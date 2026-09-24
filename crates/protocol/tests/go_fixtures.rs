@@ -33,7 +33,7 @@ use serde_json::Value;
 /// fixture 在父仓库的 `cases/protocol/`。
 ///
 /// ⚠️ 它**不在** `rust/` 里面 —— 那份数据属于契约，和 `docs/api.md` 一个层级，
-/// 所以要跟着父仓库走（见 clip-sync/ARCHITECTURE.md §5.4）。
+/// 所以要跟着父仓库走（见 docs/ARCHITECTURE.md §5.4）。
 /// 拆成独立仓库时把它一起带走，否则这个测试会红，而且是**好事**：
 /// 说明契约数据没跟上。
 fn fixture_dir() -> PathBuf {

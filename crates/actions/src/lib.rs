@@ -10,5 +10,5 @@
 //! 现状：**还没实现**。P0 的动作库是独立的一步，先把服务端最小闭环跑通再动它。
 
 // TODO(P0): 注册表 + 动作 + 参数声明 + i18n key。
-// 计划见 clip-sync/ARCHITECTURE.md §5.3 —— 注意「可下沉」这个分类会消失：
+// 计划见 docs/ARCHITECTURE.md §5.3 —— 注意「可下沉」这个分类会消失：
 // 拼音 / 简繁 / markdown 在 Rust 侧都是 crate，两端都能跑。

@@ -1,7 +1,7 @@
 //! clip9 存储层。
 //!
 //! **只有这个 crate 知道存储长什么样。** 换引擎（redb → fjall）时，改动应该被挡在
-//! 这条边界里，`core` 与 `server` 一行都不用动。设计见 `clip-sync/ARCHITECTURE.md` §3。
+//! 这条边界里，`core` 与 `server` 一行都不用动。设计见 `docs/ARCHITECTURE.md` §3。
 //!
 //! # 表结构
 //!
