@@ -33,3 +33,8 @@ uuid = { workspace = true }
 futures-util = { workspace = true }
 parking_lot = { workspace = true }
 time = { workspace = true }
+# `/text` 的 multipart 分支要它。⚠️ 别手搓 MIME 解析 —— boundary 的引号、CRLF、
+# 嵌套部分都是有坑的，multer 是 axum 自己用的那个。
+multer = "3.1"
+# `DetermineResponseType` 要按扩展名猜 MIME（Go 用 mime.TypeByExtension）。
+mime_guess = "2.0"
