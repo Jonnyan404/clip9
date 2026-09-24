@@ -1,0 +1,14 @@
+[package]
+name = "clip9-protocol"
+description = "clip9 契约层：请求 / 响应 / WS 事件的 serde 类型。零 IO，不依赖任何运行时。"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+[dev-dependencies]
+serde_json = { workspace = true }

@@ -1,0 +1,19 @@
+# 构建产物
+/target/
+**/*.rs.bk
+*.pdb
+
+# 本地运行数据（redb 库、uploads/、config.json）—— 由服务自己创建，不入库
+/data/
+*.redb
+*.redb.lock
+config.json
+
+# 打包产物
+/dist/
+/packaging/openwrt/*.ipk
+/packaging/openwrt/build/
+
+# macOS
+.DS_Store
+**/.DS_Store

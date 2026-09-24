@@ -1,0 +1,306 @@
+//! 配置模型。
+//!
+//! 对应 Go `config.go` 的 `Config`。字段名与 JSON key 逐字对齐。
+//!
+//! ⚠️ 服务端的配置文件**必须嵌套在 `server` 键下** —— 平铺会被静默忽略并回落到默认端口。
+//! 这是踩过的坑，所以这里用嵌套结构体表达，而不是一堆平铺字段。
+
+use serde::{Deserialize, Serialize};
+
+/// `auth` 支持 `false` / 字符串 / 数字 三种写法（Go 里是 `interface{}`）。
+///
+/// ⚠️ 别把它简化成 `Option<String>`：`false` 是**默认值**，而 `""` 是「配了空密码」。
+/// 两者在配置里含义相同（都回落），但直接丢进 `Option<String>` 会把 `false` 变成解析错误 ——
+/// 于是所有存量 `config.json` 都读不进来。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum AuthValue {
+    Bool(bool),
+    Str(String),
+    Num(serde_json::Number),
+}
+
+impl Default for AuthValue {
+    fn default() -> Self {
+        AuthValue::Bool(false)
+    }
+}
+
+impl AuthValue {
+    /// 归一成密码字符串。对应 Go `normalizeAuthValue`：
+    /// 字符串原样；数字 **0 视为空**（和 `false` 一个意思）；其余空。
+    #[must_use]
+    pub fn normalize(&self) -> String {
+        match self {
+            AuthValue::Bool(_) => String::new(),
+            AuthValue::Str(s) => s.clone(),
+            AuthValue::Num(n) => {
+                if n.as_i64() == Some(0) || n.as_f64() == Some(0.0) {
+                    String::new()
+                } else {
+                    n.to_string()
+                }
+            }
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Config {
+    pub server: ServerConfig,
+    pub text: TextConfig,
+    pub file: FileConfig,
+}
+
+impl Default for Config {
+    fn default() -> Self {
+        Self {
+            server: ServerConfig::default(),
+            text: TextConfig::default(),
+            file: FileConfig::default(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct ServerConfig {
+    /// 监听地址。Go 侧允许 `"0.0.0.0"` 或 `["0.0.0.0","::"]` 两种写法。
+    pub host: serde_json::Value,
+    pub port: u16,
+    /// 子路径前缀（部署在反代子目录时用）。**每个端点都带它**。
+    pub prefix: String,
+    /// ⚠️ 旧的「每房间保留多少条」。新存储改用 `limits` 三个维度（见 ARCHITECTURE §3.3），
+    /// 这个字段只为**读老配置**保留 —— 别在业务代码里用它做裁剪决策。
+    pub history: i64,
+    #[serde(rename = "historyFile")]
+    pub history_file: String,
+    #[serde(rename = "storageDir")]
+    pub storage_dir: String,
+    pub auth: AuthValue,
+    #[serde(rename = "roomAuth")]
+    pub room_auth: RoomAuthConfig,
+    pub cert: String,
+    pub key: String,
+    #[serde(rename = "roomList")]
+    pub room_list: bool,
+    #[serde(rename = "roomCleanup")]
+    pub room_cleanup: i64,
+}
+
+impl Default for ServerConfig {
+    fn default() -> Self {
+        Self {
+            host: serde_json::json!(["0.0.0.0"]),
+            port: 9501,
+            prefix: String::new(),
+            history: 100,
+            history_file: "history.json".to_owned(),
+            storage_dir: "./uploads".to_owned(),
+            auth: AuthValue::default(),
+            room_auth: RoomAuthConfig::default(),
+            cert: String::new(),
+            key: String::new(),
+            room_list: false,
+            room_cleanup: 3600,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct TextConfig {
+    /// 单条正文上限。默认 4096 —— ⚠️ 内容变换类功能因此一律放在前端做（走网络纯亏）。
+    pub limit: i64,
+}
+
+impl Default for TextConfig {
+    fn default() -> Self {
+        Self { limit: 4096 }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct FileConfig {
+    pub expire: i64,
+    pub chunk: i64,
+    pub limit: i64,
+}
+
+impl Default for FileConfig {
+    fn default() -> Self {
+        Self {
+            expire: 3600,
+            chunk: 1024 * 1024,
+            limit: 256 * 1024 * 1024,
+        }
+    }
+}
+
+/// `roomAuth`：房间名 → 该房间的认证与留存配置。
+///
+/// ⚠️ 键在**加载时**就归一化（`normalize_room_name`），否则 `"default"` 和 `""`
+/// 会变成两个不同的房间，而它们在契约里是同一个。
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct RoomAuthConfig(pub std::collections::BTreeMap<String, RoomAuthEntry>);
+
+impl RoomAuthConfig {
+    #[must_use]
+    pub fn get(&self, room: &str) -> Option<&RoomAuthEntry> {
+        self.0.get(room)
+    }
+
+    /// 归一化房间名之后重建一份。加载配置时调用一次即可。
+    #[must_use]
+    pub fn normalized(&self) -> Self {
+        Self(
+            self.0
+                .iter()
+                .map(|(room, entry)| (clip9_protocol::normalize_room_name(room), entry.clone()))
+                .collect(),
+        )
+    }
+}
+
+/// 单个房间的认证与文件留存配置。
+///
+/// 配置值支持**四种** JSON 形式（对应 Go `RoomAuthEntry.UnmarshalJSON`）：
+///
+/// ```json
+/// "password"                                   // 仅密码（旧格式）
+/// 12345                                        // 数字密码
+/// {"password": "x", "fileExpire": 0}            // 密码 + 文件过期覆盖
+/// {"open": true, "fileExpire": 0}               // 开放房间：不要密码，即使全局 auth 设了也一样
+/// ```
+///
+/// ⚠️ `open` 单独一个字段、而不是拿「空密码」当信号，有两个原因：
+/// 1. 空字符串在这份配置里**已经有含义**（只接受全局 auth）—— 改掉它会静默改变所有现有配置的
+///    含义，某个房间会悄悄敞开且不报错。安全设置不能这么反转。
+/// 2. 空密码和「压根没配过这个房间」在 JSON 里长得一样，而这两者的意图正好相反。
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
+pub struct RoomAuthEntry {
+    pub password: String,
+    #[serde(rename = "fileExpire")]
+    pub file_expire: Option<i64>,
+    pub open: bool,
+    /// 定时任务策略：`""`（未写 → 跟随房间鉴权档位）/ `"none"` / `"single"` / `"room"`。
+    pub automation: String,
+}
+
+impl RoomAuthEntry {
+    /// 从配置值解析。`from_json` 覆盖 Go 那三种兼容形式。
+    pub fn from_json(v: &serde_json::Value) -> Result<Self, String> {
+        match v {
+            serde_json::Value::String(s) => Ok(Self {
+                password: s.trim().to_owned(),
+                ..Self::default()
+            }),
+            serde_json::Value::Number(n) => Ok(Self {
+                password: normalize_auth_json(n),
+                ..Self::default()
+            }),
+            serde_json::Value::Object(_) => {
+                #[derive(Deserialize)]
+                #[serde(default)]
+                struct Raw {
+                    password: serde_json::Value,
+                    #[serde(rename = "fileExpire")]
+                    file_expire: Option<i64>,
+                    open: bool,
+                    automation: String,
+                }
+                impl Default for Raw {
+                    fn default() -> Self {
+                        Self {
+                            password: serde_json::Value::Null,
+                            file_expire: None,
+                            open: false,
+                            automation: String::new(),
+                        }
+                    }
+                }
+                let raw: Raw = serde_json::from_value(v.clone()).map_err(|e| e.to_string())?;
+                Ok(Self {
+                    password: if raw.password.is_null() {
+                        String::new()
+                    } else {
+                        normalize_auth_json_value(&raw.password)
+                    },
+                    file_expire: raw.file_expire,
+                    open: raw.open,
+                    automation: raw.automation.trim().to_owned(),
+                })
+            }
+            other => Err(format!("unsupported roomAuth value: {other}")),
+        }
+    }
+}
+
+fn normalize_auth_json(n: &serde_json::Number) -> String {
+    if n.as_i64() == Some(0) || n.as_f64() == Some(0.0) {
+        String::new()
+    } else {
+        n.to_string()
+    }
+}
+
+fn normalize_auth_json_value(v: &serde_json::Value) -> String {
+    match v {
+        serde_json::Value::String(s) => s.clone(),
+        serde_json::Value::Number(n) => normalize_auth_json(n),
+        serde_json::Value::Bool(_) | serde_json::Value::Null => String::new(),
+        // ⚠️ Go 那边 `normalizeAuthValue(对象)` 会掉进 default 分支返回 `""`。
+        // Worker 曾在这里把对象 `String()` 成 `'[object Object]'`，那是个 bug —— 别学。
+        other => {
+            debug_assert!(false, "roomAuth.password 不该是 {other}");
+            String::new()
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn auth_value_normalizes_like_go() {
+        assert_eq!(AuthValue::Bool(false).normalize(), "");
+        assert_eq!(AuthValue::Bool(true).normalize(), "");
+        assert_eq!(AuthValue::Str("secret".into()).normalize(), "secret");
+        assert_eq!(AuthValue::Num(serde_json::Number::from(0)).normalize(), "");
+        assert_eq!(AuthValue::Num(serde_json::Number::from(1234)).normalize(), "1234");
+    }
+
+    #[test]
+    fn room_auth_entry_accepts_four_forms() {
+        let s = RoomAuthEntry::from_json(&serde_json::json!("pw")).unwrap();
+        assert_eq!(s.password, "pw");
+        assert!(!s.open);
+
+        let n = RoomAuthEntry::from_json(&serde_json::json!(12345)).unwrap();
+        assert_eq!(n.password, "12345");
+
+        let zero = RoomAuthEntry::from_json(&serde_json::json!(0)).unwrap();
+        assert_eq!(zero.password, "");
+
+        let o = RoomAuthEntry::from_json(&serde_json::json!({"password": "x", "fileExpire": 0}))
+            .unwrap();
+        assert_eq!(o.password, "x");
+        assert_eq!(o.file_expire, Some(0));
+
+        let open = RoomAuthEntry::from_json(&serde_json::json!({"open": true})).unwrap();
+        assert!(open.open);
+        assert_eq!(open.password, "");
+    }
+
+    /// 平铺的配置（没有 `server` 键）不该被当成合法配置 —— 它会被静默忽略并回落默认值，
+    /// 这里至少保证「解析出来的是默认端口」这个事实是显式的。
+    #[test]
+    fn flat_config_falls_back_to_defaults() {
+        let c: Config = serde_json::from_str(r#"{"port": 8080}"#).unwrap();
+        assert_eq!(c.server.port, 9501, "平铺的 port 被忽略 —— 这是刻意的，但要知道");
+    }
+}

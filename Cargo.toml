@@ -1,0 +1,70 @@
+# clip9 —— Rust 重写版（过渡期住在这个目录里）
+#
+# ⚠️ 这个目录**完全本地开发**：父仓库 `cloud-clipboard-go` 的 .gitignore 里有一条
+#    `rust/`，它自己另有一个**无 remote** 的本地 git 仓库。开发完再拆成独立仓库推上去。
+#    详见 ./README.md 与 ../clip-sync/ARCHITECTURE.md §10。
+#
+# 依赖单向：protocol ← core ← store ← server ← { bin, client }
+#            actions ← core / server / WASM
+[workspace]
+resolver = "3"
+members = [
+    "crates/protocol",
+    "crates/core",
+    "crates/actions",
+    "crates/store",
+    "crates/server",
+    "crates/client",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+authors = ["jonnyan404"]
+
+[workspace.dependencies]
+# ── 内部 crate ───────────────────────────────────────────────────────
+clip9-protocol = { path = "crates/protocol" }
+clip9-core = { path = "crates/core" }
+clip9-actions = { path = "crates/actions" }
+clip9-store = { path = "crates/store" }
+
+# ── 外部 ─────────────────────────────────────────────────────────────
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+
+axum = { version = "0.8", features = ["ws", "macros"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "signal", "time", "sync", "fs", "io-util"] }
+tower = "0.5"
+tower-http = { version = "0.7", features = ["fs", "trace", "compression-gzip", "compression-br", "compression-zstd", "cors"] }
+hyper = "1"
+
+redb = "4.3"
+# ⚠️ 用 postcard 而不是 bincode —— **bincode 已经停止维护**：
+# 它的最后一个版本 3.0.0 里 `lib.rs` 全文只有 `compile_error!("https://xkcd.com/2347/")`，
+# README 标题就是「Bincode is now unmaintained」（作者因被人肉骚扰而终止开发）。
+# 直接写 `bincode = "3"` 会让整个 workspace 编不过，而且报错信息只有一行 xkcd 链接。
+# postcard 是 bincode 官方 README 自己推荐的替代品之一，面向嵌入式/受限环境 ——
+# 正好对得上 OpenWrt / Android 那两条约束。
+postcard = { version = "1.1", features = ["alloc", "use-std"] }
+
+uuid = { version = "1", features = ["v4"] }
+time = { version = "0.3", features = ["formatting", "parsing", "macros", "local-offset"] }
+chrono = "0.4"
+chrono-tz = "0.10"
+
+thiserror = "2"
+anyhow = "1"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+parking_lot = "0.12"
+futures-util = "0.3"
+
+[profile.release]
+# OpenWrt / Android 上体积是真约束，这里按「小」而不是「最快」调。
+opt-level = "z"
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true

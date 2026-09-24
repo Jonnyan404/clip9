@@ -1,0 +1,16 @@
+[package]
+name = "clip9-core"
+description = "clip9 领域逻辑：房间鉴权、会话令牌、分享 token、模板引擎、cron。不含 HTTP。"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[dependencies]
+clip9-protocol = { workspace = true }
+
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+chrono = { workspace = true }
+chrono-tz = { workspace = true }

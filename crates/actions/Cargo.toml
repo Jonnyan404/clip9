@@ -1,0 +1,27 @@
+[package]
+name = "clip9-actions"
+description = "clip9 单一动作库：纯函数、无 IO、无浏览器依赖。原生与 wasm32 编同一份代码。"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+chrono = { workspace = true }
+
+[features]
+# ⚠️ feature 只用来**按部署裁剪体积**，不是「哪些动作能下沉」——Rust 侧两端都能跑。
+# OpenWrt（flash 几十 MB）只带 default；桌面 / Docker 全带。
+default = ["text", "encode", "date", "inspect"]
+text = []
+encode = []
+date = []
+inspect = []
+# 词典几 MB，默认不带
+zh = []
+# 轻
+markdown = []
+# syntect 语法包几 MB，默认不带
+highlight = []

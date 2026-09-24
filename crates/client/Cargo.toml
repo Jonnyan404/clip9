@@ -1,0 +1,17 @@
+[package]
+name = "clip9-client"
+description = "clip9 客户端：剪贴板监控 + 上行 + 下行。桌面 / Android 共用。"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[dependencies]
+clip9-protocol = { workspace = true }
+
+serde = { workspace = true }
+serde_json = { workspace = true }
+anyhow = { workspace = true }
+tokio = { workspace = true }
+futures-util = { workspace = true }
+tracing = { workspace = true }

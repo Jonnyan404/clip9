@@ -1,0 +1,13 @@
+[toolchain]
+channel = "stable"
+components = ["rustfmt", "clippy"]
+# ⚠️ 这个列表里的目标必须都能装上，否则 rustup 会在每次构建前试图安装并失败。
+# 只列 Tier 2（mips-*-musl 是 Tier 3，rustup 装不了，OpenWrt mips 要另想办法）。
+targets = [
+    "wasm32-unknown-unknown",
+    "x86_64-unknown-linux-musl",
+    "aarch64-unknown-linux-musl",
+    "armv7-unknown-linux-musleabihf",
+    "aarch64-linux-android",
+    "armv7-linux-androideabi",
+]
