@@ -12,10 +12,10 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use axum::extract::{Query, State};
-use axum::http::{header, HeaderMap};
+use axum::http::{HeaderMap, header};
 use axum::routing::get;
 use axum::{Json, Router};
-use clip9_core::{can_access_room, resolve_room_auth, Config};
+use clip9_core::{Config, can_access_room, resolve_room_auth};
 use serde_json::json;
 
 /// 服务端共享状态。
@@ -90,7 +90,10 @@ async fn handle_server(
         authorized = can_access_room(config, "default", &token);
     }
 
-    let ws_scheme = match headers.get("x-forwarded-proto").and_then(|v| v.to_str().ok()) {
+    let ws_scheme = match headers
+        .get("x-forwarded-proto")
+        .and_then(|v| v.to_str().ok())
+    {
         Some(v) if v.eq_ignore_ascii_case("https") => "wss",
         _ => "ws",
     };
@@ -132,14 +135,13 @@ fn extract_auth_token(headers: &HeaderMap, query_auth: Option<&str>) -> String {
     if let Some(raw) = headers
         .get(header::AUTHORIZATION)
         .and_then(|v| v.to_str().ok())
+        && !raw.is_empty()
     {
-        if !raw.is_empty() {
-            let parts: Vec<&str> = raw.split(' ').collect();
-            if parts.len() == 2 && parts[0].eq_ignore_ascii_case("bearer") {
-                return parts[1].to_owned();
-            }
-            return raw.to_owned();
+        let parts: Vec<&str> = raw.split(' ').collect();
+        if parts.len() == 2 && parts[0].eq_ignore_ascii_case("bearer") {
+            return parts[1].to_owned();
         }
+        return raw.to_owned();
     }
 
     query_auth.unwrap_or_default().to_owned()

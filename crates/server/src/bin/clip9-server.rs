@@ -11,7 +11,7 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 
 use clip9_core::Config;
-use clip9_server::{router, AppState};
+use clip9_server::{AppState, router};
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -54,7 +54,9 @@ fn resolve_port(fallback: u16) -> u16 {
                 }
             }
             other => {
-                if let Some(v) = other.strip_prefix("--port=").and_then(|v| v.parse::<u16>().ok())
+                if let Some(v) = other
+                    .strip_prefix("--port=")
+                    .and_then(|v| v.parse::<u16>().ok())
                 {
                     return v;
                 }

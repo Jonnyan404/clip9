@@ -7,8 +7,8 @@ pub mod auth;
 pub mod config;
 
 pub use auth::{
-    can_access_room, is_global_admin, resolve_automation_policy, resolve_file_expire_seconds,
-    resolve_room_auth, token_matches_room, AutomationPolicy, RoomAuthRequirement,
+    AutomationPolicy, RoomAuthRequirement, can_access_room, is_global_admin,
+    resolve_automation_policy, resolve_file_expire_seconds, resolve_room_auth, token_matches_room,
 };
 pub use config::{
     AuthValue, Config, FileConfig, RoomAuthConfig, RoomAuthEntry, ServerConfig, TextConfig,

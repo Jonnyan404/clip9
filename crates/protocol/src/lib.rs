@@ -29,7 +29,7 @@ use serde::Deserialize;
 
 pub use device::DeviceMeta;
 pub use receive::{File, FileReceive, History, ReceiveBase, ReceiveHolder, TextReceive};
-pub use room::{normalize_room_name, RoomInfo, RoomListResponse};
+pub use room::{RoomInfo, RoomListResponse, normalize_room_name};
 pub use ws::{PostEvent, WsMessage};
 
 /// Go `encoding/json` 的 `omitempty` 语义。

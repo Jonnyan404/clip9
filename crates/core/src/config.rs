@@ -45,22 +45,12 @@ impl AuthValue {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
 #[serde(default)]
 pub struct Config {
     pub server: ServerConfig,
     pub text: TextConfig,
     pub file: FileConfig,
-}
-
-impl Default for Config {
-    fn default() -> Self {
-        Self {
-            server: ServerConfig::default(),
-            text: TextConfig::default(),
-            file: FileConfig::default(),
-        }
-    }
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -271,7 +261,10 @@ mod tests {
         assert_eq!(AuthValue::Bool(true).normalize(), "");
         assert_eq!(AuthValue::Str("secret".into()).normalize(), "secret");
         assert_eq!(AuthValue::Num(serde_json::Number::from(0)).normalize(), "");
-        assert_eq!(AuthValue::Num(serde_json::Number::from(1234)).normalize(), "1234");
+        assert_eq!(
+            AuthValue::Num(serde_json::Number::from(1234)).normalize(),
+            "1234"
+        );
     }
 
     #[test]
@@ -301,6 +294,9 @@ mod tests {
     #[test]
     fn flat_config_falls_back_to_defaults() {
         let c: Config = serde_json::from_str(r#"{"port": 8080}"#).unwrap();
-        assert_eq!(c.server.port, 9501, "平铺的 port 被忽略 —— 这是刻意的，但要知道");
+        assert_eq!(
+            c.server.port, 9501,
+            "平铺的 port 被忽略 —— 这是刻意的，但要知道"
+        );
     }
 }

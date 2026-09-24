@@ -4,8 +4,8 @@
 
 use std::collections::HashMap;
 
-use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use serde::de::Error as _;
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 use crate::device::DeviceMeta;
 use crate::go_omit::{is_false, zero_i32, zero_i64};
@@ -324,10 +324,18 @@ mod tests {
     fn sender_device_distinguishes_null_from_empty_object() {
         let mut t = base_text(1, "default", 0);
         t.base.sender_device = Some(HashMap::new());
-        assert!(serde_json::to_string(&t).unwrap().contains(r#""senderDevice":{}"#));
+        assert!(
+            serde_json::to_string(&t)
+                .unwrap()
+                .contains(r#""senderDevice":{}"#)
+        );
 
         t.base.sender_device = None;
-        assert!(serde_json::to_string(&t).unwrap().contains(r#""senderDevice":null"#));
+        assert!(
+            serde_json::to_string(&t)
+                .unwrap()
+                .contains(r#""senderDevice":null"#)
+        );
     }
 
     /// `type` 字段决定反序列化成哪一支 —— 和 Go 一致。
@@ -371,7 +379,10 @@ mod tests {
         assert!(h.receive.is_empty());
         assert_eq!(h.next_id, 0);
         // 写出去是数组，不是 null —— 单向宽松。
-        assert_eq!(serde_json::to_string(&h).unwrap(), r#"{"file":[],"receive":[]}"#);
+        assert_eq!(
+            serde_json::to_string(&h).unwrap(),
+            r#"{"file":[],"receive":[]}"#
+        );
     }
 
     /// `column` 两个分支都要能写 —— 文件卡片也得能挪列。

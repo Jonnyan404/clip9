@@ -26,8 +26,8 @@ use std::path::{Path, PathBuf};
 use clip9_protocol::{
     DeviceMeta, History, PostEvent, ReceiveHolder, RoomInfo, RoomListResponse, WsMessage,
 };
-use serde::de::DeserializeOwned;
 use serde::Serialize;
+use serde::de::DeserializeOwned;
 use serde_json::Value;
 
 /// fixture 在父仓库的 `cases/protocol/`。
@@ -113,17 +113,14 @@ fn fixture_stems() -> BTreeSet<String> {
             if path.extension().and_then(|s| s.to_str()) != Some("json") {
                 return None;
             }
-            path.file_stem()
-                .and_then(|s| s.to_str())
-                .map(str::to_owned)
+            path.file_stem().and_then(|s| s.to_str()).map(str::to_owned)
         })
         .collect()
 }
 
 fn read_fixture(stem: &str) -> String {
     let path = fixture_dir().join(format!("{stem}.json"));
-    std::fs::read_to_string(&path)
-        .unwrap_or_else(|e| panic!("读不到 {}: {e}", path.display()))
+    std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("读不到 {}: {e}", path.display()))
 }
 
 /// 每一份 fixture 都要能被对应的类型读进来、并且原样写回去。
@@ -195,7 +192,10 @@ mod semantics {
     fn nil_sender_device_is_null_not_empty_object() {
         let text = read_fixture("text_receive_nil_device");
         let parsed: ReceiveHolder = serde_json::from_str(&text).unwrap();
-        assert!(parsed.sender_device().is_none(), "nil map 读出来应该是 None");
+        assert!(
+            parsed.sender_device().is_none(),
+            "nil map 读出来应该是 None"
+        );
         let actual = serde_json::to_value(&parsed).unwrap();
         assert!(actual["senderDevice"].is_null());
     }

@@ -50,6 +50,9 @@ mod tests {
 
         let empty = DeviceMeta::default();
         let json = serde_json::to_string(&empty).unwrap();
-        assert_eq!(json, r#"{"id":"","type":"","device":"","os":"","browser":""}"#);
+        assert_eq!(
+            json,
+            r#"{"id":"","type":"","device":"","os":"","browser":""}"#
+        );
     }
 }

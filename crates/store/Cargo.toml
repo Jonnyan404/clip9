@@ -12,9 +12,15 @@ clip9-protocol = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 redb = { workspace = true }
-postcard = { workspace = true }
 thiserror = { workspace = true }
 tracing = { workspace = true }
 
 [dev-dependencies]
 tempfile = "3"
+clip9-protocol = { workspace = true }
+# 集成测试要自己开一次库去篡改 meta（测 schema 版本拒绝）。
+redb = { workspace = true }
+# ⚠️ postcard 只在 `codec_constraint` 那个**反向**回归测试里用：它证明
+# `#[serde(flatten)]` 的类型跑不了非自描述格式，所以 store 的值编码只能用 JSON。
+# 运行时**不用**它 —— 别把它挪回 [dependencies]。
+postcard = { workspace = true }

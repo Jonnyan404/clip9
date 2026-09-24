@@ -206,7 +206,10 @@ mod tests {
         let mut c = Config::default();
         c.server.auth = global;
         for (room, entry) in entries {
-            c.server.room_auth.0.insert((*room).to_owned(), entry.clone());
+            c.server
+                .room_auth
+                .0
+                .insert((*room).to_owned(), entry.clone());
         }
         c
     }
@@ -356,7 +359,10 @@ mod tests {
                 ..RoomAuthEntry::default()
             },
         );
-        assert_eq!(resolve_automation_policy(&c, "work"), AutomationPolicy::Single);
+        assert_eq!(
+            resolve_automation_policy(&c, "work"),
+            AutomationPolicy::Single
+        );
 
         c.server.room_auth.0.insert(
             "work".into(),
@@ -385,6 +391,9 @@ mod tests {
             },
         );
         assert!(is_global_admin(&c, "global"));
-        assert_eq!(resolve_automation_policy(&c, "locked"), AutomationPolicy::None);
+        assert_eq!(
+            resolve_automation_policy(&c, "locked"),
+            AutomationPolicy::None
+        );
     }
 }
