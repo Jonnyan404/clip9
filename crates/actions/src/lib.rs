@@ -45,13 +45,20 @@
 //!
 //! # 现状
 //!
-//! 注册表**已经全了**（当前是 Go 侧那 34 项，理由与目标集合见 [`registry`] 的模块文档 ——
-//! 一句话：**目标是全部动作，不是 Go 的子集**，先接这 34 项只是因为它们有现成的行为基准），
-//! 而且**这 34 项全部实现完**（`not_yet_implemented()` 现在是空的，机制留着 —— 下一步接
-//! 前端动作表里剩下的那些时，它立刻重新有用）。
+//! 服务端动作（**定时任务能用的那 34 个**）**全部实现完**：`format` 2 / `text` 13 / `date` 2 /
+//! `encode` 10 / `zh` 4 / `inspect` 3。`not_yet_implemented()` 现在是空的，机制留着。
 //!
-//! `generate.*`（uuid / time / datetime）**不进定时任务的动作集**：那是产品决定
-//! （「链的语义」），不是能力问题，理由与模板变量那条替代路径见 [`registry`]。
+//! ⚠️ **这张表的范围是「定时任务能用的动作」，不是「全部动作」** —— 这一点在 2026-09-25
+//! 被明确过（早先按 §5.3.1 写成「目标是全部动作」，那条作废了）：
+//!
+//! - `generate.*`（uuid / time / datetime）**不进**：它们是「生成」，放进链里会把正文整个丢掉。
+//!   要那个效果就用模板变量（`{{uuid}}` / `{{time}}` / `{{datetime}}`），内联、不覆盖正文。
+//! - 预览区专用的 9 个（`format.markdown` / `format.code` / `zh.pinyin*` / `zh.simplified` /
+//!   `zh.traditional` / `inspect.stats` / `inspect.detect`）**不进**：它们的行为**就是前端那几个
+//!   JS 库**，换成 Rust crate 是另一份实现、输出必然不同。完整理由见 [`registry`] 的模块文档
+//!   与 `ARCHITECTURE.md` §5.3.1 的修订。
+//!
+//! 代价是**界面上必须说清楚**（页面那条 `actionScopeHint` 常驻说明就是干这个的）。
 
 pub mod actions;
 pub mod error;
