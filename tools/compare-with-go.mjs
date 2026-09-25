@@ -1397,6 +1397,99 @@ await compareCreate(
   '?room=locked&auth=pw'
 );
 
+// ── 定时自动化的管理页（`/automation`）──────────────────────────────────
+//
+// ⚠️★ 这一页分**两层**验，因为「逐字节比正文」在这里**做不到**，而原因是可查的：
+//
+// · **文件层**（谁负责：`crates/server/tests/automation_page.rs` 的
+//   `page_matches_go_byte_for_byte`）：Rust 的 `automation_page.html` 与 Go 的
+//   `cloud-clip/lib/automation_page.html` **逐字节相同**。这一层把页面里的一切
+//   （文案表 / 四份 i18n / 动作标签 / 内联脚本 / CSS 注释）都钉住了 ——
+//   等价于把 Go 那七条静态检查（`TestAutomationPageMessagesCoverActionKeys` 那一族）
+//   整体搬过来，而且更严格。
+//
+// · **服务层**（就是这一节）：比状态码、响应头、以及**我们真正生成的那一段**
+//   （`window.__CC__ = { … }` 的注入行，含 JS 字符串转义）。正文其余部分来自那个文件，
+//   文件层已经钉住了。
+//
+// ⚠️ 为什么不逐字节比正文：Go 的 `html/template` 会把 **CSS / HTML 注释整个吃掉**
+// （源文件 1927 行 → 服务出来 1894 行，少 14KB）。那是它模板引擎的副作用，不是谁设计的行为。
+// 要在这边对上，就得复刻它的上下文解析（**只在 CSS/HTML 上下文里剔注释，JS 里的 `/* */` 不动**）
+// —— 那正是 `CONTRIBUTING.md` §6 点名的「靠人肉同步的第二份定义」，而且是最坏的一种：
+// 一个手写的 HTML/CSS/JS 上下文解析器。
+// **所以这边刻意保留注释**（`view-source` 里能看到「为什么这条 CSS 要这么写」），
+// 代价是正文与 Go 不逐字节相同。
+console.log('\n=== 定时自动化：管理页 /automation ===');
+
+/** 取出页面里那行注入。两边都必须有，且**逐字节相同**。 */
+function injectionOf(html) {
+  const m = html.match(/window\.__CC__ = \{[^}]*\};/);
+  return m ? m[0] : null;
+}
+
+async function comparePage(label, path) {
+  const [g, r] = await Promise.all([hit(GO_PORT, 'GET', path), hit(RS_PORT, 'GET', path)]);
+  const problems = [];
+  if (g.status !== r.status) problems.push(`状态码 Go=${g.status} Rust=${r.status}`);
+  const gi = injectionOf(g.text);
+  const ri = injectionOf(r.text);
+  if (gi === null || ri === null) {
+    problems.push(`有一边取不到 __CC__ 注入行（Go=${gi}，Rust=${ri}）`);
+  } else if (gi !== ri) {
+    problems.push(`__CC__ 注入行不同\n    Go  : ${gi}\n    Rust: ${ri}`);
+  }
+  // ⚠️ 正文长度**只作为信息**打出来，不算失败 —— 见上面那段论证。
+  if (problems.length === 0) {
+    pass++;
+    console.log(`  ok   ${label}  [${ri}]  （正文 ${r.text.length} 字符 / Go ${g.text.length}）`);
+  } else {
+    fail++;
+    failures.push(`${label}\n  ${problems.join('\n  ')}`);
+    console.log(`  FAIL ${label}`);
+    for (const p of problems) console.log(`       ${p}`);
+  }
+}
+
+await comparePage('GET /automation 不传 room', '/automation');
+await comparePage('GET /automation?room=work', '/automation?room=work');
+await comparePage('GET /automation?room= 空值→default', '/automation?room=');
+await comparePage('GET /automation 中文房间名', `/automation?room=${encodeURIComponent('值班室')}`);
+// ⚠️ 这一格是「不转义就是 XSS」的最小复现：`/`、`<`、`>`、`"`、`'`、`&`、`+`、`\`、`` ` ``
+// 全在 Go 的转义表里，而 `=`、`%`、空格**不在**。多转一个少转一个都会红。
+await comparePage(
+  'GET /automation 需要转义的房间名',
+  `/automation?room=${encodeURIComponent('a<b>"c\'d&e=f\\g+h`i/j')}`
+);
+await comparePage(
+  'GET /automation 控制字符与 DEL',
+  `/automation?room=${encodeURIComponent('a\u0001b\u007fc\td')}`
+);
+await comparePage(
+  'GET /automation U+2028 / emoji',
+  `/automation?room=${encodeURIComponent('a\u2028b🎉c')}`
+);
+
+// 响应头也是契约的一部分：少了 `no-store` 会让管理页被缓存（页面里内联着凭据逻辑），
+// 少了 `X-Robots-Tag` 会让它被搜索引擎收录。
+{
+  const [g, r] = await Promise.all([
+    hit(GO_PORT, 'GET', '/automation'),
+    hit(RS_PORT, 'GET', '/automation'),
+  ]);
+  const pick = (h) =>
+    ['content-type', 'cache-control', 'x-robots-tag'].map((k) => `${k}=${h[k]}`).join(' | ');
+  const gs = pick(g.headers);
+  const rs = pick(r.headers);
+  if (gs === rs) {
+    pass++;
+    console.log(`  ok   /automation 响应头  [${rs}]`);
+  } else {
+    fail++;
+    failures.push(`/automation 响应头不同\n  Go  : ${gs}\n  Rust: ${rs}`);
+    console.log(`  FAIL /automation 响应头不同\n       Go  : ${gs}\n       Rust: ${rs}`);
+  }
+}
+
 // ── 刻意偏离 Go 的地方 ────────────────────────────────────────────────
 //
 // ⚠️ 这一节**故意**和 Go 不一样。Jonny 2026-09-25 拍板：
@@ -1531,6 +1624,24 @@ async function expectOn(label, port, method, path, check, opts = {}) {
   console.log(
     `  ·  Go 同一时刻的响应里${'used' in (goInfo.parsed ?? {}) ? `有 used=${goInfo.parsed.used}` : '**没有** used 字段'}` +
       '（用量在进程内 map 里，第一次读取才建条目）'
+  );
+}
+
+// ⚠️ 刻意偏离：`/automation` **只认 GET**。
+// Go 的 `handleAutomationPage` 压根没看 `r.Method` —— POST 也会照渲染一份 200 的页面出来。
+// 按 `/revoke/*` 那次的口径（Jonny 2026-09-25：「不用考虑老客户端，按最佳实践来」），
+// 这里收紧成 GET-only，其余回 405 且恒 JSON。
+await expectOn(
+  'POST /automation → 405（Go 会照渲染一份页面）',
+  RS_PORT,
+  'POST',
+  '/automation',
+  (r) => r.status === 405 && r.parsed?.code === 'method_not_allowed'
+);
+{
+  const goPost = await hit(GO_PORT, 'POST', '/automation');
+  console.log(
+    `  ·  Go 的 POST /automation → ${goPost.status}（${goPost.text.length} 字节，照渲染了一份页面）`
   );
 }
 
