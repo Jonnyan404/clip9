@@ -13,7 +13,7 @@ use serde::Deserialize;
 fn fixture_dir() -> std::path::PathBuf {
     // 测试的 cwd 是 crate 根（crates/core），fixture 在仓库根的 cases/render。
     // ⚠️ rust/ 是独立子仓库，cases/ 在它上一级（父仓库根），所以要上三层。
-    std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../cases/render")
+    std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../cases/render")
 }
 
 #[derive(Deserialize)]

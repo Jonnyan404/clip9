@@ -102,7 +102,7 @@ struct Case {
 
 fn fixture_dir() -> PathBuf {
     // crates/actions → rust → 仓库根
-    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../../cases/actions")
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../cases/actions")
 }
 
 fn load<T: for<'de> Deserialize<'de>>(name: &str) -> T {

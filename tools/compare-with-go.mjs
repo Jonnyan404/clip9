@@ -25,7 +25,7 @@
 // 定时自动化。P2 落地后它已经进入正常比对（连同 34 个动作的完整声明），见下面那一节。
 
 import { spawn, spawnSync } from 'node:child_process';
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import http from 'node:http';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -34,7 +34,38 @@ import { dispose, makeTempDir } from './lib/tmpdir.mjs';
 
 const RUST_DIR = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const REPO_ROOT = resolve(RUST_DIR, '..');
-const GO_DIR = join(REPO_ROOT, 'cloud-clip');
+
+/** Go 仓库里的 `cloud-clip/` 目录。
+ *
+ * ⚠️★ **拆成独立仓库之后这个脚本仍然要能找到 Go**，否则那 160 多条逐请求比对
+ * （目前**最强的验证面**）就废了。所以路径按顺序找，不写死：
+ * 1. 显式 `GO_DIR` 环境变量（CI 或别处签出时用）；
+ * 2. 同仓库的 `../cloud-clip` —— **过渡期的布局**（`rust/` 还在父仓库里）；
+ * 3. 隔壁的 `../cloud-clipboard-go/cloud-clip` —— **拆出去之后的布局**。
+ *
+ * 判定用 `lib/handler.go` 在不在，而不是只看目录存不存在：目录存在但内容不对时
+ * 会走到「找不到」那条路上，报错比 `go build` 失败清楚。
+ *
+ * ⚠️ 拆出去之后这个脚本就是**过渡期工具**了（它需要 Go 在隔壁），
+ * 而 Rust 自己的验证面是 `cargo test` + 三个实机脚本（那两个不需要 Go）。
+ */
+function findGoDir() {
+  const candidates = [
+    process.env.GO_DIR,
+    join(REPO_ROOT, 'cloud-clip'),
+    join(dirname(RUST_DIR), 'cloud-clipboard-go', 'cloud-clip'),
+  ].filter(Boolean);
+  for (const candidate of candidates) {
+    if (existsSync(join(candidate, 'lib', 'handler.go'))) return resolve(candidate);
+  }
+  console.error('\n找不到 Go 仓库的 `cloud-clip/` 目录（判定依据：里面有 `lib/handler.go`）。试过：');
+  for (const candidate of candidates) console.error(`  ${candidate}`);
+  console.error('用环境变量指定：');
+  console.error('  GO_DIR=/path/to/cloud-clipboard-go/cloud-clip node tools/compare-with-go.mjs');
+  process.exit(2);
+}
+
+const GO_DIR = findGoDir();
 const GO_BIN = process.env.GO_BIN || 'go';
 const CARGO_BIN = process.env.CARGO_BIN || 'cargo';
 

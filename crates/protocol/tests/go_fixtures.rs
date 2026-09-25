@@ -37,7 +37,7 @@ use serde_json::Value;
 /// 拆成独立仓库时把它一起带走，否则这个测试会红，而且是**好事**：
 /// 说明契约数据没跟上。
 fn fixture_dir() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../cases/protocol")
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("../../cases/protocol")
 }
 
 /// 读一份 fixture，按 `T` 解析，再序列化回 JSON 与原文件深比较。

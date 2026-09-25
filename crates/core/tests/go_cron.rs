@@ -57,7 +57,7 @@ struct OccurrenceCase {
 }
 
 fn fixture() -> Fixture {
-    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../../cases/cron/cron.json");
+    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../cases/cron/cron.json");
     let raw = std::fs::read_to_string(&path).unwrap_or_else(|e| {
         panic!(
             "读不到 {}（{e}）—— 先在 cloud-clip 里跑 UPDATE_FIXTURES=1 go test ./lib -run TestCronFixtures",

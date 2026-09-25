@@ -39,7 +39,7 @@ struct Case {
 
 fn fixture_path() -> PathBuf {
     // crates/core → rust → 仓库根
-    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../../cases/share/tokens.json")
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../cases/share/tokens.json")
 }
 
 #[test]

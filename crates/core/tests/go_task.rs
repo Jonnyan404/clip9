@@ -8,7 +8,7 @@ use clip9_core::task::{AutomationTask, ChainStep, normalize_and_validate};
 use serde::Deserialize;
 
 fn fixture_dir() -> std::path::PathBuf {
-    std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../cases/task")
+    std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../cases/task")
 }
 
 #[derive(Deserialize)]

@@ -19,10 +19,22 @@ use clip9_server::{AppState, router};
 use clip9_store::Store;
 use tower::ServiceExt;
 
-/// 父仓库里 Go 那份页面。⚠️ `rust/` 是过渡期工作区，拆出去之后这个路径就不存在了 ——
+/// 父仓库里 Go 那份页面。⚠️ 拆成独立仓库之后这个路径就没了 ——
 /// 那时下面那条测试会自动跳过（见它的注释）。
-fn go_page_path() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../../cloud-clip/lib/automation_page.html")
+///
+/// ⚠️ 但**过渡期还要能用**，所以按顺序试两个位置（和 `tools/compare-with-go.mjs` 的
+/// `findGoDir()` 同一套办法）：
+/// 1. `rust/` 还在父仓库里时的 `../cloud-clip`；
+/// 2. 拆出去之后的两种常见摆法：`../cloud-clipboard-go/cloud-clip`（隔壁）
+///    与 `../../cloud-clipboard-go/cloud-clip`（clone 进 Go 项目根目录）。
+fn go_page_path() -> Option<PathBuf> {
+    let manifest = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let candidates = [
+        manifest.join("../../../cloud-clip/lib/automation_page.html"),
+        manifest.join("../../../../cloud-clipboard-go/cloud-clip/lib/automation_page.html"),
+        manifest.join("../../../cloud-clipboard-go/cloud-clip/lib/automation_page.html"),
+    ];
+    candidates.into_iter().find(|p| p.exists())
 }
 
 /// ⚠️★ 这一页**必须与 Go 的那份逐字节相同**，靠 `[[.Prefix]]` / `[[.Room]]` 注入。
@@ -37,14 +49,15 @@ fn go_page_path() -> PathBuf {
 /// 没有「漂移」可言。到那一步要补的是把 Go 那七条静态检查真正移植过来。
 #[test]
 fn page_matches_go_byte_for_byte() {
-    let go = go_page_path();
-    let Ok(expected) = std::fs::read(&go) else {
+    let Some(go) = go_page_path() else {
         println!(
-            "跳过：父仓库里的 {} 不在（`rust/` 拆出去之后就该跳过）",
-            go.display()
+            "跳过：找不到 Go 那份 automation_page.html（拆出去、且 Go 仓库不在隔壁时就该跳过）。\
+             ⚠️ 跳过意味着这条防线没了 —— 那时这份就是唯一的源，要补的是把 Go 那七条静态检查\
+             （文案表 / i18n / 动作标签）真正移植过来"
         );
         return;
     };
+    let expected = std::fs::read(&go).expect("文件刚 exists 过，读不出来就是权限问题");
     let ours = include_bytes!("../src/automation_page.html");
     assert_eq!(
         ours.len(),
