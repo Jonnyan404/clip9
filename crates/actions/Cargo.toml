@@ -10,16 +10,25 @@ authors.workspace = true
 serde = { workspace = true }
 serde_json = { workspace = true }
 chrono = { workspace = true }
+thiserror = { workspace = true }
+# 动作本身要用的两样。都是纯 Rust，都能编到 wasm32。
+base64 = { workspace = true }
+sha2 = { workspace = true }
 
 [features]
 # ⚠️ feature 只用来**按部署裁剪体积**，不是「哪些动作能下沉」——Rust 侧两端都能跑。
 # OpenWrt（flash 几十 MB）只带 default；桌面 / Docker 全带。
-default = ["text", "encode", "date", "inspect"]
+#
+# ⚠️ 名字与动作的 `group` **一一对应**（`format` / `text` / `date` / `encode` / `zh` / `inspect`）——
+# 注册表判断「这个动作在这一版里有没有」靠 `registry::group_enabled()` 读这些开关。
+# 名字对不上就会出现「feature 关了、动作却还在」这种静默不一致，所以这条要守住。
+default = ["format", "text", "encode", "date", "inspect"]
+format = []
 text = []
 encode = []
 date = []
 inspect = []
-# 词典几 MB，默认不带
+# 词典几 MB，默认不带（`zh.pinyin*` / `zh.simplified` / `zh.traditional` 在那边）
 zh = []
 # 轻
 markdown = []
