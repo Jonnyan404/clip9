@@ -51,6 +51,32 @@ pub struct Config {
     pub server: ServerConfig,
     pub text: TextConfig,
     pub file: FileConfig,
+    pub automation: AutomationConfig,
+}
+
+/// 定时自动化的运行时配置。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct AutomationConfig {
+    /// 总开关。关掉时 `/tasks` 回 404、能力声明固定 `{"enabled": false}`。
+    pub enabled: bool,
+    #[serde(rename = "tickSeconds")]
+    pub tick_seconds: i64,
+    #[serde(rename = "graceSeconds")]
+    pub grace_seconds: i64,
+    #[serde(rename = "defaultTZ")]
+    pub default_tz: String,
+}
+
+impl Default for AutomationConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            tick_seconds: 30,
+            grace_seconds: 600,
+            default_tz: "Asia/Shanghai".to_owned(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

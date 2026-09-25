@@ -7,6 +7,7 @@ pub mod auth;
 pub mod config;
 pub mod cron;
 pub mod share;
+pub mod task;
 pub mod template;
 
 pub use auth::{
