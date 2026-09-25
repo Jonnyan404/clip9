@@ -87,6 +87,39 @@ impl ChainStep {
     }
 }
 
+/// 按 Go 的 `time.RFC3339` 渲染一个时刻。
+///
+/// ⚠️★ **别直接用 chrono 的 `to_rfc3339()`**：它对**零偏移**输出 `+00:00`，而 Go 的
+/// `time.RFC3339` 输出 `Z`。这个差别会落在用户看得见的字段上 —— `taskView` 的 `runAt`、
+/// 试跑响应的 `scheduledAt` / `referenceAt2`（管理页把它们原样显示出来）。
+/// 2026-09-25 由双跑比对抓到（`?at=2026-09-25T01:30:00Z` 那条用例；带 `+08:00` 的
+/// 时刻两边一样，所以只有「基准恰好是 UTC」时才现形）。
+///
+/// `SecondsFormat::Secs` 同样是照 Go：RFC3339 不带小数秒。
+#[must_use]
+pub fn format_rfc3339(t: &chrono::DateTime<chrono::FixedOffset>) -> String {
+    t.to_rfc3339_opts(chrono::SecondsFormat::Secs, true)
+}
+
+/// 把 JSON `null` 当成「没有这一项」。
+///
+/// ⚠️ `#[serde(default)]` **只管「字段缺失」，不管 `null`** —— 收到 `"byWeekday": null`
+/// 时 `Vec<u32>` 会直接解析失败。而 Go 那边这两个字段是 nil 切片，`taskView` 序列化出来
+/// 正是 `null`。于是「客户端把从 Go 读到的任务原样回传」这条路会在 Rust 上变成 400
+/// `invalid_body`，而两边**都不是坏的** —— 只是对「空列表」的表达不同。
+///
+/// 收下 `null` 是「宽进」的那一半；出参侧仍然给 `[]`（见 `server::automation::task_view`，
+/// 那条是**刻意**和 Go 不同，比对脚本里单独断言着）。
+fn null_as_default<'de, D, T>(d: D) -> Result<T, D::Error>
+where
+    D: serde::Deserializer<'de>,
+    T: serde::Deserialize<'de> + Default,
+{
+    // `Deserialize` 这个 trait 得在作用域里才调得到 `Option::<T>::deserialize`。
+    use serde::Deserialize as _;
+    Ok(Option::<T>::deserialize(d)?.unwrap_or_default())
+}
+
 /// 一条定时任务。
 ///
 /// ⚠️ Room 是**服务端根据凭据推导出来**并写死的，不是客户端说了算的字段。
@@ -94,6 +127,21 @@ impl ChainStep {
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct AutomationTask {
     pub id: String,
+    /// ⚠️★ **内部排序键**：单调递增，由 `Store::put_task` 分配，**不出现在任何响应里**
+    /// （`task_view` 不写它，`TaskRequest` 也没有它）。
+    ///
+    /// 为什么需要它 —— 根因是「拿随机值当排序兜底键」：
+    /// 1. 任务在 redb 里按 `id`（uuid）做键，所以「按 key 遍历」= **按随机串排序**；
+    ///    用户新建一条任务，它会落在列表中间某个随机位置而不是末尾。
+    /// 2. 用 `createdAt` 当兜底也救不了：它是**秒级**的，同一秒内建的两条分不出先后。
+    ///
+    /// 消息那边早就用同一个办法解决了同一个问题（`meta.next_id` 单调计数器 +
+    /// `(room, ts_desc, id_desc)` 的键），这里只是把同一套办法用到任务上。
+    /// **顺序必须来自单调序列，不能来自随机值** —— 这是那条约定的可执行形式。
+    ///
+    /// `0` = 还没分配（`put_task` 会补上）；更新时调用方带着已有的值进来，位置因此不变。
+    #[serde(default)]
+    pub seq: i64,
     pub name: String,
     #[serde(default)]
     pub enabled: bool,
@@ -103,7 +151,11 @@ pub struct AutomationTask {
     pub time: String,
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub cron: String,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[serde(
+        default,
+        deserialize_with = "null_as_default",
+        skip_serializing_if = "Vec::is_empty"
+    )]
     pub by_weekday: Vec<u32>,
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub run_at: String,
@@ -111,7 +163,11 @@ pub struct AutomationTask {
     pub tz: String,
     pub room: String,
     pub template: String,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[serde(
+        default,
+        deserialize_with = "null_as_default",
+        skip_serializing_if = "Vec::is_empty"
+    )]
     pub chain: Vec<ChainStep>,
     /// 这条任务的消息是否占房间历史额度。默认 false —— 房间历史按房间计数，
     /// 一个每天 09:30 的任务十几天就能把房间里的历史全换成「今天是几号」。
@@ -266,7 +322,12 @@ impl AutomationTask {
             return None;
         }
         if let Ok(at) = DateTime::parse_from_rfc3339(raw) {
-            return Some(at.with_timezone(&offset));
+            // ⚠️ **保留输入里的偏移**，不要 `with_timezone(&offset)` 转成任务时区 ——
+            // 归一化之后 `runAt` 的**字符串形状**会变（`2026-12-31T16:00:00Z` →
+            // `2027-01-01T00:00:00+08:00`），而 Go 那边是 `at.Format(time.RFC3339)`，
+            // 原样保留。同一个时刻、两个字符串，管理页把它显示出来 —— 属于线上形状。
+            // 2026-09-25 由双跑比对抓到。
+            return Some(at);
         }
         // 本地写法：按任务时区解释。
         for layout in ["%Y-%m-%dT%H:%M", "%Y-%m-%d %H:%M", "%Y-%m-%dT%H:%M:%S"] {
@@ -393,7 +454,8 @@ pub fn normalize_and_validate(task: &mut AutomationTask) -> Result<(), TaskError
                 ));
             };
             // 归一化成带时区的 RFC3339，落盘之后不再有「按谁的时区解释」这个问题。
-            task.run_at = at.to_rfc3339();
+            // ⚠️ 用 `format_rfc3339` 而不是 `to_rfc3339()` —— 零偏移要写成 `Z`（见它的注释）。
+            task.run_at = format_rfc3339(&at);
             task.time.clear();
             task.by_weekday.clear();
         }

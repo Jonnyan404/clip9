@@ -104,6 +104,7 @@ fn load() -> TaskFile {
 fn occurrence_task(o: &Occurrence) -> AutomationTask {
     AutomationTask {
         id: String::new(),
+        seq: 0,
         name: String::new(),
         enabled: true,
         freq: o.freq.clone(),
@@ -185,6 +186,7 @@ fn validation_matches_go() {
         let input = &v.input;
         let mut task = AutomationTask {
             id: String::new(),
+            seq: 0,
             name: input.name.clone(),
             enabled: true,
             freq: input.freq.clone(),
