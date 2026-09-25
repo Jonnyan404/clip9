@@ -19,7 +19,10 @@
 //   · JSON 对象 key 顺序（JSON 对象本来无序）
 //   · 时间戳类字段（两个进程不在同一毫秒）
 //   · `/rooms` 的数组顺序（Go 那边是 `for room := range map`，**本来就是随机的**）
-// 还有一处是**已知的刻意差异**（`automation`，P0 未实现），单独在末尾报告。
+// 还有几处是**已知的刻意差异**（`version`、UA 的近似实现），单独在末尾报告。
+//
+// ⚠️ `automation`（`/server` 的能力声明）**以前**也在末尾那一节 —— 那时 Rust 还没实现
+// 定时自动化。P2 落地后它已经进入正常比对（连同 34 个动作的完整声明），见下面那一节。
 
 import { spawn, spawnSync } from 'node:child_process';
 import { mkdirSync, writeFileSync } from 'node:fs';
@@ -48,10 +51,15 @@ mkdirSync(rsData);
 // 两边跑**同一份配置**，否则比出来的是配置差异而不是实现差异。
 //
 // `roomAuth` 这几个房间是给下面几组用例用的：
-// · `locked`        —— WS 鉴权（要密码）
+// · `locked`        —— WS 鉴权（要密码）；也当定时任务的「room 档」用
 // · `never-expire`  —— `fileExpire: 0` = **永不过期**
 // · `negative`      —— `fileExpire: -5` = 配置写错了，**回退全局** `file.expire`
 // · `short`         —— `fileExpire: 1` = 1 秒后过期
+// · `open-auto`     —— 公开房间 + 显式 `automation: "single"`：**唯一**会下发 task token 的那一档
+// · `no-auto`       —— 显式 `automation: "none"`：配置层能否决掉运行时权限
+//
+// ⚠️ 最后两个房间**只**出现在 `roomAuth` 里，而 `/rooms` 的来源是消息 / 连接 / 统计
+// （Go 的 `getRoomList`），**不看配置** —— 所以它们不会污染上面那几条 `/rooms` 的比对。
 const config = JSON.stringify({
   server: {
     port: GO_PORT,
@@ -61,8 +69,15 @@ const config = JSON.stringify({
       'never-expire': { open: true, fileExpire: 0 },
       negative: { open: true, fileExpire: -5 },
       short: { open: true, fileExpire: 1 },
+      'open-auto': { open: true, automation: 'single' },
+      'no-auto': { open: true, automation: 'none' },
     },
   },
+  // 定时自动化的总开关。⚠️ **必须显式写出来**：两边的默认值一度不一致
+  // （Go 的 `defaultConfig()` 是 true，Rust 的 `AutomationConfig::default()` 曾写成 false），
+  // 靠默认值「碰巧对上」的比对等于没比。默认值本身由 `config_defaults_match_go` 那条
+  // 单测钉着（在 `crates/core/src/config.rs` 里）。
+  automation: { enabled: true },
 });
 writeFileSync(join(goData, 'config.json'), config);
 writeFileSync(join(rsData, 'config.json'), config);
@@ -214,18 +229,45 @@ function normalize(value, port) {
           'expiresAt',
           'previewExpiresAt',
           'createdAt',
+          // ⚠️ 定时任务的时刻字段（P2）。分成两类，**别一刀切**：
+          // · 这一类是「就是此刻」—— 两个进程不在同一毫秒，抹掉。
+          'now', // `GET /tasks` 列表里给前端画倒计时用的「现在」
+          'updatedAt', // 每次 upsert 都写成 now
+          'lastRunAt', // 试跑 / 发送那一下的时刻
+          'sentAt', // `?send=1` 的发送时刻
+          // · 这一类**不抹**：`nextRunAt` / `next` / `referenceAt` 都是**推导出来的**时刻，
+          //   在固定基准（`?at=`）或稳定表达式下两边必须逐秒相等 —— 那正是要比的东西。
         ].includes(k)
       ) {
         out[k] = v === 0 ? 0 : typeof v === 'number' ? '<ts>' : v;
       }
-      // 刻意差异，末尾单独报告。
-      else if (k === 'automation') out[k] = '<automation>';
+      // ⚠️ `automation` 曾经整块抹成 `'<automation>'` —— 那时 Rust 还没实现定时自动化，
+      // 抹掉是为了让「已知差异」不混进失败里。**P2 落地之后它必须比**：
+      // 那一块是前端决定要不要显示自动化入口的唯一依据，而且带着 34 个动作的
+      // 完整声明（params / options / visibleWhen / vars），是这一族里最该比的东西。
+      //
       // ⚠️ 数组顺序不可比：Go 那边是 `for room := range map`，本来就随机。
       else if (k === 'rooms' && Array.isArray(v)) {
         out[k] = [...v]
           .sort((a, b) => String(a.name).localeCompare(String(b.name)))
           .map((r) => normalize(r, port));
-      } else out[k] = normalize(v, port);
+      }
+      // ⚠️★ 任务列表的**顺序本身是契约的一部分**（页面按收到的顺序渲染，还拿第一条做
+      // 默认选中），所以这里**不排序** —— 两边都必须是「插入顺序」。
+      // Go 是一个切片，天然如此；Rust 靠 `Store::put_task` 分配的**单调序号**（`seq`）。
+      // ⚠️ 别改回「按 name 排序再比」：那等于放弃检查顺序，而顺序正是这里最容易错的东西
+      // （Rust 一开始是按 redb 的 key = uuid 遍历，等于**随机顺序**；
+      //  后来试的「按 (createdAt, id)」也不够，同一秒内仍靠 uuid 兜底）。
+      else if (k === 'tasks' && Array.isArray(v)) {
+        out[k] = v.map((t) => normalize(t, port));
+      }
+      // ⚠️ 任务视图里两个**列表字段的空值形态**刻意不同：Go 是 nil 切片 → `null`，
+      // 这边是空 `Vec` → `[]`。这里把 `null` 归一成 `[]` 再比，否则每一条带任务的用例
+      // 都会红，而它们想测的根本不是这件事。**这条偏离本身**在下面「刻意偏离」一节
+      // 单独断言（连同「入参收得下 null」那一半）。
+      // ⚠️ 非空时照常比 —— 归一的是空值形态，不是整个字段。
+      else if ((k === 'byWeekday' || k === 'chain') && v === null) out[k] = [];
+      else out[k] = normalize(v, port);
     }
     return out;
   }
@@ -280,14 +322,57 @@ function applyMask(value, mask) {
   return value;
 }
 
+/** 递归找出两个已规范化的值**到底哪几个路径不同**。
+ *
+ * 为什么要它：`/tasks` 的响应里带着 34 个动作的完整声明（几 KB），
+ * 而真正不同的往往只有一两个字段 —— 把整坨 JSON 打出来，一屏红字里没人找得到重点。
+ * ⚠️ 数组同型差异（`tasks[0].byWeekday` / `tasks[1].byWeekday`）会把下标折成 `[]` 去重，
+ * 否则一条失败能刷出几十行。 */
+function diffPaths(a, b, path = '', out = []) {
+  if (a === undefined && b === undefined) return out;
+  const aObj = a !== null && typeof a === 'object';
+  const bObj = b !== null && typeof b === 'object';
+  if (!aObj || !bObj) {
+    if (JSON.stringify(a) !== JSON.stringify(b)) {
+      out.push(`${path}: Go=${JSON.stringify(a)} Rust=${JSON.stringify(b)}`);
+    }
+    return out;
+  }
+  if (Array.isArray(a) !== Array.isArray(b)) {
+    out.push(`${path}: 类型不同（Go=${Array.isArray(a) ? 'array' : 'object'}，Rust=${Array.isArray(b) ? 'array' : 'object'}）`);
+    return out;
+  }
+  if (Array.isArray(a)) {
+    if (a.length !== b.length) out.push(`${path}.length: Go=${a.length} Rust=${b.length}`);
+    for (let i = 0; i < Math.max(a.length, b.length); i++) diffPaths(a[i], b[i], `${path}[${i}]`, out);
+    return out;
+  }
+  for (const k of new Set([...Object.keys(a), ...Object.keys(b)])) {
+    diffPaths(a[k], b[k], path ? `${path}.${k}` : k, out);
+  }
+  return out;
+}
+
+/** 同上，但把数组下标折成 `[]` 去重 —— 打印用。 */
+function formatDiff(paths, limit = 8) {
+  const uniq = [...new Set(paths.map((s) => s.replace(/\[\d+\]/g, '[]')))];
+  const shown = uniq.slice(0, limit);
+  if (uniq.length > limit) shown.push(`…还有 ${uniq.length - limit} 种差异`);
+  return shown;
+}
+
 /** 比对两个已经取回来的响应。`mask` 见 [`applyMask`]。 */
 function judge(label, g, r, mask = []) {
   const problems = [];
   if (g.status !== r.status) problems.push(`状态码 Go=${g.status} Rust=${r.status}`);
   if (g.parsed !== undefined || r.parsed !== undefined) {
-    const gn = canonical(applyMask(normalize(g.parsed, GO_PORT), mask));
-    const rn = canonical(applyMask(normalize(r.parsed, RS_PORT), mask));
-    if (gn !== rn) problems.push(`JSON 不同\n    Go  : ${gn}\n    Rust: ${rn}`);
+    const gn = applyMask(normalize(g.parsed, GO_PORT), mask);
+    const rn = applyMask(normalize(r.parsed, RS_PORT), mask);
+    if (canonical(gn) !== canonical(rn)) {
+      // ⚠️ 打**差异字段**，不打整坨 JSON —— `/tasks` 的响应里带着 34 个动作声明，
+      // 整坨打出来是一屏红字，真正不同的那一两个字段反而找不到。
+      problems.push(`JSON 不同：\n    ${formatDiff(diffPaths(gn, rn)).join('\n    ')}`);
+    }
   } else if (g.text !== r.text) {
     problems.push(
       `文本不同\n    Go  : ${JSON.stringify(g.text)}\n    Rust: ${JSON.stringify(r.text)}`
@@ -1066,12 +1151,296 @@ await compareVia(
 );
 
 
+// ── 定时自动化：/tasks 一族（P2）───────────────────────────────────────
+//
+// ⚠️ 这一节是 P2 落地之后**补上的**。在此之前 `automation.rs`（958 行）+
+// `scheduler.rs`（407 行）**一条都没跟 Go 比过** —— 而这一族里「读代码看不出来」
+// 的东西特别多：三层卡口（config → API → UI）、房间来自鉴权上下文而不是请求体、
+// single 档为什么要配 task token、`taskView` 里哪些字段该出现、
+// `desc` 只在 cron 档出现、试跑的基准是「下次触发时刻」而不是「现在」……
+//
+// ⚠️ 请求体里**没有 `room`** —— 那是设计（Go 的 `automationTaskRequest` 注释里有论证）：
+// 房间来自 `?room=` + 凭据，不接受客户端在任务里声明投递目标。所以下面每条路径都带着它。
+//
+// ⚠️ **覆盖缺口（有意的）**：`admin` 档没在这儿测。它要求配置里有一个**全局密码**
+// （`isGlobalAdmin` 认明文全局密码或它换来的会话令牌），而这份共享配置刻意没有 ——
+// 加了全局密码会让 `work` / `ws-bc` 那些房间一起变成受保护房间，
+// 前面一百多条用例的**语义**就跟着变了（虽然两边一起变、断言照样绿，但那是假绿）。
+// admin 档由 `crates/server/tests/automation_api.rs` 的端到端用例覆盖。
+console.log('\n=== 定时自动化：/tasks ===');
+
+/** 各台自己建的任务 id / task token。⚠️ 不能共用：id 是 uuid、token 是随机串。 */
+const taskIds = {};
+const taskTokens = {};
+
+/** 任务相关响应里**必然不同**的字段：`id` 是服务端生成的 uuid，
+ * `taskId` 是它在 run / send / delete 响应里的同一个值。 */
+const TASK_MASK = ['id', 'taskId'];
+
+const postTask = (port, body, query) => hit(port, 'POST', `/tasks${query}`, jsonPost(body));
+
+/** 两边各自建一条，再逐字段比对。
+ *
+ * ⚠️ 不能像别的用例那样「同一个请求发两遍」—— `id` 是服务端生成的 uuid，
+ * 两边必然不同，后续的 `/tasks/{id}` 得各用各的。所以这里把 id 取出来存着，
+ * 比对时把 `id` 遮掉（`taskToken` 同理：随机串）。 */
+async function compareCreate(label, body, query, mask = TASK_MASK) {
+  const [g, r] = await Promise.all([
+    postTask(GO_PORT, body, query),
+    postTask(RS_PORT, body, query),
+  ]);
+  taskIds[GO_PORT] = g.parsed?.task?.id;
+  taskIds[RS_PORT] = r.parsed?.task?.id;
+  taskTokens[GO_PORT] = g.parsed?.taskToken;
+  taskTokens[RS_PORT] = r.parsed?.taskToken;
+  judge(label, g, r, mask);
+}
+
+/** 各台拿自己的 id 打同一个路径。 */
+const viaId = (port, method, tail, query) =>
+  hit(port, method, `/tasks/${taskIds[port]}${tail}${query}`);
+
+// ── 三层卡口的第一层：房间策略 ────────────────────────────────────────
+// 不传 room = `default` 房间；它没有密码 → 策略回落成 `none` → 房间里没有自动化能力。
+await compare('GET /tasks 默认房间（无密码 → 策略 none）', 'GET', '/tasks');
+await compare('GET /tasks?room=locked 不带凭据', 'GET', '/tasks?room=locked');
+await compare('GET /tasks?room=no-auto 显式 none', 'GET', '/tasks?room=no-auto');
+await compare('GET /tasks?room=locked&auth=错', 'GET', '/tasks?room=locked&auth=错');
+// 有密码的房间 → 策略默认 `room`；公开房间显式配 `single` 才开。
+await compare('GET /tasks?room=locked&auth=pw', 'GET', '/tasks?room=locked&auth=pw');
+await compare('GET /tasks?room=open-auto（single 档）', 'GET', '/tasks?room=open-auto');
+
+// ── 创建 ──────────────────────────────────────────────────────────────
+const daily = { name: '值班提醒', freq: 'daily', time: '09:30', template: '今天是 {{date}}' };
+await compareCreate('POST /tasks 创建（daily 09:30）', daily, '?room=locked&auth=pw');
+// ⚠️ `?at=` 固定基准，让 `referenceAt` / `referenceAt2` 这些可推导的时刻真的可比。
+// 用 `Z` 结尾的 RFC3339：`+08:00` 里的 `+` 在 query 里会被解成空格，得再编码一层。
+const AT = '2026-09-25T01:30:00Z';
+const ATQ = `&at=${encodeURIComponent(AT)}`;
+
+// single 档：公开房间没人可分辨，所以**创建时下发一把 task token**（明文只回一次）。
+await compareCreate(
+  'POST /tasks?room=open-auto 创建（single 档，应下发 taskToken）',
+  { name: '公开房间的任务', freq: 'daily', time: '08:00', template: '早' },
+  '?room=open-auto',
+  ['id', 'taskId', 'taskToken']
+);
+if (!taskTokens[GO_PORT] || !taskTokens[RS_PORT]) {
+  fail++;
+  failures.push('single 档创建没有下发 taskToken（Go/Rust 至少一边没有）');
+  console.log('  FAIL single 档创建没有下发 taskToken');
+}
+
+// cron 档：`taskView` 里会**多一个 `desc`**（结构化翻译），别的档没有。
+await compareCreate(
+  'POST /tasks 创建（cron 档，视图里应带 desc）',
+  { name: '工作日提醒', freq: 'cron', cron: '0 9 * * 1-5', template: '上班' },
+  '?room=locked&auth=pw'
+);
+// 把 daily 那条换回列表的主位（上面又建了一条 cron，列表里会有两条）。
+await compare('GET /tasks?room=locked&auth=pw 列表（两条）', 'GET', '/tasks?room=locked&auth=pw', {}, [
+  'id',
+]);
+
+// ── 校验失败 ──────────────────────────────────────────────────────────
+await compare('POST /tasks 空 name', 'POST', '/tasks?room=locked&auth=pw', jsonPost({ freq: 'daily', time: '09:30' }));
+await compare('POST /tasks 非法 freq', 'POST', '/tasks?room=locked&auth=pw', jsonPost({ name: 'x', freq: 'hourly', time: '09:30' }));
+await compare('POST /tasks 非法时刻', 'POST', '/tasks?room=locked&auth=pw', jsonPost({ name: 'x', freq: 'daily', time: '25:99' }));
+await compare('POST /tasks cron 档缺表达式', 'POST', '/tasks?room=locked&auth=pw', jsonPost({ name: 'x', freq: 'cron' }));
+await compare('POST /tasks 请求体不是 JSON', 'POST', '/tasks?room=locked&auth=pw', { body: '不是 json' });
+// ⚠️ 房间**不可由请求体声明**：body 里塞一个 `room`，它必须被忽略，
+// 落下来仍是鉴权上下文那个房间（否则一条已授权的任务就能把消息发到别的房间）。
+await compareCreate(
+  'POST /tasks body 里塞 room 必须被忽略',
+  { ...daily, room: 'work' },
+  '?room=locked&auth=pw'
+);
+
+// ── item 端点 ─────────────────────────────────────────────────────────
+await compareVia(
+  'POST /tasks/{id}/run 试跑（固定基准）',
+  (port) => viaId(port, 'POST', '/run', `?room=locked&auth=pw${ATQ}`),
+  TASK_MASK
+);
+// ⚠️ `?at=` 是 `docs/api.md` §8.7 写明的参数，**两种写法都要认**（RFC3339 与日期 token）。
+// 认不出时必须 400 —— 悄悄回落到「下次触发时刻」会让用户以为预览的正是他要的那个基准。
+await compareVia(
+  'POST /tasks/{id}/run 试跑（?at= 用日期 token 写法）',
+  (port) =>
+    viaId(port, 'POST', '/run', `?room=locked&auth=pw&at=${encodeURIComponent('2026-09-25 09:30')}`),
+  TASK_MASK
+);
+await compareVia(
+  'POST /tasks/{id}/run 试跑（?at= 认不出 → 400 invalid_reference）',
+  (port) =>
+    viaId(port, 'POST', '/run', `?room=locked&auth=pw&at=${encodeURIComponent('不是时刻')}`),
+  TASK_MASK
+);
+await compareVia(
+  'POST /tasks/{id}/toggle 翻转（不带参数 = 切一下）',
+  (port) => viaId(port, 'POST', '/toggle', '?room=locked&auth=pw'),
+  TASK_MASK
+);
+await compareVia(
+  'POST /tasks/{id}/toggle?enabled=1 显式设值',
+  (port) => viaId(port, 'POST', '/toggle', '?room=locked&auth=pw&enabled=1'),
+  TASK_MASK
+);
+await compareVia(
+  'POST /tasks/{id}/run?send=1 立即发送',
+  (port) => viaId(port, 'POST', '/run', '?room=locked&auth=pw&send=1'),
+  TASK_MASK
+);
+await compareVia(
+  'GET /tasks/{id} → 405（只认 DELETE / run / toggle）',
+  (port) => viaId(port, 'GET', '', '?room=locked&auth=pw')
+);
+await compare('DELETE /tasks/9999 不存在', 'DELETE', '/tasks/9999?room=locked&auth=pw');
+await compare('POST /tasks/9999/run 不存在', 'POST', '/tasks/9999/run?room=locked&auth=pw');
+// ⚠️ 认不出的动作：Go 那边 `splitTaskPath` 把最后一段当动作，**先按 id 找任务**，
+// 找不到就是 404 `task_not_found` —— 不是 405。这条顺手钉住「`/tasks/*` 下的错误恒 JSON」：
+// 没有 `/tasks/{id}/{action}` 这条路由时，它会落到静态资源兜底（一份 HTML、状态码 200）。
+await compare('POST /tasks/abc/whatever 任务不存在 → 404', 'POST', '/tasks/abc/whatever?room=locked&auth=pw');
+await compare('PUT /tasks 方法不对 → 405', 'PUT', '/tasks?room=locked&auth=pw');
+
+// ── 试算一条**还没保存**的任务（不落盘、无副作用）────────────────────
+await compare('POST /tasks/preview 试算', 'POST', `/tasks/preview?room=locked&auth=pw${ATQ}`, jsonPost(daily));
+await compare('POST /tasks/preview 非法任务', 'POST', '/tasks/preview?room=locked&auth=pw', jsonPost({ name: 'x' }));
+// ⚠️ preview 也只认 POST，`?at=` 同样认不出就 400。
+await compare('GET /tasks/preview → 405', 'GET', '/tasks/preview?room=locked&auth=pw');
+await compare(
+  'POST /tasks/preview（?at= 认不出 → 400 invalid_reference）',
+  'POST',
+  `/tasks/preview?room=locked&auth=pw&at=${encodeURIComponent('不是时刻')}`,
+  jsonPost(daily)
+);
+
+// ── cron 表达式校验器 ─────────────────────────────────────────────────
+// ⚠️ 返回的是 **200 + valid:false**，不是 400：这个接口的用途就是校验，
+// 「表达式不合法」是它的正常输出之一（前端每次输入都会调它）。
+const cronQ = (expr, tz) =>
+  `/tasks/cron?expr=${encodeURIComponent(expr)}` + (tz ? `&tz=${encodeURIComponent(tz)}` : '');
+// ⚠️ 用**不贴着当下**的表达式：`* * * * *` 那种会让 `next` 在两次请求之间跨秒，
+// 变成一条随机红的用例（两边都对，只是算的时刻不同）。
+await compare('GET /tasks/cron 合法（工作日 9 点）', 'GET', `${cronQ('0 9 * * 1-5')}&room=locked&auth=pw`);
+await compare('GET /tasks/cron 需要归一化（多余空格）', 'GET', `${cronQ('0  9  *  *  *')}&room=locked&auth=pw`);
+await compare('GET /tasks/cron 语法不合法', 'GET', `${cronQ('0 9 * *')}&room=locked&auth=pw`);
+await compare('GET /tasks/cron 语法合法但永远等不到', 'GET', `${cronQ('0 0 30 2 *')}&room=locked&auth=pw`);
+await compare('GET /tasks/cron 不认识的时区', 'GET', `${cronQ('0 9 * * *', 'Not/AZone')}&room=locked&auth=pw`);
+await compare('GET /tasks/cron 显式时区', 'GET', `${cronQ('0 9 * * *', 'Asia/Shanghai')}&room=locked&auth=pw`);
+await compare('POST /tasks/cron 也认（Go 侧显式允许）', 'POST', `${cronQ('30 4 1 * *')}&room=locked&auth=pw`);
+
+// ── 有任务的房间清单 ──────────────────────────────────────────────────
+// ⚠️ 非管理员只拿到**自己那个房间** —— 把「别的房间有没有装自动化」告诉他，
+// 等于泄露房间名的存在性。所以这里只该出现 `locked` 一条。
+await compare('GET /tasks/rooms 非管理员只见自己那个房间', 'GET', '/tasks/rooms?room=locked&auth=pw');
+// ⚠️★ 刻意偏离：房间没开自动化时的 **文案**。
+// Go 在 `/tasks` 上用长句、在 `/tasks/{id}` 子树（`/tasks/rooms` 走的就是那条）上用短句 ——
+// 同一个语义两句话，是它两个 handler 分头写的副产品。这里统一用**长句**：它告诉了用户
+// 怎么修（「需要该房间的凭据，或由管理员在 roomAuth 里设置 automation」），短句只说「不行」。
+// 管理页会把 `message` 直接显示给用户，所以这条偏离是**看得见**的。
+// 遮掉 `message` 之后仍然比状态码与 `code` —— 契约的那一半照旧钉着。
+await compare('GET /tasks/rooms 无权限的房间（message 刻意不同）', 'GET', '/tasks/rooms?room=no-auto', {}, [
+  'message',
+]);
+
+// ── 删除 ──────────────────────────────────────────────────────────────
+await compareVia(
+  'DELETE /tasks/{id} 真的删',
+  (port) => viaId(port, 'DELETE', '', '?room=locked&auth=pw'),
+  TASK_MASK
+);
+await compareVia(
+  'DELETE 之后再看同一条',
+  (port) => viaId(port, 'DELETE', '', '?room=locked&auth=pw'),
+  TASK_MASK
+);
+await compare('GET /tasks?room=locked&auth=pw 删完只剩一条', 'GET', '/tasks?room=locked&auth=pw', {}, TASK_MASK);
+
+// ── once 档：`runAt` 归一化 ────────────────────────────────────────────
+// ⚠️ 这条同时钉住**零偏移的写法**：喂进去一个带 `Z` 的时刻，`runAt` 落下来必须是
+// `...Z` 而不是 `...+00:00`。Go 的 `time.RFC3339` 对零偏移输出 `Z`，而 chrono 的
+// `to_rfc3339()` 输出 `+00:00` —— 2026-09-25 就是这条用例把它抓出来的
+// （带 `+08:00` 的时刻两边一样，所以只有基准恰好是 UTC 时才现形）。
+await compareCreate(
+  'POST /tasks 创建（once 档，runAt 归一化成 RFC3339）',
+  { name: '一次性提醒', freq: 'once', runAt: '2026-12-31T16:00:00Z', template: '跨年' },
+  '?room=locked&auth=pw'
+);
+
+// ── 三个 camelCase 字段名（写错会被**静默忽略**）────────────────────────
+// ⚠️★ `byWeekday` / `runAt` / `keepHistory` 都是**多词**的 camelCase。请求体里把名字
+// 写成 snake_case（`by_weekday`）不会报错 —— serde 只是「没看到这个字段」，
+// 于是症状分别变成「设了周几却报『每周需要至少选一天』」「设了 runAt 却报
+// 『仅一次需要 runAt』」「`keepHistory: true` 被吞掉、消息不进历史」。
+// 2026-09-25 就是这一组把 Rust 请求体漏 `rename` 的问题抓出来的（读代码看不出来）。
+await compareCreate(
+  'POST /tasks 创建（weekly + byWeekday）',
+  {
+    name: '每周例会',
+    freq: 'weekly',
+    time: '10:00',
+    byWeekday: [1, 3, 5],
+    template: '例会',
+  },
+  '?room=locked&auth=pw'
+);
+await compareCreate(
+  'POST /tasks 创建（keepHistory: true 必须被认下）',
+  {
+    name: '留档提醒',
+    freq: 'daily',
+    time: '11:00',
+    template: '留档',
+    keepHistory: true,
+  },
+  '?room=locked&auth=pw'
+);
+
 // ── 刻意偏离 Go 的地方 ────────────────────────────────────────────────
 //
 // ⚠️ 这一节**故意**和 Go 不一样。Jonny 2026-09-25 拍板：
 // 「revoke 不用考虑老客户端，按最佳实践来」。
 // 所以它不能拿 Go 当基准，只能**直接断言我们自己的行为**。
 console.log('\n=== 刻意偏离 Go（按最佳实践，直接断言我们的行为） ===');
+
+// ⚠️★ 刻意偏离：`byWeekday` / `chain` 的**空值形态**。
+//
+// Go 那边这两个字段是 nil 切片，序列化出来是 `null`；这边是空 `Vec`，给 `[]`。
+// 取 `[]` 的理由：一个「列表」字段的空值就该是空列表 —— `null` 把「没有这一项」与
+// 「一项都没有」混成一种写法，客户端每次用之前都得先判空。而现有客户端（管理页）
+// 本来就带着 `(task.byWeekday || [])` / `(task && task.chain)` 这类守卫，两种都吃得下 ——
+// 属于「只影响响应形状、客户端两边都吃得下」那一档，按 CONTRIBUTING §0 的规则 Rust 可以领先。
+//
+// ⚠️ 反过来，**入参侧收下 `null`**（`core::task` 的 `null_as_default`）：一个照 Go 写的
+// 客户端把读到的任务原样回传时不会 400。这里顺手把那一半也测了。
+{
+  const body = { name: '形状探针', freq: 'daily', time: '07:00', template: 'x' };
+  const created = await hit(
+    RS_PORT,
+    'POST',
+    '/tasks?room=locked&auth=pw',
+    jsonPost({ ...body, byWeekday: null, chain: null })
+  );
+  const t = created.parsed?.task;
+  if (created.status === 200 && Array.isArray(t?.byWeekday) && Array.isArray(t?.chain)) {
+    pass++;
+    console.log('  ok   任务视图里 byWeekday / chain 是 []（Go 给 null）；且入参的 null 也收得下');
+  } else {
+    fail++;
+    failures.push(
+      `任务视图的空列表形状不对：期望 byWeekday=[] chain=[] 且能读入 null → ` +
+        `${created.status} ${JSON.stringify(t?.byWeekday)}/${JSON.stringify(t?.chain)}`
+    );
+    console.log(`  FAIL 任务视图的空列表形状不对 → ${created.status}`);
+  }
+  // 顺手演示 Go 的行为（**不是在测 Go**，是给读者看两边差在哪）。
+  const goCreated = await hit(GO_PORT, 'POST', '/tasks?room=locked&auth=pw', jsonPost(body));
+  console.log(
+    `  ·  Go 同一时刻给的是 byWeekday=${JSON.stringify(goCreated.parsed?.task?.byWeekday)}` +
+      ` chain=${JSON.stringify(goCreated.parsed?.task?.chain)}`
+  );
+}
 
 /** 只打一台服务器，直接断言。 */
 async function expectOn(label, port, method, path, check, opts = {}) {
@@ -1257,11 +1626,16 @@ console.log(
 
 // ── 已知的、刻意的差异 ────────────────────────────────────────────────
 console.log('\n=== 已知差异（刻意，不算失败） ===');
-const gSrv = (await hit(GO_PORT, 'GET', '/server')).parsed;
+// ⚠️ `automation` **不在**这一节了。它以前在这儿，写着「Rust enabled=false —— P0 未实现」，
+// 而那句话在 P2 落地后就成了**假绿**：两边的差异其实来自**默认值不同**
+// （Go 的 `defaultConfig()` 是 `true`，Rust 的 `AutomationConfig::default()` 曾写成 `false`），
+// 不是「没实现」。配置里现在显式写了 `automation.enabled`，整块能力声明进入正常比对 ——
+// 它要是不同，上面就会是一条 FAIL，而不是这儿的一行 KNOWN。
 const rSrv = (await hit(RS_PORT, 'GET', '/server')).parsed;
 console.log(
-  `  KNOWN automation：Go enabled=${gSrv.automation.enabled}（带 ${gSrv.automation.actions?.length ?? 0} 个动作声明），` +
-    `Rust enabled=${rSrv.automation.enabled} —— P0 未实现定时自动化（P2），前端会正确地不显示入口`
+  `  ·  /server 的 automation 已进入正常比对：` +
+    `enabled=${rSrv.automation.enabled}、带 ${rSrv.automation.actions?.length ?? 0} 个动作声明、` +
+    `${rSrv.automation.vars?.length ?? 0} 个模板变量`
 );
 console.log('  KNOWN version：两个实现本来就不是同一个版本号（WS 的 config 里也带着它）');
 console.log(
