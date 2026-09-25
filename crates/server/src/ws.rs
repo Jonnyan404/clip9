@@ -26,7 +26,7 @@ use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
 use axum::extract::{ConnectInfo, Query, State};
 use axum::http::{HeaderMap, StatusCode, header};
 use axum::response::Response;
-use clip9_core::{can_access_room, resolve_room_auth};
+use clip9_core::resolve_room_auth;
 use clip9_protocol::normalize_room_name;
 use futures_util::stream::SplitSink;
 use futures_util::{SinkExt, StreamExt};
@@ -71,7 +71,7 @@ pub async fn push(
                 "Unauthorized: Missing token",
             );
         }
-        if !can_access_room(&state.config, &room, &token) {
+        if !state.can_access_room(&room, &token) {
             return write_error(
                 StatusCode::UNAUTHORIZED,
                 codes::UNAUTHORIZED_INVALID_TOKEN,

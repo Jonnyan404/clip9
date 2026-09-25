@@ -13,12 +13,13 @@ use axum::body::Bytes;
 use axum::extract::{ConnectInfo, Path, Query, State};
 use axum::http::{HeaderMap, StatusCode, header};
 use axum::response::{IntoResponse, Response};
-use clip9_core::{Config, can_access_room, resolve_room_auth};
+use clip9_core::{Config, resolve_room_auth};
 use clip9_protocol::{
     FileReceive, ReceiveHolder, RoomInfo, RoomListResponse, TextReceive, normalize_room_name,
 };
 use serde_json::json;
 
+use crate::auth_gate::require_room_access;
 use crate::error::{codes, shortcuts, write_error};
 use crate::state::{AppState, now_secs};
 use crate::text_body::read_text_body;
@@ -330,11 +331,11 @@ pub async fn server(
         let room = query.get("room").cloned().unwrap_or_default();
         let requirement = resolve_room_auth(config, &room);
         auth_needed = requirement.required;
-        authorized = can_access_room(config, &room, &token);
+        authorized = state.can_access_room(&room, &token);
         room_protected = requirement.required;
     } else if !global_password.is_empty() {
         auth_needed = true;
-        authorized = can_access_room(config, "default", &token);
+        authorized = state.can_access_room("default", &token);
     }
 
     let ws_scheme = if scheme(&headers) == "https" {
@@ -415,6 +416,15 @@ pub async fn text(
 ) -> Response {
     let config = &state.config;
     let room = normalize_room_name(query.get("room").map(String::as_str).unwrap_or(""));
+
+    // ⚠️★ 房间闸门。**曾经完全没有** —— 任何人（不，凭任何东西）都能往带密码的房间里发消息，
+    // 而 Go 那边是 `authMiddleware` 兜着的（`/text` 也在它的名单里）。
+    // 为什么一直没被发现：验收脚本用的恰好是**正确凭据**，双跑比对也没覆盖
+    // 「不带凭据往受保护房间发消息」这一条 —— 两个验证都恰好绕开了它。
+    // 教训写在这里，也写进 `docs/HANDOVER.md` §4（那是「假绿」那节）。
+    if let Some(response) = require_room_access(&state, &headers, &query, &room) {
+        return response;
+    }
 
     let content_type = headers
         .get(header::CONTENT_TYPE)
@@ -589,7 +599,6 @@ pub async fn content(
 
     let has_requested_room = query.contains_key("room");
     let requested_room = normalize_room_name(query.get("room").map(String::as_str).unwrap_or(""));
-    let token = extract_auth_token(&headers, query.get("auth").map(String::as_str));
 
     let Some(entry) = state.store.get(id).ok().flatten() else {
         return shortcuts::content_not_found();
@@ -599,7 +608,12 @@ pub async fn content(
         return shortcuts::content_not_found();
     }
     // ⚠️ 鉴权按**条目自己记录的房间**，不信客户端传的 `?room=`。
-    if !can_access_room(&state.config, &message_room, &token) {
+    //
+    // 两条路：房间凭据（`Authorization` / `?auth=`，含会话令牌），或者
+    // **针对这条内容**的分享令牌（`?t=`）。Go 的 `canAccessContent` 是同一个两条腿。
+    //
+    // ⚠️ 分享令牌**只放行读** —— 挪列（`content_column`）不认它。
+    if !crate::share::can_read_content(&state, &headers, &query, &message_room, id) {
         return shortcuts::room_forbidden();
     }
 
@@ -698,7 +712,7 @@ pub async fn latest_content(
             let name = normalize_room_name(&room.name);
             // ⚠️ 打不开的房间要**跳过**，不是报 401 —— 否则「某个受保护房间里有一条新消息」
             // 就会让**所有**取全局最新的请求全变 401。（Go 也是跳过，这里对齐它。）
-            if !can_access_room(&state.config, &name, &token) {
+            if !state.can_access_room(&name, &token) {
                 continue;
             }
             if let Ok(Some(e)) = state.store.latest(&name) {
@@ -725,7 +739,7 @@ pub async fn latest_content(
         return shortcuts::content_not_found();
     }
     // ⚠️ latest **不支持分享 token**（没有稳定的资源 id），只认房间密码。
-    if !can_access_room(&state.config, &message_room, &token) {
+    if !state.can_access_room(&message_room, &token) {
         return shortcuts::room_forbidden();
     }
 
@@ -793,7 +807,7 @@ pub async fn latest_content(
 }
 
 /// 把文件名转义成 URL 路径安全的形式（Go 用 `url.PathEscape`）。
-fn url_escape(name: &str) -> String {
+pub(crate) fn url_escape(name: &str) -> String {
     let mut out = String::with_capacity(name.len());
     for b in name.bytes() {
         match b {
@@ -861,7 +875,7 @@ pub async fn content_column(
     }
     // ⚠️ 这里的错误码是 `room_auth_required`，**和 `content` 的 `room_forbidden` 不一样**。
     // 别「统一」它们 —— 前端可能按 code 分支。
-    if !can_access_room(&state.config, &message_room, &token) {
+    if !state.can_access_room(&message_room, &token) {
         return write_error(
             StatusCode::UNAUTHORIZED,
             codes::ROOM_AUTH_REQUIRED,
@@ -931,10 +945,8 @@ pub async fn rooms(
     let mut list = Vec::new();
     for room in names {
         // ⚠️ 打不开的房间**整个不列出来**（不是标个锁）。Go 就是这么做的。
-        let accessible = can_access_room(&state.config, &room, "")
-            || tokens
-                .iter()
-                .any(|t| can_access_room(&state.config, &room, t));
+        let accessible = state.can_access_room(&room, "")
+            || tokens.iter().any(|t| state.can_access_room(&room, t));
         if !accessible {
             continue;
         }
@@ -1011,7 +1023,7 @@ pub async fn revoke(
             "消息未找到",
         );
     }
-    if !can_access_room(&state.config, &message_room, &token) {
+    if !state.can_access_room(&message_room, &token) {
         return shortcuts::room_forbidden();
     }
 
@@ -1053,7 +1065,7 @@ pub async fn clear_all(
 ) -> Response {
     let room = normalize_room_name(query.get("room").map(String::as_str).unwrap_or(""));
     let token = extract_auth_token(&headers, query.get("auth").map(String::as_str));
-    if !can_access_room(&state.config, &room, &token) {
+    if !state.can_access_room(&room, &token) {
         return shortcuts::room_forbidden();
     }
 

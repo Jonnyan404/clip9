@@ -7,7 +7,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use clip9_core::Config;
+use clip9_core::{Config, ShareKey};
 use clip9_protocol::DeviceMeta;
 use clip9_store::Store;
 use parking_lot::Mutex;
@@ -65,6 +65,13 @@ pub struct AppState {
     /// （Docker 挂载点 / OpenWrt `/var/lib` / Android 私有目录 / 桌面标准目录），
     /// 见 `docs/ARCHITECTURE.md` §4.2。
     pub static_dir: Option<PathBuf>,
+    /// 分享 / 会话令牌的签名密钥。启动时按配置派生一次（见 [`ShareKey::derive`]）。
+    pub share_key: ShareKey,
+    /// 分享页访问去重：`<jti>|<访客 IP>` → 最近一次上报时刻。
+    ///
+    /// ⚠️ 它是**内存态**，重启即空 —— 这是对的：去重窗口（10 分钟）本来就是「防手抖刷新」，
+    /// 不是结算依据。持久化的计数在 store 的分享记录里。
+    share_visits: Mutex<HashMap<String, i64>>,
 }
 
 impl std::fmt::Debug for AppState {
@@ -80,6 +87,7 @@ impl AppState {
     #[must_use]
     pub fn new(config: Config, store: Store, static_dir: Option<PathBuf>) -> Arc<Self> {
         let (broadcast_tx, _) = broadcast::channel(BROADCAST_CAPACITY);
+        let share_key = ShareKey::derive(&config, &share_salt());
         Arc::new(Self {
             config,
             store,
@@ -88,7 +96,51 @@ impl AppState {
             conn_seq: AtomicU64::new(1),
             device_hash: std::collections::hash_map::RandomState::new(),
             static_dir,
+            share_key,
+            share_visits: Mutex::new(HashMap::new()),
         })
+    }
+
+    /// 这个凭据能不能进这个房间。
+    ///
+    /// ⚠️ 它只是把**配置、签名密钥、当前时间**注入 `clip9_core::can_access_room` ——
+    /// 判定逻辑一行都不在这儿（`CONTRIBUTING.md` §4：鉴权是 core 的职责，
+    /// 在 server 里再写一份必然和 core 漂开）。
+    #[must_use]
+    pub fn can_access_room(&self, room: &str, token: &str) -> bool {
+        clip9_core::can_access_room(&self.config, &self.share_key, room, token, now_secs())
+    }
+
+    /// 记一次分享页访问的**去重**判断。返回 `true` = 这次算一次新的打开。
+    ///
+    /// 为什么去重：拿着链接连点刷新就能把数字刷上去；而二维码和点链接打开的是同一个页面，
+    /// 只能靠访客 IP 区分「是不是同一个人又来了一次」。
+    ///
+    /// ⚠️ 窗口内的重复上报**不报错**，只是不计数（`tracked: false`）——
+    /// 分享页每次挂载都会上报一次，报错会让用户看到一条莫名其妙的红字。
+    #[must_use]
+    pub fn mark_share_visit(&self, jti: &str, visitor: &str, now: i64) -> bool {
+        /// 同一访客对同一条分享的重复上报窗口（秒）。
+        const DEDUPE_WINDOW: i64 = 600;
+        /// 去重表的软上限：超过就先清掉窗口过期的那些。
+        const MAX_DEDUPE_ENTRIES: usize = 2048;
+
+        if jti.trim().is_empty() {
+            return false;
+        }
+        let key = format!("{jti}|{}", visitor.trim());
+
+        let mut visits = self.share_visits.lock();
+        if let Some(last) = visits.get(&key)
+            && now - *last < DEDUPE_WINDOW
+        {
+            return false;
+        }
+        if visits.len() > MAX_DEDUPE_ENTRIES {
+            visits.retain(|_, ts| now - *ts < DEDUPE_WINDOW);
+        }
+        visits.insert(key, now);
+        true
     }
 
     // ── 连接 ──────────────────────────────────────────────────────────
@@ -225,7 +277,6 @@ impl AppState {
 }
 
 /// 当前 Unix 秒。
-///
 /// ⚠️ 全项目**只从这一个地方取当前时间**。理由不是洁癖，是踩过：
 /// Go 那边注入了固定的 `Now` 之后，一半地方用了、一半地方还在 `time.Now()`，
 /// 于是「试算」和「实发」会不一致，测试还会**每天过午夜红一次**。
@@ -239,4 +290,15 @@ pub fn now_secs() -> i64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map_or(0, |d| d.as_secs() as i64)
+}
+
+/// 派生分享密钥时用的随机盐（只在**配置里一个密码都没有**时才真的被用到）。
+///
+/// ⚠️ 用 `uuid` v4 而不是自己 `getrandom`：uuid 已经是这个 crate 的依赖，底层就是系统随机源
+/// （`getrandom`），再引一个随机数库只为了让调用长得不一样。
+///
+/// ⚠️ 它**每次启动都不同**，所以没有密码的部署重启后旧的分享链接会失效。
+/// 与 Go 一致（那边混的是时间戳 + 设备哈希种子）。有密码时根本不走这条路。
+fn share_salt() -> [u8; 16] {
+    uuid::Uuid::new_v4().into_bytes()
 }

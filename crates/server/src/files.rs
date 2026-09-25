@@ -28,15 +28,14 @@ use axum::body::{Body, Bytes};
 use axum::extract::{ConnectInfo, Path, Query, State};
 use axum::http::{HeaderMap, Method, Request, StatusCode, header};
 use axum::response::Response;
-use clip9_core::{can_access_room, resolve_file_expire_seconds};
+use clip9_core::resolve_file_expire_seconds;
 use clip9_protocol::{File, FileReceive, ReceiveBase, ReceiveHolder, normalize_room_name};
 use serde_json::json;
 use tower::ServiceExt;
 
+use crate::auth_gate::{require_file_read_access, require_room_access};
 use crate::error::{codes, write_error};
-use crate::handlers::{
-    content_url, determine_response_type, extract_auth_token, json_response, sender_base,
-};
+use crate::handlers::{content_url, determine_response_type, json_response, sender_base};
 use crate::state::{AppState, now_secs};
 
 /// 超过这个大小的文件**不生成缩略图**（解码一张 100MB 的图会把内存吃光）。
@@ -77,39 +76,6 @@ fn file_room(state: &AppState, uuid: &str, query: &HashMap<String, String>) -> S
         return normalize_room_name(&file.room);
     }
     normalize_room_name(query.get("room").map(String::as_str).unwrap_or(""))
-}
-
-/// 房间鉴权。`None` = 放行；`Some(响应)` = 直接返回它。
-///
-/// ⚠️ 两个错误码**不一样**：没带凭据是 `unauthorized`，带了但不对是
-/// `unauthorized_invalid_token`。客户端据此决定「提示输密码」还是「提示密码错」。
-fn require_room_access(
-    state: &AppState,
-    headers: &HeaderMap,
-    query: &HashMap<String, String>,
-    room: &str,
-) -> Option<Response> {
-    if can_access_room(&state.config, room, "") {
-        return None;
-    }
-    let token = extract_auth_token(headers, query.get("auth").map(String::as_str));
-    if token.is_empty() {
-        return Some(write_error(
-            StatusCode::UNAUTHORIZED,
-            "unauthorized",
-            "Authentication required",
-            "需要认证令牌",
-        ));
-    }
-    if !can_access_room(&state.config, room, &token) {
-        return Some(write_error(
-            StatusCode::UNAUTHORIZED,
-            codes::UNAUTHORIZED_INVALID_TOKEN,
-            "Invalid auth token",
-            "无效的认证令牌",
-        ));
-    }
-    None
 }
 
 // ── POST /upload 与 /upload/chunk（初始化） ───────────────────────────
@@ -409,7 +375,10 @@ pub async fn file(
 ) -> Response {
     let uuid = params.get("uuid").cloned().unwrap_or_default();
     let room = file_room(&state, &uuid, &query);
-    if let Some(resp) = require_room_access(&state, &headers, &query, &room) {
+    // ⚠️ **只有 GET 能用分享令牌**（`DELETE` 是写操作）。
+    // 少这个区分的后果：一张只读令牌能删文件。
+    let shared_uuid = (method == Method::GET).then_some(uuid.as_str());
+    if let Some(resp) = require_file_read_access(&state, &headers, &query, &room, shared_uuid) {
         return resp;
     }
 

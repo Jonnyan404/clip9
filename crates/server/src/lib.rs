@@ -14,13 +14,22 @@
 //! |---|---|
 //! | [`error`] | 错误响应的**唯一**出口（恒 JSON，绝不按 Accept 分叉） |
 //! | [`handlers`] | 各个 HTTP 处理器，形状逐字对齐 Go |
+//! | [`auth_token`] | `/auth/token*`：用密码换会话令牌、续期 |
+//! | [`share`] | 分享：签发 / 元信息 / 记录列表 / 打开上报 / 落地页 |
+//! | [`share_card`] | 分享落地页的 OG 卡片内容（纯函数，好测） |
+//! | [`spa_shell`] | SPA 外壳的读取与 `<base>` / OG 标签注入 |
 //! | [`text_body`] | `/text` 的三种请求体形态 + UTF-16 嗅探 |
 //! | [`user_agent`] | UA → 设备信息（⚠️ 近似实现，见模块注释） |
 //! | [`state`] | 共享状态 + 广播出口 |
 
+pub mod auth_gate;
+pub mod auth_token;
 pub mod error;
 pub mod files;
 pub mod handlers;
+pub mod share;
+pub mod share_card;
+pub mod spa_shell;
 pub mod state;
 pub mod text_body;
 pub mod user_agent;
@@ -43,6 +52,8 @@ pub use state::AppState;
 ///
 /// ```text
 /// GET    /server                 服务端能力与配置声明
+/// POST   /auth/token             用密码换会话令牌
+/// POST   /auth/token/refresh     续期（不需要密码）
 /// POST   /text                   发文本（?id= 是覆盖已有条目）
 /// GET    /content/latest         最新一条（不传 room = 不限房间）
 /// GET    /content/<id>           按 id 取一条（`.json` 后缀也认）
@@ -50,13 +61,19 @@ pub use state::AppState;
 /// GET    /rooms                  房间列表
 /// POST   /revoke/<id>            删一条
 /// POST   /revoke/all             清空一个房间
+/// POST   /share                  签发分享令牌
+/// GET    /share?t=               分享页元信息（不消耗次数）
+/// GET    /share/list             房间最近的分享记录
+/// POST   /share/visit            分享页被真人打开时上报
+/// GET    /s/<token>              分享页（注入 OG 卡片的那份外壳）
 /// ```
 ///
-/// # 还没做的（P0 剩余）
+/// # 还没做的
 ///
-/// - `/push`（WS）：握手推 config + 最近 N 条历史，以及 [`AppState::broadcast`] 的订阅端
-/// - `/upload`、`/upload/chunk/`、`/upload/finish/`、`/file/`：文件三件套
-/// - `/auth/token*`（P1）、`/share*` + `/s/`（P1）、`/tasks*` + `/automation`（P2）、`/myip`（P3）
+/// - `/tasks*` + `/automation`（P2 定时自动化）、`/myip`（P3）
+///
+/// ⚠️ `/s/<token>` 必须排在 `fallback_service` **之前**：它是前端路由的深链，
+/// 而静态资源的兜底也会对未知路径回 `index.html` —— 谁先接住，谁说了算。
 pub fn router(state: Arc<AppState>) -> Router {
     let prefix = state.config.server.prefix.clone();
     let static_dir = state.static_dir.clone();
@@ -75,6 +92,28 @@ pub fn router(state: Arc<AppState>) -> Router {
         // 加它是因为验收脚本需要一个「活着吗」的探活口，而 `/server` 会做鉴权计算、
         // 不适合当探活。**别把它写进 `docs/api.md`** —— 它不是契约的一部分。
         .route("/healthz", get(|| async { "ok" }))
+        // ── 会话令牌（P1）──
+        .route("/auth/token", post(auth_token::issue).fallback(only_post))
+        .route(
+            "/auth/token/refresh",
+            post(auth_token::refresh).fallback(only_post),
+        )
+        // ── 分享（P1）──
+        // ⚠️ `/share` **一条路径两种方法**：GET 是「分享页先看一眼」，POST 才是签发。
+        // 挂成两条独立路径的话，分享页就只能去问 `/share/info` 之类的第二条路径 ——
+        // 而契约里那条路是 `?t=`。
+        .route(
+            "/share",
+            get(share::info)
+                .head(share::info)
+                .post(share::create)
+                .fallback(only_post),
+        )
+        .route("/share/list", get(share::list).fallback(only_get))
+        .route("/share/visit", post(share::visit).fallback(only_post))
+        // ⚠️ 分享页本体。**必须排在静态资源兜底之前**，否则它会拿到一份没注入卡片的
+        // 空白外壳（而那正是「抓取程序只看到域名」的那个 bug）。
+        .route("/s/{token}", get(share::landing).fallback(only_get))
         .route("/text", post(handlers::text).fallback(only_post))
         // ⚠️ WS 用 `get` 注册是刻意的：握手是一个 GET + `Upgrade` 头。
         .route("/push", get(ws::push))
