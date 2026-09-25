@@ -54,9 +54,12 @@ pub fn detect_device_type(ua: &str, os_family: &str) -> &'static str {
 
 /// 解析 UA，产出 `{type, os, browser}`；`device_name` 非空时补一个 `name`。
 ///
-/// ⚠️ `os` / `browser` 是 `"<家族> <主版本>"` 的形式（Go 用 `fmt.Sprintf("%s %s", Family, Major)`），
-/// 所以认不出来时**会带一个尾随空格**（`"Unknown "`）。看着难看，但这是既有形状 ——
-/// 前端拿它直接显示，改成 `"Unknown"` 会让两边输出不一致。
+/// ⚠️ `os` / `browser` 是 `"<家族> <主版本>"` 的形式。
+///
+/// ⚠️ **末尾要 trim** —— 认不出家族时是 `"Other"` + 空版本，不 trim 就得到 `"Other "`。
+/// 前端是**直接把这个串显示出来**的（副标题），尾随空格会让它看起来莫名多一格。
+/// Go 那边就是带空格的（`fmt.Sprintf("%s %s", ...)` 不做 trim）—— 这里是**故意不同**，
+/// 见 `docs/CONTRIBUTING.md` §0。
 #[must_use]
 pub fn parse_user_agent(ua: &str, device_name: &str) -> HashMap<String, String> {
     let (os_family, os_major) = parse_os(ua);
@@ -67,15 +70,20 @@ pub fn parse_user_agent(ua: &str, device_name: &str) -> HashMap<String, String> 
         "type".to_owned(),
         detect_device_type(ua, os_family).to_owned(),
     );
-    info.insert("os".to_owned(), format!("{os_family} {os_major}"));
+    info.insert("os".to_owned(), family_and_major(os_family, &os_major));
     info.insert(
         "browser".to_owned(),
-        format!("{browser_family} {browser_major}"),
+        family_and_major(browser_family, &browser_major),
     );
     if !device_name.is_empty() {
         info.insert("name".to_owned(), device_name.to_owned());
     }
     info
+}
+
+/// `"<家族> <主版本>"`，去首尾空白。
+fn family_and_major(family: &str, major: &str) -> String {
+    format!("{family} {major}").trim().to_owned()
 }
 
 /// 构造 WS 用的 `DeviceMeta`。
@@ -93,8 +101,8 @@ pub fn parse_device_meta(ua: &str, device_name: &str, device_id: &str) -> Device
         kind: detect_device_type(ua, os_family).to_owned(),
         name: device_name.to_owned(),
         device: device_family(ua, os_family),
-        os: format!("{os_family} {os_major}"),
-        browser: format!("{browser_family} {browser_major}"),
+        os: family_and_major(os_family, &os_major),
+        browser: family_and_major(browser_family, &browser_major),
     }
 }
 
@@ -285,13 +293,15 @@ mod tests {
         assert_eq!(info["type"], "desktop");
     }
 
-    /// 认不出来时家族是 `Other`、版本是空串 → `"Other "`（带尾随空格）。
-    /// 难看，但和 Go 的 `Sprintf("%s %s", ...)` 一致。
+    /// 认不出来时家族是 `Other`、版本是空串 → `"Other"`（**没有**尾随空格）。
+    ///
+    /// ⚠️ 这里**故意和 Go 不同**：Go 是 `Sprintf("%s %s", ...)` 不 trim，给出 `"Other "`，
+    /// 而前端是**直接把这个串显示出来**的。见 `docs/CONTRIBUTING.md` §0。
     #[test]
-    fn unknown_ua_keeps_the_go_shape_with_a_trailing_space() {
+    fn unknown_ua_is_trimmed() {
         let info = parse_user_agent("完全认不出来的东西", "");
-        assert_eq!(info["os"], "Other ");
-        assert_eq!(info["browser"], "Other ");
+        assert_eq!(info["os"], "Other");
+        assert_eq!(info["browser"], "Other");
         assert_eq!(info["type"], "desktop");
     }
 }

@@ -658,7 +658,8 @@ pub async fn latest_content(
             "不支持的格式（只支持 raw / json）",
         );
     };
-    let is_json_request = explicit_format == "json";
+    // ⚠️ 这个接口**不再区分**「显式 ?format=json」和「只带 Accept」—— 两者都给同一个形状。
+    // 见下面 Text 分支的注释（这里**故意和 Go 不同**）。
     let has_requested_room = query.contains_key("room");
     let requested_room = normalize_room_name(query.get("room").map(String::as_str).unwrap_or(""));
     let token = extract_auth_token(&headers, query.get("auth").map(String::as_str));
@@ -711,7 +712,7 @@ pub async fn latest_content(
                     "文件已过期",
                 );
             }
-            if is_json_request {
+            if wants_json(&explicit_format, &headers) {
                 return json_response(&json!({
                     "type": determine_response_type(&f.name),
                     "name": f.name,
@@ -734,28 +735,24 @@ pub async fn latest_content(
             )
         }
         ReceiveHolder::Text(t) => {
-            // ⚠️★ 三条分支的顺序**就是契约**，别重排：
-            //   1. 显式 `?format=json` → **扁平对象** `{type, content, id, timestamp, column}`
-            //   2. 只带 `Accept: application/json` → **PostEvent 信封** `{event, data}`
-            //   3. 其余 → 纯文本
-            // 1 和 2 是**两种不同的 JSON 形状**。这是 Go 的既有行为（显式那条走
-            // `isJSONRequest`，Accept 那条走 `wantsJSON` 然后 `Encode(msg)`），照抄 ——
-            // 「统一」它们会让只发 Accept 头的客户端突然收到不同形状。
-            if is_json_request {
+            // ⚠️★ **只有两种形状**：JSON 和纯文本。JSON 一律是那个**扁平对象**
+            // `{type, content, id, timestamp, column}` —— 不管你是用 `?format=json`
+            // 还是只带 `Accept: application/json` 问的。
+            //
+            // ⚠️ 这里**故意和 Go 不同**（见 `docs/CONTRIBUTING.md` §0）：Go 那边
+            // 显式那条给扁平对象、只带 `Accept` 那条给 **PostEvent 信封** `{event, data}`，
+            // 而且信封里的 `event` 是 `text`/`file`，WS 推送用的却是 `receive` ——
+            // 同一个接口两种形状、同一个概念两个名字，客户端得写两套解析。
+            //
+            // 已确认 SPA（`web-vue3/src/App.vue:380`）只用这个接口生成二维码链接、
+            // **不解析响应体**，所以这次统一是安全的。
+            if wants_json(&explicit_format, &headers) {
                 return json_response(&json!({
                     "type": "text",
                     "content": t.content,
                     "id": id.to_string(),
                     "timestamp": t.base.timestamp,
                     "column": t.base.column,
-                }));
-            }
-            if wants_json(&explicit_format, &headers) {
-                // ⚠️ `event` 用的是**条目自己的类型**（`text` / `file`），不是 `receive`。
-                // Go 那边存的是 `PostEvent{Event: "text", ...}`，所以信封里就是 `"event":"text"`。
-                return json_response(&json!({
-                    "event": entry.kind(),
-                    "data": entry,
                 }));
             }
             let mut body = t.content.clone();

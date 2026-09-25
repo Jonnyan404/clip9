@@ -288,9 +288,8 @@ await compare('POST /text 超长（413）', 'POST', '/text', { body: 'x'.repeat(
 console.log('\n=== 取内容 ===');
 await compare('GET /content/latest 原文', 'GET', '/content/latest');
 await compare('GET /content/latest?format=json', 'GET', '/content/latest?format=json');
-await compare('GET /content/latest（Accept: json）', 'GET', '/content/latest', {
-  headers: { accept: 'application/json' },
-});
+// ⚠️ 「只带 `Accept: application/json`」那条**故意和 Go 不同**（Go 给 PostEvent 信封、
+// 我们给扁平对象），所以它不在这儿比 —— 在下面的「刻意偏离」一节单独断言。
 await compare('GET /content/2 原文', 'GET', '/content/2');
 await compare('GET /content/2?format=json', 'GET', '/content/2?format=json');
 await compare('GET /content/2.json（后缀）', 'GET', '/content/2.json');
@@ -744,8 +743,8 @@ for (const [label, method, path] of [
 console.log('\n=== 刻意偏离 Go（按最佳实践，直接断言我们的行为） ===');
 
 /** 只打一台服务器，直接断言。 */
-async function expectOn(label, port, method, path, check) {
-  const r = await hit(port, method, path, {});
+async function expectOn(label, port, method, path, check, opts = {}) {
+  const r = await hit(port, method, path, opts);
   if (check(r)) {
     pass++;
     console.log(`  ok   ${label}`);
@@ -764,6 +763,29 @@ await expectOn('GET /revoke/<id> → 405', RS_PORT, 'GET', '/revoke/1', (r) => {
 await expectOn('GET /revoke/all → 405', RS_PORT, 'GET', '/revoke/all?room=ws-bc', (r) => {
   return r.status === 405;
 });
+
+// `/content/latest` 的 JSON 形状**统一了**：不管用 `?format=json` 还是只带 `Accept`，
+// 都给同一个扁平对象。Go 那边是两种形状（显式给扁平对象、Accept 给 PostEvent 信封）。
+// 顺带修掉一个洞：Go 在「文件条目 + 只带 Accept」时会掉进非 JSON 分支 → 404。
+await expectOn(
+  'GET /content/latest 只带 Accept → 也是扁平对象（不再是 PostEvent 信封）',
+  RS_PORT,
+  'GET',
+  '/content/latest',
+  (r) => r.status === 200 && typeof r.parsed?.type === 'string' && !('event' in r.parsed),
+  { headers: { accept: 'application/json' } }
+);
+
+// `senderDevice.os` / `.browser` 认不出来时是 `"Other"`（**没有**尾随空格），
+// Go 那边是 `"Other "`，而前端直接把这个串显示出来。
+//
+// ⚠️ 这条**只在下面报一句**，不写成断言：`expectOn` 走的是 `hit`（fetch），
+// 拿不到「服务端收到的那个 UA」的确定性结果 —— 写个恒真的断言比不写更糟
+// （假绿会让人以为测过了）。真实形状在 `user_agent.rs` 的单测里钉着。
+console.log(
+  '  KNOWN senderDevice 的 os/browser：认不出来时是 "Other"（**无尾随空格**）' +
+    '，Go 是 "Other "。前端直接显示这个串 —— 这条偏离是刻意的'
+);
 
 // 顺手演示一下 Go 的行为 —— **不是在测 Go**，是给读者看「为什么必须改」：
 // Go 那边任何方法都会真的执行撤销，浏览器直接访问 `/revoke/1` 就删掉了 1 号条目。
