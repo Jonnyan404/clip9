@@ -86,6 +86,7 @@ pub fn router(state: Arc<AppState>) -> Router {
     // ⚠️ 文案按方法分三种，别合并（Go 就是这么分的，见 handlers.rs）。
     let only_get = handlers::only_get;
     let only_post = handlers::only_post;
+    let only_get_post = handlers::only_get_post;
     let mna = handlers::method_not_allowed;
 
     let app = Router::new()
@@ -167,32 +168,48 @@ pub fn router(state: Arc<AppState>) -> Router {
             "/tasks",
             get(automation::task_list)
                 .post(automation::tasks)
-                .fallback(mna),
+                .fallback(only_get_post),
         )
-        // ⚠️ 静态段（preview / cron / rooms）必须排在 `/tasks/{id}` 之前。
+        // ⚠️ 静态段（preview / cron / rooms）必须排在 `/tasks/{id}` 之前 ——
+        // Go 那边是靠 `splitTaskPath` 之后几个 `if id == "..."` 提前返回，
+        // 这里交给路由表，静态段天然优先。
         .route(
             "/tasks/preview",
             post(automation::task_preview_item).fallback(only_post),
         )
+        // ⚠️ Go 的 `handleCronCheck` **显式允许 GET 与 POST**（表达式一律从 query 取，
+        // 两种方法等价）。只认 GET 会让一个照 Go 写的客户端拿到 405。
         .route(
             "/tasks/cron",
-            get(automation::cron_check).fallback(only_get),
+            get(automation::cron_check)
+                .post(automation::cron_check)
+                .fallback(only_get_post),
         )
         .route(
             "/tasks/rooms",
             get(automation::task_rooms).fallback(only_get),
         )
+        // ⚠️★ 这三个端点的 405 **不是**一句「仅允许 POST」：Go 那边先按 id 找任务、
+        // 找不到就 404，再看 (action, method) 分派。顺序反了会让 `GET /tasks/9999`
+        // 从 404 变成 405，而客户端是靠码区分的。文案用 Go 那句（它列出了支持的动作）。
         .route(
             "/tasks/{id}",
-            axum::routing::delete(automation::task_item).fallback(only_post),
+            axum::routing::delete(automation::task_item).fallback(automation::task_item_fallback),
         )
         .route(
             "/tasks/{id}/run",
-            post(automation::task_run_item).fallback(only_post),
+            post(automation::task_run_item).fallback(automation::task_unknown_action),
         )
         .route(
             "/tasks/{id}/toggle",
-            post(automation::task_toggle_item).fallback(only_post),
+            post(automation::task_toggle_item).fallback(automation::task_unknown_action),
+        )
+        // ⚠️ 认不出的动作也要有条路由：没有它，`/tasks/<id>/whatever` 会落到**静态资源兜底**
+        // （拿到一份 HTML、状态码 200），而「错误响应恒 JSON」是契约的一部分。
+        // 静态段优先，所以 `/tasks/{id}/run` 不会被这条吞掉。
+        .route(
+            "/tasks/{id}/{action}",
+            axum::routing::any(automation::task_unknown_action),
         )
         // Go 的 CORS 是逐个端点手写的（`corsMiddleware` / `authMiddleware`），
         // 效果等价于「任意来源 + 常见方法/头」。这里用一层统一的代替 ——

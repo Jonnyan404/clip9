@@ -393,6 +393,33 @@ pub async fn only_post() -> Response {
     )
 }
 
+/// 405：这个端点允许 GET 和 POST（`/tasks`、`/tasks/cron`）。
+///
+/// ⚠️ 文案与 Go 逐字一致（`handleTasks` / `handleCronCheck` 的 default 分支）。
+/// 管理页会把 `message` 直接显示给用户，所以错误文案也算线上形状 ——
+/// 两边不同的话，同一个操作在 Go 和 Rust 上会看到两句不同的话。
+pub async fn only_get_post() -> Response {
+    write_error(
+        StatusCode::METHOD_NOT_ALLOWED,
+        codes::METHOD_NOT_ALLOWED,
+        "Only GET and POST are allowed",
+        "仅允许 GET / POST 请求",
+    )
+}
+
+/// 405：`/tasks/{id}*` 上「方法或动作不认识」。
+///
+/// ⚠️ 文案与 Go 一致（`handleTaskItem` 的 default 分支）：它把**支持的动作列了出来**，
+/// 比一句「仅允许 POST」有用得多 —— 用户看到的是「还能怎么调」。
+pub fn unsupported_task_action() -> Response {
+    write_error(
+        StatusCode::METHOD_NOT_ALLOWED,
+        codes::METHOD_NOT_ALLOWED,
+        "Unsupported method or action",
+        "仅支持 DELETE /tasks/:id、POST /tasks/:id/run、POST /tasks/:id/toggle",
+    )
+}
+
 /// 405：没说限定哪些方法（`/file/` 那条走的是 Go 的 `default` 分支）。
 pub async fn method_not_allowed() -> Response {
     write_error(

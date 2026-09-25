@@ -39,6 +39,18 @@ impl AutomationScope {
     }
 }
 
+/// 这次请求指向哪个房间。`?room=` 缺省、空值、`default` 三种写法都归一到 `default`。
+///
+/// ⚠️★ 必须走 `normalize_room_name`，**不能**图省事写 `.unwrap_or_default()` ——
+/// 后者在「压根没有 `?room=` 这个参数」时给出的是**空串**，而 Go 那边
+/// `normalizeRoomName(r.URL.Query().Get("room"))` 给的是 `"default"`。
+/// 症状：`/server` 的 `automation.room` 变成 `""`，错误文案里的房间名也消失
+/// （「房间  未开放自动化」——两个空格）。
+/// 这条偏离是 2026-09-25 把 `/tasks` 加进双跑比对时抓出来的，读代码看不出来。
+fn request_room(query: &HashMap<String, String>) -> String {
+    clip9_protocol::normalize_room_name(query.get("room").map(String::as_str).unwrap_or(""))
+}
+
 /// 从凭据推导这次请求能对哪个房间做什么。
 ///
 /// ⚠️ 房间**不是**从请求体里读的。非管理员的房间来自 `?room=`，而且必须通过
@@ -54,22 +66,15 @@ fn resolve_scope(
     // 管理员：明文全局密码，或它换来的会话令牌（scope=global）。少了后一半，管理页里的
     // 「管理员」就不成立（那边刻意不存明文密码）。
     if state.is_global_admin(&token) || state.is_global_session_token(&token) {
-        let room = query
-            .get("room")
-            .map(|r| clip9_protocol::normalize_room_name(r))
-            .unwrap_or_else(|| "default".to_owned());
         return AutomationScope {
             admin: true,
-            room,
+            room: request_room(query),
             tier: "admin".to_owned(),
             ok: true,
         };
     }
 
-    let room = query
-        .get("room")
-        .map(|r| clip9_protocol::normalize_room_name(r))
-        .unwrap_or_default();
+    let room = request_room(query);
     if !state.can_access_room(&room, &token) {
         return AutomationScope::denied(room);
     }
@@ -205,6 +210,17 @@ fn default_tz(state: &AppState) -> String {
 }
 
 /// `POST /tasks` 的请求体。⚠️ **没有 room** —— 房间来自鉴权上下文。
+///
+/// ⚠️★ **字段名必须逐字用 camelCase**（`byWeekday` / `runAt` / `keepHistory`），
+/// 这不是风格问题：`serde` 默认按字段名匹配，少了 `rename` 就会**静默忽略**客户端
+/// 传来的那个字段 —— 于是「设了周几却报『每周需要至少选一天』」「设了 runAt 却报
+/// 『仅一次需要 runAt』」「`keepHistory: true` 被吞掉、消息不进历史」。
+/// 三种都**不报错**，只是结果不对。
+/// 2026-09-25 由双跑比对抓到（喂一个 `runAt: "…Z"` 的 once 任务，Go 收下、这边 400）。
+///
+/// 别把它改成 `#[serde(rename_all = "camelCase")]` 图省事 —— `id` / `name` / `freq` /
+/// `time` / `cron` / `tz` / `template` / `chain` / `sender` 这些单词字段靠它是对的，
+/// 但**逐字写出来**才能一眼和 Go 的 json tag 对照（契约纪律见 CONTRIBUTING §3）。
 #[derive(serde::Deserialize)]
 struct TaskRequest {
     #[serde(default)]
@@ -219,9 +235,9 @@ struct TaskRequest {
     time: String,
     #[serde(default)]
     cron: String,
-    #[serde(default)]
+    #[serde(default, rename = "byWeekday")]
     by_weekday: Option<Vec<u32>>,
-    #[serde(default)]
+    #[serde(default, rename = "runAt")]
     run_at: String,
     #[serde(default)]
     tz: String,
@@ -229,7 +245,7 @@ struct TaskRequest {
     template: String,
     #[serde(default)]
     chain: Option<Vec<ChainStep>>,
-    #[serde(default)]
+    #[serde(default, rename = "keepHistory")]
     keep_history: Option<bool>,
     #[serde(default)]
     sender: String,
@@ -357,6 +373,9 @@ async fn upsert(
 
     let mut task = AutomationTask {
         id: req.id.trim().to_owned(),
+        // ⚠️ `seq` 由 `Store::put_task` 分配（这里是新建，所以给 0）；
+        // 更新时 `upsert_task` 会把已有的序号搬回来。
+        seq: 0,
         name: req.name.clone(),
         enabled: req.enabled.unwrap_or(true),
         freq: req.freq.clone(),
@@ -506,6 +525,10 @@ fn upsert_task(state: &AppState, task: &mut AutomationTask, now: i64) -> Result<
         task.room = existing.room;
         task.created_at = existing.created_at;
         task.owner_hash = existing.owner_hash;
+        // ⚠️ 保留**排序序号** —— 否则每次保存都会把任务挪到列表末尾
+        // （`seq == 0` 会被 `put_task` 当成「新建」重新分配）。Go 那边 upsert 是就地替换，
+        // 位置同样不变；这条是「列表顺序」能对齐的前提。
+        task.seq = existing.seq;
         task.updated_at = now;
         let trigger_changed = existing.freq != task.freq
             || existing.time != task.time
@@ -667,6 +690,48 @@ pub async fn task_toggle_item(
         Err(resp) => *resp,
         Ok((task, _scope)) => task_toggle(&state, &task, &query).await,
     }
+}
+
+/// `/tasks/{id}*` 上「方法或动作不认识」时的 405。
+///
+/// ⚠️★ 它**先解析任务**，不是直接回 405 —— Go 那边是「先按 id 找任务，再按
+/// (action, method) 分派」，所以任务不存在时给的是 **404 `task_not_found`**。
+/// 顺序反过来的话，`GET /tasks/9999` 会从 404 变成 405，而客户端是靠码区分的。
+async fn task_unsupported(
+    state: &AppState,
+    headers: &HeaderMap,
+    query: &HashMap<String, String>,
+    id: &str,
+) -> Response {
+    match resolve_task_item(state, headers, query, id) {
+        Err(resp) => *resp,
+        Ok(_) => crate::handlers::unsupported_task_action(),
+    }
+}
+
+/// `/tasks/{id}` 上方法不对（例如 GET）时的兜底。
+pub async fn task_item_fallback(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Query(query): Query<HashMap<String, String>>,
+    Path(id): Path<String>,
+) -> Response {
+    task_unsupported(&state, &headers, &query, &id).await
+}
+
+/// `/tasks/{id}/<认不出的动作>`。
+///
+/// ⚠️ 这条路由必须存在：没有它，`/tasks/<id>/whatever` 会落到**静态资源兜底**
+/// （拿到一份 HTML、状态码 200）或 axum 的空 body 404 —— 而「错误响应恒 JSON」
+/// 是这个项目的契约（`tools/compare-with-go.mjs` 里有一整节钉着它）。
+/// 静态段 `/tasks/preview|cron|rooms` 排在它前面，所以不会被这条吞掉。
+pub async fn task_unknown_action(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Query(query): Query<HashMap<String, String>>,
+    Path((id, _action)): Path<(String, String)>,
+) -> Response {
+    task_unsupported(&state, &headers, &query, &id).await
 }
 
 /// `POST /tasks/{id}/toggle` 的核心：只改开关，其他字段一律不动。
@@ -842,6 +907,8 @@ pub async fn task_preview_item(
 
     let mut draft = AutomationTask {
         id: String::new(),
+        // 试算的草稿**不落盘**，所以序号无意义。
+        seq: 0,
         name: req.name.clone(),
         enabled: true,
         freq: req.freq.clone(),
