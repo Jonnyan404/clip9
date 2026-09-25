@@ -51,6 +51,7 @@ pub mod limits;
 use std::collections::BTreeMap;
 use std::path::Path;
 
+use clip9_core::task::AutomationTask;
 use clip9_protocol::{File, ReceiveHolder, normalize_room_name};
 use redb::{
     Database, ReadableDatabase, ReadableTable, ReadableTableMetadata, Table, TableDefinition,
@@ -83,6 +84,13 @@ const FILES: TableDefinition<&str, &[u8]> = TableDefinition::new("files");
 ///
 /// ⚠️ **新增一张表不用改 `SCHEMA_VERSION`** —— 见上面 `FILES` 的注释。
 const SHARES: TableDefinition<&str, &[u8]> = TableDefinition::new("shares");
+/// 定时任务表：`task id -> AutomationTask`（JSON）。
+///
+/// ⚠️ Go 把它放在 `tasks.json`（整份原子重写）。这边让它进库：和分享记录同理，
+/// 少一类「半截 JSON」的失败模式，也少一条迁移工具的路径。
+///
+/// ⚠️ **新增一张表不用改 `SCHEMA_VERSION`** —— 见上面 `FILES` 的注释。
+const TASKS: TableDefinition<&str, &[u8]> = TableDefinition::new("tasks");
 
 const K_SCHEMA_VERSION: &str = "schema_version";
 const K_NEXT_ID: &str = "next_id";
@@ -257,6 +265,7 @@ impl Store {
             let _ = txn.open_table(ROOMS)?;
             let _ = txn.open_table(FILES)?;
             let _ = txn.open_table(SHARES)?;
+            let _ = txn.open_table(TASKS)?;
             let mut meta = txn.open_table(META)?;
 
             // ⚠️ 先把 guard 里的值取出来再写 —— 否则 `meta.get()` 的不可变借用
@@ -962,6 +971,64 @@ impl Store {
         let txn = self.db.begin_read()?;
         let shares = txn.open_table(SHARES)?;
         Ok(shares.iter()?.count())
+    }
+
+    // ── 定时任务 ──────────────────────────────────────────────────────
+
+    /// 写入（新建或整体替换）一条定时任务。key 是 `task.id`。
+    pub fn put_task(&self, task: &AutomationTask) -> Result<()> {
+        let payload = serde_json::to_vec(task)?;
+        let txn = self.db.begin_write()?;
+        {
+            let mut tasks = txn.open_table(TASKS)?;
+            tasks.insert(task.id.as_str(), payload.as_slice())?;
+        }
+        txn.commit()?;
+        Ok(())
+    }
+
+    /// 取一条定时任务。
+    pub fn get_task(&self, id: &str) -> Result<Option<AutomationTask>> {
+        let txn = self.db.begin_read()?;
+        let tasks = txn.open_table(TASKS)?;
+        match tasks.get(id)? {
+            Some(v) => Ok(Some(serde_json::from_slice(v.value())?)),
+            None => Ok(None),
+        }
+    }
+
+    /// 删一条定时任务。返回 `true` = 确实删掉了。
+    pub fn remove_task(&self, id: &str) -> Result<bool> {
+        let txn = self.db.begin_write()?;
+        let removed = {
+            let mut tasks = txn.open_table(TASKS)?;
+            tasks.remove(id)?.is_some()
+        };
+        txn.commit()?;
+        Ok(removed)
+    }
+
+    /// 列出**全部**定时任务（跨房间）。
+    ///
+    /// ⚠️ 不按房间过滤：任务量级很小（每房间最多 20 条），而「按房间过滤」是服务端鉴权的
+    /// 职责（管理员能跨房间，普通成员只能看自己房间），不该下沉到存储层。
+    /// 全量读出再由调用方过滤，和 Go 的 `snapshotAutomationTasks` 一个意思。
+    pub fn list_tasks(&self) -> Result<Vec<AutomationTask>> {
+        let txn = self.db.begin_read()?;
+        let tasks = txn.open_table(TASKS)?;
+        let mut out = Vec::new();
+        for row in tasks.iter()? {
+            let (_, value) = row?;
+            out.push(serde_json::from_slice(value.value())?);
+        }
+        Ok(out)
+    }
+
+    /// 定时任务条数（诊断/测试用）。
+    pub fn task_count(&self) -> Result<usize> {
+        let txn = self.db.begin_read()?;
+        let tasks = txn.open_table(TASKS)?;
+        Ok(tasks.iter()?.count())
     }
 }
 

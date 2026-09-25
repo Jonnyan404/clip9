@@ -8,6 +8,9 @@ authors.workspace = true
 
 [dependencies]
 clip9-protocol = { workspace = true }
+# 定时任务的模型（AutomationTask）在 core。持久化它需要 core —— 依赖方向是
+# `protocol ← core ← store`（ARCHITECTURE §4 的依赖单向），所以这里加 core 是顺着走的。
+clip9-core = { workspace = true }
 
 serde = { workspace = true }
 serde_json = { workspace = true }

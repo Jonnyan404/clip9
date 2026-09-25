@@ -350,6 +350,7 @@ dependencies = [
 name = "clip9-store"
 version = "0.1.0"
 dependencies = [
+ "clip9-core",
  "clip9-protocol",
  "postcard",
  "redb",
