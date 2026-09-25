@@ -187,6 +187,23 @@ fn consume_share_use_distinguishes_expired_from_unknown() {
     );
 }
 
+/// 没超上限时**一条都不许动**（也不该报「裁掉了 N 条」）。
+///
+/// ⚠️ 这条盯的是 `put_share` 的**短路**：它是写入路径，每签发一条分享都走一遍，
+/// 而「谁该被丢」那张名单要全表读出来逐条解析 JSON。短路写错的两种典型后果 ——
+/// 没超限也开始删（静默丢记录），或者返回值乱报（调用方据此打日志，会刷出假告警）。
+#[test]
+fn below_the_limit_nothing_is_trimmed() {
+    let (store, _dir) = store();
+    for i in 0..10 {
+        let trimmed = store
+            .put_share(&record(&format!("jti-{i}"), "work", NOW), NOW)
+            .unwrap();
+        assert_eq!(trimmed, 0, "第 {i} 条就报「裁掉了」");
+    }
+    assert_eq!(store.share_count().unwrap(), 10);
+}
+
 /// ⚠️★ 裁剪要**先丢已经失效的**，而不是无脑按时间丢：
 /// 否则「别人分享了 500 条」会把一条还在有效期内、还差一次就用完的分享挤掉，
 /// 它的用量计数跟着消失 —— 那次限量就静默失效了。

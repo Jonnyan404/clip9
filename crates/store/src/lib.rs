@@ -976,7 +976,19 @@ const MAX_SHARE_RECORDS: usize = 500;
 ///
 /// 优先级 = (还是不是「可用」的, 创建时间)：不可用的先丢，然后旧的先丢。
 /// 「可用」= 没过期，且（不限次 或 还有剩余次数）——判据和 `consume_share_use` 里那两条一致。
+///
+/// ⚠️★ **先看条数再扫**。这个函数在**写入路径**上（每签发一条分享走一次），而下面那张
+/// 「谁该被丢」的名单要把全表读出来、**逐条解析 JSON**。少了这个短路，常态（远未到上限，
+/// 也就是绝大多数时候）每签一条链接都要付 500 次解析 —— 正是 `CONTRIBUTING.md` §6
+/// 点名的「不要在写入路径上做全表扫」。
+///
+/// `len()` 读的是 B-tree 根节点里缓存的条数（`ReadOnlyTree::len` = `root.length`），是 O(1)，
+/// 不是遍历。同一个写事务里没有别的写者，所以「先量后扫」这两步之间条数不会变。
 fn trim_shares_table(shares: &mut Table<'_, &str, &[u8]>, now: i64) -> Result<usize> {
+    if shares.len()? as usize <= MAX_SHARE_RECORDS {
+        return Ok(0);
+    }
+
     let mut all: Vec<(String, bool, i64)> = Vec::new();
     for row in shares.iter()? {
         let (key, value) = row?;
@@ -984,10 +996,6 @@ fn trim_shares_table(shares: &mut Table<'_, &str, &[u8]>, now: i64) -> Result<us
         let usable = (record.exp <= 0 || record.exp > now)
             && (record.max_uses <= 0 || (record.used as i64) < record.max_uses);
         all.push((key.value().to_owned(), usable, record.created_at));
-    }
-
-    if all.len() <= MAX_SHARE_RECORDS {
-        return Ok(0);
     }
 
     all.sort_by(|a, b| {
