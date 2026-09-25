@@ -25,6 +25,7 @@
 pub mod auth_gate;
 pub mod auth_token;
 pub mod automation;
+pub mod automation_page;
 pub mod error;
 pub mod files;
 pub mod handlers;
@@ -211,6 +212,11 @@ pub fn router(state: Arc<AppState>) -> Router {
             "/tasks/{id}/{action}",
             axum::routing::any(automation::task_unknown_action),
         )
+        // ── 定时自动化：管理页（服务端渲染的独立页面）──
+        // ⚠️ 排在静态资源兜底**之前**（和 `/s/{token}` 同理）：它有自己的 HTML，
+        // 落到 SPA 外壳就变成一份没有表单的空白页。
+        // ⚠️ 它**不做任何鉴权** —— 能不能建/改任务全由 `/tasks` 决定（页面里也是这么写的）。
+        .route("/automation", get(automation_page::page).fallback(only_get))
         // Go 的 CORS 是逐个端点手写的（`corsMiddleware` / `authMiddleware`），
         // 效果等价于「任意来源 + 常见方法/头」。这里用一层统一的代替 ——
         // 差别只是几个 Go 没挂 CORS 的端点上多几个头，没有客户端依赖「少了那些头」。
