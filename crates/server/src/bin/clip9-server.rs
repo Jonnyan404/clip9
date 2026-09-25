@@ -185,7 +185,6 @@ async fn main() -> anyhow::Result<()> {
     std::fs::create_dir_all(&paths.uploads)
         .map_err(|e| anyhow::anyhow!("无法创建文件存储目录 {}：{e}", paths.uploads.display()))?;
     tracing::info!(dir = %paths.uploads.display(), "文件存储目录");
-    tracing::info!(dir = %config.server.storage_dir, "文件存储目录");
 
     // 静态资源目录：`-static` > `CLIP9_STATIC` > 不挂（只跑 API）。
     //
