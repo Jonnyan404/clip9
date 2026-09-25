@@ -92,6 +92,9 @@ pub fn router(state: Arc<AppState>) -> Router {
 
     let app = Router::new()
         .route("/server", get(handlers::server))
+        // ⚠️ `/myip` 是**前端在用**的：聊天模式显示「你现在的 IP」。别当成边角端点删掉。
+        // 只认 GET（同 `/content/{id}`：读接口不该被非读方法触发）。
+        .route("/myip", get(handlers::my_ip).fallback(only_get))
         // ⚠️ `/healthz` 是**这个实现自己加的**便利端点，契约里没有它（Go 那边也没有）。
         // 加它是因为验收脚本需要一个「活着吗」的探活口，而 `/server` 会做鉴权计算、
         // 不适合当探活。**别把它写进 `docs/api.md`** —— 它不是契约的一部分。
