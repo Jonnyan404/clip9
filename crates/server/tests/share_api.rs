@@ -168,7 +168,7 @@ async fn a_session_token_opens_its_room() {
     assert_eq!(status, StatusCode::UNAUTHORIZED, "没凭据要被拒");
 
     let request = Request::builder()
-        .uri(&format!("/content/{id}?room=work"))
+        .uri(format!("/content/{id}?room=work"))
         .header(header::AUTHORIZATION, format!("Bearer {token}"))
         .body(Body::empty())
         .unwrap();
@@ -336,7 +336,7 @@ async fn a_share_token_cannot_write() {
 
     let request = Request::builder()
         .method("POST")
-        .uri(&format!("/text?room=work&t={token}"))
+        .uri(format!("/text?room=work&t={token}"))
         .header(header::CONTENT_TYPE, "text/plain")
         .body(Body::from("我要改内容"))
         .unwrap();
@@ -358,7 +358,7 @@ async fn a_share_token_cannot_write() {
 
     let request = Request::builder()
         .method("POST")
-        .uri(&format!("/revoke/{id}?room=work&t={token}"))
+        .uri(format!("/revoke/{id}?room=work&t={token}"))
         .body(Body::empty())
         .unwrap();
     let (status, _) = call(&app, request).await;
@@ -477,7 +477,7 @@ async fn password_shares_gate_on_the_header_and_issue_a_preview_token() {
     assert_eq!(code_of(&body), "share_password_required");
 
     let request = Request::builder()
-        .uri(&format!("/share?t={token}"))
+        .uri(format!("/share?t={token}"))
         .header("x-share-password", "错密码")
         .body(Body::empty())
         .unwrap();
@@ -486,7 +486,7 @@ async fn password_shares_gate_on_the_header_and_issue_a_preview_token() {
     assert_eq!(code_of(&body), "share_password_required");
 
     let request = Request::builder()
-        .uri(&format!("/share?t={token}"))
+        .uri(format!("/share?t={token}"))
         .header("x-share-password", "hunter2")
         .body(Body::empty())
         .unwrap();
@@ -506,7 +506,7 @@ async fn password_shares_gate_on_the_header_and_issue_a_preview_token() {
     assert_eq!(status, StatusCode::UNAUTHORIZED);
 
     let request = Request::builder()
-        .uri(&format!("/content/{id}?room=work&t={token}"))
+        .uri(format!("/content/{id}?room=work&t={token}"))
         .header("x-share-password", "hunter2")
         .body(Body::empty())
         .unwrap();
@@ -716,7 +716,7 @@ async fn the_landing_page_says_when_the_content_is_gone() {
 
     let request = Request::builder()
         .method("POST")
-        .uri(&format!("/revoke/{id}?room=work"))
+        .uri(format!("/revoke/{id}?room=work"))
         .header(header::AUTHORIZATION, "Bearer roompw")
         .body(Body::empty())
         .unwrap();
