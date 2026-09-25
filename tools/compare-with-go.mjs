@@ -23,6 +23,7 @@
 
 import { spawn, spawnSync } from 'node:child_process';
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import http from 'node:http';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -44,7 +45,10 @@ mkdirSync(goData);
 mkdirSync(rsData);
 
 // 两边跑**同一份配置**，否则比出来的是配置差异而不是实现差异。
-const config = JSON.stringify({ server: { port: GO_PORT, roomList: true } });
+// `roomAuth.locked` 是给 WS 鉴权那组用例用的（一个要密码的房间）。
+const config = JSON.stringify({
+  server: { port: GO_PORT, roomList: true, roomAuth: { locked: 'pw' } },
+});
 writeFileSync(join(goData, 'config.json'), config);
 writeFileSync(join(rsData, 'config.json'), config);
 
@@ -72,15 +76,30 @@ console.log('构建 Rust 服务端…');
 run(CARGO_BIN, ['build', '-p', 'clip9-server'], { cwd: RUST_DIR });
 
 const children = [];
+
+/** 起一个子进程，并把它的输出攒起来 —— 起不来时要能看见**为什么**。
+ *
+ * ⚠️ 一开始这里是 `stdio: 'ignore'`，结果「实例没起来」只能靠猜。
+ * 第一次真出问题（`roomAuth` 解析失败导致服务端退出）时，错误信息里什么都没有。 */
 function start(cmd, args, opts) {
-  const child = spawn(cmd, args, { stdio: 'ignore', ...opts });
+  const child = spawn(cmd, args, { stdio: ['ignore', 'pipe', 'pipe'], ...opts });
+  child.__log = '';
+  const collect = (d) => {
+    child.__log += d;
+  };
+  child.stdout.on('data', collect);
+  child.stderr.on('data', collect);
   children.push(child);
   return child;
 }
 
 // ⚠️ Go 的 history.json 是相对 cwd 写的，所以必须 cd 进它自己的目录。
-start(goBin, ['-port', String(GO_PORT), '-config', join(goData, 'config.json')], { cwd: goData });
-start(join(RUST_DIR, 'target/debug/clip9-server'), [
+const goChild = start(
+  goBin,
+  ['-port', String(GO_PORT), '-config', join(goData, 'config.json')],
+  { cwd: goData }
+);
+const rsChild = start(join(RUST_DIR, 'target/debug/clip9-server'), [
   '--config',
   join(rsData, 'config.json'),
   '--port',
@@ -113,7 +132,7 @@ for (const sig of ['SIGINT', 'SIGTERM', 'SIGHUP']) {
   });
 }
 
-async function waitReady(port) {
+async function waitReady(port, child) {
   // ⚠️ 探活用 `/server` 而**不是** `/healthz` —— 后者是 Rust 侧自己加的便利端点，
   // **Go 那边没有**。用它会一直等不到就绪，报出来是「实例没起来」，很难查。
   for (let i = 0; i < 120; i++) {
@@ -125,8 +144,13 @@ async function waitReady(port) {
     }
     await new Promise((r) => setTimeout(r, 250));
   }
+  // ⚠️ **把子进程的输出打出来** —— 否则「没起来」只能靠猜。
+  // 这条提示是踩出来的：配置里 `roomAuth` 写成字符串（最常见的写法）时，
+  // Rust 那边的配置解析失败、进程直接退出，而错误信息里当时什么都没有。
+  const log = (child?.__log || '').trim().split('\n').slice(-15).join('\n');
   throw new Error(
-    `端口 ${port} 上的实例没起来。先单独跑一次看它为什么起不来：\n` +
+    `端口 ${port} 上的实例没起来。它的输出（末 15 行）：\n${log || '(没有任何输出)'}\n` +
+      `也可以单独跑一次看：\n` +
       `  （Go）  cd cloud-clip && go build -o /tmp/go-clip . && /tmp/go-clip -port ${GO_PORT}\n` +
       `  （Rust）cargo run -p clip9-server -- --port ${RS_PORT}`
   );
@@ -214,8 +238,8 @@ async function compare(label, method, path, opts = {}) {
   }
 }
 
-await waitReady(GO_PORT);
-await waitReady(RS_PORT);
+await waitReady(GO_PORT, goChild);
+await waitReady(RS_PORT, rsChild);
 
 console.log('\n=== 发文本：三种 Content-Type ===');
 await compare('POST /text 纯文本（不声明 Content-Type）', 'POST', '/text', { body: 'hello world' });
@@ -288,6 +312,233 @@ console.log('\n=== 清空房间 ===');
 await compare('POST /revoke/all?room=work', 'POST', '/revoke/all?room=work');
 await compare('GET /rooms 清空后', 'GET', '/rooms');
 
+// ── WebSocket ─────────────────────────────────────────────────────────
+
+/** 原始握手：能拿到「升级**之前**被拒绝」时的状态码和响应体。
+ *
+ * ⚠️ Node 的 `WebSocket` 拿不到握手失败的响应体，而「没带凭据」和「凭据不对」是
+ * **两条不同的错误码**（客户端据此决定「提示输密码」还是「提示密码错」），
+ * 必须能读到 body 才比得了。 */
+function wsHandshake(port, path, extraHeaders = {}) {
+  return new Promise((resolve) => {
+    const req = http.request({
+      host: '127.0.0.1',
+      port,
+      path,
+      method: 'GET',
+      headers: {
+        Connection: 'Upgrade',
+        Upgrade: 'websocket',
+        'Sec-WebSocket-Version': '13',
+        'Sec-WebSocket-Key': Buffer.from('0123456789abcdef').toString('base64'),
+        ...extraHeaders,
+      },
+    });
+    req.on('response', (res) => {
+      let body = '';
+      res.on('data', (c) => (body += c));
+      res.on('end', () => resolve({ status: res.statusCode, body }));
+    });
+    req.on('upgrade', () => {
+      req.destroy();
+      resolve({ status: 101, body: '' });
+    });
+    req.on('error', (e) => resolve({ status: 0, body: String(e) }));
+    req.end();
+  });
+}
+
+/** 连上一个 WS，收一小会儿消息，然后关掉。 */
+function wsCollect(port, path, { ms = 400, send = [] } = {}) {
+  return new Promise((resolve) => {
+    const ws = new WebSocket(`ws://127.0.0.1:${port}${path}`);
+    const messages = [];
+    let opened = false;
+    ws.addEventListener('open', () => {
+      opened = true;
+      for (const m of send) ws.send(typeof m === 'string' ? m : JSON.stringify(m));
+    });
+    ws.addEventListener('message', (ev) => {
+      try {
+        messages.push(JSON.parse(ev.data));
+      } catch {
+        messages.push({ raw: String(ev.data) });
+      }
+    });
+    ws.addEventListener('error', () => {});
+    setTimeout(() => {
+      try {
+        ws.close();
+      } catch {
+        /* 已关 */
+      }
+      resolve({ opened, messages });
+    }, ms);
+  });
+}
+
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+/** WS 载荷的规范化。比 HTTP 那边多抹三样**已知差异**：
+ *  · `version`：两个实现本来就不是同一个版本号
+ *  · `device` / `os` / `browser`：UA 解析是近似实现（见 docs/HANDOVER.md §6）
+ *  · 字符串形态的 `id`：设备 ID 是**带随机种子的哈希**，两边必然不同
+ *    （消息 id 是数字，**不**抹 —— 那个必须一致） */
+function normalizeWs(value, port) {
+  if (typeof value === 'string') return value.replaceAll(`:${port}`, ':PORT');
+  if (Array.isArray(value)) return value.map((v) => normalizeWs(v, port));
+  if (value && typeof value === 'object') {
+    const out = {};
+    for (const [k, v] of Object.entries(value)) {
+      if (k === 'timestamp' || k === 'lastActive') out[k] = typeof v === 'number' ? '<ts>' : v;
+      else if (k === 'automation') out[k] = '<automation>';
+      else if (k === 'version') out[k] = '<version>';
+      else if (k === 'device' || k === 'os' || k === 'browser') out[k] = '<ua>';
+      else if (k === 'id' && typeof v === 'string') out[k] = '<device-id>';
+      else out[k] = normalizeWs(v, port);
+    }
+    return out;
+  }
+  return value;
+}
+
+function compareEvents(label, g, r) {
+  const problems = [];
+  if (g.opened !== r.opened) problems.push(`连上与否不同 Go=${g.opened} Rust=${r.opened}`);
+  // 事件的**种类与顺序**是契约的一部分（客户端按顺序处理）。
+  const ge = g.messages.map((m) => m.event ?? '<无 event>');
+  const re = r.messages.map((m) => m.event ?? '<无 event>');
+  if (ge.join(',') !== re.join(',')) {
+    problems.push(`事件序列不同\n    Go  : ${ge.join(' ')}\n    Rust: ${re.join(' ')}`);
+  }
+  const gn = canonical(g.messages.map((m) => normalizeWs(m, GO_PORT)));
+  const rn = canonical(r.messages.map((m) => normalizeWs(m, RS_PORT)));
+  if (gn !== rn) problems.push(`载荷不同\n    Go  : ${gn}\n    Rust: ${rn}`);
+
+  if (problems.length === 0) {
+    pass++;
+    console.log(`  ok   ${label}  [${ge.join(' ')}]`);
+  } else {
+    fail++;
+    failures.push(`${label}\n  ${problems.join('\n  ')}`);
+    console.log(`  FAIL ${label}`);
+    for (const p of problems) console.log(`       ${p}`);
+  }
+}
+
+console.log('\n=== WebSocket：握手与推送顺序 ===');
+
+// 空房间连上：应当只有一条 `config`（没历史、没别的设备）。
+{
+  const [g, r] = await Promise.all([
+    wsCollect(GO_PORT, '/push?room=ws-empty'),
+    wsCollect(RS_PORT, '/push?room=ws-empty'),
+  ]);
+  compareEvents('空房间：只有 config', g, r);
+}
+
+// ping → pong 原样回显（前端用它算 RTT）。
+{
+  const [g, r] = await Promise.all([
+    wsCollect(GO_PORT, '/push?room=ws-ping', { send: [{ event: 'ping', data: 1234567890 }] }),
+    wsCollect(RS_PORT, '/push?room=ws-ping', { send: [{ event: 'ping', data: 1234567890 }] }),
+  ]);
+  compareEvents('ping → pong 回显', g, r);
+}
+
+// 鉴权：升级**之前**就该被拒，且两种失败的错误码不同。
+for (const [label, headers] of [
+  ['锁着的房间：不带凭据', {}],
+  ['锁着的房间：凭据错', { Authorization: 'Bearer nope' }],
+  ['锁着的房间：凭据对', { Authorization: 'Bearer pw' }],
+]) {
+  const [g, r] = await Promise.all([
+    wsHandshake(GO_PORT, '/push?room=locked', headers),
+    wsHandshake(RS_PORT, '/push?room=locked', headers),
+  ]);
+  const problems = [];
+  if (g.status !== r.status) problems.push(`状态码 Go=${g.status} Rust=${r.status}`);
+  const gb = g.body.trim();
+  const rb = r.body.trim();
+  if (gb !== rb) problems.push(`响应体不同\n    Go  : ${gb}\n    Rust: ${rb}`);
+  if (problems.length === 0) {
+    pass++;
+    console.log(`  ok   WS ${label}（${g.status}${gb ? ' ' + JSON.parse(gb).code : ''}）`);
+  } else {
+    fail++;
+    failures.push(`WS ${label}\n  ${problems.join('\n  ')}`);
+    console.log(`  FAIL WS ${label}`);
+    for (const p of problems) console.log(`       ${p}`);
+  }
+}
+
+// 广播 + connect/disconnect：两个客户端 + 一条 HTTP 发的消息。
+//
+// ⚠️ 两边用**同一个房间名和同一段正文** —— 它们是两个独立进程，不会互相干扰。
+// 一开始我给它们加了不同的后缀来「区分」，结果比出来的是**我自己造的差异**
+// （房间名不同、正文里的 Go/Rust 不同），不是实现的差异。
+const wsRoom = 'ws-bc';
+const wsBody = '来自 HTTP 的广播';
+const wsResults = {};
+
+for (const [name, port] of [
+  ['Go', GO_PORT],
+  ['Rust', RS_PORT],
+]) {
+  const a = wsCollect(port, `/push?room=${wsRoom}`, { ms: 1200 });
+  await sleep(250);
+  const b = wsCollect(port, `/push?room=${wsRoom}`, { ms: 950 });
+  await sleep(250);
+  await hit(port, 'POST', `/text?room=${wsRoom}`, { body: wsBody });
+  await sleep(150);
+  const [ra, rb] = await Promise.all([a, b]);
+  wsResults[name] = { ra, rb };
+
+  // A 应该看到：config → connect(B) → receive
+  // B 应该看到：connect(A) → config → receive
+  const seq = (x) => x.messages.map((m) => m.event).join(' ');
+  console.log(`  ·  ${name} A=[${seq(ra)}]  B=[${seq(rb)}]`);
+}
+
+/** ⚠️ 把 `disconnect` 滤掉再比。
+ *
+ * 两个客户端的收集窗口长度接近，**谁先关是竞态** —— 先关的那个会让另一个收到
+ * `disconnect`，而这一组用例想比的是 config / connect / receive。
+ * `disconnect` 有它自己的确定性用例（下面那条）。 */
+const stripDisconnect = (x) => ({
+  opened: x.opened,
+  messages: x.messages.filter((m) => m.event !== 'disconnect'),
+});
+
+compareEvents(
+  '两客户端：config / connect / receive',
+  stripDisconnect(wsResults.Go.ra),
+  stripDisconnect(wsResults.Rust.ra)
+);
+compareEvents(
+  '后连的那个：connect / config / receive',
+  stripDisconnect(wsResults.Go.rb),
+  stripDisconnect(wsResults.Rust.rb)
+);
+
+// disconnect：B 先关，A 应该收到 `disconnect`（带设备 ID）。
+// ⚠️ 窗口长度要**拉开**（A 1200ms、B 400ms）才确定 —— 否则又是竞态。
+{
+  const results = {};
+  for (const [name, port] of [
+    ['Go', GO_PORT],
+    ['Rust', RS_PORT],
+  ]) {
+    const a = wsCollect(port, '/push?room=ws-disc', { ms: 1200 });
+    await sleep(250);
+    const b = wsCollect(port, '/push?room=ws-disc', { ms: 400 });
+    const [ra] = await Promise.all([a, b]);
+    results[name] = ra;
+  }
+  compareEvents('B 先关 → A 收到 disconnect', results.Go, results.Rust);
+}
+
+
 // ── 已知的、刻意的差异 ────────────────────────────────────────────────
 console.log('\n=== 已知差异（刻意，不算失败） ===');
 const gSrv = (await hit(GO_PORT, 'GET', '/server')).parsed;
@@ -295,6 +546,11 @@ const rSrv = (await hit(RS_PORT, 'GET', '/server')).parsed;
 console.log(
   `  KNOWN automation：Go enabled=${gSrv.automation.enabled}（带 ${gSrv.automation.actions?.length ?? 0} 个动作声明），` +
     `Rust enabled=${rSrv.automation.enabled} —— P0 未实现定时自动化（P2），前端会正确地不显示入口`
+);
+console.log('  KNOWN version：两个实现本来就不是同一个版本号（WS 的 config 里也带着它）');
+console.log(
+  '  KNOWN UA：device / os / browser 是近似实现（Go 用 uap-go 的正则库）。' +
+    '**type（desktop/smartphone/tablet）是逐字移植的**，前端图标靠它'
 );
 
 console.log(`\n通过 ${pass}，失败 ${fail}`);

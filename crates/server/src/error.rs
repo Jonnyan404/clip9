@@ -40,6 +40,11 @@ pub mod codes {
     pub const ROOM_FORBIDDEN: &str = "room_forbidden";
     pub const ROOM_AUTH_REQUIRED: &str = "room_auth_required";
     pub const ROOM_LIST_DISABLED: &str = "room_list_disabled";
+    /// WS 握手：一个凭据都没带。**和「凭据不对」分开** —— 客户端据此决定「提示输入密码」
+    /// 还是「提示密码错了」。
+    pub const UNAUTHORIZED_MISSING_TOKEN: &str = "unauthorized_missing_token";
+    /// WS 握手：带了凭据但不对。
+    pub const UNAUTHORIZED_INVALID_TOKEN: &str = "unauthorized_invalid_token";
 
     // 正文
     pub const TEXT_TOO_LONG: &str = "text_too_long";

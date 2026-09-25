@@ -818,7 +818,7 @@ pub async fn rooms(
     // ⚠️ 计数表只读**一次**：原来写在循环里，每个房间都重查一遍全表 ——
     // 房间一多就是 O(房间数²)，而 `/rooms` 是前端切房间时的高频调用。
     let summaries = state.store.rooms().unwrap_or_default();
-    let connected: Vec<String> = state.devices.lock().keys().cloned().collect();
+    let connected = state.connected_rooms();
 
     let mut names: Vec<String> = summaries.iter().map(|r| r.name.clone()).collect();
     for room in connected {

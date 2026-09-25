@@ -17,6 +17,8 @@
 
 use std::collections::HashMap;
 
+use clip9_protocol::DeviceMeta;
+
 /// 把 UA 归类成 `desktop` / `smartphone` / `tablet`。
 ///
 /// ⚠️ `os_family` 只在关键词全部落空时兜底，别把它提到前面去 ——
@@ -74,6 +76,71 @@ pub fn parse_user_agent(ua: &str, device_name: &str) -> HashMap<String, String> 
         info.insert("name".to_owned(), device_name.to_owned());
     }
     info
+}
+
+/// 构造 WS 用的 `DeviceMeta`。
+///
+/// `device` 字段在 Go 那边是 `"<品牌> <型号> <OS 家族>"` 去空白（uap-go 给品牌和型号）。
+/// ⚠️ 这边是**近似**：没有 uap 的型号库，只能靠关键词认出最常见的几类。
+/// 认不出来的就只给 OS 家族 —— 前端那个副标题会显得单薄，但不会出错。
+#[must_use]
+pub fn parse_device_meta(ua: &str, device_name: &str, device_id: &str) -> DeviceMeta {
+    let (os_family, os_major) = parse_os(ua);
+    let (browser_family, browser_major) = parse_browser(ua);
+
+    DeviceMeta {
+        id: device_id.to_owned(),
+        kind: detect_device_type(ua, os_family).to_owned(),
+        name: device_name.to_owned(),
+        device: device_family(ua, os_family),
+        os: format!("{os_family} {os_major}"),
+        browser: format!("{browser_family} {browser_major}"),
+    }
+}
+
+/// 「品牌 + 型号」，认不出来时退化成 OS 家族。
+fn device_family(ua: &str, os_family: &str) -> String {
+    let lower = ua.to_ascii_lowercase();
+    if lower.contains("iphone") {
+        return "Apple iPhone".to_owned();
+    }
+    if lower.contains("ipad") {
+        return "Apple iPad".to_owned();
+    }
+    if lower.contains("macintosh") || lower.contains("mac os x") {
+        return "Apple Mac".to_owned();
+    }
+    if let Some(model) = android_model(ua) {
+        return model;
+    }
+    os_family.to_owned()
+}
+
+/// 从 `(Linux; Android 13; Pixel 7)` 里抠出型号。
+fn android_model(ua: &str) -> Option<String> {
+    let start = ua.find("Android ")?;
+    let rest = &ua[start..];
+    // 形如 `Android 13; Pixel 7)` 或 `Android 13; zh-cn; SM-G991B Build/...`
+    let mut parts = rest.split(';');
+    parts.next()?; // 丢掉 "Android 13"
+    for part in parts {
+        let candidate = part.trim().trim_end_matches(')').trim();
+        // `Build/...` 之前那段才是型号；`wv` / `zh-cn` 这类语言标记要跳过。
+        let candidate = candidate
+            .split(" Build/")
+            .next()
+            .unwrap_or(candidate)
+            .trim();
+        if !candidate.is_empty()
+            && !candidate.eq_ignore_ascii_case("wv")
+            && candidate.len() > 1
+            && !candidate.contains('-')
+        // `zh-cn` 这类语言标记
+        {
+            return Some(format!("Android {candidate}"));
+        }
+    }
+    None
 }
 
 fn parse_os(ua: &str) -> (&'static str, String) {

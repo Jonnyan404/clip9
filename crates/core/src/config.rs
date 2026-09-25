@@ -170,7 +170,11 @@ impl RoomAuthConfig {
 /// 1. 空字符串在这份配置里**已经有含义**（只接受全局 auth）—— 改掉它会静默改变所有现有配置的
 ///    含义，某个房间会悄悄敞开且不报错。安全设置不能这么反转。
 /// 2. 空密码和「压根没配过这个房间」在 JSON 里长得一样，而这两者的意图正好相反。
-#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
+///
+/// ⚠️ **不能 `#[derive(Deserialize)]`** —— 配置值有四种形态，derive 出来的解析器只认
+/// 其中一种（对象），于是 `"work": "password"` 这种**最常见的写法**会让整个配置解析失败、
+/// **服务端起不来**。手写 `Deserialize` 走 [`RoomAuthEntry::from_json`]。
+#[derive(Debug, Clone, PartialEq, Default, Serialize)]
 pub struct RoomAuthEntry {
     pub password: String,
     #[serde(rename = "fileExpire")]
@@ -178,6 +182,16 @@ pub struct RoomAuthEntry {
     pub open: bool,
     /// 定时任务策略：`""`（未写 → 跟随房间鉴权档位）/ `"none"` / `"single"` / `"room"`。
     pub automation: String,
+}
+
+impl<'de> Deserialize<'de> for RoomAuthEntry {
+    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        // ⚠️ 先落到 `Value` 再转 —— 四种配置形态的判定逻辑只有一处（`from_json`），
+        // 这里不重复实现一遍。derive 出来的解析器只认对象那一种，会让最常见的
+        // `"work": "password"` 直接把整个配置解析弄失败、服务端起不来。
+        let value = serde_json::Value::deserialize(d)?;
+        RoomAuthEntry::from_json(&value).map_err(serde::de::Error::custom)
+    }
 }
 
 impl RoomAuthEntry {
@@ -298,5 +312,48 @@ mod tests {
             c.server.port, 9501,
             "平铺的 port 被忽略 —— 这是刻意的，但要知道"
         );
+    }
+
+    /// ⚠️★ 这条防的是「derive 出来的 `Deserialize` 只认对象」那个 bug。
+    ///
+    /// 真实的 `config.json` 里 `"work": "password"` 是**最常见**的写法；
+    /// 解析不了会让**服务端直接起不来**（不是降级，是启动失败）。
+    /// 2026-09-25 由双跑比对抓到 —— 单测当时只测了 `from_json`，没测 serde 那条路。
+    #[test]
+    fn room_auth_accepts_all_four_forms_through_serde() {
+        let cfg: Config = serde_json::from_str(
+            r#"{"server":{"roomAuth":{
+                "plain":"pw",
+                "numeric":12345,
+                "zero":0,
+                "object":{"password":"x","fileExpire":0},
+                "opened":{"open":true},
+                "tuned":{"automation":"single"}
+            }}}"#,
+        )
+        .expect("四种形态都要能解析 —— 解析不了服务端就起不来");
+
+        assert_eq!(cfg.server.room_auth.get("plain").unwrap().password, "pw");
+        assert_eq!(
+            cfg.server.room_auth.get("numeric").unwrap().password,
+            "12345"
+        );
+        assert_eq!(cfg.server.room_auth.get("zero").unwrap().password, "");
+        let obj = cfg.server.room_auth.get("object").unwrap();
+        assert_eq!(obj.password, "x");
+        assert_eq!(obj.file_expire, Some(0));
+        assert!(cfg.server.room_auth.get("opened").unwrap().open);
+        assert_eq!(
+            cfg.server.room_auth.get("tuned").unwrap().automation,
+            "single"
+        );
+    }
+
+    /// 认不出的形态要**报错**，不能静默当成空条目 —— 那会把一个受保护房间悄悄敞开。
+    #[test]
+    fn room_auth_rejects_an_unknown_shape() {
+        let bad: Result<Config, _> =
+            serde_json::from_str(r#"{"server":{"roomAuth":{"weird":["a","b"]}}}"#);
+        assert!(bad.is_err(), "数组不是合法的 roomAuth 值");
     }
 }

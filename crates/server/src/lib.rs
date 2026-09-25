@@ -23,6 +23,7 @@ pub mod handlers;
 pub mod state;
 pub mod text_body;
 pub mod user_agent;
+pub mod ws;
 
 use std::sync::Arc;
 
@@ -65,6 +66,8 @@ pub fn router(state: Arc<AppState>) -> Router {
         // 不适合当探活。**别把它写进 `docs/api.md`** —— 它不是契约的一部分。
         .route("/healthz", get(|| async { "ok" }))
         .route("/text", post(handlers::text))
+        // ⚠️ WS 用 `get` 注册是刻意的：握手是一个 GET + `Upgrade` 头。
+        .route("/push", get(ws::push))
         .route("/content/latest", get(handlers::latest_content))
         .route("/content/latest.json", get(handlers::latest_content))
         .route("/content/{id}", get(handlers::content))
