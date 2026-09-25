@@ -101,16 +101,20 @@ pub struct ServerConfig {
     /// ⚠️ 旧的「每房间保留多少条」。新存储改用 `limits` 三个维度（见 ARCHITECTURE §3.3），
     /// 这个字段只为**读老配置**保留 —— 别在业务代码里用它做裁剪决策。
     pub history: i64,
-    /// **库文件的路径**（redb）。
+    /// **库文件的路径**（redb）。默认 `./data/clip9.redb`。
     ///
     /// ⚠️★ 这里**刻意不叫 `historyFile`**（Jonny 2026-09-25 定）。Go 那边那个名字的含义是
     /// 「历史记录 **JSON** 文件的路径」，而这边历史存在 redb 里 —— 沿用旧名会让
-    /// 「名字说的」和「实际做的」不一致，而**那个不一致本身**正是这个项目最忌讳的一类问题
-    /// （读代码觉得是一回事、实际是另一回事）。
+    /// 「名字说的」和「实际做的」不一致，而**那个不一致本身**正是这个项目最忌讳的一类问题。
     /// 所以字段名、`serde` 名、命令行参数名**一起改**，不留旧名当别名：
     /// 旧名在这边的语义是**错的**，静默接受它比报错更坏。
     ///
-    /// 空串 = 没设 → 用 `<data 目录>/clip9.redb`。
+    /// ⚠️ 默认值给的是一个**看得见的路径**（生成的配置文件里能读到它落在哪），
+    /// 但服务端按「**等于默认值就当没写**」处理 —— 与 `storageDir` 同一套办法，
+    /// 这样 `-data` 仍然能把库整体搬走（否则配置文件里一旦写死，`-data` 就失效了）。
+    /// ⚠️ 副作用与 `storageDir` 相同：显式把它写成 `./data/clip9.redb` 会被当成没写。
+    /// 想钉死就写别的值（或绝对路径）。
+    ///
     /// ⚠️ 老配置里那个 `historyFile` 会被 serde 当成未知字段忽略掉 —— 这正是想要的：
     /// Go 版的 `history.json` 是**迁移工具的输入**，不该被这边覆盖。
     #[serde(rename = "dbPath")]
@@ -142,7 +146,7 @@ impl Default for ServerConfig {
             port: 9501,
             prefix: String::new(),
             history: 100,
-            db_path: String::new(),
+            db_path: "./data/clip9.redb".to_owned(),
             storage_dir: "./uploads".to_owned(),
             auth: AuthValue::default(),
             room_auth: RoomAuthConfig::default(),

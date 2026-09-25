@@ -84,6 +84,11 @@ const MIGRATE_FLAGS: &[(&str, bool, &str)] = &[
         true,
         "Go 版的数据目录（里面有 history.json 与 uploads/）",
     ),
+    (
+        "config",
+        true,
+        "配置文件路径（**只读**它的 dbPath / storageDir，不会生成文件），默认 config.json",
+    ),
     ("data", true, "本实现的数据目录，默认 ./data"),
     ("dbpath", true, "库文件路径，默认 <data>/clip9.redb"),
     ("storage", true, "上传文件的存放目录，默认 <data>/uploads"),
@@ -164,49 +169,22 @@ async fn main() -> anyhow::Result<()> {
 
     apply_flags(&mut config, &args)?;
 
-    // 数据目录：`-data` > `CLIP9_DATA` > `./data`。⚠️ **Go 版没有这个概念**（它不用数据库）。
-    let data_dir = args
-        .get("data")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from("./data"));
-    std::fs::create_dir_all(&data_dir)
-        .map_err(|e| anyhow::anyhow!("无法创建数据目录 {}：{e}", data_dir.display()))?;
-
-    // 库文件：`-dbpath` > 配置 `server.dbPath` > `<data 目录>/clip9.redb`。
-    //
-    // ⚠️★ 这个名字**刻意不叫 `historyFile`**（Jonny 2026-09-25 定）：Go 那边那个名字
-    // 指的是「历史记录 **JSON** 文件的路径」，而这边历史在 redb 里 —— 沿用旧名会让
-    // 「名字说的」和「实际做的」不一致，而那个不一致本身就是这个项目最忌讳的一类问题。
-    // 所以**不留旧名当别名**：`-historyfile` 会被当成认不出的参数报错（带一句说明），
-    // 老配置里的 `historyFile` 会被 serde 当未知字段忽略（正好：Go 那个 JSON 是
-    // **迁移工具的输入**，不该被这边覆盖）。
-    // ⚠️ 相对路径按 **cwd** 解析（与 Go 一致）。
-    let db_path = args
-        .get("dbpath")
-        .or_else(|| Some(config.server.db_path.clone()).filter(|s| !s.is_empty()))
-        .map(PathBuf::from)
-        .unwrap_or_else(|| data_dir.join("clip9.redb"));
-    if let Some(parent) = db_path.parent()
+    // 路径（数据目录 / 库文件 / 上传目录）由**共用的一份**算出来 —— 见 `resolve_paths`。
+    // ⚠️ `migrate` 子命令用的是同一个函数：两边各写一份的话，会出现「服务端按配置里的
+    // dbPath 找库、而迁移写到了别处」—— 用户以为迁完了，其实服务读的是另一个文件，
+    // 而且**两边都不报错**。
+    let paths = resolve_paths(&args, &mut config);
+    if let Some(parent) = paths.db.parent()
         && !parent.as_os_str().is_empty()
     {
         std::fs::create_dir_all(parent)
             .map_err(|e| anyhow::anyhow!("无法创建库文件所在目录 {}：{e}", parent.display()))?;
     }
-    let store = Store::open_with(&db_path, Limits::default())?;
-    tracing::info!(db = %db_path.display(), "存储已打开");
-
-    // ⚠️ 文件存储目录的**兜底**跟着 `--data` 走。配置里那个 `./uploads` 是相对 **cwd** 的，
-    // 而服务端可能从任何地方启动（systemd / Docker / OpenWrt procd）—— 相对路径会让
-    // 上传的文件散落到各处，重启后就找不到了。
-    // ⚠️ 优先级：`-storage` > 配置文件 > `--data/uploads`。
-    // 判「配置文件有没有写」的办法是**和默认值比**：`storage_dir` 的默认值就是 `./uploads`，
-    // 相等即「没写」。⚠️ 副作用：显式把 `storageDir` 写成 `./uploads` 时会被当成没写 ——
-    // 这是已知的近似，写成别的值（或绝对路径）就没这个问题。
-    if config.server.storage_dir == Config::default().server.storage_dir {
-        config.server.storage_dir = data_dir.join("uploads").to_string_lossy().into_owned();
-    }
-    std::fs::create_dir_all(&config.server.storage_dir)
-        .map_err(|e| anyhow::anyhow!("无法创建文件存储目录 {}：{e}", config.server.storage_dir))?;
+    let store = Store::open_with(&paths.db, Limits::default())?;
+    tracing::info!(db = %paths.db.display(), "存储已打开");
+    std::fs::create_dir_all(&paths.uploads)
+        .map_err(|e| anyhow::anyhow!("无法创建文件存储目录 {}：{e}", paths.uploads.display()))?;
+    tracing::info!(dir = %paths.uploads.display(), "文件存储目录");
     tracing::info!(dir = %config.server.storage_dir, "文件存储目录");
 
     // 静态资源目录：`-static` > `CLIP9_STATIC` > 不挂（只跑 API）。
@@ -394,6 +372,52 @@ fn resolve_hosts(value: &serde_json::Value, port: u16) -> anyhow::Result<Vec<Soc
     Ok(out)
 }
 
+/// 三样路径：数据目录、库文件、上传目录。
+#[derive(Debug)]
+struct Paths {
+    db: PathBuf,
+    uploads: PathBuf,
+}
+
+/// 算「库在哪、上传文件存哪」，并把结果**写回 config**（服务端后面读的是 `config.server.*`）。
+///
+/// ⚠️★ **服务端与 `migrate` 子命令共用这一份**。别在两边各写一份 —— 写歪了的症状是
+/// 「服务端按配置里的 `dbPath` 找库，而迁移写到了别处」：用户以为迁完了，
+/// 其实服务读的是另一个文件，而且**两边都不报错**。那正是这个项目最忌讳的一类。
+///
+/// 优先级：`-dbpath` / `-storage` > 配置文件 > `<data 目录>/…`。
+/// （`-dbpath` / `-storage` 已经由 `apply_flags` 盖到 config 上了，所以这里只看 config。）
+///
+/// ⚠️ 「配置文件里到底写没写」的判据是**和默认值比**：`dbPath` 的默认是
+/// `./data/clip9.redb`、`storageDir` 的默认是 `./uploads` —— 相等即「没写」，
+/// 于是 `-data` 仍能把这两样**一起**搬走（只搬一样是最难解释的状态）。
+/// ⚠️ 副作用：显式写成默认值会被当成没写 —— 已知的近似，写成别的值（或绝对路径）即可。
+fn resolve_paths(args: &Args, config: &mut Config) -> Paths {
+    // ⚠️ `-data` 是**本实现独有的**（Go 不用数据库，没有「数据目录」这个概念）。
+    let data_dir = args
+        .get("data")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from("./data"));
+
+    let defaults = Config::default();
+    let db = if config.server.db_path != defaults.server.db_path {
+        PathBuf::from(&config.server.db_path)
+    } else {
+        data_dir.join("clip9.redb")
+    };
+    let uploads = if config.server.storage_dir != defaults.server.storage_dir {
+        PathBuf::from(&config.server.storage_dir)
+    } else {
+        data_dir.join("uploads")
+    };
+
+    // 写回去：服务端读的是 config 里这两个字段（`files.rs` 用 `storage_dir`）。
+    config.server.db_path = db.to_string_lossy().into_owned();
+    config.server.storage_dir = uploads.to_string_lossy().into_owned();
+
+    Paths { db, uploads }
+}
+
 /// 解析出来的命令行参数。
 #[derive(Debug, Default)]
 struct Args {
@@ -566,33 +590,50 @@ fn run_migrate(raw: &[String]) -> anyhow::Result<()> {
         anyhow::bail!("migrate 需要 `-from <Go 数据目录>`（用 `clip9-server migrate -h` 看用法）");
     };
     let dry_run = args.has("dry-run");
-    let data_dir = args
-        .get("data")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from("./data"));
-    let db_path = args
-        .get("dbpath")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| clip9_server::migrate::default_db_path(&data_dir));
-    let storage_dir = args
-        .get("storage")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| data_dir.join("uploads"));
+
+    // ⚠️★ **也要读配置文件**（`-config`，默认 `config.json`）：不然「服务端按配置里的
+    // `dbPath` 找库，而迁移写到了别处」—— 用户以为迁完了，其实服务读的是另一个文件，
+    // 而且两边都不报错。路径用**与主程序同一个** `resolve_paths` 算。
+    //
+    // ⚠️ 这里**不生成**配置文件（主程序会）—— 迁移是运维动作，顺手往 cwd 里写一个文件
+    // 属于意外副作用；而且 `-dry-run` 的承诺是「什么都不写」。
+    let config_path = args
+        .get("config")
+        .unwrap_or_else(|| "config.json".to_owned());
+    let mut config = match std::fs::read_to_string(&config_path) {
+        Ok(raw) => serde_json::from_str::<Config>(&raw)
+            .map_err(|e| anyhow::anyhow!("配置文件 {config_path} 解析失败：{e}"))?,
+        Err(e) => {
+            tracing::info!(path = %config_path, error = %e, "读不到配置文件，用默认路径");
+            Config::default()
+        }
+    };
+    apply_flags(&mut config, &args)?;
+    let paths = resolve_paths(&args, &mut config);
 
     // ⚠️ dry-run 下**一个目录都不建** —— 它的承诺是「绝对不动任何东西」。
     if !dry_run {
-        std::fs::create_dir_all(&data_dir)
-            .map_err(|e| anyhow::anyhow!("无法创建数据目录 {}：{e}", data_dir.display()))?;
-        std::fs::create_dir_all(&storage_dir)
-            .map_err(|e| anyhow::anyhow!("无法创建上传目录 {}：{e}", storage_dir.display()))?;
+        for dir in [paths.db.parent(), Some(paths.uploads.as_path())]
+            .into_iter()
+            .flatten()
+        {
+            if !dir.as_os_str().is_empty() {
+                std::fs::create_dir_all(dir)
+                    .map_err(|e| anyhow::anyhow!("无法创建目录 {}：{e}", dir.display()))?;
+            }
+        }
     }
 
     tracing::info!(
-        from = %from, db = %db_path.display(), uploads = %storage_dir.display(), dry_run,
+        from = %from, db = %paths.db.display(), uploads = %paths.uploads.display(), dry_run,
         "开始迁移"
     );
-    let report =
-        clip9_server::migrate::run(std::path::Path::new(&from), &db_path, &storage_dir, dry_run)?;
+    let report = clip9_server::migrate::run(
+        std::path::Path::new(&from),
+        &paths.db,
+        &paths.uploads,
+        dry_run,
+    )?;
     print!("{}", clip9_server::migrate::describe(&report, dry_run));
     Ok(())
 }

@@ -32,7 +32,7 @@
 //! ⚠️ **不迁** `share-log.json`（分享是短期的，过期即失效）与 `tasks.json`
 //! （定时任务是用户重写得出来的配置，不是数据）—— Jonny 2026-09-25 定的范围收窄。
 
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use clip9_protocol::History;
 use clip9_store::Store;
@@ -184,16 +184,11 @@ pub fn describe(report: &Report, dry_run: bool) -> String {
     out
 }
 
-/// `-from` 与目标路径的默认值：目标跟着 `-data` 走，与主程序一致。
-#[must_use]
-pub fn default_db_path(data_dir: &Path) -> PathBuf {
-    data_dir.join("clip9.redb")
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use clip9_store::Store;
+    use std::path::PathBuf;
 
     /// 造一份「Go 数据目录」：`history.json`（两条消息 + 一条文件登记）+ `uploads/<uuid>`。
     ///
