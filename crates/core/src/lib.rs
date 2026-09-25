@@ -5,6 +5,7 @@
 
 pub mod auth;
 pub mod config;
+pub mod cron;
 pub mod share;
 
 pub use auth::{
@@ -14,6 +15,7 @@ pub use auth::{
 pub use config::{
     AuthValue, Config, FileConfig, RoomAuthConfig, RoomAuthEntry, ServerConfig, TextConfig,
 };
+pub use cron::{CronDay, CronDescription, CronError, CronMode, CronSpec};
 pub use share::{
     DEFAULT_SHARE_TTL_SECONDS, MAX_SHARE_MAX_USES, MAX_SHARE_TTL_SECONDS, MIN_SHARE_TTL_SECONDS,
     NewShare, PREVIEW_TOKEN_TTL_SECONDS, ROOM_SESSION_TTL_SECONDS, SCOPE_GLOBAL, SESSION_TYPE,
