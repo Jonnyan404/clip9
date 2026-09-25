@@ -248,7 +248,13 @@ impl ShareKey {
     /// 签名（Go 也是这么做的）。
     #[must_use]
     pub fn sign(&self, claims: &ShareClaims) -> String {
-        let payload = serde_json::to_vec(claims).unwrap_or_default();
+        // ⚠️ 这里**不能**写 `unwrap_or_default()`：序列化失败时它会静默签出一个空 payload 的串
+        // （`parse` 必然拒绝），表现为「签发成功了但链接用不了」，而且没有任何日志 ——
+        // 正是 `CONTRIBUTING.md` §6 点名的「用默认值掩盖失败」。
+        // claims 只有 `String` / `i64` / `Option<String>`，序列化不可能失败；真失败了说明
+        // 这个结构被改错了，那是该当场炸掉的事，不该悄悄降级成一个废 token。
+        let payload = serde_json::to_vec(claims)
+            .expect("ShareClaims 只有 String / i64 / Option<String>，序列化不会失败");
         let payload_part = URL_SAFE_NO_PAD.encode(payload);
 
         let mut mac = self.mac();
