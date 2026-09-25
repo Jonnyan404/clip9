@@ -101,8 +101,20 @@ pub struct ServerConfig {
     /// ⚠️ 旧的「每房间保留多少条」。新存储改用 `limits` 三个维度（见 ARCHITECTURE §3.3），
     /// 这个字段只为**读老配置**保留 —— 别在业务代码里用它做裁剪决策。
     pub history: i64,
-    #[serde(rename = "historyFile")]
-    pub history_file: String,
+    /// **库文件的路径**（redb）。
+    ///
+    /// ⚠️★ 这里**刻意不叫 `historyFile`**（Jonny 2026-09-25 定）。Go 那边那个名字的含义是
+    /// 「历史记录 **JSON** 文件的路径」，而这边历史存在 redb 里 —— 沿用旧名会让
+    /// 「名字说的」和「实际做的」不一致，而**那个不一致本身**正是这个项目最忌讳的一类问题
+    /// （读代码觉得是一回事、实际是另一回事）。
+    /// 所以字段名、`serde` 名、命令行参数名**一起改**，不留旧名当别名：
+    /// 旧名在这边的语义是**错的**，静默接受它比报错更坏。
+    ///
+    /// 空串 = 没设 → 用 `<data 目录>/clip9.redb`。
+    /// ⚠️ 老配置里那个 `historyFile` 会被 serde 当成未知字段忽略掉 —— 这正是想要的：
+    /// Go 版的 `history.json` 是**迁移工具的输入**，不该被这边覆盖。
+    #[serde(rename = "dbPath")]
+    pub db_path: String,
     #[serde(rename = "storageDir")]
     pub storage_dir: String,
     pub auth: AuthValue,
@@ -112,6 +124,13 @@ pub struct ServerConfig {
     pub key: String,
     #[serde(rename = "roomList")]
     pub room_list: bool,
+    /// 房间清理间隔（秒）。**照 Go 的语义实现**（Jonny 2026-09-25 定）：
+    /// 每隔这么久清一次「空房间」的行（计数为 0、没有连接、且空闲超过这个值）。
+    ///
+    /// ⚠️ Rust 侧的「空房间」不是 Go 那个内存 `roomStats`，而是存储里那张 `rooms`
+    /// 计数表 —— 它在计数归零之后**仍然留着行**，所以需要有人来收。
+    /// 实现见 `server/src/room_cleanup.rs`（判定逐条照 Go 的 `cleanupEmptyRooms`）。
+    /// ⚠️ `<= 0` 表示**不清理**，且只在 `roomList` 开启时才跑 —— 两条都是 Go 的规矩。
     #[serde(rename = "roomCleanup")]
     pub room_cleanup: i64,
 }
@@ -123,7 +142,7 @@ impl Default for ServerConfig {
             port: 9501,
             prefix: String::new(),
             history: 100,
-            history_file: "history.json".to_owned(),
+            db_path: String::new(),
             storage_dir: "./uploads".to_owned(),
             auth: AuthValue::default(),
             room_auth: RoomAuthConfig::default(),
