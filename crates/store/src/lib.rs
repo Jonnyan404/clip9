@@ -587,6 +587,23 @@ impl Store {
         Ok(out)
     }
 
+    /// 删掉一个房间的**计数行**（`rooms` 表里那一行）。
+    ///
+    /// ⚠️ **只删计数行，不删消息。** 调用方必须先确认「这个房间确实是空的」
+    /// （计数为 0、没有连接）—— 见 `server/src/room_cleanup.rs`。
+    /// 删一个还有消息的房间会让 `/rooms` 少一行，而消息还在库里，
+    /// 两个视图就对不上了（`/rooms` 的房间来源本来就是「计数行 ∪ 有连接的 ∪ 有消息的」，
+    /// 所以消息还在时它**仍然会出现** —— 删那一行等于什么都没省，只是把状态搞乱）。
+    pub fn remove_room(&self, name: &str) -> Result<()> {
+        let txn = self.db.begin_write()?;
+        {
+            let mut rooms = txn.open_table(ROOMS)?;
+            rooms.remove(name)?;
+        }
+        txn.commit()?;
+        Ok(())
+    }
+
     /// 整体统计。
     pub fn stats(&self) -> Result<StoreStats> {
         let txn = self.db.begin_read()?;

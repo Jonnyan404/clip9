@@ -101,6 +101,8 @@ impl AppState {
         });
         // 定时自动化：启用了就起调度器 ticker。
         crate::scheduler::spawn(state.clone());
+        // 房间清理：`roomList` 开着且 `roomCleanup > 0` 才起（判定在那边）。
+        crate::room_cleanup::start(state.clone());
         state
     }
 
