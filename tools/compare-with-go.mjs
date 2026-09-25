@@ -22,11 +22,12 @@
 // 还有一处是**已知的刻意差异**（`automation`，P0 未实现），单独在末尾报告。
 
 import { spawn, spawnSync } from 'node:child_process';
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, writeFileSync } from 'node:fs';
 import http from 'node:http';
-import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+
+import { dispose, makeTempDir } from './lib/tmpdir.mjs';
 
 const RUST_DIR = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const REPO_ROOT = resolve(RUST_DIR, '..');
@@ -37,7 +38,7 @@ const CARGO_BIN = process.env.CARGO_BIN || 'cargo';
 const GO_PORT = 19521;
 const RS_PORT = 19522;
 
-const work = mkdtempSync(join(tmpdir(), 'clip9-cmp-'));
+const work = makeTempDir('clip9-cmp-');
 const goBin = join(work, 'go-clip');
 const goData = join(work, 'go');
 const rsData = join(work, 'rs');
@@ -130,11 +131,9 @@ const cleanup = () => {
       /* 已退出 */
     }
   }
-  try {
-    rmSync(work, { recursive: true, force: true });
-  } catch {
-    /* 忽略 */
-  }
+  // ⚠️ **挪走，不删**：递归删除会撞沙箱的批量删除守卫（弹权限确认框）。
+  // 见 `lib/tmpdir.mjs` 的长注释。
+  dispose(work);
 };
 process.on('exit', cleanup);
 // ⚠️ `process.on('exit')` **不**在 Ctrl-C / SIGTERM 时触发 —— 少了下面这几个处理器，
