@@ -34,6 +34,15 @@ clip9-store = { path = "crates/store" }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 
+# ── 分享 / 会话令牌的签名 ─────────────────────────────────────────────
+# HMAC-SHA256 + base64url。**它是契约的一部分**：Go 侧 `share_token.go` 用的就是这一套，
+# token 的字节形状（`base64url(json claims).base64url(hmac)`）与密钥派生规则都得逐字对上，
+# 否则切换期间 Go 签的链接在 Rust 这边会全部失效。
+# sha2 0.10 / hmac 0.12 都是 RustCrypto 的稳定线，仍在维护（选型纪律见 CONTRIBUTING §1）。
+hmac = "0.12"
+sha2 = "0.10"
+base64 = "0.23"
+
 axum = { version = "0.8", features = ["ws", "macros"] }
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "signal", "time", "sync", "fs", "io-util"] }
 tower = "0.5"

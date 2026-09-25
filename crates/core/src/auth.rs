@@ -6,6 +6,7 @@
 use clip9_protocol::normalize_room_name;
 
 use crate::config::Config;
+use crate::share::ShareKey;
 
 /// 一个房间的鉴权结论。
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -106,13 +107,31 @@ pub fn resolve_file_expire_seconds(config: &Config, room: &str) -> i64 {
 
 /// 这个凭据对这个房间有效吗？
 ///
-/// ⚠️ 这里的判定顺序是「全局密码 → 房间密码」。会话令牌（`/auth/token` 换来的）
-/// 属于 P1，届时插在最前面 —— 但**房间会话令牌不算管理员**：
-/// 它是按房间签发的，拿它当管理员等于把「能进这个房间」放大成「能管所有房间」。
+/// 判定顺序（**顺序本身就是语义**，别重排）：
+/// 1. **会话令牌**（`/auth/token` 换来的）—— 它带着房间与作用域，`scope: "global"` 对所有房间有效；
+/// 2. 全局密码；
+/// 3. 房间密码。
+///
+/// ⚠️ 会话令牌与密码的**区别**在这里体现：会话令牌是签过名的、会过期的、可撤销的（换密码即失效），
+/// 而明文密码永远有效。所以两者都要认 —— 老客户端和脚本传的就是明文。
+///
+/// ⚠️ 但**房间会话令牌不算管理员**：它按房间签发，拿它当管理员等于把「能进这个房间」
+/// 放大成「能管所有房间」。管理员只有两个来源：明文全局密码，或**用全局密码换来的**
+/// `scope: "global"` 会话令牌（管理页不存明文密码，少了这一条，管理页里的「管理员」就不成立）。
 #[must_use]
-pub fn token_matches_room(config: &Config, room: &str, token: &str) -> bool {
+pub fn token_matches_room(
+    config: &Config,
+    share_key: &ShareKey,
+    room: &str,
+    token: &str,
+    now: i64,
+) -> bool {
     if token.is_empty() {
         return false;
+    }
+
+    if share_key.session_matches_room(room, token, now) {
+        return true;
     }
 
     let global_password = config.server.auth.normalize();
@@ -128,13 +147,23 @@ pub fn token_matches_room(config: &Config, room: &str, token: &str) -> bool {
 }
 
 /// 能不能进这个房间。
+///
+/// ⚠️ **全仓库唯一的入口**。`server` 那边不要再包一个 `room_password_ok(...)` 之类的
+/// 第二实现 —— 这个项目已经被「两份实现慢慢漂开」咬过多次（见 `CONTRIBUTING.md` §6）。
+/// 服务端包的那一层（`AppState::can_access_room`）只负责把配置、密钥和当前时间注入进来。
 #[must_use]
-pub fn can_access_room(config: &Config, room: &str, token: &str) -> bool {
+pub fn can_access_room(
+    config: &Config,
+    share_key: &ShareKey,
+    room: &str,
+    token: &str,
+    now: i64,
+) -> bool {
     let requirement = resolve_room_auth(config, room);
     if !requirement.required {
         return true;
     }
-    token_matches_room(config, room, token)
+    token_matches_room(config, share_key, room, token, now)
 }
 
 /// 这个凭据是不是**全局密码**（= 管理员）。
@@ -201,6 +230,21 @@ pub fn resolve_automation_policy(config: &Config, room: &str) -> AutomationPolic
 mod tests {
     use super::*;
     use crate::config::{AuthValue, RoomAuthEntry};
+    use crate::share::{
+        DEFAULT_SHARE_TTL_SECONDS, ROOM_SESSION_TTL_SECONDS, SCOPE_GLOBAL, ShareKey,
+    };
+
+    /// 测试用的固定时刻（钥匙派生出来的会话令牌要有一个确定的「现在」）。
+    const NOW: i64 = 1_700_000_000;
+
+    /// 测试里「能不能进」统一走这个包一层，省得每行都拼密钥和时刻。
+    fn key(config: &Config) -> ShareKey {
+        ShareKey::derive(config, b"test-salt")
+    }
+
+    fn can_enter(config: &Config, room: &str, token: &str) -> bool {
+        can_access_room(config, &key(config), room, token, NOW)
+    }
 
     fn cfg_with(global: AuthValue, entries: &[(&str, RoomAuthEntry)]) -> Config {
         let mut c = Config::default();
@@ -242,8 +286,8 @@ mod tests {
         let r = resolve_room_auth(&c, "work");
         assert!(r.required);
         assert_eq!(r.password, "global");
-        assert!(can_access_room(&c, "work", "global"));
-        assert!(!can_access_room(&c, "work", ""));
+        assert!(can_enter(&c, "work", "global"));
+        assert!(!can_enter(&c, "work", ""));
     }
 
     /// ⚠️ 这条是「全局加密 + 个别房间开放」的全部实现 —— 开放房间**不**回落全局密码。
@@ -252,8 +296,8 @@ mod tests {
         let c = cfg_with(AuthValue::Str("global".into()), &[("public", open())]);
         let r = resolve_room_auth(&c, "public");
         assert!(!r.required, "open 的房间即使有全局密码也不要密码");
-        assert!(can_access_room(&c, "public", ""));
-        assert!(can_access_room(&c, "public", "随便什么"));
+        assert!(can_enter(&c, "public", ""));
+        assert!(can_enter(&c, "public", "随便什么"));
     }
 
     /// ⚠️ 房间密码是**多给一把钥匙**，不是换锁 —— 全局密码对那个房间仍然有效。
@@ -263,9 +307,9 @@ mod tests {
         let r = resolve_room_auth(&c, "work");
         assert!(r.required);
         assert_eq!(r.password, "roompw", "生效的密码是房间自己的");
-        assert!(can_access_room(&c, "work", "roompw"));
-        assert!(can_access_room(&c, "work", "global"), "全局密码仍然能进");
-        assert!(!can_access_room(&c, "work", "nope"));
+        assert!(can_enter(&c, "work", "roompw"));
+        assert!(can_enter(&c, "work", "global"), "全局密码仍然能进");
+        assert!(!can_enter(&c, "work", "nope"));
     }
 
     /// ⚠️ 配置里同时写了 `open` 和 `password` → **密码优先**。
@@ -395,5 +439,76 @@ mod tests {
             resolve_automation_policy(&c, "locked"),
             AutomationPolicy::None
         );
+    }
+
+    /// ⚠️★ 会话令牌必须能进它自己的房间 —— 而且**只**能进它自己的房间。
+    ///
+    /// 这条测试防的是「两张令牌可以互换使用」：`typ`、`room`、`id` 三个字段都得对上，
+    /// 少对任何一个，A 房间的令牌就能读 B 房间的内容，而界面上看不出任何异常。
+    #[test]
+    fn room_session_token_opens_its_room_and_nothing_else() {
+        let c = cfg_with(AuthValue::Str("global".into()), &[("secret", pw("roompw"))]);
+        let key = key(&c);
+        let (token, exp) = key.session_token("secret", ROOM_SESSION_TTL_SECONDS, None, NOW);
+        assert_eq!(exp, NOW + ROOM_SESSION_TTL_SECONDS);
+
+        assert!(can_enter(&c, "secret", &token));
+        assert!(
+            !can_enter(&c, "other", &token),
+            "房间令牌不能开后门到别的房间"
+        );
+        assert!(
+            !can_enter(&c, "default", &token),
+            "房间令牌不能被当成全局令牌用"
+        );
+        // 明文密码依然有效（老客户端/脚本走的就是这条路）。
+        assert!(can_enter(&c, "secret", "roompw"));
+    }
+
+    /// 全局会话令牌对所有房间有效 —— 管理页就是这么用的（它不存明文密码）。
+    #[test]
+    fn global_session_token_opens_every_room() {
+        let c = cfg_with(AuthValue::Str("global".into()), &[("secret", pw("roompw"))]);
+        let key = key(&c);
+        let (token, _) =
+            key.session_token("default", ROOM_SESSION_TTL_SECONDS, Some(SCOPE_GLOBAL), NOW);
+
+        assert!(can_enter(&c, "default", &token));
+        assert!(can_enter(&c, "secret", &token));
+        assert!(can_enter(&c, "从来没有配过的房间", &token));
+    }
+
+    /// 过期的会话令牌一律作废 —— 时间由调用方给，所以这条不需要等一小时。
+    #[test]
+    fn expired_session_token_is_rejected() {
+        let c = cfg_with(AuthValue::Str("global".into()), &[]);
+        let key = key(&c);
+        let (token, exp) = key.session_token("default", 60, Some(SCOPE_GLOBAL), NOW);
+
+        assert!(can_enter(&c, "default", &token));
+        assert!(
+            !can_access_room(&c, &key, "default", &token, exp + 1),
+            "过期之后必须失效（exp 是闭区间：exp+1 才过期）"
+        );
+    }
+
+    /// ⚠️ 别的用途的令牌（内容分享）**不能**当会话令牌用。
+    /// 只读的内容分享令牌如果能进房间，分享就变成了「给别人开了一个房间账号」。
+    #[test]
+    fn content_share_token_is_not_a_session_token() {
+        let c = cfg_with(AuthValue::Str("global".into()), &[]);
+        let key = key(&c);
+        let (claims, _) = key.share_claims(crate::share::NewShare {
+            share_type: crate::share::TYPE_CONTENT,
+            id: "7",
+            room: "default",
+            ttl_seconds: DEFAULT_SHARE_TTL_SECONDS,
+            max_uses: 0,
+            password: "",
+            jti: "jti-1".to_owned(),
+            now: NOW,
+        });
+        let token = key.sign(&claims);
+        assert!(!can_enter(&c, "default", &token));
     }
 }

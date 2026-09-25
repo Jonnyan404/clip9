@@ -14,3 +14,9 @@ serde_json = { workspace = true }
 thiserror = { workspace = true }
 chrono = { workspace = true }
 chrono-tz = { workspace = true }
+# 分享 / 会话令牌的签名（HMAC-SHA256）与 base64url 编码。
+# ⚠️ 这两样是**契约**，不是实现细节：Go 侧 `share_token.go` 用的就是它们 ——
+# 换算法等于让所有已发出的分享链接失效，也让 Go 签发的 token 在这边验不过（迁移期要能互通）。
+hmac = { workspace = true }
+sha2 = { workspace = true }
+base64 = { workspace = true }
