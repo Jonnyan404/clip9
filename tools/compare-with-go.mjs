@@ -184,7 +184,14 @@ function normalize(value, port) {
   if (value && typeof value === 'object') {
     const out = {};
     for (const [k, v] of Object.entries(value)) {
-      if (k === 'timestamp' || k === 'lastActive') out[k] = typeof v === 'number' ? '<ts>' : v;
+      // 时间戳类字段：两个进程不在同一毫秒，逐字比没有意义。
+      //
+      // ⚠️ **`0` 要原样保留** —— 它在这些字段上是「永不过期 / 未设置」，
+      // 和「某个时刻」是**两种不同的语义**。整段抹成 `<ts>` 会把
+      // 「fileExpire: 0 的房间」和「会过期的房间」比成一样，那正好是最该测的一格。
+      if (['timestamp', 'lastActive', 'expire', 'expireTime', 'scheduledAt'].includes(k)) {
+        out[k] = v === 0 ? 0 : typeof v === 'number' ? '<ts>' : v;
+      }
       // 刻意差异，末尾单独报告。
       else if (k === 'automation') out[k] = '<automation>';
       // ⚠️ 数组顺序不可比：Go 那边是 `for room := range map`，本来就随机。
@@ -558,6 +565,29 @@ compareEvents(
 }
 
 
+// `?name=`（设备名）与 `?client=`（客户端 ID）—— ⚠️ 这两个**改了但一直没验过**。
+//
+// 它们会进 `senderDevice.name` / `senderClientID`，前端靠它们显示「谁发的」
+// 和「这条是不是我自己发的」（气泡归属）。走 WS 广播才能看到 ——
+// `/content/<id>?format=json` 那个扁平对象里**不含** senderDevice。
+{
+  const results = {};
+  const body = '带设备名和客户端 ID';
+  // 中文设备名要 URL 编码；顺便测一下解码路径。
+  const q = '?room=ws-sender&name=%E5%AE%A2%E5%8E%85%E7%9A%84%20Mac&client=abc123';
+  for (const [name, port] of [
+    ['Go', GO_PORT],
+    ['Rust', RS_PORT],
+  ]) {
+    const collector = wsCollect(port, '/push?room=ws-sender', { ms: 900 });
+    await sleep(250);
+    await hit(port, 'POST', `/text${q}`, { body });
+    const [r] = await Promise.all([collector]);
+    results[name] = r;
+  }
+  compareEvents('senderDevice.name / senderClientID 都带上了', results.Go, results.Rust);
+}
+
 // ── 文件 ──────────────────────────────────────────────────────────────
 
 console.log('\n=== 文件：分片上传 / 下载 / 删除 ===');
@@ -689,6 +719,70 @@ async function fileFlow(port) {
     console.log(`       Rust: ${rv}`);
   }
 }
+
+// ── 方法不对 ──────────────────────────────────────────────────────────
+
+console.log('\n=== 方法不对：405 也必须恒 JSON ===');
+
+// ⚠️ axum 内置的 405 是**空 body**，而契约里写着「错误响应恒 `{code,error,message}`」。
+// 这组用例就是钉这条 —— 少了它，`GET /text` 会静默变成一个空响应，
+// 而 Apple 快捷指令读不到 `error` 字段、只会走进兜底分支。
+for (const [label, method, path] of [
+  ['GET /text', 'GET', '/text'],
+  ['PUT /rooms', 'PUT', '/rooms'],
+  ['GET /upload/chunk', 'GET', '/upload/chunk'],
+  ['PUT /content/1/column', 'PUT', '/content/1/column'],
+]) {
+  await compare(`405 ${label}`, method, path, {});
+}
+
+// ── 刻意偏离 Go 的地方 ────────────────────────────────────────────────
+//
+// ⚠️ 这一节**故意**和 Go 不一样。Jonny 2026-09-25 拍板：
+// 「revoke 不用考虑老客户端，按最佳实践来」。
+// 所以它不能拿 Go 当基准，只能**直接断言我们自己的行为**。
+console.log('\n=== 刻意偏离 Go（按最佳实践，直接断言我们的行为） ===');
+
+/** 只打一台服务器，直接断言。 */
+async function expectOn(label, port, method, path, check) {
+  const r = await hit(port, method, path, {});
+  if (check(r)) {
+    pass++;
+    console.log(`  ok   ${label}`);
+  } else {
+    fail++;
+    failures.push(`${label}\n  Rust: ${r.status} ${JSON.stringify(r.parsed)}`);
+    console.log(`  FAIL ${label}`);
+    console.log(`       Rust: ${r.status} ${JSON.stringify(r.parsed)}`);
+  }
+}
+
+// 破坏性操作必须是**显式的 POST**，GET 一律 405。
+await expectOn('GET /revoke/<id> → 405', RS_PORT, 'GET', '/revoke/1', (r) => {
+  return r.status === 405 && r.parsed?.code === 'method_not_allowed';
+});
+await expectOn('GET /revoke/all → 405', RS_PORT, 'GET', '/revoke/all?room=ws-bc', (r) => {
+  return r.status === 405;
+});
+
+// 顺手演示一下 Go 的行为 —— **不是在测 Go**，是给读者看「为什么必须改」：
+// Go 那边任何方法都会真的执行撤销，浏览器直接访问 `/revoke/1` 就删掉了 1 号条目。
+// （放在最后跑，免得影响前面那些用例。）
+{
+  const before = await hit(GO_PORT, 'GET', '/content/1?format=json');
+  const goGet = await hit(GO_PORT, 'GET', '/revoke/1');
+  const after = await hit(GO_PORT, 'GET', '/content/1?format=json');
+  console.log(
+    `  ·  Go 的 GET /revoke/1 → ${goGet.status}：删之前 ${before.status}，删之后 ${after.status}` +
+      `（${before.status === 200 && after.status === 404 ? '真的删了' : '没删'}）`
+  );
+}
+
+console.log(
+  '  KNOWN 多标签页：同一设备开两个标签页时，**关掉其中一个不会让设备显示离线**' +
+    '（按连接登记，只有最后一条连接断开才广播 disconnect）。' +
+    'Go 那边按 deviceID 删，关一个标签页就会误报离线 —— 这条偏离是刻意的'
+);
 
 // ── 已知的、刻意的差异 ────────────────────────────────────────────────
 console.log('\n=== 已知差异（刻意，不算失败） ===');

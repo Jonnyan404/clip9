@@ -116,10 +116,12 @@ pub async fn push(
             state,
             socket,
             room,
-            ip,
-            remote,
-            user_agent,
-            device_name,
+            ClientInfo {
+                ip,
+                remote,
+                user_agent,
+                device_name,
+            },
             auth_needed,
         )
     })
@@ -166,22 +168,33 @@ pub(crate) fn sanitize_device_name(raw: &str) -> String {
     chars.into_iter().collect::<String>().trim().to_owned()
 }
 
-#[allow(clippy::too_many_arguments)]
+/// 「谁连上来了」。
+///
+/// ⚠️ 绑成一个类型，而不是散着传四个字符串：`ip` / `remote` / `user_agent` / `device_name`
+/// **全是 `String`**，按位置传太容易搞反，而且**搞反了不报错** —— 只是设备名显示错、
+/// 或者设备 ID 按错的输入算出来。名字比位置可靠。
+struct ClientInfo {
+    /// 客户端 IP（`X-Forwarded-For` → `X-Real-IP` → 对端地址）。
+    ip: String,
+    /// 对端 `addr:port`。设备 ID 的哈希输入之一。
+    remote: String,
+    user_agent: String,
+    /// 客户端用 `?name=` 声明的设备名（已清洗）。
+    device_name: String,
+}
+
 async fn handle_socket(
     state: Arc<AppState>,
     socket: WebSocket,
     room: String,
-    ip: String,
-    remote: String,
-    user_agent: String,
-    device_name: String,
+    client: ClientInfo,
     auth_needed: bool,
 ) {
     let conn_id = state.next_conn_id();
-    let device_id = state.device_id_for(&remote, &user_agent);
-    let meta = parse_device_meta(&user_agent, &device_name, &device_id);
-    state.register_device(&room, &meta);
-    tracing::info!(%ip, %room, device_id, "WS 连上");
+    let device_id = state.device_id_for(&client.remote, &client.user_agent);
+    let meta = parse_device_meta(&client.user_agent, &client.device_name, &device_id);
+    state.register_device(&room, conn_id, &meta);
+    tracing::info!(ip = %client.ip, %room, device_id, "WS 连上");
 
     // ⚠️ 先订阅、再发历史。反过来的话，「订阅之前」发生的那几条会漏 ——
     // 而漏一条 `revoke` 会让客户端一直显示已经删掉的条目。
@@ -192,7 +205,7 @@ async fn handle_socket(
     // ① 房间里已有的设备，每台一条 connect
     for dev in state.devices_in_room_except(&room, &device_id) {
         if send_json(&mut sink, "connect", &dev).await.is_err() {
-            return cleanup(&state, &room, &device_id);
+            return cleanup(&state, &room, conn_id);
         }
     }
 
@@ -211,7 +224,7 @@ async fn handle_socket(
     };
     for entry in state.store.recent_asc(&room, limit).unwrap_or_default() {
         if send_json(&mut sink, "receive", &entry).await.is_err() {
-            return cleanup(&state, &room, &device_id);
+            return cleanup(&state, &room, conn_id);
         }
     }
 
@@ -238,7 +251,7 @@ async fn handle_socket(
         .await
         .is_err()
     {
-        return cleanup(&state, &room, &device_id);
+        return cleanup(&state, &room, conn_id);
     }
 
     let mut ticker = tokio::time::interval(PING_INTERVAL);
@@ -294,17 +307,22 @@ async fn handle_socket(
         }
     }
 
-    cleanup(&state, &room, &device_id);
+    cleanup(&state, &room, conn_id);
 }
 
-/// 断开时的清理：注销设备，并且**只有它本来在**才广播 `disconnect`。
+/// 断开时的清理：注销这条连接，并在**这台设备的最后一条连接**断开时广播 `disconnect`。
 ///
-/// ⚠️ 不判断就广播的话，重复清理会发出多余的 `disconnect`，前端会把还在线的设备标成离线。
-fn cleanup(state: &AppState, room: &str, device_id: &str) {
-    if state.unregister_device(room, device_id) {
-        state.broadcast("disconnect", &json!({ "id": device_id }), room);
+/// ⚠️ 两个判断都不能省：
+/// · 不判「这条连接本来在不在」→ 重复清理会发出多余的 `disconnect`；
+/// · 不判「这台设备还有没有别的连接」→ **关掉一个标签页 = 整台设备显示离线**
+///   （Go 那边就是这样，这里按最佳实践修掉了）。
+fn cleanup(state: &AppState, room: &str, conn_id: u64) {
+    if let Some((meta, still_connected)) = state.unregister_device(room, conn_id) {
+        if !still_connected {
+            state.broadcast("disconnect", &json!({ "id": meta.id }), room);
+        }
+        tracing::info!(room, device_id = %meta.id, still_connected, "WS 断开");
     }
-    tracing::info!(room, device_id, "WS 断开");
 }
 
 async fn send_json(

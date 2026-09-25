@@ -29,7 +29,7 @@ pub mod ws;
 use std::sync::Arc;
 
 use axum::Router;
-use axum::routing::{any, get, post};
+use axum::routing::{get, post};
 use tower_http::cors::CorsLayer;
 
 pub use state::AppState;
@@ -60,35 +60,66 @@ pub use state::AppState;
 pub fn router(state: Arc<AppState>) -> Router {
     let prefix = state.config.server.prefix.clone();
 
+    // ⚠️ 每个限定了方法的端点都挂 `.fallback(...)`：axum 内置的 405 是**空 body**，
+    // 而契约里写着「错误响应恒 `{code,error,message}`」。Go 那边这几个 handler 都显式返回
+    // JSON 405 —— 不挂就是一处**静默的形状差异**。
+    // ⚠️ 文案按方法分三种，别合并（Go 就是这么分的，见 handlers.rs）。
+    let only_get = handlers::only_get;
+    let only_post = handlers::only_post;
+    let mna = handlers::method_not_allowed;
+
     let app = Router::new()
         .route("/server", get(handlers::server))
         // ⚠️ `/healthz` 是**这个实现自己加的**便利端点，契约里没有它（Go 那边也没有）。
         // 加它是因为验收脚本需要一个「活着吗」的探活口，而 `/server` 会做鉴权计算、
         // 不适合当探活。**别把它写进 `docs/api.md`** —— 它不是契约的一部分。
         .route("/healthz", get(|| async { "ok" }))
-        .route("/text", post(handlers::text))
+        .route("/text", post(handlers::text).fallback(only_post))
         // ⚠️ WS 用 `get` 注册是刻意的：握手是一个 GET + `Upgrade` 头。
         .route("/push", get(ws::push))
         .route("/content/latest", get(handlers::latest_content))
         .route("/content/latest.json", get(handlers::latest_content))
-        .route("/content/{id}", get(handlers::content))
-        .route("/content/{id}/column", post(handlers::content_column))
-        .route("/rooms", get(handlers::rooms))
+        // ⚠️ Go 的 `handleContent` **没有方法检查** —— `POST /content/1` 会照 GET 的逻辑跑。
+        // 这里收紧成只认 GET（同样的理由：读接口不该被非读方法触发）。
+        .route("/content/{id}", get(handlers::content).fallback(only_get))
+        .route(
+            "/content/{id}/column",
+            post(handlers::content_column).fallback(only_post),
+        )
+        .route("/rooms", get(handlers::rooms).fallback(only_get))
         // ── 文件 ──
         // ⚠️ `/upload/chunk`（初始化，body 是文件名）和 `/upload/chunk/{uuid}`（追加分片）
         // 是**两条不同的路由** —— Go 那边靠「路径后缀 + Content-Type 全等」在一个 handler 里
         // 分叉，这里交给路由表分，更清楚。
-        .route("/upload", post(files::upload))
-        .route("/upload/chunk", post(files::upload))
-        .route("/upload/chunk/{uuid}", post(files::chunk))
-        .route("/upload/finish/{uuid}", post(files::finish))
+        .route("/upload", post(files::upload).fallback(only_post))
+        .route("/upload/chunk", post(files::upload).fallback(only_post))
+        .route(
+            "/upload/chunk/{uuid}",
+            post(files::chunk).fallback(only_post),
+        )
+        .route(
+            "/upload/finish/{uuid}",
+            post(files::finish).fallback(only_post),
+        )
         // ⚠️ 带不带文件名都要能下 —— Go 只用 uuid，文件名那段是给人看的。
-        .route("/file/{uuid}", get(files::file).delete(files::file))
-        .route("/file/{uuid}/{name}", get(files::file).delete(files::file))
+        // `/file/` 的 405 用的是通用文案（Go 的 `default` 分支）。
+        .route(
+            "/file/{uuid}",
+            get(files::file).delete(files::file).fallback(mna),
+        )
+        .route(
+            "/file/{uuid}/{name}",
+            get(files::file).delete(files::file).fallback(mna),
+        )
         // ⚠️ `/revoke/all` 必须能和 `/revoke/{id}` 并存：axum 里静态段优先，
         // 所以 `all` 不会被当成一个 id。Go 那边是靠注册顺序决定的。
-        .route("/revoke/all", any(handlers::clear_all))
-        .route("/revoke/{id}", any(handlers::revoke))
+        // ⚠️ `/revoke/*` **只认 POST**。
+        //
+        // Go 那边**没有方法检查** —— 任何方法（含 GET）都会真的执行撤销，于是浏览器
+        // 直接访问 `/revoke/5` 就会删掉 5 号条目。Jonny 2026-09-25 拍板：**不用考虑老客户端**，
+        // 按最佳实践来（破坏性操作必须是显式的 POST）。
+        .route("/revoke/all", post(handlers::clear_all).fallback(only_post))
+        .route("/revoke/{id}", post(handlers::revoke).fallback(only_post))
         // Go 的 CORS 是逐个端点手写的（`corsMiddleware` / `authMiddleware`），
         // 效果等价于「任意来源 + 常见方法/头」。这里用一层统一的代替 ——
         // 差别只是几个 Go 没挂 CORS 的端点上多几个头，没有客户端依赖「少了那些头」。

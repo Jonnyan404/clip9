@@ -147,7 +147,15 @@ pub async fn upload(
     // 所以 `text/plain; charset=utf-8` 不算）。这里照抄：不等就走 multipart。
     let boundary = multer::parse_boundary(content_type).ok();
 
-    if content_type == "text/plain" && is_chunk_init_path(&headers) {
+    // ⚠️ 判「分片初始化」只看 `Content-Type == "text/plain"`（**全等** ——
+    // `text/plain; charset=utf-8` 不算，会落到 multipart 解析然后 400）。
+    // 路径那一半由**路由表**保证：`/upload` 和 `/upload/chunk` 都指向这个 handler，
+    // 只有后者是初始化。
+    //
+    // Go 那边靠「路径后缀 + Content-Type 全等」在一个 handler 里分叉；这里路径交给 axum 分，
+    // 判定条件就只剩 Content-Type 一半 —— 所以原来那个 `is_chunk_init_path`（恒 true）
+    // 是**死代码**，删了。
+    if content_type == "text/plain" {
         return init_chunk_upload(&state, &room, &body).await;
     }
 
@@ -229,15 +237,6 @@ async fn init_chunk_upload(state: &Arc<AppState>, room: &str, body: &Bytes) -> R
     }
 
     json_response(&json!({ "result": { "uuid": uuid } }))
-}
-
-/// 路径是不是 `/upload/chunk`（用来区分初始化和整份上传）。
-///
-/// ⚠️ 这里只能从 `Content-Type` + 路由判断：axum 已经按路由分派过了，
-/// 所以 `/upload/chunk` 这条路由本身就意味着是初始化请求。保留这个函数是为了
-/// **把 Go 的判定条件写下来**，免得以后有人以为「只要路径对就行」。
-fn is_chunk_init_path(_headers: &HeaderMap) -> bool {
-    true
 }
 
 // ── POST /upload/chunk/<uuid> ─────────────────────────────────────────

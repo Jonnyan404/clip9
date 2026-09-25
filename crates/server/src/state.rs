@@ -1,6 +1,6 @@
 //! 服务端共享状态。
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::hash::{BuildHasher, Hasher};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -41,11 +41,16 @@ pub struct AppState {
     pub config: Config,
     /// 消息存储。redb 自己保证并发（`begin_write` 串行化写事务），**不要在外面再包一层锁**。
     pub store: Store,
-    /// 房间 → (设备 ID → 设备元信息)。
+    /// 房间 → (连接号 → 设备元信息)。
+    ///
+    /// ⚠️★ 键是**连接号**，不是设备 ID —— 这是有意的（比 Go 更对）：
+    /// 按设备 ID 存的话，「关掉一个标签页」会被误判成「设备离线」。
+    /// Go 那边就是这样：`cleanupWebSocketConnection` 直接按 deviceID 删，
+    /// 于是另一个还开着的标签页收不到后续推送，别的设备也以为它下线了。
+    /// 按连接存之后，**只有这台设备的最后一条连接断开才广播 `disconnect`**。
     ///
     /// ⚠️ 它是**内存态**，重启即空 —— 这是对的：「当前连接」本来就只在此刻有意义。
-    /// 一把锁管两层，是因为这两个映射必须一起改（拆成两把锁迟早会不一致）。
-    devices: Mutex<HashMap<String, HashMap<String, DeviceMeta>>>,
+    devices: Mutex<HashMap<String, BTreeMap<u64, DeviceMeta>>>,
     /// 广播出口。每个 WS 连接订阅它，按房间过滤。
     broadcast_tx: broadcast::Sender<Broadcast>,
     /// 连接序号。只用来实现「广播给除我之外的人」。
@@ -99,51 +104,67 @@ impl AppState {
         format!("{}", h.finish())
     }
 
-    /// 登记一台设备。同一个设备 ID 重复登记会覆盖（重连）。
-    pub fn register_device(&self, room: &str, meta: &DeviceMeta) {
+    /// 登记一条连接。
+    ///
+    /// ⚠️ 同一个设备开多个标签页 = **多条连接**，都会登记 —— 这是有意的，
+    /// 这样「关掉一个标签页」不会让设备看起来离线（见 `devices` 字段的注释）。
+    pub fn register_device(&self, room: &str, conn_id: u64, meta: &DeviceMeta) {
         self.devices
             .lock()
             .entry(room.to_owned())
             .or_default()
-            .insert(meta.id.clone(), meta.clone());
+            .insert(conn_id, meta.clone());
     }
 
-    /// 注销一台设备。返回「它本来在不在」—— 不在就不该广播 `disconnect`。
-    pub fn unregister_device(&self, room: &str, device_id: &str) -> bool {
+    /// 注销一条连接。返回 `(这台设备的信息, 它还有没有别的连接)`。
+    ///
+    /// ⚠️ **只有 `still_connected == false` 时才该广播 `disconnect`** ——
+    /// 否则关掉一个标签页就会让别的设备以为整台机器下线了。
+    #[must_use]
+    pub fn unregister_device(&self, room: &str, conn_id: u64) -> Option<(DeviceMeta, bool)> {
         let mut devices = self.devices.lock();
-        let Some(in_room) = devices.get_mut(room) else {
-            return false;
-        };
-        let existed = in_room.remove(device_id).is_some();
+        let in_room = devices.get_mut(room)?;
+        let meta = in_room.remove(&conn_id)?;
+        let still_connected = in_room.values().any(|d| d.id == meta.id);
         if in_room.is_empty() {
             devices.remove(room);
         }
-        existed
+        Some((meta, still_connected))
     }
 
-    /// 某个房间里**除某台设备之外**的设备。
+    /// 某个房间里**除我这台设备之外**的设备，按设备 ID 去重。
     ///
-    /// ⚠️ Go 的 `getDeviceIDsInRoomLocked` 是**按连接**筛的，不是按设备 ID 去重 ——
-    /// 同一个设备开两个标签页时，按 ID 去重会让第二个标签页看不到第一个的 `connect`。
-    /// 这里按设备 ID 存，所以同一设备多标签页会互相覆盖（可接受的简化，见 HANDOVER）。
+    /// ⚠️ 去重是按**设备 ID**：同一个设备开两个标签页时，第二个标签页不该在
+    /// 设备列表里看到自己（连接号不同、设备 ID 相同）。
     #[must_use]
     pub fn devices_in_room_except(&self, room: &str, exclude_device_id: &str) -> Vec<DeviceMeta> {
-        self.devices
-            .lock()
-            .get(room)
-            .map(|m| {
-                m.values()
-                    .filter(|d| d.id != exclude_device_id)
-                    .cloned()
-                    .collect()
-            })
-            .unwrap_or_default()
+        let devices = self.devices.lock();
+        let Some(in_room) = devices.get(room) else {
+            return Vec::new();
+        };
+        let mut seen = HashSet::new();
+        in_room
+            .values()
+            .filter(|d| d.id != exclude_device_id && seen.insert(d.id.clone()))
+            .cloned()
+            .collect()
     }
 
-    /// 某个房间当前连了几台设备。
+    /// 某个房间当前有几台**设备**。
+    ///
+    /// ⚠️ 数的是**设备**不是连接：同一个设备开两个标签页只算一台
+    /// （`/rooms` 的 `deviceCount` 是给用户看的「有几台设备」）。
     #[must_use]
     pub fn device_count(&self, room: &str) -> usize {
-        self.devices.lock().get(room).map_or(0, HashMap::len)
+        let devices = self.devices.lock();
+        let Some(in_room) = devices.get(room) else {
+            return 0;
+        };
+        in_room
+            .values()
+            .map(|d| d.id.as_str())
+            .collect::<HashSet<_>>()
+            .len()
     }
 
     /// 当前**有设备连着**的房间名。
@@ -197,10 +218,14 @@ impl AppState {
 
 /// 当前 Unix 秒。
 ///
-/// ⚠️ 全项目**只从这一个地方取当前时间** —— Go 那边栽过一次：
-/// 注入了固定的 `Now` 之后，一半地方用了、一半地方还在 `time.Now()`，
-/// 于是「试算」和「实发」会不一致，测试还会每天过午夜红一次。
-/// 测试要控制时间时，从这里注入，别去各个调用点改。
+/// ⚠️ 全项目**只从这一个地方取当前时间**。理由不是洁癖，是踩过：
+/// Go 那边注入了固定的 `Now` 之后，一半地方用了、一半地方还在 `time.Now()`，
+/// 于是「试算」和「实发」会不一致，测试还会**每天过午夜红一次**。
+///
+/// ⚠️ 现在它是**自由函数**，所以「注入」目前只等于「只有一处调用点、改起来只有一处」——
+/// **不是**真的可注入。真需要让测试控制时间时（比如测定时任务的补发窗口），
+/// 把它挪到 `AppState` 上做成 `clock: Box<dyn Fn() -> i64>`；
+/// **别去各个调用点加参数**，那正是上面那个坑的成因。
 #[must_use]
 pub fn now_secs() -> i64 {
     SystemTime::now()

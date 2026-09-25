@@ -353,6 +353,45 @@ pub async fn server(
     }))
 }
 
+// ── 方法不对时的统一响应 ──────────────────────────────────────────────
+//
+// ⚠️ 每个**限定了方法**的端点都要把它挂成 `MethodRouter::fallback`。
+// 原因是 axum 内置的 405 是**空 body**，而契约里写着「错误响应恒 `{code,error,message}`」——
+// Apple 快捷指令读不到 `error` 字段就只会走进兜底分支。
+//
+// ⚠️ 文案**按方法分三种**（Go 就是这么分的，别合并成一个）：
+// 「仅允许 GET 请求」/「仅允许 POST 请求」/「方法不允许」（`/file/` 那条的 default 分支）。
+
+/// 405：这个端点只允许 GET。
+pub async fn only_get() -> Response {
+    write_error(
+        StatusCode::METHOD_NOT_ALLOWED,
+        codes::METHOD_NOT_ALLOWED,
+        "Only GET is allowed",
+        "仅允许 GET 请求",
+    )
+}
+
+/// 405：这个端点只允许 POST。
+pub async fn only_post() -> Response {
+    write_error(
+        StatusCode::METHOD_NOT_ALLOWED,
+        codes::METHOD_NOT_ALLOWED,
+        "Only POST is allowed",
+        "仅允许 POST 请求",
+    )
+}
+
+/// 405：没说限定哪些方法（`/file/` 那条走的是 Go 的 `default` 分支）。
+pub async fn method_not_allowed() -> Response {
+    write_error(
+        StatusCode::METHOD_NOT_ALLOWED,
+        codes::METHOD_NOT_ALLOWED,
+        "Method not allowed",
+        "方法不允许",
+    )
+}
+
 // ── POST /text ────────────────────────────────────────────────────────
 
 pub async fn text(

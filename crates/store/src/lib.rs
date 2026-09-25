@@ -562,14 +562,32 @@ impl Store {
         Ok(removed)
     }
 
-    /// 全库整理：`total` 与 `max_bytes`。一次最多删 [`TRIM_BATCH`] 条，返回删掉的条数。
+    /// 全库整理：`total` 与 `max_bytes`。返回删掉的条数。
     ///
-    /// ⚠️ **必须在后台低频跑**（比如每小时），不要在写入路径上调 ——
-    /// 它要扫全表，且会长时间占着写事务。返回 `0` 表示已经不再超限，调用方可以停。
+    /// ⚠️ **必须在后台低频跑**（比如每小时），不要在写入路径上调 —— 它要扫全表。
+    ///
+    /// 内部按批（[`TRIM_BATCH`]）循环到不再超限，**调用方一次调用就够**。
+    /// （以前要求调用方自己写 `loop { if trim() == 0 { break } }` —— 那是个容易漏的接口，
+    /// 漏了的表现是「限额没生效」而**没有任何报错**。）
     ///
     /// ⚠️ **丢最旧的是明确选择，不是默认行为**：超限时静默丢数据是自托管场景里最讨厌的
     /// 一类 bug。要「拒绝写入」而不是「丢旧的」，得在 `insert` 那侧拦，见 ARCHITECTURE §3.3。
     pub fn trim_global(&self) -> Result<usize> {
+        // 上限是防呆：真出问题时别在这儿转一辈子。
+        const MAX_ROUNDS: usize = 20;
+        let mut total_removed = 0;
+        for _ in 0..MAX_ROUNDS {
+            let removed = self.trim_global_once()?;
+            if removed == 0 {
+                break;
+            }
+            total_removed += removed;
+        }
+        Ok(total_removed)
+    }
+
+    /// 单批裁剪：最多删 [`TRIM_BATCH`] 条，返回这一批删了几条（`0` = 已经不再超限）。
+    fn trim_global_once(&self) -> Result<usize> {
         let stats = self.stats()?;
         let over_count = self
             .limits
