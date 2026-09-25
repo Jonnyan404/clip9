@@ -45,9 +45,23 @@ mkdirSync(goData);
 mkdirSync(rsData);
 
 // 两边跑**同一份配置**，否则比出来的是配置差异而不是实现差异。
-// `roomAuth.locked` 是给 WS 鉴权那组用例用的（一个要密码的房间）。
+//
+// `roomAuth` 这几个房间是给下面几组用例用的：
+// · `locked`        —— WS 鉴权（要密码）
+// · `never-expire`  —— `fileExpire: 0` = **永不过期**
+// · `negative`      —— `fileExpire: -5` = 配置写错了，**回退全局** `file.expire`
+// · `short`         —— `fileExpire: 1` = 1 秒后过期
 const config = JSON.stringify({
-  server: { port: GO_PORT, roomList: true, roomAuth: { locked: 'pw' } },
+  server: {
+    port: GO_PORT,
+    roomList: true,
+    roomAuth: {
+      locked: 'pw',
+      'never-expire': { open: true, fileExpire: 0 },
+      negative: { open: true, fileExpire: -5 },
+      short: { open: true, fileExpire: 1 },
+    },
+  },
 });
 writeFileSync(join(goData, 'config.json'), config);
 writeFileSync(join(rsData, 'config.json'), config);
@@ -719,6 +733,70 @@ async function fileFlow(port) {
   }
 }
 
+// ── 文件过期（fileExpire 的三档） ─────────────────────────────────────
+
+console.log('\n=== 文件过期：fileExpire 的三档 ===');
+
+// ⚠️ 这三档原来**只有 core 的单测**，没有端到端用例 —— 而它是「配错了会丢文件」的地方：
+//   `0`   = **永不过期**（不是「立刻过期」！把 0 当成立刻过期会把文件全清光）
+//   `>0`  = 秒数
+//   `<0`  = 配置写错了，**回退全局** `file.expire`
+{
+  const rooms = [
+    ['never-expire', (e) => e === 0, 'fileExpire:0 → expire 必须是 0'],
+    ['negative', (e) => e > 0, 'fileExpire:-5 → 回退全局（>0）'],
+  ];
+
+  for (const [room, ok, label] of rooms) {
+    const [g, r] = await Promise.all([
+      hitForm(GO_PORT, `/upload?room=${room}`, 'x.txt', 'x'),
+      hitForm(RS_PORT, `/upload?room=${room}`, 'x.txt', 'x'),
+    ]);
+    const [gc, rc] = await Promise.all([
+      hit(GO_PORT, 'GET', `/content/latest?room=${room}&format=json`),
+      hit(RS_PORT, 'GET', `/content/latest?room=${room}&format=json`),
+    ]);
+    const ge = gc.parsed?.expire;
+    const re = rc.parsed?.expire;
+    if (g.status === 200 && r.status === 200 && ok(ge) && ok(re) && ge === re) {
+      pass++;
+      console.log(`  ok   ${label}（expire=${ge}）`);
+    } else {
+      fail++;
+      failures.push(`${label}\n  Go  expire=${ge}  upload=${g.status}\n  Rust expire=${re}  upload=${r.status}`);
+      console.log(`  FAIL ${label}`);
+      console.log(`       Go  expire=${ge}  Rust expire=${re}`);
+    }
+  }
+
+  // `fileExpire: 1` → 1 秒后过期。等一下再下，两边都该 404 `file_expired`。
+  const [, ] = await Promise.all([
+    hitForm(GO_PORT, '/upload?room=short', 'gone.txt', 'gone'),
+    hitForm(RS_PORT, '/upload?room=short', 'gone.txt', 'gone'),
+  ]);
+  const [gu, ru] = await Promise.all([
+    hit(GO_PORT, 'GET', '/content/latest?room=short&format=json'),
+    hit(RS_PORT, 'GET', '/content/latest?room=short&format=json'),
+  ]);
+  await sleep(2200);
+  const [gd, rd] = await Promise.all([
+    hit(GO_PORT, 'GET', `/file/${gu.parsed?.uuid}/gone.txt`),
+    hit(RS_PORT, 'GET', `/file/${ru.parsed?.uuid}/gone.txt`),
+  ]);
+  if (gd.status === 404 && rd.status === 404 && gd.parsed?.code === rd.parsed?.code) {
+    pass++;
+    console.log(`  ok   过期后下载 → 404 ${gd.parsed?.code}（两边一致）`);
+  } else {
+    fail++;
+    failures.push(
+      `过期后下载\n  Go=${gd.status} ${JSON.stringify(gd.parsed)}\n  Rust=${rd.status} ${JSON.stringify(rd.parsed)}`
+    );
+    console.log('  FAIL 过期后下载');
+    console.log(`       Go=${gd.status} ${JSON.stringify(gd.parsed)}`);
+    console.log(`       Rust=${rd.status} ${JSON.stringify(rd.parsed)}`);
+  }
+}
+
 // ── 方法不对 ──────────────────────────────────────────────────────────
 
 console.log('\n=== 方法不对：405 也必须恒 JSON ===');
@@ -771,7 +849,9 @@ await expectOn(
   'GET /content/latest 只带 Accept → 也是扁平对象（不再是 PostEvent 信封）',
   RS_PORT,
   'GET',
-  '/content/latest',
+  // ⚠️ 必须**指定房间**：不指定就是「跨房间取全局最新」，而上面刚传的那个
+  // `fileExpire: 1` 的文件已经过期了 → 会拿到 404，测的东西就变了。
+  '/content/latest?room=never-expire',
   (r) => r.status === 200 && typeof r.parsed?.type === 'string' && !('event' in r.parsed),
   { headers: { accept: 'application/json' } }
 );
