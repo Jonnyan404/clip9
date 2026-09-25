@@ -59,6 +59,16 @@ pub struct Config {
 #[serde(default)]
 pub struct AutomationConfig {
     /// 总开关。关掉时 `/tasks` 回 404、能力声明固定 `{"enabled": false}`。
+    ///
+    /// ⚠️★ **默认 `true`**，与 Go 的 `defaultConfig()` 一致。这不是随手定的：
+    /// 「默认可用」**不等于**「默认放开」—— 能不能给**某个房间**装任务由
+    /// `roomAuth[x].automation` 决定，公开房间默认是 `none`
+    /// （见 `auth::resolve_automation_policy`）。所以默认开着**不会让任何房间凭空多出
+    /// 自动化能力**，只是让「已经配好的房间」在升级后仍然能用。
+    ///
+    /// ⚠️ 这条曾经写成 `false`（手写 `Default` 时没对 Go，也没有任何论证），
+    /// 后果是**同一份 `config.json` 在 Go 上开着、在 Rust 上关着** —— 从 Go 切过来的
+    /// 用户会静默丢掉这个功能。2026-09-25 由双跑比对发现，同日翻正。
     pub enabled: bool,
     #[serde(rename = "tickSeconds")]
     pub tick_seconds: i64,
@@ -71,7 +81,8 @@ pub struct AutomationConfig {
 impl Default for AutomationConfig {
     fn default() -> Self {
         Self {
-            enabled: false,
+            // ⚠️ 见字段注释：与 Go 的 `defaultConfig()` 一致。
+            enabled: true,
             tick_seconds: 30,
             grace_seconds: 600,
             default_tz: "Asia/Shanghai".to_owned(),
@@ -381,5 +392,30 @@ mod tests {
         let bad: Result<Config, _> =
             serde_json::from_str(r#"{"server":{"roomAuth":{"weird":["a","b"]}}}"#);
         assert!(bad.is_err(), "数组不是合法的 roomAuth 值");
+    }
+
+    /// ⚠️★ `automation.enabled` 的默认值必须与 Go 的 `defaultConfig()` 一致（`true`）。
+    ///
+    /// 这条防的是「**同一份 `config.json` 在两个实现上行为不同**」：写成 `false` 的话，
+    /// 没配 `automation` 块的部署在 Rust 上会静默关掉定时自动化 —— `/tasks` 回 404、
+    /// `/server` 报 `{"enabled": false}`、SPA 的工具条不显示入口。
+    /// 2026-09-25 就是这条偏离（当时是 `false`，手写 `Default` 时没对 Go）由双跑比对抓出来的。
+    ///
+    /// ⚠️ 顺带钉住另一件事：**从 JSON 解析**（走 `#[serde(default)]`）与
+    /// **直接构造**（走 `Default`）必须给同一套值 —— 两条路分叉是这类默认值最容易出的错。
+    #[test]
+    fn automation_defaults_match_go() {
+        let cfg: Config =
+            serde_json::from_str(r#"{"server":{"port":9501}}"#).expect("最小配置要能解析");
+        assert!(
+            cfg.automation.enabled,
+            "automation.enabled 默认必须是 true —— 与 Go 的 defaultConfig() 一致"
+        );
+        assert_eq!(cfg.automation.tick_seconds, 30);
+        assert_eq!(cfg.automation.grace_seconds, 600);
+        assert_eq!(cfg.automation.default_tz, "Asia/Shanghai");
+
+        let direct = Config::default();
+        assert_eq!(direct.automation, cfg.automation, "两条默认值路径不能分叉");
     }
 }

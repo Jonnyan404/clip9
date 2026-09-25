@@ -79,12 +79,19 @@ fn daily_task(template: &str) -> Value {
 async fn automation_disabled_returns_404() {
     let dir = tempfile::tempdir().expect("建临时目录");
     let store = Store::open(dir.path().join("clip9.redb")).expect("打开 store");
-    let config = Config::default(); // automation.enabled = false
+    // ⚠️ 必须**显式**关掉：`Config::default()` 的 `automation.enabled` 是 `true`
+    // （与 Go 的 `defaultConfig()` 一致，见 `crates/core/src/config.rs` 的字段注释）。
+    let mut config = Config::default();
+    config.automation.enabled = false;
     let state = AppState::new(config, store, None);
     let router = router(state);
 
     let (status, _) = call(&router, "GET", "/tasks?room=default", None, None).await;
     assert_eq!(status, StatusCode::NOT_FOUND, "未启用时 /tasks 应 404");
+
+    // `/server` 的能力声明也要跟着关 —— 前端就是靠它决定显不显示入口的。
+    let (_, srv) = call(&router, "GET", "/server", None, None).await;
+    assert_eq!(srv["automation"], json!({ "enabled": false }));
 }
 
 #[tokio::test]
