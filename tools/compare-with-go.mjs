@@ -203,7 +203,20 @@ function normalize(value, port) {
       // ⚠️ **`0` 要原样保留** —— 它在这些字段上是「永不过期 / 未设置」，
       // 和「某个时刻」是**两种不同的语义**。整段抹成 `<ts>` 会把
       // 「fileExpire: 0 的房间」和「会过期的房间」比成一样，那正好是最该测的一格。
-      if (['timestamp', 'lastActive', 'expire', 'expireTime', 'scheduledAt'].includes(k)) {
+      if (
+        [
+          'timestamp',
+          'lastActive',
+          'expire',
+          'expireTime',
+          'scheduledAt',
+          // ⚠️ 分享/会话令牌里**所有**的时刻：两个进程签发的那一秒就未必相同，
+          // 而 `expiresAt` 是「签发时刻 + TTL」，比出来没意义。
+          'expiresAt',
+          'previewExpiresAt',
+          'createdAt',
+        ].includes(k)
+      ) {
         out[k] = v === 0 ? 0 : typeof v === 'number' ? '<ts>' : v;
       }
       // 刻意差异，末尾单独报告。
@@ -251,20 +264,35 @@ async function hitForm(port, path, filename, content) {
   return { status: res.status, text, parsed };
 }
 
-async function compare(label, method, path, opts = {}) {
-  const [g, r] = await Promise.all([
-    hit(GO_PORT, method, path, opts),
-    hit(RS_PORT, method, path, opts),
-  ]);
+/** 把指定字段抹成 `<masked>`。
+ *
+ * ⚠️ 只用于**本来就不可比**的值（分享令牌里的随机 `jti` → 整个 token 串），
+ * 别的字段一律不抹 —— 抹多了就变成「什么都能过」。 */
+function applyMask(value, mask) {
+  if (mask.length === 0) return value;
+  if (Array.isArray(value)) return value.map((v) => applyMask(v, mask));
+  if (value && typeof value === 'object') {
+    const out = {};
+    for (const [k, v] of Object.entries(value)) {
+      out[k] = mask.includes(k) ? '<masked>' : applyMask(v, mask);
+    }
+    return out;
+  }
+  return value;
+}
 
+/** 比对两个已经取回来的响应。`mask` 见 [`applyMask`]。 */
+function judge(label, g, r, mask = []) {
   const problems = [];
   if (g.status !== r.status) problems.push(`状态码 Go=${g.status} Rust=${r.status}`);
   if (g.parsed !== undefined || r.parsed !== undefined) {
-    const gn = canonical(normalize(g.parsed, GO_PORT));
-    const rn = canonical(normalize(r.parsed, RS_PORT));
+    const gn = canonical(applyMask(normalize(g.parsed, GO_PORT), mask));
+    const rn = canonical(applyMask(normalize(r.parsed, RS_PORT), mask));
     if (gn !== rn) problems.push(`JSON 不同\n    Go  : ${gn}\n    Rust: ${rn}`);
   } else if (g.text !== r.text) {
-    problems.push(`文本不同\n    Go  : ${JSON.stringify(g.text)}\n    Rust: ${JSON.stringify(r.text)}`);
+    problems.push(
+      `文本不同\n    Go  : ${JSON.stringify(g.text)}\n    Rust: ${JSON.stringify(r.text)}`
+    );
   }
 
   if (problems.length === 0) {
@@ -276,6 +304,20 @@ async function compare(label, method, path, opts = {}) {
     console.log(`  FAIL ${label}`);
     for (const p of problems) console.log(`       ${p}`);
   }
+}
+
+async function compare(label, method, path, opts = {}, mask = []) {
+  const [g, r] = await Promise.all([
+    hit(GO_PORT, method, path, opts),
+    hit(RS_PORT, method, path, opts),
+  ]);
+  judge(label, g, r, mask);
+}
+
+/** 两边的请求**构造方式不同**时用它（比如各自先换一张令牌，再拿它去续期）。 */
+async function compareVia(label, fn, mask = []) {
+  const [g, r] = await Promise.all([fn(GO_PORT), fn(RS_PORT)]);
+  judge(label, g, r, mask);
 }
 
 await waitReady(GO_PORT, goChild);
@@ -827,6 +869,167 @@ for (const [label, method, path] of [
   await compare(`405 ${label}`, method, path, {});
 }
 
+// ── P1：会话令牌与分享 ────────────────────────────────────────────────
+//
+// 这一节验的不只是「形状对不对」，还有一条更强的性质：**两个实现互认对方的令牌**。
+// 那条是切换期能不能无缝的关键 —— 配置相同 → 派生出的签名密钥相同 → Go 签的链接
+// 在 Rust 上仍然能开，反之亦然。（静态那一半由 cases/share/tokens.json 钉着，
+// 这里是活的两个真实进程。）
+const jsonPost = (body) => ({
+  body: JSON.stringify(body),
+  headers: { 'content-type': 'application/json' },
+});
+// 令牌里的 jti 是随机的 → 整个 token 串、以及内嵌它的三个地址都不可比。
+const TOKEN_MASK = ['token', 'jti', 'previewToken', 'url', 'pageUrl', 'rawUrl'];
+
+console.log('\n=== 会话令牌 ===');
+await compare('POST /auth/token 空密码', 'POST', '/auth/token?room=locked', jsonPost({ password: '' }));
+await compare('POST /auth/token 密码不对', 'POST', '/auth/token?room=locked', jsonPost({ password: 'nope' }));
+await compare('POST /auth/token 空 body', 'POST', '/auth/token?room=locked', {});
+// ⚠️ 开放房间也不能拿**任意**密码换令牌（`canAccessRoom` 对开放房间恒 true，
+// 拿它签发就是个后门）。这条两边都该是 `wrong_password`。
+await compare('POST /auth/token 开放房间不认任意密码', 'POST', '/auth/token', jsonPost({ password: 'whatever' }));
+await compare('POST /auth/token 房间密码', 'POST', '/auth/token?room=locked', jsonPost({ password: 'pw' }), ['token']);
+await compare('POST /auth/token 未知字段', 'POST', '/auth/token?room=locked', jsonPost({ password: 'pw', pwd: 'x' }));
+await compare('POST /auth/token/refresh 无凭据', 'POST', '/auth/token/refresh?room=locked', {});
+// 令牌各是各的，所以两边各自先换一张再续期 —— 比的是**响应形状**。
+await compareVia(
+  'POST /auth/token/refresh 保留 scope',
+  async (port) => {
+    const issued = await hit(port, 'POST', '/auth/token?room=locked', jsonPost({ password: 'pw' }));
+    return hit(port, 'POST', '/auth/token/refresh?room=locked', {
+      headers: { authorization: `Bearer ${issued.parsed.token}` },
+    });
+  },
+  ['token']
+);
+await compareVia(
+  'POST /auth/token/refresh 房间不匹配',
+  async (port) => {
+    const issued = await hit(port, 'POST', '/auth/token?room=locked', jsonPost({ password: 'pw' }));
+    return hit(port, 'POST', '/auth/token/refresh?room=default', {
+      headers: { authorization: `Bearer ${issued.parsed.token}` },
+    });
+  }
+);
+// ⚠️★ 这条是 2026-09-25 补的**回归守卫**：Rust 的 `POST /text` 一路没有房间闸门，
+// 于是**谁都能往带密码的房间里发消息**。之前的验收脚本用的恰好是正确凭据，
+// 双跑比对也没这条 —— 两个验证都恰好绕开了它（「假绿」的教科书案例）。
+await compare('POST /text?room=locked 不带凭据（曾漏掉闸门）', 'POST', '/text?room=locked', {
+  body: '没凭据就不该发得出去',
+});
+await compare('POST /text?room=locked 凭据不对', 'POST', '/text?room=locked&auth=错', {
+  body: '密码错了也不该发得出去',
+});
+
+console.log('\n=== 分享 ===');
+// 各自在被保护的房间里发一条被分享的内容（id 两边应当相同，但下面用实际值）。
+const sharedId = {};
+for (const [name, port] of [
+  ['Go', GO_PORT],
+  ['Rust', RS_PORT],
+]) {
+  const sent = await hit(port, 'POST', '/text?room=locked&auth=pw', { body: '被分享的正文' });
+  sharedId[name] = sent.parsed?.id;
+}
+await compare('POST /share 缺 type', 'POST', '/share?room=locked&auth=pw', jsonPost({ id: '1' }));
+await compare('POST /share 凭据不对', 'POST', '/share?room=locked&auth=错', jsonPost({ type: 'content', id: '1' }));
+await compare('POST /share 不支持的 type', 'POST', '/share?room=locked&auth=pw', jsonPost({ type: 'nope' }));
+await compare('POST /share 缺 id', 'POST', '/share?room=locked&auth=pw', jsonPost({ type: 'content' }));
+await compare('POST /share 非法 id', 'POST', '/share?room=locked&auth=pw', jsonPost({ type: 'content', id: 'abc' }));
+await compare('POST /share 条目不存在', 'POST', '/share?room=locked&auth=pw', jsonPost({ type: 'content', id: '9999' }));
+await compare('POST /share 未知字段', 'POST', '/share?room=locked&auth=pw', jsonPost({ type: 'content', id: '1', max_uses: 1 }));
+await compare('POST /share 正常签发', 'POST', '/share?room=locked&auth=pw', jsonPost({ type: 'content', id: '1' }), TOKEN_MASK);
+await compare(
+  'POST /share TTL 与次数被夹',
+  'POST',
+  '/share?room=locked&auth=pw',
+  jsonPost({ type: 'content', id: '1', ttl: 5, maxUses: 99999 }),
+  TOKEN_MASK
+);
+await compare('GET /share 令牌无效', 'GET', '/share?t=不是令牌');
+await compare('GET /share 无令牌', 'GET', '/share');
+await compare('GET /share/list 无凭据（受保护房间）', 'GET', '/share/list?room=locked');
+await compare('POST /share/visit 无令牌', 'POST', '/share/visit', jsonPost({}));
+await compare('POST /share/visit 令牌无效', 'POST', '/share/visit', jsonPost({ token: '不是令牌' }));
+
+// ★★★ 互验：一方签的令牌，另一方必须认。
+//
+// 这是整节里最有价值的一条：配置相同 → 派生密钥相同 → 令牌与实现无关。
+// 切换期就靠它 —— 用户手里的旧链接在切换后还能开。
+for (const [fromName, fromPort, toName, toPort] of [
+  ['Go', GO_PORT, 'Rust', RS_PORT],
+  ['Rust', RS_PORT, 'Go', GO_PORT],
+]) {
+  const issued = await hit(fromPort, 'POST', '/share?room=locked&auth=pw', jsonPost({ type: 'content', id: sharedId[fromName] }));
+  const token = issued.parsed?.token;
+  const label = `★ ${fromName} 签的分享令牌在 ${toName} 上能用`;
+  if (!token) {
+    fail++;
+    failures.push(`${label}\n  ${fromName} 那边签发失败：${issued.status} ${issued.text}`);
+    console.log(`  FAIL ${label}（${fromName} 签发失败）`);
+    continue;
+  }
+  const info = await hit(toPort, 'GET', `/share?t=${token}`, {});
+  const body = await hit(toPort, 'GET', `/content/${sharedId[toName]}?room=locked&t=${token}`, {});
+  const problems = [];
+  if (info.status !== 200) problems.push(`GET /share → ${info.status} ${info.text}`);
+  else if (info.parsed?.kind !== 'text' || info.parsed?.room !== 'locked')
+    problems.push(`元信息不对: ${JSON.stringify(info.parsed)}`);
+  if (body.status !== 200) problems.push(`GET /content → ${body.status} ${body.text}`);
+  else if (!body.text.includes('被分享的正文')) problems.push(`正文不对: ${JSON.stringify(body.text)}`);
+  if (problems.length === 0) {
+    pass++;
+    console.log(`  ok   ${label}`);
+  } else {
+    fail++;
+    failures.push(`${label}\n  ${problems.join('\n  ')}`);
+    console.log(`  FAIL ${label}`);
+    for (const p of problems) console.log(`       ${p}`);
+  }
+}
+
+// 分享令牌**不能**当房间凭据用（否则一张只读令牌就能发消息）。
+for (const [name, port] of [
+  ['Go', GO_PORT],
+  ['Rust', RS_PORT],
+]) {
+  const issued = await hit(port, 'POST', '/share?room=locked&auth=pw', jsonPost({ type: 'content', id: sharedId[name] }));
+  const res = await hit(port, 'POST', `/text?room=locked&t=${issued.parsed.token}`, { body: '我只有只读令牌' });
+  if (res.status === 401) {
+    pass++;
+    console.log(`  ok   ${name}：分享令牌不能发消息（401）`);
+  } else {
+    fail++;
+    failures.push(`${name}：分享令牌居然能发消息 → ${res.status} ${res.text}`);
+    console.log(`  FAIL ${name}：分享令牌居然能发消息`);
+  }
+}
+
+// 限次分享的消耗：两边各用自己的令牌，取两次 + 第三次必须 401。
+// ⚠️ 计数是**每个实例各自**的（所以不能拿对面的令牌来测这条）。
+await compareVia(
+  '限次分享：第 1、2 次能读，第 3 次 401（且 /share 不消耗次数）',
+  async (port) => {
+    const issued = await hit(port, 'POST', '/share?room=locked&auth=pw', jsonPost({ type: 'content', id: '1', maxUses: 2 }));
+    const token = issued.parsed.token;
+    const id = issued.parsed.id;
+    const read = () => hit(port, 'GET', `/content/${id}?room=locked&t=${token}`);
+    const first = await read();
+    await hit(port, 'GET', `/share?t=${token}`); // 打开页面不该消耗次数
+    const second = await read();
+    await hit(port, 'GET', `/share?t=${token}`);
+    const third = await read();
+    // 只比「第 3 次的状态 + 次数」—— 前两次两边都是 200，比出来没有信息量。
+    const info = await hit(port, 'GET', `/share?t=${token}`);
+    return {
+      status: third.status,
+      text: `${JSON.stringify(third.parsed?.code)} used=${info.parsed?.used}`,
+    };
+  }
+);
+
+
 // ── 刻意偏离 Go 的地方 ────────────────────────────────────────────────
 //
 // ⚠️ 这一节**故意**和 Go 不一样。Jonny 2026-09-25 拍板：
@@ -847,6 +1050,29 @@ async function expectOn(label, port, method, path, check, opts = {}) {
     console.log(`       Rust: ${r.status} ${JSON.stringify(r.parsed)}`);
   }
 }
+
+// ⚠️★ 分享令牌**只放行读**。Go 那边 `handleContentColumn` 也走 `canAccessContent`，
+// 所以一张只读的分享令牌在 Go 上**能挪列**（而 `docs/api.md` 写的是「分享令牌不行」
+// —— 文档和实现本来就对不上）。写操作只认房间凭据是按最佳实践收的，
+// 所以这两条不能拿 Go 当基准，直接断言我们自己的行为。
+await expectOn(
+  '分享令牌不能挪列（写操作只认房间凭据）',
+  RS_PORT,
+  'POST',
+  // ⚠️ 必须拿**受保护房间**里的那条：default 房间是开放的，本来就不需要凭据，
+  // 那时「没被拒绝」说明不了任何事。
+  `/content/${sharedId.Rust}/column?room=locked&t=不是令牌`,
+  (r) => r.status === 401,
+  { body: JSON.stringify({ column: 'doing' }), headers: { 'content-type': 'application/json' } }
+);
+await expectOn(
+  'POST /text?room=locked 不带凭据 → 401（曾漏掉闸门）',
+  RS_PORT,
+  'POST',
+  '/text?room=locked',
+  (r) => r.status === 401 && r.parsed?.code === 'unauthorized',
+  { body: '没凭据就不该发得出去' }
+);
 
 // 破坏性操作必须是**显式的 POST**，GET 一律 405。
 await expectOn('GET /revoke/<id> → 405', RS_PORT, 'GET', '/revoke/1', (r) => {
