@@ -29,6 +29,7 @@ pub mod automation_page;
 pub mod error;
 pub mod files;
 pub mod handlers;
+pub mod migrate;
 pub mod room_cleanup;
 pub mod scheduler;
 pub mod share;

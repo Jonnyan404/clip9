@@ -76,6 +76,25 @@ const FLAGS: &[(&str, bool, &str)] = &[
     ),
 ];
 
+/// `migrate` 子命令自己的参数表。⚠️ 与 `FLAGS` **分开**：`-from` / `-dry-run` 只对迁移有意义，
+/// 放进主表会让 `clip9-server -from x` 看起来像个能用的启动参数。
+const MIGRATE_FLAGS: &[(&str, bool, &str)] = &[
+    (
+        "from",
+        true,
+        "Go 版的数据目录（里面有 history.json 与 uploads/）",
+    ),
+    ("data", true, "本实现的数据目录，默认 ./data"),
+    ("dbpath", true, "库文件路径，默认 <data>/clip9.redb"),
+    ("storage", true, "上传文件的存放目录，默认 <data>/uploads"),
+    (
+        "dry-run",
+        false,
+        "只读、只报告，一个字节都不写（连库都不打开）",
+    ),
+    ("h", false, "显示帮助信息"),
+];
+
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     tracing_subscriber::fmt()
@@ -85,10 +104,17 @@ async fn main() -> anyhow::Result<()> {
         )
         .init();
 
+    // ⚠️★ 子命令要在参数解析**之前**判：`migrate` 是位置参数，而解析器把位置参数当错误
+    // （那是对的 —— 主程序不接受位置参数）。子命令只认第一个参数，其余交给它自己解析。
+    let raw: Vec<String> = std::env::args().skip(1).collect();
+    if raw.first().map(String::as_str) == Some("migrate") {
+        return run_migrate(&raw[1..]);
+    }
+
     // ⚠️★ 先解析 + 校验参数：认不出的参数**必须报错**（见模块注释）。
     // 取参是「按名字找」的，不主动检查的话 `-auth secret` 这类会被**静默忽略** ——
     // 服务照常起来，只是没有密码。Go 的 `flag` 包会打印帮助并退出，这里也一样。
-    let args = Args::parse()?;
+    let args = Args::parse(&raw, FLAGS)?;
     if args.has("h") {
         print_usage();
         std::process::exit(0);
@@ -381,8 +407,9 @@ impl Args {
     /// 收的形式：`-flag value` / `-flag=value` / `--flag value` / `--flag=value`。
     /// ⚠️ `-flag` 与 `--flag` **等价**（Go 的 `flag` 包本来就不区分），
     /// 所以从 Go 抄过来的命令行能原样用。
-    fn parse() -> anyhow::Result<Self> {
-        let raw: Vec<String> = std::env::args().skip(1).collect();
+    ///
+    /// ⚠️ `flags` 由调用方给：主程序与 `migrate` 子命令各有一张表（见 `FLAGS` / `MIGRATE_FLAGS`）。
+    fn parse(raw: &[String], flags: &[(&str, bool, &str)]) -> anyhow::Result<Self> {
         let mut out = Self::default();
         let mut i = 0;
         while i < raw.len() {
@@ -417,7 +444,7 @@ impl Args {
                 );
             }
 
-            let Some(&(_, takes_value, _)) = FLAGS.iter().find(|(n, _, _)| *n == name) else {
+            let Some(&(_, takes_value, _)) = flags.iter().find(|(n, _, _)| *n == name) else {
                 anyhow::bail!(
                     "认不出的参数 {arg}\n\
                      ⚠️ 参数名与 Go 版**一致**，但 Go 用单横线（`-port`）、这边两种都收。\n\
@@ -503,4 +530,69 @@ fn print_usage() {
     println!("\n⚠️ 参数名与 Go 版**一致**，语法也一致：`-flag 值` / `-flag=值` 都收。");
     println!("⚠️ 每个参数也可以走环境变量：`CLIP9_` + 名字大写（如 `CLIP9_PORT`），命令行优先。");
     println!("⚠️ 覆盖语义同 Go：字符串参数**非空**才覆盖、数字参数**大于 0** 才覆盖。");
+    println!("\n子命令:");
+    println!("  migrate           把 Go 版的数据目录迁进本实现（`clip9-server migrate -h`）");
+}
+
+/// `migrate` 子命令。
+///
+/// ⚠️ 为什么是子命令而不是一个参数：迁移是**一次性的运维动作**，不是启动配置 ——
+/// 混进主参数表会让 `clip9-server -from x` 看起来像是「用这个数据目录启动」。
+/// 而它必须在服务**打开数据库之前**跑（redb 独占锁），所以它天然是「另一件事」。
+fn run_migrate(raw: &[String]) -> anyhow::Result<()> {
+    // ⚠️ **不要**在这里再 `tracing_subscriber::init()` —— `main` 已经初始化过了，
+    // 第二次会 panic（`Unable to install global subscriber: a global default trace
+    // dispatcher has already been set`）。第一版就是这么挂的。
+    let args = Args::parse(raw, MIGRATE_FLAGS)?;
+    if args.has("h") {
+        println!("clip9-server migrate —— 把 Go 版的数据迁进本实现\n");
+        println!("用法: clip9-server migrate -from <Go 数据目录> [选项]\n");
+        println!("选项:");
+        for (name, takes_value, desc) in MIGRATE_FLAGS {
+            let value = if *takes_value { " <值>" } else { "" };
+            println!("  -{name}{value}");
+            println!("        {desc}");
+        }
+        println!("\n示例:");
+        println!("  clip9-server migrate -from /old/data -dry-run   # 先看看会做什么");
+        println!("  clip9-server migrate -from /old/data            # 真跑");
+        println!("\n⚠️ 幂等：重复跑会跳过已导入的，不会重复累加。");
+        println!("⚠️ **原始数据一个字节都不动** —— 它是回退的唯一依据。");
+        println!("⚠️ 必须在服务**停着**的时候跑（redb 是独占锁）。");
+        return Ok(());
+    }
+
+    let Some(from) = args.get("from") else {
+        anyhow::bail!("migrate 需要 `-from <Go 数据目录>`（用 `clip9-server migrate -h` 看用法）");
+    };
+    let dry_run = args.has("dry-run");
+    let data_dir = args
+        .get("data")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from("./data"));
+    let db_path = args
+        .get("dbpath")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| clip9_server::migrate::default_db_path(&data_dir));
+    let storage_dir = args
+        .get("storage")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| data_dir.join("uploads"));
+
+    // ⚠️ dry-run 下**一个目录都不建** —— 它的承诺是「绝对不动任何东西」。
+    if !dry_run {
+        std::fs::create_dir_all(&data_dir)
+            .map_err(|e| anyhow::anyhow!("无法创建数据目录 {}：{e}", data_dir.display()))?;
+        std::fs::create_dir_all(&storage_dir)
+            .map_err(|e| anyhow::anyhow!("无法创建上传目录 {}：{e}", storage_dir.display()))?;
+    }
+
+    tracing::info!(
+        from = %from, db = %db_path.display(), uploads = %storage_dir.display(), dry_run,
+        "开始迁移"
+    );
+    let report =
+        clip9_server::migrate::run(std::path::Path::new(&from), &db_path, &storage_dir, dry_run)?;
+    print!("{}", clip9_server::migrate::describe(&report, dry_run));
+    Ok(())
 }
