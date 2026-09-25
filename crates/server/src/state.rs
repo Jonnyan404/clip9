@@ -88,7 +88,7 @@ impl AppState {
     pub fn new(config: Config, store: Store, static_dir: Option<PathBuf>) -> Arc<Self> {
         let (broadcast_tx, _) = broadcast::channel(BROADCAST_CAPACITY);
         let share_key = ShareKey::derive(&config, &share_salt());
-        Arc::new(Self {
+        let state = Arc::new(Self {
             config,
             store,
             devices: Mutex::new(HashMap::new()),
@@ -98,7 +98,10 @@ impl AppState {
             static_dir,
             share_key,
             share_visits: Mutex::new(HashMap::new()),
-        })
+        });
+        // 定时自动化：启用了就起调度器 ticker。
+        crate::scheduler::spawn(state.clone());
+        state
     }
 
     /// 这个凭据能不能进这个房间。
@@ -109,6 +112,27 @@ impl AppState {
     #[must_use]
     pub fn can_access_room(&self, room: &str, token: &str) -> bool {
         clip9_core::can_access_room(&self.config, &self.share_key, room, token, now_secs())
+    }
+
+    /// 这个凭据是不是**明文**全局密码（管理员）。
+    #[must_use]
+    pub fn is_global_admin(&self, token: &str) -> bool {
+        clip9_core::is_global_admin(&self.config, token)
+    }
+
+    /// 这个凭据是不是「用全局密码换来的」会话令牌（`scope: "global"`）。
+    ///
+    /// ⚠️ 为什么必须认它：管理页**不存明文密码**，它拿的是 `/auth/token` 换来的会话令牌。
+    /// 只认明文的话，「管理员」在管理页里等于不存在，所有标着「管理员才能做」的能力
+    /// 都会悄悄失效。这不放大权限：`can_access_room` 本来就认这种令牌对所有房间有效。
+    #[must_use]
+    pub fn is_global_session_token(&self, token: &str) -> bool {
+        if token.trim().is_empty() {
+            return false;
+        }
+        self.share_key
+            .parse_session(token, now_secs())
+            .is_some_and(|claims| claims.is_global_scope())
     }
 
     /// 记一次分享页访问的**去重**判断。返回 `true` = 这次算一次新的打开。

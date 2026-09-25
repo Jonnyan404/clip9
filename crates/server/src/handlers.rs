@@ -358,11 +358,9 @@ pub async fn server(
         // 定时自动化的能力声明。前端据此决定要不要渲染自动化面板 ——
         // 唯一来源是这里，前端不要自己判断「这个房间有没有密码」（会和服务端策略漂开）。
         //
-        // P0 还没实现自动化，所以只回 `{"enabled": false}`（和 Go 那边关掉时一模一样）。
-        // ⚠️ 真正要下发时，这份能力**还必须同时进 WS 握手载荷** ——
-        // 前端的 `app.config` 来自握手那条 `config` 事件，不是这个 HTTP 响应。
-        // 只加在这里会得到一个永远 `undefined` 的字段（Go 侧踩过这个坑）。
-        "automation": { "enabled": false },
+        // ⚠️ 这份能力**还必须同时进 WS 握手载荷**（`app.config` 来自握手那条 `config` 事件，
+        // 不是这个 HTTP 响应），但那里只需要 `enabled` 一个布尔 —— 入口图标的显隐只看它。
+        "automation": crate::automation::capability(&state, &headers, &query),
     }))
 }
 

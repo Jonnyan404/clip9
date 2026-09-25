@@ -243,9 +243,10 @@ async fn handle_socket(
             "limit": state.config.file.limit,
         },
         "auth": auth_needed,
-        // P0 还没实现定时自动化（P2）。前端据此决定渲不渲染工具栏那个入口 ——
-        // Worker 部署也没有这一族接口，所以它必须是个**明确的下发字段**，不能靠「有没有」推断。
-        "automation": { "enabled": false },
+        // 定时自动化的能力声明。前端 `PageToolbar` 的入口图标只认这里的 `enabled`
+        // （`app.config` 来自握手这条 `config` 事件，不是 `/server` 的 HTTP 响应）。
+        // Worker 部署没有这一族接口，所以它必须是个**明确的下发字段**，不能靠「有没有」推断。
+        "automation": { "enabled": state.config.automation.enabled },
     });
     if send_json(&mut sink, "config", &config_payload)
         .await

@@ -24,9 +24,11 @@
 
 pub mod auth_gate;
 pub mod auth_token;
+pub mod automation;
 pub mod error;
 pub mod files;
 pub mod handlers;
+pub mod scheduler;
 pub mod share;
 pub mod share_card;
 pub mod spa_shell;
@@ -160,6 +162,38 @@ pub fn router(state: Arc<AppState>) -> Router {
         // 按最佳实践来（破坏性操作必须是显式的 POST）。
         .route("/revoke/all", post(handlers::clear_all).fallback(only_post))
         .route("/revoke/{id}", post(handlers::revoke).fallback(only_post))
+        // ── 定时自动化（P2）──
+        .route(
+            "/tasks",
+            get(automation::task_list)
+                .post(automation::tasks)
+                .fallback(mna),
+        )
+        // ⚠️ 静态段（preview / cron / rooms）必须排在 `/tasks/{id}` 之前。
+        .route(
+            "/tasks/preview",
+            post(automation::task_preview_item).fallback(only_post),
+        )
+        .route(
+            "/tasks/cron",
+            get(automation::cron_check).fallback(only_get),
+        )
+        .route(
+            "/tasks/rooms",
+            get(automation::task_rooms).fallback(only_get),
+        )
+        .route(
+            "/tasks/{id}",
+            axum::routing::delete(automation::task_item).fallback(only_post),
+        )
+        .route(
+            "/tasks/{id}/run",
+            post(automation::task_run_item).fallback(only_post),
+        )
+        .route(
+            "/tasks/{id}/toggle",
+            post(automation::task_toggle_item).fallback(only_post),
+        )
         // Go 的 CORS 是逐个端点手写的（`corsMiddleware` / `authMiddleware`），
         // 效果等价于「任意来源 + 常见方法/头」。这里用一层统一的代替 ——
         // 差别只是几个 Go 没挂 CORS 的端点上多几个头，没有客户端依赖「少了那些头」。
