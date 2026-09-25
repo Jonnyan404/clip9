@@ -59,6 +59,7 @@ pub use state::AppState;
 /// - `/auth/token*`（P1）、`/share*` + `/s/`（P1）、`/tasks*` + `/automation`（P2）、`/myip`（P3）
 pub fn router(state: Arc<AppState>) -> Router {
     let prefix = state.config.server.prefix.clone();
+    let static_dir = state.static_dir.clone();
 
     // ⚠️ 每个限定了方法的端点都挂 `.fallback(...)`：axum 内置的 405 是**空 body**，
     // 而契约里写着「错误响应恒 `{code,error,message}`」。Go 那边这几个 handler 都显式返回
@@ -125,6 +126,27 @@ pub fn router(state: Arc<AppState>) -> Router {
         // 差别只是几个 Go 没挂 CORS 的端点上多几个头，没有客户端依赖「少了那些头」。
         .layer(CorsLayer::permissive())
         .with_state(state);
+
+    // ── 前端静态资源 ────────────────────────────────────────────────────
+    //
+    // ⚠️ 挂在 `fallback_service` 上，也就是排在**所有 `.route()` 之后**：
+    // API 路由优先，剩下的（`/`、`/assets/…`、前端路由）才落到这里。
+    // 这和 Go 那边「先注册 API、最后 `mux.Handle(prefix+"/", spaStaticHandler)`」是同一个结构。
+    //
+    // ⚠️ **SPA 兜底必须落到 `index.html`**：前端是 history 路由，`/s/<token>` 这类深链
+    // 直接访问（或刷新）时服务端得吐出同一份 HTML，否则刷新就 404。
+    // 这也是为什么 SPA 和 API 必须**同源** —— 否则前端那些相对路径的请求全要配代理。
+    let app = match static_dir {
+        Some(dir) => {
+            let index = dir.join("index.html");
+            app.fallback_service(
+                tower_http::services::ServeDir::new(&dir)
+                    .fallback(tower_http::services::ServeFile::new(index)),
+            )
+        }
+        // 没配静态目录 = 这次部署只跑 API（Android 客户端连别人的服务端就是这种）。
+        None => app,
+    };
 
     if prefix.is_empty() {
         app

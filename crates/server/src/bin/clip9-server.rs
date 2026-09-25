@@ -62,7 +62,27 @@ async fn main() -> anyhow::Result<()> {
         .map_err(|e| anyhow::anyhow!("无法创建文件存储目录 {}：{e}", config.server.storage_dir))?;
     tracing::info!(dir = %config.server.storage_dir, "文件存储目录");
 
-    let state = AppState::new(config.clone(), store);
+    // 静态资源目录：`--static <dir>` > `CLIP9_STATIC` > 不挂（只跑 API）。
+    //
+    // ⚠️ 路径由**外壳**决定（`docs/ARCHITECTURE.md` §4.2）：Docker 挂载点 / OpenWrt 的
+    // `/var/lib` / Android 私有目录各不相同，把路径逻辑写进业务代码会让它们互相打架。
+    //
+    // TODO(P3)：正式分发包里应该把前端**嵌进二进制**（`include_dir!`）——
+    // Go 那边是 `-tags embed`。现在用 `--static` 指向构建产物就够了。
+    let static_dir = arg_value("--static", "CLIP9_STATIC").map(PathBuf::from);
+    if let Some(dir) = &static_dir {
+        // ⚠️ 早点失败：指错了目录的话，表现是「页面 404」而**日志里什么都没有**，
+        // 那种问题查起来最费时间。
+        if !dir.join("index.html").is_file() {
+            anyhow::bail!(
+                "静态目录 {} 里没有 index.html —— 那不像一份前端产物",
+                dir.display()
+            );
+        }
+        tracing::info!(dir = %dir.display(), "静态资源目录");
+    }
+
+    let state = AppState::new(config.clone(), store, static_dir);
 
     let addr = SocketAddr::from(([0, 0, 0, 0], config.server.port));
     let listener = tokio::net::TcpListener::bind(addr)

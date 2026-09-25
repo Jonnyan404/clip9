@@ -2,6 +2,7 @@
 
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::hash::{BuildHasher, Hasher};
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -58,6 +59,12 @@ pub struct AppState {
     /// 设备 ID 的哈希种子。**每进程随机**，和 Go 的 `deviceHashSeed` 同义 ——
     /// 目的是让设备 ID 不可预测（它会被前端当成身份用于气泡归属）。
     device_hash: std::collections::hash_map::RandomState,
+    /// 前端静态资源的目录。`None` = 这次部署没有前端（只跑 API）。
+    ///
+    /// ⚠️ 它是**外壳**传进来的，不是配置项 —— 四种分发形态的目录约定完全不同
+    /// （Docker 挂载点 / OpenWrt `/var/lib` / Android 私有目录 / 桌面标准目录），
+    /// 见 `docs/ARCHITECTURE.md` §4.2。
+    pub static_dir: Option<PathBuf>,
 }
 
 impl std::fmt::Debug for AppState {
@@ -71,7 +78,7 @@ impl std::fmt::Debug for AppState {
 
 impl AppState {
     #[must_use]
-    pub fn new(config: Config, store: Store) -> Arc<Self> {
+    pub fn new(config: Config, store: Store, static_dir: Option<PathBuf>) -> Arc<Self> {
         let (broadcast_tx, _) = broadcast::channel(BROADCAST_CAPACITY);
         Arc::new(Self {
             config,
@@ -80,6 +87,7 @@ impl AppState {
             broadcast_tx,
             conn_seq: AtomicU64::new(1),
             device_hash: std::collections::hash_map::RandomState::new(),
+            static_dir,
         })
     }
 
