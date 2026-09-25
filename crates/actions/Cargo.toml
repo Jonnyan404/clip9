@@ -11,9 +11,10 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 chrono = { workspace = true }
 thiserror = { workspace = true }
-# 动作本身要用的两样。都是纯 Rust，都能编到 wasm32。
+# 动作本身要用的三样。都是纯 Rust，都能编到 wasm32。
 base64 = { workspace = true }
 sha2 = { workspace = true }
+regex = { workspace = true }
 
 [features]
 # ⚠️ feature 只用来**按部署裁剪体积**，不是「哪些动作能下沉」——Rust 侧两端都能跑。
@@ -22,13 +23,20 @@ sha2 = { workspace = true }
 # ⚠️ 名字与动作的 `group` **一一对应**（`format` / `text` / `date` / `encode` / `zh` / `inspect`）——
 # 注册表判断「这个动作在这一版里有没有」靠 `registry::group_enabled()` 读这些开关。
 # 名字对不上就会出现「feature 关了、动作却还在」这种静默不一致，所以这条要守住。
-default = ["format", "text", "encode", "date", "inspect"]
+#
+# ⚠️ `zh` 从「默认不带」改成了默认带：**这四件事的代价不一样**。
+# 已经接进来的 `zh.fullwidth/halfwidth/punctuation/number` 是纯码点运算与查表，
+# 加起来几 KB；真正几 MB 的是**词典**（`zh.pinyin*` 的 pinyin-pro、`zh.simplified` 的 opencc）。
+# 把整个 `zh` 关掉等于为了词典把四件零成本的事也关掉 —— 而那四件恰恰是中国用户最常用的。
+# 等 pinyin / opencc 接进来时，**给词典单开一个 feature**（比如 `zh-dict`），
+# 别反过来把整个 `zh` 关掉。
+default = ["format", "text", "encode", "date", "inspect", "zh"]
 format = []
 text = []
 encode = []
 date = []
 inspect = []
-# 词典几 MB，默认不带（`zh.pinyin*` / `zh.simplified` / `zh.traditional` 在那边）
+# 纯码点运算那四个（词典类动作接进来时再拆 `zh-dict`）
 zh = []
 # 轻
 markdown = []

@@ -8,15 +8,21 @@
 //!   拼音 / 简繁 / markdown 在 Rust 侧都是 crate，两端都能跑；`IsServerRenderAction`
 //!   那个白名单**不需要了** —— 它当年存在只是因为「那些库在浏览器里」。
 //! - 现在这 34 项是 **Go 侧那份子集**，之所以先接它，是因为**它已经有实现、能当 oracle
-//!   跑出期望值**（§5.4 要的语言无关用例就是这么来的）。剩下的动作（含 `generate.*`、
-//!   `format.markdown`、`zh.pinyin*` 等）随后按同样的方式接进来，契约同一份。
+//!   跑出期望值**（§5.4 要的语言无关用例就是这么来的）。**这 34 项到 2026-09-25 已全部实现**；
+//!   剩下的动作（`format.markdown`、`zh.pinyin*`、`inspect.stats` 等）随后按同样的方式接进来，
+//!   契约同一份。
 //! - 所以 [`not_yet_implemented`] 是一份**进度的棘轮**，**不是**新的白名单：
 //!   它的长度只会变短，长度就是进度。别把它当成「这些动作不该在这」的结论。
 //!
-//! ⚠️ 但有一类**与能力无关**的取舍要单独想清楚：`generate.*`（uuid / time / datetime）
-//! 在 Go 那边被排除，理由不是「跑不了」，而是**链的语义** —— 它是「生成」，放进链里会把
-//! 前面算出来的正文整个丢掉。这个取舍跟着「链」走，不跟着「能不能跑」走，所以接它的时候
-//! 要一并决定「定时任务允许不允许把正文换掉」（模板变量 `{{uuid}}` 是更合适的答案）。
+//! ⚠️ 但有一类**与能力无关**的取舍，已经拍板了：`generate.*`（uuid / time / datetime）
+//! **不进定时任务的动作集**，理由是**链的语义**而不是「跑不了」—— 它是「生成」，
+//! 放进链里会把前面算出来的正文整个丢掉。要用它的效果就用**模板变量**
+//! （`{{uuid}}` / `{{time}}` / `{{datetime}}`），变量是**内联**的、不覆盖任何东西。
+//!
+//! 「以后有需求了再改」是**用户 2026-09-25 的原话**：真要做，得先想清楚
+//! 「定时任务允许不允许把正文整个换掉」（那会同时影响预览区的语义与 Worker 侧），
+//! 属于产品决定，不是加个实现就完事的。所以它**不进 [`not_yet_implemented`]** ——
+//! 那份清单的意思恰恰相反：「注册表里有、实现还没接上」。
 //!
 //! # 元数据是契约
 //!
@@ -473,6 +479,12 @@ pub fn meta(id: &str) -> Option<&'static ActionMeta> {
 ///
 /// 单独一个函数是为了把「名字必须对上」这件事收在一处：测试会拿它去校验
 /// fixture 里每个 `group` 都能被这个函数解释，写错一个分组名就会红。
+///
+/// ⚠️ 别听 clippy 的 `matches!` 建议（所以这里显式 allow）：它只看**当前这一组 feature
+/// 全开**时的常量折叠结果（`cfg!` 全成 `true`，于是 match 看起来等价于 `matches!`），
+/// 而按它的写法一改，`--no-default-features` 下就会把没编进来的分组报成「开着」——
+/// 那正是这个函数要防的事。**lint 的建议只在某一种 feature 组合下成立，就不能照抄。**
+#[allow(clippy::match_like_matches_macro)]
 #[must_use]
 pub fn group_enabled(group: &str) -> bool {
     match group {
@@ -494,33 +506,17 @@ pub fn group_enabled(group: &str) -> bool {
 /// ⚠️ 它必须是**显式**的，不能「缺了就是缺了」：`tests/go_cases.rs` 会拿它跟
 /// `cases/actions/registry.json` 对账（已实现的 ∪ 这份清单 == 当前 feature 下的全集）。
 /// 漏掉一个动作**一定会红** —— 而不是等用户在界面上点到一个「点了没反应」的动作。
-pub const NOT_YET_IMPLEMENTED: &[&str] = &[
-    // text：正则与启发式那一堆（提取、模式替换、排序）。
-    "text.trimLines",
-    "text.dropBlank",
-    "text.dedupe",
-    "text.sort",
-    "text.upper",
-    "text.lower",
-    "text.replace",
-    "text.reverse",
-    "text.extractUrl",
-    "text.extractEmail",
-    "text.extractPhone",
-    "text.extractIp",
-    "text.extractNumber",
-    // date：日期加减与差值（要一套自己的解析/夹取规则）。
-    "date.add",
-    "date.diff",
-    // zh：全角/半角、标点、数字大写。
-    "zh.fullwidth",
-    "zh.halfwidth",
-    "zh.punctuation",
-    "zh.number",
-    // inspect：时间戳两向转换（要跟 `ctx.now` 的时区打交道）。
-    "inspect.timestamp",
-    "inspect.dateToTimestamp",
-];
+///
+/// # 它现在是**空的**（2026-09-25）
+///
+/// 当前注册表那 34 项**全部实现完**了。空清单不是「这套机制没用了」，恰恰相反：
+/// 下一步要接的是**前端动作表里剩下的那些**（`format.markdown`、`zh.pinyin*`、
+/// `inspect.stats` 等 10 个左右 —— `generate.*` 已按决定排除，见模块文档），
+/// 它们会先加进注册表、再落实现，中间那段时间就是靠这份清单把「加了但没实现」摆到明处。
+///
+/// ⚠️ 所以**别删这个机制**（包括 [`is_implemented`]）：它保证的是「注册表 ⊃ 实现」这件事
+/// 永远说不清就报错 —— 这个不变量在注册表继续长大时会立刻重新有用。
+pub const NOT_YET_IMPLEMENTED: &[&str] = &[];
 
 /// 还没实现的动作（见 [`NOT_YET_IMPLEMENTED`] 的说明）。
 #[must_use]
@@ -532,8 +528,11 @@ pub fn not_yet_implemented() -> &'static [&'static str] {
 ///
 /// ⚠️ 与 [`meta`] 的区别是要紧的：`meta()` 对**注册表里每一项**都返回 `Some`
 /// （元数据本来就全写了 —— 它要喂给界面渲染动作列表），而「能跑」还得**有实现**。
-/// 混用这两个概念会让测试出现「比了 21 条根本没实现的用例」这种假红/假绿，
+/// 混用这两个概念会让测试出现「比了一堆根本没实现的用例」这种假红/假绿，
 /// 所以这里单独给一个判据，别在调用方各自拼 `meta() && !NOT_YET.contains(..)`。
+///
+/// ⚠️ 清单为空时它与 `meta().is_some()` 等价 —— 但**调用方仍然应该用它**：
+/// 这样等注册表重新长大时，判断逻辑不用回头改一遍（改一处漏一处才是这类东西的常态）。
 #[must_use]
 pub fn is_implemented(id: &str) -> bool {
     let id = id.trim();
@@ -555,12 +554,44 @@ pub fn run(
 ) -> Result<String, ActionError> {
     let id = id.trim();
 
+    // ⚠️ `feature` 一个都没开时（`--no-default-features`），下面那一串分派会被**整体**
+    // cfg 掉，这几个参数就没人用了。这里显式「用」一下，好过把它们改名成 `_input`
+    // （那在默认 feature 下反而丢掉「这个参数是有用的」这层信息）。
+    //
+    // 为什么值得为「一个动作都没有的构建」花这几行：`--no-default-features` 是**唯一**
+    // 能便宜地验证「feature 裁剪这条路真能走」的姿势（`Cargo.toml` 里那句
+    // 「按部署裁剪体积」要是编不过就只是句话）。所以它进常态门禁，见 HANDOVER §2。
+    //
+    // ⚠️ 这个 cfg 列表要与上面那一串**同步**：加了新分组却忘了加进来，
+    // 零 feature 那一版会重新报未使用变量 —— 会红，不会静默。
+    #[cfg(not(any(
+        feature = "format",
+        feature = "text",
+        feature = "date",
+        feature = "encode",
+        feature = "zh",
+        feature = "inspect"
+    )))]
+    let _ = (input, params, ctx);
+
     #[cfg(feature = "format")]
     if let Some(out) = crate::actions::format::run(id, input, params, ctx) {
         return out;
     }
+    #[cfg(feature = "text")]
+    if let Some(out) = crate::actions::text::run(id, input, params, ctx) {
+        return out;
+    }
+    #[cfg(feature = "date")]
+    if let Some(out) = crate::actions::date::run(id, input, params, ctx) {
+        return out;
+    }
     #[cfg(feature = "encode")]
     if let Some(out) = crate::actions::encode::run(id, input, params, ctx) {
+        return out;
+    }
+    #[cfg(feature = "zh")]
+    if let Some(out) = crate::actions::zh::run(id, input, params, ctx) {
         return out;
     }
     #[cfg(feature = "inspect")]

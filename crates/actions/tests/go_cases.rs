@@ -116,6 +116,30 @@ fn load<T: for<'de> Deserialize<'de>>(name: &str) -> T {
     serde_json::from_str(&raw).unwrap_or_else(|e| panic!("{} 解析失败: {e}", path.display()))
 }
 
+/// 这个动作在**这一版**里能不能跑。
+///
+/// `feature` 裁剪掉的分组根本没编进来，那些测试没法跑 —— 那是**配置**，不是坏掉。
+/// ⚠️ 但「静默 return」是个陷阱：id 打错了也会静默跳过。所以这里**顺带核对**
+/// 它真的在 fixture 的注册表里（打错字必红），再回「这一版有没有」。
+fn available(id: &str) -> bool {
+    let registry: RegistryFile = load("registry.json");
+    assert!(
+        registry.actions.iter().any(|spec| spec.id == id),
+        "{id} 不在 fixture 的注册表里 —— 测试里写错 id 了？"
+    );
+    if !is_implemented(id) {
+        println!("跳过：{id} 不在这一版的 feature 里");
+    }
+    is_implemented(id)
+}
+
+/// 至少有一个分组开着。用来区分「这一版刻意不带动作」与「分组名全写错了」。
+fn any_group_enabled() -> bool {
+    ["format", "text", "date", "encode", "zh", "inspect"]
+        .iter()
+        .any(|group| group_enabled(group))
+}
+
 /// fixture 里记的「此刻」，Rust 侧要用**同一个时钟**跑（否则时间类动作没有可比性）。
 fn context(fixture: &CasesFile) -> ActionContext {
     ActionContext {
@@ -234,10 +258,14 @@ fn metadata_matches_go_for_every_enabled_action() {
         }
         checked += 1;
     }
-    assert!(
-        checked > 0,
-        "一条元数据都没比到 —— group_enabled() 是不是把分组名写错了？"
-    );
+    // feature 全关时一条都比不到，那是配置；但只要**有任何一个分组开着**，
+    // 就至少该比到一条 —— 一条都比不到说明 group_enabled() 把所有名字都看不认了。
+    if any_group_enabled() {
+        assert!(
+            checked > 0,
+            "一条元数据都没比到 —— group_enabled() 是不是把分组名写错了？"
+        );
+    }
 }
 
 /// 用到的 i18n key 必须与 Go 下发的**完全一致**。
@@ -343,11 +371,10 @@ fn coverage_is_explicit_in_both_directions() {
         );
     }
 
-    // 未实现清单**只会变短**：这条只是提醒「别忘了删」，不冻结具体数字。
-    assert!(
-        !not_yet_implemented().is_empty(),
-        "全部动作都实现了 —— 那就把 not_yet_implemented() 连同这条测试一起删掉"
-    );
+    // ⚠️ 这里**不再**要求「清单非空」。清单在 2026-09-25 清空过一次（34 项全实现完），
+    // 然后会随着「把前端那 11 个动作加进注册表」重新变长。
+    // 拿「非空」当断言等于把「进度」写成了「必须没做完」，反过来就假红了。
+    // 真正要守的是上面那条 XOR：**注册表里的每一个动作，状态必须是说得清的**。
 }
 
 // ── 3. 行为：逐条跑 Go 记录的期望值 ────────────────────────────────────
@@ -355,20 +382,35 @@ fn coverage_is_explicit_in_both_directions() {
 #[test]
 fn behaviour_matches_go_case_by_case() {
     let fixture: CasesFile = load("cases.json");
+    let registry: RegistryFile = load("registry.json");
     let ctx = context(&fixture);
     assert!(!fixture.cases.is_empty(), "fixture 里一条用例都没有");
 
+    // id → group：用来判断「跳过」是因为**没实现**，还是因为这个分组**这一版没编进来**。
+    let groups: BTreeMap<&str, &str> = registry
+        .actions
+        .iter()
+        .map(|spec| (spec.id.as_str(), spec.group.as_str()))
+        .collect();
+
     let mut checked = 0;
-    let mut skipped: BTreeSet<&str> = BTreeSet::new();
+    // ⚠️ 两个都要：`skipped_ids` 用来「逐个说清为什么跳过」，`skipped_cases` 用来对账。
+    // 用一个 Set 兼任两件事会错 —— 一个动作**有多条用例**（`text.replace` 有 17 条），
+    // 拿 id 的个数当用例数去加，永远对不上总数。
+    let mut skipped_cases = 0;
+    let mut skipped_ids: BTreeSet<&str> = BTreeSet::new();
+    let mut compared_ids: BTreeSet<&str> = BTreeSet::new();
     let mut failures: Vec<String> = Vec::new();
 
     for case in &fixture.cases {
         if !is_implemented(&case.id) {
             // 还没实现的动作：**记下来**（下面拿它跟清单对账），不静默跳过。
-            skipped.insert(case.id.as_str());
+            skipped_cases += 1;
+            skipped_ids.insert(case.id.as_str());
             continue;
         }
         let label = format!("{}({:?}, {:?})", case.id, case.input, case.params);
+        compared_ids.insert(case.id.as_str());
         match (run(&case.id, &case.input, &case.params, &ctx), &case.expect, case.error) {
             (Ok(actual), Some(expected), false) => {
                 if &actual != expected {
@@ -406,24 +448,60 @@ fn behaviour_matches_go_case_by_case() {
         failures.len(),
         failures.join("\n  - ")
     );
-    // ⚠️ 只在**默认 feature 全开**时要求「比到了足够多条」。关掉 feature 是有意的裁剪，
-    // 那时用例本来就该被跳过 —— 拿一个固定数字去卡会让 `--no-default-features` 假红。
-    #[cfg(all(feature = "format", feature = "encode", feature = "inspect"))]
     assert!(
-        checked >= 40,
-        "只比到 {checked} 条 —— 默认 feature 下应该有 40+ 条（format+encode+sha256 的用例数）"
+        checked + skipped_cases == fixture.cases.len(),
+        "比过的 {checked} + 跳过的 {skipped_cases} ≠ 用例总数 {} —— 有案例既没比也没记",
+        fixture.cases.len()
     );
-    assert!(
-        checked + skipped.len() > 0,
-        "一条用例都没处理，fixture 是空的？"
-    );
+    // feature 全关时一条都比不了（那是配置）；有分组开着却一条没比，才说明哪里坏了。
+    if any_group_enabled() {
+        assert!(checked > 0, "一条用例都没比 —— fixture 是空的？");
+    }
 
-    // 跳过的那些必须正好是「未实现清单」里的动作，否则说明注册表与清单脱节了。
+    // ★ 每一个**这一版能跑**的动作，都必须至少有一条用例被真的比过。
+    //
+    // 这条比「总数 ≥ 某个魔数」有用得多：魔数在有人加用例时只会被顺手改大，
+    // 而这条能抓住「某个动作悄悄变成一条也没比」—— 那正是「静默少测一块」的样子。
+    // （它**不是**同义反复：上面的计数是循环跑出来的，这里比的是 fixture 的覆盖内容。）
+    if any_group_enabled() {
+        for spec in &registry.actions {
+            if !group_enabled(&spec.group) || !is_implemented(&spec.id) {
+                continue;
+            }
+            assert!(
+                compared_ids.contains(spec.id.as_str()),
+                "{} 是这一版能跑的动作，却一条用例都没比到 —— fixture 里漏了它？",
+                spec.id
+            );
+        }
+    }
+
+    // ★ 跳过的每一个动作都必须**说得清为什么**，而且只允许两种原因：
+    //   ① 这个动作还没实现（在未实现清单里）—— 那是进度；
+    //   ② 它所属的分组**这一版没编进来**（feature 关掉）—— 那是有意的裁剪。
+    // 除这两种以外的跳过都是 bug：典型是「注册表加了新动作、忘了实现也没进清单」，
+    // 那会**静默少比一批用例**，而少了哪一批没人看得出来。
     let pending: BTreeSet<&str> = not_yet_implemented().iter().copied().collect();
-    for id in &skipped {
-        assert!(
-            pending.contains(id),
-            "{id} 的用例被跳过了，但它不在未实现清单里"
+    let mut by_feature: BTreeSet<&str> = BTreeSet::new();
+    for id in &skipped_ids {
+        let group = groups
+            .get(id)
+            .unwrap_or_else(|| panic!("{id} 的用例被跳过了，但它不在注册表里"));
+        if group_enabled(group) {
+            assert!(
+                pending.contains(id),
+                "{id} 的用例被跳过了，但它既不在未实现清单里、分组（{group}）也开着 —— 注册表和实现脱节了"
+            );
+        } else {
+            by_feature.insert(id);
+        }
+    }
+    // 两种原因都记下来，出问题时一眼能看出是「没写完」还是「没编进来」。
+    if !by_feature.is_empty() {
+        println!(
+            "跳过 {} 条用例：动作 {} 因为分组没编进来",
+            skipped_cases,
+            by_feature.len()
         );
     }
 }
@@ -437,6 +515,9 @@ fn behaviour_matches_go_case_by_case() {
 /// `encode.html.decode` 只认常见命名实体 + 分号形式；罕见实体**原样保留**。
 #[test]
 fn html_decode_keeps_unknown_entities_verbatim() {
+    if !available("encode.html.decode") {
+        return;
+    }
     let ctx = context(&load::<CasesFile>("cases.json"));
     let params = BTreeMap::new();
     for input in ["&because;", "&amp", "&#xZZ;"] {
@@ -464,6 +545,9 @@ fn html_decode_keeps_unknown_entities_verbatim() {
 /// 只是内存里的表示不同。这条差异不写下来，下次有人对着 Go 的字节调试会白费半天。
 #[test]
 fn url_decode_is_lossy_for_invalid_utf8() {
+    if !available("encode.url.decode") {
+        return;
+    }
     let ctx = context(&load::<CasesFile>("cases.json"));
     let params = BTreeMap::new();
     assert_eq!(
@@ -475,6 +559,9 @@ fn url_decode_is_lossy_for_invalid_utf8() {
 /// `format.json.*` 走 `serde_json` 校验，它对**超出 f64 的数字**比 Go 严。
 #[test]
 fn json_actions_reject_huge_numbers_that_go_accepts() {
+    if !available("format.json.pretty") {
+        return;
+    }
     let ctx = context(&load::<CasesFile>("cases.json"));
     let params = BTreeMap::new();
     assert!(
@@ -486,6 +573,9 @@ fn json_actions_reject_huge_numbers_that_go_accepts() {
 /// 链：**某一步失败就停在那里**，后面的动作不再跑。
 #[test]
 fn a_failing_step_stops_the_chain() {
+    if !available("encode.base64") {
+        return;
+    }
     let ctx = context(&load::<CasesFile>("cases.json"));
     let chain = vec![
         clip9_actions::ChainStep {
@@ -502,5 +592,89 @@ fn a_failing_step_stops_the_chain() {
     assert!(
         matches!(err, clip9_actions::ActionError::InvalidInput(_)),
         "{err}"
+    );
+}
+
+/// `text.upper` / `text.lower` 走**完整**大小写映射（跟前端 JS），与 Go 的**简单**映射不同。
+///
+/// 这条断言的是**差异本身**：哪天有人把这边改成 Go 那种「一个码点对一个码点」，
+/// 或者上游把 Go 换掉了，这里会红，提醒回来重读决策 —— 而不是让差异从「写着」变成「没人知道」。
+///
+/// 选边站的理由：这个动作在界面上有**预览区**（JS），用户看到的是 `STRASSE`。
+/// 「预览区 STRASSE、定时任务 STRAßE」正是这个项目最不能接受的那类错。
+#[test]
+fn case_mapping_follows_the_frontend_not_go() {
+    if !available("text.upper") {
+        return;
+    }
+    let ctx = context(&load::<CasesFile>("cases.json"));
+    let params = BTreeMap::new();
+    // Go 给的是 `STRAßE`（ß 没有简单大写映射，原样留着）。
+    assert_eq!(
+        run("text.upper", "straße", &params, &ctx).unwrap(),
+        "STRASSE"
+    );
+    assert_eq!(run("text.upper", "ﬁ", &params, &ctx).unwrap(), "FI");
+    // Go 给的是 `i`（丢掉了上面那个点）。
+    assert_eq!(run("text.lower", "İ", &params, &ctx).unwrap(), "i\u{307}");
+    // 两边一致的那一档不能坏 —— 否则「刻意的差异」就成了「什么都不干」的借口。
+    assert_eq!(
+        run("text.upper", "aBc123", &params, &ctx).unwrap(),
+        "ABC123"
+    );
+}
+
+/// 提取 URL 时，`\s` 按**前端**的 Unicode 语义（Go 的 `\s` 是 ASCII）。
+///
+/// Go 那边 `https://a.com　后面的字`（全角空格 / 不换行空格）会把**后半句一起吃进 URL**；
+/// 前端与这边停在全角空格。差异来自**同一串 source、不同引擎**，不是谁少做了什么。
+#[test]
+fn url_extraction_stops_at_unicode_spaces_like_the_frontend() {
+    if !available("text.extractUrl") {
+        return;
+    }
+    let ctx = context(&load::<CasesFile>("cases.json"));
+    let params = BTreeMap::new();
+    for space in ['\u{3000}', '\u{a0}'] {
+        let input = format!("https://a.com{space}后面的字");
+        assert_eq!(
+            run("text.extractUrl", &input, &params, &ctx).unwrap(),
+            "https://a.com",
+            "U+{:04X} 之后的内容不该被吞进 URL（Go 那边会吞）",
+            space as u32
+        );
+    }
+}
+
+/// 日期解析这边**更严格**：时分秒越界直接报错。
+///
+/// Go 用 `time.Date(...)` 构造，它会把越界值**归一化**（`01:99` → `02:39`），
+/// 而回读校验只比年月日 —— 于是这种输入在 Go 那边**是合法的**。
+/// 这边按区间校验，报错。选严格是因为「悄悄给出一个看着合理、其实不对的时间」
+/// 正是 Go 自己那段注释在防的事。
+///
+/// 同一条规则的另一个面：`\s` 按前端（Unicode），所以全角空格分隔的写法在这边能算、Go 报错。
+#[test]
+fn date_parsing_is_stricter_than_go_about_out_of_range_time() {
+    if !available("date.add") {
+        return;
+    }
+    let ctx = context(&load::<CasesFile>("cases.json"));
+    let params = BTreeMap::new();
+    for input in ["2026-09-24 01:99 +1d", "2026-09-24 25:00 +1d"] {
+        assert!(
+            run("date.add", input, &params, &ctx).is_err(),
+            "{input} 应当报错（Go 会归一化后接受）"
+        );
+    }
+    // 但正常的时间必须能算，别把整条路都堵死。
+    assert_eq!(
+        run("date.add", "2026-09-24 01:30 +1d", &params, &ctx).unwrap(),
+        "2026-09-25 01:30"
+    );
+    // 全角空格分隔：Go 报错、前端与这边都能算（同一处 `\s` 差异的另一个面）。
+    assert_eq!(
+        run("date.add", "2026-09-24\u{3000}+1d", &params, &ctx).unwrap(),
+        "2026-09-25"
     );
 }

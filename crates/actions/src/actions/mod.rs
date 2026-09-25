@@ -5,9 +5,15 @@
 //!
 //! ⚠️ 这里的模块名与 `Cargo.toml` 的 feature 名**一一对应**（见 `registry::group_enabled`）。
 
+#[cfg(feature = "date")]
+pub mod date;
 #[cfg(feature = "encode")]
 pub mod encode;
 #[cfg(feature = "format")]
 pub mod format;
 #[cfg(feature = "inspect")]
 pub mod inspect;
+#[cfg(feature = "text")]
+pub mod text;
+#[cfg(feature = "zh")]
+pub mod zh;

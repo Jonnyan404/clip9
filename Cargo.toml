@@ -65,6 +65,10 @@ chrono-tz = "0.10"
 
 thiserror = "2"
 anyhow = "1"
+# 动作库的提取/替换正则。选它而不是手写扫描器，是因为**模式本身是契约**：
+# 同一串 source 要在 Go（RE2）、前端（JS）与这边三处逐字一致 ——
+# 手写解析器一上来就把这条对不上了（细节见 crates/actions/src/actions/text.rs 的模块文档）。
+regex = "1"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 parking_lot = "0.12"
