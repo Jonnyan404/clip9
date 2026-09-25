@@ -20,14 +20,16 @@
 //!    举例：`2026-09-24　+1d`（全角空格）在前端与这边能算，在 Go 那边报错。
 //!
 //! 下面这些 `[0-9]` 也是同一个理由（`\d` 在 Go/JS 里都是 ASCII，而 Rust 默认是 Unicode）。
+//! ⚠️ 日期 token 的三条正则**已经搬到 `crate::offset`**（服务端的 `?at=` 也要认同一套写法），
+//! 那边的 `parse_date_token` 上重复写着这条约定。
 
 use std::sync::LazyLock;
 
-use chrono::{DateTime, Duration, FixedOffset, NaiveDate, NaiveTime};
+use chrono::{DateTime, FixedOffset};
 use regex::Regex;
 
 use crate::error::ActionError;
-use crate::offset::{DateOffset, DateUnit, at_local};
+use crate::offset::{DateOffset, DateUnit, parse_date_token, start_of_day};
 use crate::registry::{ActionContext, Params};
 
 /// `date.add` 的输入约定：`基准 运算符 数量 单位`，基准可省（省了用 `ctx.now`）。
@@ -38,37 +40,11 @@ use crate::registry::{ActionContext, Params};
 /// 那会换成 leftmost-longest，两边就此分叉。
 const DATE_ADD_SOURCE: &str = r"^(.*?)\s*([+-])\s*([0-9]+)\s*([dwmy]?)\s*$";
 
-/// 日期 token 的三种写法，与前端 `parseDateToken` 认的一致：
-///
-/// - ISO / 斜杠：`2026-09-23`、`2026/9/23`（可跟 `10:30` 或 `T10:30:00`）
-/// - 中文：`2026年09月23日`
-/// - 紧凑：`20260923`
-///
-/// ⚠️★ 第三条**没有时间捕获组**（`m` 只有 4 项）—— Go 那边正因此有过一次
-/// **下标越界 panic**（`date.add` 传紧凑日期 → 调度器 goroutine 崩 → 整个进程退出）。
-/// 这里用 `caps.get(4)` 取组，组不存在与组没参与都回 `None`，两种情形自然合一，
-/// 不会再犯同一个错。
-const DATE_TOKEN_SOURCES: [&str; 3] = [
-    r"^([0-9]{4})[-/]([0-9]{1,2})[-/]([0-9]{1,2})(?:[ T]([0-9]{1,2}):([0-9]{2})(?::([0-9]{2}))?)?$",
-    r"^([0-9]{4})年([0-9]{1,2})月([0-9]{1,2})日?(?:[ T]([0-9]{1,2}):([0-9]{2})(?::([0-9]{2}))?)?$",
-    r"^([0-9]{4})([0-9]{2})([0-9]{2})$",
-];
-
 /// 两个操作数之间的分隔符，与前端 `date.diff` 保持一致。
 ///
 /// ⚠️ 这里的 `\s*` 只是让它**顺便**吃掉分隔符旁边的空白，而「两行写法」是另一条路
 /// （分隔符本身不匹配裸换行，所以 `A\nB` 会落到下面那个按 `\n` 拆的分支）。
 const DATE_DIFF_SEP_SOURCE: &str = r"\s*(?:~|～|→|->|至|到|\.\.+)\s*";
-
-/// 日期关键词 → 相对「今天」的天数偏移。查表前先转小写（所以 `TODAY` 也认）。
-const DATE_KEYWORDS: [(&str, i64); 6] = [
-    ("今天", 0),
-    ("明天", 1),
-    ("昨天", -1),
-    ("today", 0),
-    ("tomorrow", 1),
-    ("yesterday", -1),
-];
 
 fn compiled(source: &'static str) -> Regex {
     Regex::new(source).expect("内置正则必须能编译")
@@ -76,9 +52,6 @@ fn compiled(source: &'static str) -> Regex {
 
 static DATE_ADD_RE: LazyLock<Regex> = LazyLock::new(|| compiled(DATE_ADD_SOURCE));
 static DATE_DIFF_SEP_RE: LazyLock<Regex> = LazyLock::new(|| compiled(DATE_DIFF_SEP_SOURCE));
-static DATE_TOKEN_RES: LazyLock<[Regex; 3]> = LazyLock::new(|| {
-    DATE_TOKEN_SOURCES.map(|source| Regex::new(source).expect("内置正则必须能编译"))
-});
 
 pub(crate) fn run(
     id: &str,
@@ -96,62 +69,6 @@ pub(crate) fn run(
 
 fn invalid(message: impl Into<String>) -> ActionError {
     ActionError::InvalidInput(message.into())
-}
-
-/// 某个时刻所在那一天的**本地零点**。
-fn start_of_day(t: &DateTime<FixedOffset>) -> DateTime<FixedOffset> {
-    at_local(*t.offset(), t.date_naive().and_time(NaiveTime::MIN))
-}
-
-/// 解析一个日期 token，返回**任务时区**下的时刻；认不出返回 `None`。
-///
-/// ⚠️ 关键字（今天/明天/昨天）按**基准时刻** `now` 算，**不要**在函数里取 `now()`：
-/// 试算用的 `ctx.now` 是「下次触发时刻」（未来），实发时才是当前时刻 —— 用真实时间的话
-/// **同一份正文试算和实发会得到不同结果**，而测试里注入的固定 `now` 也会失效，
-/// 于是断言跟着真实日期漂（每天早上红一次）。
-fn parse_date_token(raw: &str, now: &DateTime<FixedOffset>) -> Option<DateTime<FixedOffset>> {
-    let s = raw.trim();
-    if s.is_empty() {
-        return None;
-    }
-    let offset = *now.offset();
-
-    if let Some((_, days)) = DATE_KEYWORDS
-        .iter()
-        .find(|(key, _)| *key == s.to_lowercase())
-    {
-        // 归到零点再加偏移 —— 不归一的话「明天」会把当前的时分秒一起带上。
-        return Some(start_of_day(now) + Duration::days(*days));
-    }
-
-    for re in DATE_TOKEN_RES.iter() {
-        let Some(caps) = re.captures(s) else { continue };
-        // 三条正则的前三组都是纯数字，解析不会失败；`unwrap_or_default` 是照 Go 的
-        // `_ := strconv.Atoi(...)` 写法（那里也忽略错误 —— 忽略之后得 0，
-        // 于是自然在下面的构造/回读校验那一步被拒）。
-        let year: i32 = num(&caps[1]);
-        let month: u32 = num(&caps[2]);
-        let day: u32 = num(&caps[3]);
-        // ⚠️ 紧凑写法没有时间组：`get(4)` 在「组不存在」与「组没参与」两种情形下都回 None，
-        // 所以这一句同时兜住了 Go 那个越界 panic 的两种根因。
-        let hour: u32 = caps.get(4).map_or(0, |m| num(m.as_str()));
-        let minute: u32 = caps.get(5).map_or(0, |m| num(m.as_str()));
-        let second: u32 = caps.get(6).map_or(0, |m| num(m.as_str()));
-
-        // ⚠️ 这里是**严格构造**（月/日/时分秒越界 / 不存在的日期一律 None），
-        // 与 Go 的「构造完再回读校验年月日」在绝大多数输入上等价；
-        // 差别只在时分秒越界那种输入上，见模块文档第 1 条。
-        let date = NaiveDate::from_ymd_opt(year, month, day)?;
-        let time = NaiveTime::from_hms_opt(hour, minute, second)?;
-        return Some(at_local(offset, date.and_time(time)));
-    }
-
-    None
-}
-
-/// 捕获组里的数字。三条正则里出现过数字的位置都是纯数字，解析不会失败。
-fn num<T: std::str::FromStr + Default>(raw: &str) -> T {
-    raw.parse().unwrap_or_default()
 }
 
 fn date_add(input: &str, now: &DateTime<FixedOffset>) -> Result<String, ActionError> {

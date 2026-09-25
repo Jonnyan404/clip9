@@ -263,6 +263,51 @@ fn record_run(
     }
 }
 
+/// 解析 `?at=` 给的基准时刻。对应 Go 的 `parsePreviewReference`。
+///
+/// ⚠️ 认两种写法：RFC3339，或日期 token（`2026-09-25` / `2026-09-25 09:30` …）。
+/// 后者**复用 `actions::offset::parse_date_token`**，不在这里另写一套 ——
+/// 那套语法已经被 `date.add` / `date.diff` / 模板引擎 / 这里**四处**共用，
+/// 抄一份迟早会漂（而漂出来的正是「同一个输入两个结果」这类最难查的错）。
+///
+/// ⚠️ 认不出**必须报错**，不能悄悄回落到默认基准：那会让用户拿到一个看着合理、
+/// 其实完全不对的预览结果。同 `date.add` 里「写了基准但认不出就报错」那条原则。
+fn parse_preview_reference(
+    raw: &str,
+    fallback: chrono::DateTime<chrono::FixedOffset>,
+) -> Result<chrono::DateTime<chrono::FixedOffset>, String> {
+    if let Ok(at) = chrono::DateTime::parse_from_rfc3339(raw) {
+        return Ok(at);
+    }
+    if let Some(at) = clip9_actions::offset::parse_date_token(raw, &fallback) {
+        return Ok(at);
+    }
+    Err(format!(
+        "无法解析基准时刻 {raw:?}（可用 RFC3339，或 2026-09-25 / 2026-09-25 09:30）"
+    ))
+}
+
+/// 把 `?at=` 应用到默认基准上；`?at=` 缺省或只有空白时原样返回。
+fn apply_at(
+    query: &HashMap<String, String>,
+    fallback: chrono::DateTime<chrono::FixedOffset>,
+) -> Result<chrono::DateTime<chrono::FixedOffset>, String> {
+    match query.get("at").map(|s| s.trim()).filter(|s| !s.is_empty()) {
+        None => Ok(fallback),
+        Some(raw) => parse_preview_reference(raw, fallback),
+    }
+}
+
+/// `?at=` 解析失败时的响应。两个端点（run / preview）共用一份，文案才不会两边漂。
+fn invalid_reference(message: &str) -> Response {
+    write_error(
+        StatusCode::BAD_REQUEST,
+        "invalid_reference",
+        "Invalid reference time",
+        message,
+    )
+}
+
 /// `POST /tasks/{id}/run`：试跑（默认只算不发）或立即发送（`?send=1`）。
 pub async fn task_run(
     state: &AppState,
@@ -307,6 +352,12 @@ pub async fn task_run(
             .unwrap()
             .with_timezone(&offset);
         let reference = task.next_run_after(now).unwrap_or(now);
+        // ⚠️ `?at=` 是 `docs/api.md` §8.7 写明的参数。认不出时必须 400 ——
+        // 悄悄回落到「下次触发时刻」会让用户以为看到的就是他要的那个基准。
+        let reference = match apply_at(query, reference) {
+            Ok(r) => r,
+            Err(msg) => return invalid_reference(&msg),
+        };
 
         match execute(state, task, reference, true) {
             Ok(output) => json_response(&serde_json::json!({
@@ -317,7 +368,7 @@ pub async fn task_run(
                 "keepHistory": task.keep_history,
                 "referenceAt": reference.timestamp(),
                 "nextRunAt": task.next_run_at(now),
-                "scheduledAt": reference.to_rfc3339(),
+                "scheduledAt": clip9_core::task::format_rfc3339(&reference),
             })),
             Err(e) => write_error(
                 StatusCode::BAD_REQUEST,
@@ -333,7 +384,7 @@ pub async fn task_run(
 pub async fn task_preview(
     state: &AppState,
     task: &AutomationTask,
-    _query: &HashMap<String, String>,
+    query: &HashMap<String, String>,
 ) -> Response {
     let offset = task
         .tz_offset()
@@ -342,6 +393,11 @@ pub async fn task_preview(
         .unwrap()
         .with_timezone(&offset);
     let reference = task.next_run_after(now).unwrap_or(now);
+    // 与 `task_run` 同一条：`?at=` 认不出必须报错，不能悄悄用默认基准。
+    let reference = match apply_at(query, reference) {
+        Ok(r) => r,
+        Err(msg) => return invalid_reference(&msg),
+    };
 
     match execute(state, task, reference, true) {
         Ok(output) => json_response(&serde_json::json!({
@@ -351,7 +407,7 @@ pub async fn task_preview(
             "keepHistory": false,
             "referenceAt": reference.timestamp(),
             "nextRunAt": task.next_run_at(now),
-            "referenceAt2": reference.to_rfc3339(),
+            "referenceAt2": clip9_core::task::format_rfc3339(&reference),
         })),
         Err(e) => write_error(
             StatusCode::BAD_REQUEST,
