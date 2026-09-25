@@ -57,11 +57,7 @@ async fn call(
         .header(header::CONTENT_TYPE, "application/json")
         .body(Body::from(body_bytes))
         .expect("构造请求");
-    let resp = router
-        .clone()
-        .oneshot(req)
-        .await
-        .expect("请求应成功返回");
+    let resp = router.clone().oneshot(req).await.expect("请求应成功返回");
     let status = resp.status();
     let bytes = axum::body::to_bytes(resp.into_body(), usize::MAX)
         .await
@@ -105,7 +101,10 @@ async fn admin_can_create_and_list_tasks() {
     )
     .await;
     assert_eq!(status, StatusCode::OK, "创建应成功：{body}");
-    let task_id = body["task"]["id"].as_str().expect("返回 task.id").to_owned();
+    let task_id = body["task"]["id"]
+        .as_str()
+        .expect("返回 task.id")
+        .to_owned();
     assert_eq!(body["task"]["room"], "work", "房间来自鉴权上下文");
 
     // 列表按 room 过滤。
@@ -127,7 +126,14 @@ async fn room_cannot_be_declared_in_the_body() {
     // 请求体里塞一个 room 字段 —— 应该被忽略，任务仍落在鉴权上下文给的房间。
     let mut req = daily_task("x");
     req["room"] = json!("hijacked");
-    let (status, body) = call(&router, "POST", "/tasks?room=work", Some("adminpw"), Some(req)).await;
+    let (status, body) = call(
+        &router,
+        "POST",
+        "/tasks?room=work",
+        Some("adminpw"),
+        Some(req),
+    )
+    .await;
     assert_eq!(status, StatusCode::OK, "创建应成功：{body}");
     assert_eq!(body["task"]["room"], "work", "请求体里的 room 必须被忽略");
 }
@@ -141,14 +147,7 @@ async fn non_admin_needs_room_credential() {
     assert_eq!(status, StatusCode::FORBIDDEN);
 
     // 带房间密码就能用（room 档成员）。
-    let (status, _) = call(
-        &router,
-        "GET",
-        "/tasks?room=work",
-        Some("roompw"),
-        None,
-    )
-    .await;
+    let (status, _) = call(&router, "GET", "/tasks?room=work", Some("roompw"), None).await;
     assert_eq!(status, StatusCode::OK);
 }
 
@@ -236,10 +235,15 @@ async fn single_tier_issues_a_task_token() {
     )
     .await;
     assert_eq!(status, StatusCode::OK, "创建应成功：{body}");
-    let token = body["taskToken"].as_str().expect("single 档应返回 taskToken");
+    let token = body["taskToken"]
+        .as_str()
+        .expect("single 档应返回 taskToken");
 
     // taskToken 明文只出现这一次；响应里的 task 不应含 ownerHash。
-    assert!(body["task"].get("ownerHash").is_none(), "ownerHash 永不外发");
+    assert!(
+        body["task"].get("ownerHash").is_none(),
+        "ownerHash 永不外发"
+    );
 
     // 不带 task token 时，single 档里这条任务**连内容都不给看**（foreignCount）。
     let (status, list) = call(&router, "GET", "/tasks?room=lobby", None, None).await;
