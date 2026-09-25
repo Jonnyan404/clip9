@@ -94,6 +94,11 @@ const TASKS: TableDefinition<&str, &[u8]> = TableDefinition::new("tasks");
 
 const K_SCHEMA_VERSION: &str = "schema_version";
 const K_NEXT_ID: &str = "next_id";
+/// 定时任务的**单调序号**计数器。见 [`Store::put_task`] / [`Store::list_tasks`]。
+///
+/// ⚠️ 它和 `K_NEXT_ID` 是**两个独立的**计数器，不能合用：消息 id 是 i32、
+/// 任务是 i64，而且两者的「跳到已有值之后」是各自表的事。
+const K_NEXT_TASK_SEQ: &str = "next_task_seq";
 const K_STORED_BYTES: &str = "stored_bytes";
 
 /// 一次 `trim_global` 最多删多少条。
@@ -976,11 +981,45 @@ impl Store {
     // ── 定时任务 ──────────────────────────────────────────────────────
 
     /// 写入（新建或整体替换）一条定时任务。key 是 `task.id`。
+    ///
+    /// ⚠️ `seq <= 0` = 「序号还没定」，这里给它分配一个**单调递增**的序号，
+    /// 而序号就是列表顺序（见 [`Self::list_tasks`]）。已经有条目的，沿用它的旧序号 ——
+    /// 所以更新**不会**改变位置，和 Go 的「upsert 就地替换、不挪位置」一致。
+    ///
+    /// 为什么不靠 `createdAt`：它是**秒级**的，同一秒内建的两条分不出先后，
+    /// 而 uuid 又是随机的 —— 于是「谁排在前面」这件事**没有任何依据**。
+    /// 单调序列是这里唯一能给出确定答案的东西。
     pub fn put_task(&self, task: &AutomationTask) -> Result<()> {
-        let payload = serde_json::to_vec(task)?;
+        let mut task = task.clone();
         let txn = self.db.begin_write()?;
         {
+            let mut meta = txn.open_table(META)?;
             let mut tasks = txn.open_table(TASKS)?;
+
+            let mut next_seq = meta.get(K_NEXT_TASK_SEQ)?.map_or(1, |g| g.value());
+            if task.seq <= 0 {
+                // ⚠️ 已有条目要**沿用它的序号** —— 否则「直接 put 一条 `seq = 0` 的更新」
+                // 会被当成新建、重新分配一个序号，那条任务就跳到列表末尾去了。
+                // 服务端那条路（`upsert_task`）本来就会把序号搬回来，这里是**兜底**：
+                // 「更新不该改变位置」这件事不该依赖调用方记得带字段。
+                let existing_seq = tasks
+                    .get(task.id.as_str())?
+                    .and_then(|v| serde_json::from_slice::<AutomationTask>(v.value()).ok())
+                    .map_or(0, |t| t.seq);
+                task.seq = if existing_seq > 0 {
+                    existing_seq
+                } else {
+                    // ⚠️ 溢出必须**报错**，不能 `unwrap_or(i64::MAX)` —— 那样从某一刻起每条任务
+                    // 都会拿到同一个序号，顺序退化成随机。同 `insert` 里对 id 的那条论证。
+                    i64::try_from(next_seq).map_err(|_| StoreError::IdExhausted)?
+                };
+            }
+            // 和 `insert` 一样：计数器必须能跳过**已有**的序号，否则更新过的任务
+            // 会让后面新建的撞上它。
+            next_seq = next_seq.max(task.seq as u64 + 1);
+            meta.insert(K_NEXT_TASK_SEQ, next_seq)?;
+
+            let payload = serde_json::to_vec(&task)?;
             tasks.insert(task.id.as_str(), payload.as_slice())?;
         }
         txn.commit()?;
@@ -1013,14 +1052,29 @@ impl Store {
     /// ⚠️ 不按房间过滤：任务量级很小（每房间最多 20 条），而「按房间过滤」是服务端鉴权的
     /// 职责（管理员能跨房间，普通成员只能看自己房间），不该下沉到存储层。
     /// 全量读出再由调用方过滤，和 Go 的 `snapshotAutomationTasks` 一个意思。
+    ///
+    /// ⚠️★ **顺序按 `seq`（单调递增的内部序号）升序 —— 不要依赖 redb 的 key 顺序。**
+    ///
+    /// 这张表的主键是任务的 uuid，所以「按 key 遍历」等于**按随机串排序**：
+    /// 用户新建一条任务，它会出现在列表中间某个随机位置，而不是末尾；
+    /// 每读一次顺序还可能变。Go 那边是一个切片，天然是插入顺序，于是这成了
+    /// 2026-09-25 把 `/tasks` 加进双跑比对时**看得见**的一条偏离。
+    ///
+    /// ⚠️ 一开始试的是「按 `(createdAt, id)` 排」，**不够** —— `createdAt` 是秒级的，
+    /// 同一秒内建的两条仍然只能靠 uuid 兜底，顺序还是随机的（自己的测试当场抓到）。
+    /// 根因是「拿随机值当排序兜底键」，所以修法是**换掉兜底键**：用 `seq`。
+    /// 这和消息那边（`meta.next_id` + `(room, ts_desc, id_desc)`）是同一套办法。
+    ///
+    /// 后两个字段只是防御性的兜底（`seq` 理论上不会重复，`0` 也只可能来自手改的库）。
     pub fn list_tasks(&self) -> Result<Vec<AutomationTask>> {
         let txn = self.db.begin_read()?;
         let tasks = txn.open_table(TASKS)?;
-        let mut out = Vec::new();
+        let mut out: Vec<AutomationTask> = Vec::new();
         for row in tasks.iter()? {
             let (_, value) = row?;
             out.push(serde_json::from_slice(value.value())?);
         }
+        out.sort_by(|a, b| (a.seq, a.created_at, &a.id).cmp(&(b.seq, b.created_at, &b.id)));
         Ok(out)
     }
 
