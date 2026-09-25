@@ -300,8 +300,22 @@ await compare('POST /text?room=work', 'POST', '/text?room=work', { body: 'work r
 await compare('POST /text 超长（413）', 'POST', '/text', { body: 'x'.repeat(5000) });
 
 console.log('\n=== 取内容 ===');
-await compare('GET /content/latest 原文', 'GET', '/content/latest');
-await compare('GET /content/latest?format=json', 'GET', '/content/latest?format=json');
+// ⚠️ 显式写 `?room=default`：**不传 room** 的语义我们**故意和 Go 不同**
+// （Go = 跨所有房间取全局最新；我们 = default 房间），那条在下面「刻意偏离」一节单独断言。
+await compare('GET /content/latest 原文', 'GET', '/content/latest?room=default');
+await compare(
+  'GET /content/latest?format=json',
+  'GET',
+  '/content/latest?room=default&format=json'
+);
+// `?all=1` 是**我们新加的**显式跨房间开关，Go 不认这个参数 ——
+// 但 Go 在「不传 room」时本来就是跨房间，所以这条比对的含义是：
+// **「我们显式要跨房间，结果和 Go 的隐式跨房间一致」**。能过就说明跨房间实现是对的。
+await compare(
+  'GET /content/latest?all=1（显式跨房间）',
+  'GET',
+  '/content/latest?all=1&format=json'
+);
 // ⚠️ 「只带 `Accept: application/json`」那条**故意和 Go 不同**（Go 给 PostEvent 信封、
 // 我们给扁平对象），所以它不在这儿比 —— 在下面的「刻意偏离」一节单独断言。
 await compare('GET /content/2 原文', 'GET', '/content/2');
@@ -862,6 +876,35 @@ await expectOn(
 // ⚠️ 这条**只在下面报一句**，不写成断言：`expectOn` 走的是 `hit`（fetch），
 // 拿不到「服务端收到的那个 UA」的确定性结果 —— 写个恒真的断言比不写更糟
 // （假绿会让人以为测过了）。真实形状在 `user_agent.rs` 的单测里钉着。
+// 「不传 room」= **default 房间**（Go 是跨所有房间取全局最新）。
+//
+// ⚠️ 响应体里**没有 room 字段**，所以光看一条响应分不出它来自哪个房间。
+// 用一个标记来分辨：在 `work` 房间发一条**最新的**，然后
+// · 不传 room → 必须**不是**它（那是 default 房间的）
+// · `?all=1`  → 必须是它
+{
+  const marker = `跨房间标记 ${Date.now()}`;
+  await hit(RS_PORT, 'POST', '/text?room=work', { body: marker });
+  const plain = await hit(RS_PORT, 'GET', '/content/latest?format=json');
+  const all = await hit(RS_PORT, 'GET', '/content/latest?all=1&format=json');
+
+  if (plain.parsed?.content !== marker && all.parsed?.content === marker) {
+    pass++;
+    console.log('  ok   不传 room → default 房间；?all=1 → 跨房间（拿到 work 的那条）');
+  } else {
+    fail++;
+    failures.push(
+      `不传 room / ?all=1 的语义不对\n` +
+        `  不传 room 拿到: ${JSON.stringify(plain.parsed?.content)}\n` +
+        `  ?all=1 拿到:   ${JSON.stringify(all.parsed?.content)}\n` +
+        `  标记应该是:    ${JSON.stringify(marker)}`
+    );
+    console.log('  FAIL 不传 room / ?all=1 的语义不对');
+    console.log(`       不传 room: ${JSON.stringify(plain.parsed?.content)}`);
+    console.log(`       ?all=1:   ${JSON.stringify(all.parsed?.content)}`);
+  }
+}
+
 console.log(
   '  KNOWN senderDevice 的 os/browser：认不出来时是 "Other"（**无尾随空格**）' +
     '，Go 是 "Other "。前端直接显示这个串 —— 这条偏离是刻意的'

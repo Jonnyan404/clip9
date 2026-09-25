@@ -235,6 +235,18 @@ fn wants_json(explicit_format: &str, headers: &HeaderMap) -> bool {
     }
 }
 
+/// 真值参数：`1` / `true` / `yes` / `on`（大小写与首尾空白不敏感）。
+///
+/// 和 Go 的 `isTruthy` 一致 —— 这个接口里已经有两个这样的参数（`?json=1`、`?download=true`），
+/// 新加的 `?all=1` 跟着它们走，别自己发明第三种写法。
+#[must_use]
+fn is_truthy(raw: Option<&String>) -> bool {
+    matches!(
+        raw.map(|v| v.trim().to_ascii_lowercase()).as_deref(),
+        Some("1" | "true" | "yes" | "on")
+    )
+}
+
 /// 按文件名猜响应类型（前端据此选图标/播放器）。
 ///
 /// 对应 Go `utils.go:199` 的 `DetermineResponseType`。
@@ -664,23 +676,39 @@ pub async fn latest_content(
     let requested_room = normalize_room_name(query.get("room").map(String::as_str).unwrap_or(""));
     let token = extract_auth_token(&headers, query.get("auth").map(String::as_str));
 
-    // ⚠️ 房间参数**不传**时是「不限房间」—— 要从所有房间里挑最新的那条，
-    // 而不是只看 default。这就是它不能直接用 `store.latest(room)` 的原因。
+    // ⚠️★ 「要不要跨房间」由 `?all=1` **显式**要，**不靠「不传 room」推断**。
+    //
+    // 原来（Go）是「不传 room = 跨所有房间取全局最新」，有两个问题：
+    // · **和其余端点不一致** —— `/text`、`/content/<id>`、`/revoke`、`/push` 不传 room 都是 `default`；
+    // · `docs/api.md` 自己写的是 "the newest entry **in the room**" —— **文档和实现早就对不上**。
+    //
+    // 现在：不传 room = `default` 房间（和文档一致）；要全局最新就显式 `?all=1`。
+    // 这条改动本身就是「按最佳实践来」的样子：**把隐式行为变显式**。
+    let want_all = is_truthy(query.get("all"));
+
     let candidates: Vec<ReceiveHolder> = if has_requested_room {
         state
             .store
             .recent_desc(&requested_room, 1)
             .unwrap_or_default()
-    } else {
+    } else if want_all {
         // 跨房间取最新：每个房间各取一条再比。房间数不多，这样比全表扫便宜得多。
         let mut all = Vec::new();
         for room in state.store.rooms().unwrap_or_default() {
-            if let Ok(Some(e)) = state.store.latest(&room.name) {
+            let name = normalize_room_name(&room.name);
+            // ⚠️ 打不开的房间要**跳过**，不是报 401 —— 否则「某个受保护房间里有一条新消息」
+            // 就会让**所有**取全局最新的请求全变 401。（Go 也是跳过，这里对齐它。）
+            if !can_access_room(&state.config, &name, &token) {
+                continue;
+            }
+            if let Ok(Some(e)) = state.store.latest(&name) {
                 all.push(e);
             }
         }
         all.sort_by(|a, b| b.timestamp().cmp(&a.timestamp()).then(b.id().cmp(&a.id())));
         all.into_iter().take(1).collect()
+    } else {
+        state.store.recent_desc("default", 1).unwrap_or_default()
     };
 
     let Some(entry) = candidates.into_iter().next() else {
