@@ -11,12 +11,14 @@
 //! 字段清单会随契约演进，行为不会。
 
 use std::net::SocketAddr;
+use std::sync::Arc;
 
 use axum::Router;
 use axum::body::Body;
 use axum::extract::ConnectInfo;
 use axum::http::{Request, StatusCode, header};
-use clip9_core::{AuthValue, Config, RoomAuthEntry};
+use clip9_core::{AuthValue, Config, NewShare, RoomAuthEntry, TYPE_CONTENT};
+use clip9_server::state::now_secs;
 use clip9_server::{AppState, router};
 use clip9_store::Store;
 use serde_json::{Value, json};
@@ -29,7 +31,10 @@ fn peer() -> SocketAddr {
 
 /// 一个装好的服务端：受保护房间 `work`（密码 `roompw`）+ 开放房间 `default`，
 /// 外加一个带 `index.html` 的静态目录（落地页要读它）。
-fn app() -> (Router, tempfile::TempDir) {
+///
+/// 连 `AppState` 一起返回：有的用例要**自己签一张令牌**（`state.share_key`）——
+/// 「造一个正常路径产生不了的输入」只能这么做，塞假串测的是「签名不对」，那是另一件事。
+fn app_with_state() -> (Router, Arc<AppState>, tempfile::TempDir) {
     let dir = tempfile::tempdir().expect("建临时目录");
     let store = Store::open(dir.path().join("clip9.redb")).expect("打开 store");
 
@@ -55,7 +60,13 @@ fn app() -> (Router, tempfile::TempDir) {
     .expect("写 index.html");
 
     let state = AppState::new(config, store, Some(static_dir));
-    (router(state), dir)
+    let router = router(state.clone());
+    (router, state, dir)
+}
+
+fn app() -> (Router, tempfile::TempDir) {
+    let (router, _state, dir) = app_with_state();
+    (router, dir)
 }
 
 /// 另一个配置：**没有**全局密码、房间也开放 —— 用来验「开放房间照样签发令牌」。
@@ -727,6 +738,44 @@ async fn the_landing_page_says_when_the_content_is_gone() {
     assert_eq!(status, StatusCode::OK);
     assert!(body.contains("内容已被删除或过期"), "{body}");
     assert!(!body.contains("会被删掉"), "{body}");
+}
+
+/// ⚠️ 手工签一张 **`room` 与条目对不上**的令牌 —— 正常的签发路径产生不了它
+/// （房间取自条目自己），所以这条测的是**纵深防御**：落地页与 `GET /share` 都必须拒，
+/// 而不是把**别的房间**的内容摘要写进 OG 卡片。
+///
+/// 值得单独一条的理由：那份 HTML 会被微信 / Telegram / Slack 缓存，删不掉 ——
+/// 泄露一次就是永久泄露。两条路径（`info` 与 `landing_card`）各有一份校验，少哪一份都在这条上红。
+#[tokio::test]
+async fn a_token_whose_room_does_not_match_the_entry_is_refused() {
+    let (app, state, _dir) = app_with_state();
+    // 这条内容在**受保护**的 `work` 房间。
+    let id = send_text(&app, "别的房间的机密").await;
+
+    // 用真的签名密钥签（签名是对的），只把 `room` 写成 `default`。
+    let (claims, _) = state.share_key.share_claims(NewShare {
+        share_type: TYPE_CONTENT,
+        id: &id,
+        room: "default",
+        ttl_seconds: 900,
+        max_uses: 0,
+        password: "",
+        jti: "jti-room-mismatch".to_owned(),
+        now: now_secs(),
+    });
+    let token = state.share_key.sign(&claims);
+
+    let (status, body) = get(&app, &format!("/s/{token}")).await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(
+        !body.contains("别的房间的机密"),
+        "落地页把别的房间的内容摘要写进了卡片: {body}"
+    );
+    assert!(body.contains("分享链接无效或已过期"), "{body}");
+
+    let (status, body) = get(&app, &format!("/share?t={token}")).await;
+    assert_eq!(status, StatusCode::NOT_FOUND, "{body}");
+    assert_eq!(code_of(&body), "content_not_found");
 }
 
 /// 没有前端外壳时回退到一张通用卡片（API-only 的部署也要能被预览）。

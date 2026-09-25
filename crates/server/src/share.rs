@@ -922,6 +922,13 @@ fn landing_card(state: &AppState, landing: &Landing<'_>, now: i64) -> ShareCard 
             let Some(entry) = state.store.get(content_id).ok().flatten() else {
                 return deleted_card(card, "这条分享指向的内容已不在服务器上。");
             };
+            // ⚠️ 房间必须与 token 里那份一致 —— 和 `info` 里那条是同一道校验，两条路径都要有。
+            // 少了它，一张「room 与条目对不上」的令牌会把**别的房间**的内容摘要写进 OG 卡片，
+            // 而这份 HTML 会被第三方缓存且删不掉（见模块注释）。正常的签发路径产生不了这种
+            // token（房间取自条目自己），所以这是纵深防御，不是堵一个已存在的洞。
+            if normalize_room_name(entry.room()) != claims.room {
+                return card;
+            }
             match &entry {
                 ReceiveHolder::File(file) => {
                     let (name, size) = share_file_meta(state, &file.cache, &file.name, file.size);
