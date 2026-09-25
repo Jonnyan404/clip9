@@ -98,17 +98,42 @@ async fn main() -> anyhow::Result<()> {
         std::process::exit(0);
     }
 
-    // 配置：`-config <path>` 读 JSON（形状与 Go 的 `config.json` 一致，见 `core::config`）。
-    // ⚠️ 配置**必须嵌套在 `server` 键下** —— 平铺会被静默忽略并回落默认值，
-    // 那是踩过的坑（配了端口却还是 9501）。
-    let mut config = match args.get("config") {
-        Some(path) => {
-            let raw = std::fs::read_to_string(&path)
-                .map_err(|e| anyhow::anyhow!("读不到配置文件 {path}：{e}"))?;
-            serde_json::from_str::<Config>(&raw)
-                .map_err(|e| anyhow::anyhow!("配置文件 {path} 解析失败：{e}"))?
+    // 配置：`-config` 默认 `config.json`（与 Go 的 flag 默认值一致）。
+    //
+    // ⚠️★ **文件不存在就写一份默认配置出来，然后照常启动** —— 与 Go 的 `load_config`
+    // 一样（它读不到就 `os.WriteFile` 一份 `defaultConfig()`）。这一条同时给了两个东西：
+    // 「零配置启动」和「一份可以照着改的配置模板」。Jonny 2026-09-25 要的就是这两样。
+    //
+    // ⚠️ 但**解析失败是致命错误**，这一条**刻意与 Go 不同**：Go 会打一行日志然后用默认值
+    // 继续跑 —— 那意味着一个拼错的配置会让服务**不带密码**地起来，而用户以为自己配过了。
+    // 「启动失败」比「静默降级」安全，这是这个项目一贯的取舍。
+    let config_path = args
+        .get("config")
+        .unwrap_or_else(|| "config.json".to_owned());
+    let mut config = match std::fs::read_to_string(&config_path) {
+        Ok(raw) => serde_json::from_str::<Config>(&raw)
+            .map_err(|e| anyhow::anyhow!("配置文件 {config_path} 解析失败：{e}"))?,
+        Err(read_err) => {
+            let default = Config::default();
+            // ⚠️ 写不出来**不是**致命错误（只读挂载 / 容器里的只读层）—— 照样用默认值跑，
+            // 但要**说出来**，否则用户以为配置已经保存了。
+            match serde_json::to_string_pretty(&default) {
+                Ok(text) => match std::fs::write(&config_path, format!("{text}\n")) {
+                    Ok(()) => tracing::info!(
+                        path = %config_path,
+                        "配置文件不存在，已写入一份默认配置（照着改，改完重启生效）"
+                    ),
+                    Err(write_err) => tracing::warn!(
+                        path = %config_path,
+                        error = %write_err,
+                        "写默认配置失败，用内存里的默认值继续跑"
+                    ),
+                },
+                Err(e) => tracing::warn!(error = %e, "序列化默认配置失败"),
+            }
+            tracing::info!(path = %config_path, error = %read_err, "用默认配置启动");
+            default
         }
-        None => Config::default(),
     };
 
     apply_flags(&mut config, &args)?;
