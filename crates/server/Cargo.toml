@@ -38,3 +38,8 @@ time = { workspace = true }
 multer = "3.1"
 # `DetermineResponseType` 要按扩展名猜 MIME（Go 用 mime.TypeByExtension）。
 mime_guess = "2.0"
+# 缩略图：解码 → 缩到 min(w,h)=64 → JPEG q70 → data URI。
+# ⚠️ 它给二进制加几百 KB（各格式的解码器），是 OpenWrt 上体积的主要来源之一 ——
+# 真要省体积时，第一刀就砍这里。默认 feature 关掉是为了不把 tiff/avif/hdr 那些冷门解码器也带上。
+image = { version = "0.25", default-features = false, features = ["jpeg", "png", "gif", "webp"] }
+base64 = "0.23"

@@ -19,6 +19,7 @@
 //! | [`state`] | 共享状态 + 广播出口 |
 
 pub mod error;
+pub mod files;
 pub mod handlers;
 pub mod state;
 pub mod text_body;
@@ -73,6 +74,17 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/content/{id}", get(handlers::content))
         .route("/content/{id}/column", post(handlers::content_column))
         .route("/rooms", get(handlers::rooms))
+        // ── 文件 ──
+        // ⚠️ `/upload/chunk`（初始化，body 是文件名）和 `/upload/chunk/{uuid}`（追加分片）
+        // 是**两条不同的路由** —— Go 那边靠「路径后缀 + Content-Type 全等」在一个 handler 里
+        // 分叉，这里交给路由表分，更清楚。
+        .route("/upload", post(files::upload))
+        .route("/upload/chunk", post(files::upload))
+        .route("/upload/chunk/{uuid}", post(files::chunk))
+        .route("/upload/finish/{uuid}", post(files::finish))
+        // ⚠️ 带不带文件名都要能下 —— Go 只用 uuid，文件名那段是给人看的。
+        .route("/file/{uuid}", get(files::file).delete(files::file))
+        .route("/file/{uuid}/{name}", get(files::file).delete(files::file))
         // ⚠️ `/revoke/all` 必须能和 `/revoke/{id}` 并存：axum 里静态段优先，
         // 所以 `all` 不会被当成一个 id。Go 那边是靠注册顺序决定的。
         .route("/revoke/all", any(handlers::clear_all))

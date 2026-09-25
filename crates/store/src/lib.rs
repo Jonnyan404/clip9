@@ -51,7 +51,7 @@ pub mod limits;
 use std::collections::BTreeMap;
 use std::path::Path;
 
-use clip9_protocol::{ReceiveHolder, normalize_room_name};
+use clip9_protocol::{File, ReceiveHolder, normalize_room_name};
 use redb::{
     Database, ReadableDatabase, ReadableTable, ReadableTableMetadata, Table, TableDefinition,
 };
@@ -67,6 +67,15 @@ const MESSAGES: TableDefinition<(&str, u64, u32), &[u8]> = TableDefinition::new(
 const BY_ID: TableDefinition<i32, (&str, i64)> = TableDefinition::new("by_id");
 const ROOMS: TableDefinition<&str, (u64, i64)> = TableDefinition::new("rooms");
 const META: TableDefinition<&str, u64> = TableDefinition::new("meta");
+/// 上传文件的登记表：`uuid -> File`（JSON）。
+///
+/// ⚠️ Go 把它放在**内存 map** 里，再顺手写进 `history.json` 的 `file` 数组 ——
+/// 于是重启之后「文件还在磁盘上、但登记没了」，`/file/<uuid>` 直接 404。
+/// 这边让它进库：重启后仍然认得已经传过的文件。
+///
+/// ⚠️ **新增一张表不用改 `SCHEMA_VERSION`** —— 那个版本号管的是**已有表的结构**，
+/// 加表是纯增量，老库打开时 `init_schema` 会把它建出来。
+const FILES: TableDefinition<&str, &[u8]> = TableDefinition::new("files");
 
 const K_SCHEMA_VERSION: &str = "schema_version";
 const K_NEXT_ID: &str = "next_id";
@@ -626,6 +635,67 @@ impl Store {
             tracing::info!(removed, "全库裁剪：丢掉了最旧的若干条");
         }
         Ok(removed)
+    }
+
+    // ── 文件登记 ──────────────────────────────────────────────────────
+
+    /// 登记（或更新）一个上传文件。
+    ///
+    /// ⚠️ 分片上传时**每个分片都要调它**来更新 `size` —— 否则 `/upload/finish` 报出去的
+    /// 大小是 0，而客户端会拿这个 0 去做进度/校验。
+    pub fn put_file(&self, file: &File) -> Result<()> {
+        let payload = serde_json::to_vec(file)?;
+        let txn = self.db.begin_write()?;
+        {
+            let mut files = txn.open_table(FILES)?;
+            files.insert(file.uuid.as_str(), payload.as_slice())?;
+        }
+        txn.commit()?;
+        Ok(())
+    }
+
+    pub fn get_file(&self, uuid: &str) -> Result<Option<File>> {
+        let txn = self.db.begin_read()?;
+        let files = txn.open_table(FILES)?;
+        match files.get(uuid)? {
+            Some(v) => Ok(Some(serde_json::from_slice(v.value())?)),
+            None => Ok(None),
+        }
+    }
+
+    /// 注销一个文件。返回「它本来在不在」。
+    pub fn remove_file(&self, uuid: &str) -> Result<bool> {
+        let txn = self.db.begin_write()?;
+        let existed = {
+            let mut files = txn.open_table(FILES)?;
+            files.remove(uuid)?.is_some()
+        };
+        txn.commit()?;
+        Ok(existed)
+    }
+
+    /// 全部已登记的文件。
+    pub fn list_files(&self) -> Result<Vec<File>> {
+        let txn = self.db.begin_read()?;
+        let files = txn.open_table(FILES)?;
+        let mut out = Vec::new();
+        for row in files.iter()? {
+            let (_, v) = row?;
+            out.push(serde_json::from_slice(v.value())?);
+        }
+        Ok(out)
+    }
+
+    /// 已过期的登记：`expire_time > 0 && expire_time < now`。
+    ///
+    /// ⚠️ `expire_time == 0` 是**永不过期**，不是「立刻过期」——
+    /// 把它算进过期会让所有设了 `fileExpire: 0` 的房间文件被清光。
+    pub fn expired_files(&self, now: i64) -> Result<Vec<File>> {
+        Ok(self
+            .list_files()?
+            .into_iter()
+            .filter(|f| f.expire_time > 0 && f.expire_time < now)
+            .collect())
     }
 
     /// 按消息表**重算**房间统计。迁移工具和「怀疑计数漂了」时用。

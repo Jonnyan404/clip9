@@ -119,7 +119,7 @@ fn host(headers: &HeaderMap) -> String {
 
 /// 内容 URL：`<scheme>://<host><prefix>/content/<id>`，非 default 房间再挂 `?room=`。
 #[must_use]
-fn content_url(headers: &HeaderMap, config: &Config, id: i32, room: &str) -> String {
+pub fn content_url(headers: &HeaderMap, config: &Config, id: i32, room: &str) -> String {
     let mut url = format!(
         "{}://{}{}/content/{id}",
         scheme(headers),
@@ -132,10 +132,51 @@ fn content_url(headers: &HeaderMap, config: &Config, id: i32, room: &str) -> Str
     url
 }
 
+/// 组装「谁发的」三件套：IP、设备信息、客户端 ID。
+///
+/// ⚠️ 三处细节都和 Go `broadcast.go:110` 对齐，缺一个都会让前端显示不对：
+///
+/// - **设备名来自 `?name=`**（清洗过）。它会进 `senderDevice.name`，而前端的 deviceLabel
+///   取值顺序是 `name → os → type` —— 缺了它，气泡上就只有「Chrome 120」这种通用名。
+/// - **客户端 ID 来自 `?client=`**，用于**气泡收发归属**（判断哪条是我自己发的）。
+/// - ⚠️ **没有 UA 的来源（定时任务）不能去解析 UA**：那会得到 `"os": " "` / `"browser": " "`
+///   这种带空格的脏值，而前端取值顺序是 name → os → type，于是消息会被显示成一个空格。
+///   Go 那边特判成 `{name, type: "Automation"}`。
+#[must_use]
+pub fn sender_base(
+    headers: &HeaderMap,
+    peer: Option<SocketAddr>,
+    query: &HashMap<String, String>,
+) -> (String, HashMap<String, String>, String) {
+    let ip = client_ip(headers, peer);
+    let ua = headers
+        .get(header::USER_AGENT)
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("");
+    let device_name =
+        crate::ws::sanitize_device_name(query.get("name").map(String::as_str).unwrap_or(""));
+
+    let device = if ua.trim().is_empty() {
+        HashMap::from([
+            ("name".to_owned(), device_name),
+            ("type".to_owned(), "Automation".to_owned()),
+        ])
+    } else {
+        parse_user_agent(ua, &device_name)
+    };
+
+    let client_id = query
+        .get("client")
+        .map(|s| s.trim().to_owned())
+        .unwrap_or_default();
+
+    (ip, device, client_id)
+}
+
 /// 带尾随换行的 JSON 响应 —— 和 Go 的 `json.NewEncoder(w).Encode(...)` 对齐，
 /// 这样两边的响应可以**逐字节比对**。
 #[must_use]
-fn json_response(value: &serde_json::Value) -> Response {
+pub fn json_response(value: &serde_json::Value) -> Response {
     let mut body = serde_json::to_string(value).unwrap_or_default();
     body.push('\n');
     ([(header::CONTENT_TYPE, "application/json")], body).into_response()
@@ -143,7 +184,7 @@ fn json_response(value: &serde_json::Value) -> Response {
 
 /// 纯文本响应（文本内容那条路）。
 #[must_use]
-fn text_response(body: String) -> Response {
+pub fn text_response(body: String) -> Response {
     ([(header::CONTENT_TYPE, "text/plain; charset=utf-8")], body).into_response()
 }
 
@@ -198,7 +239,7 @@ fn wants_json(explicit_format: &str, headers: &HeaderMap) -> bool {
 ///
 /// 对应 Go `utils.go:199` 的 `DetermineResponseType`。
 #[must_use]
-fn determine_response_type(filename: &str) -> &'static str {
+pub fn determine_response_type(filename: &str) -> &'static str {
     let mime = mime_guess::from_path(filename).first_raw().unwrap_or("");
     if mime.is_empty() {
         return "file";
@@ -352,14 +393,9 @@ pub async fn text(
         );
     }
 
-    let ip = client_ip(&headers, Some(peer));
-    let device = parse_user_agent(
-        headers
-            .get(header::USER_AGENT)
-            .and_then(|v| v.to_str().ok())
-            .unwrap_or(""),
-        "",
-    );
+    // ⚠️ 用共享的 `sender_base`：设备名（`?name=`）和客户端 ID（`?client=`）都要带上 ——
+    // 少了前者，气泡上只有「Chrome 120」这种通用名；少了后者，分不出哪条是自己发的。
+    let (ip, device, client_id) = sender_base(&headers, Some(peer), &query);
 
     // 带 ?id= 是「覆盖已有条目」（前端改正文走这条）。
     if let Some(raw_id) = query.get("id").filter(|v| !v.is_empty()) {
@@ -394,6 +430,7 @@ pub async fn text(
             timestamp: now_secs(),
             sender_ip: ip,
             sender_device: Some(device),
+            sender_client_id: client_id,
             ..clip9_protocol::ReceiveBase::default()
         },
         content: text,

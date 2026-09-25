@@ -208,6 +208,25 @@ async function hit(port, method, path, { body, headers } = {}) {
   } catch {
     parsed = undefined;
   }
+  // 头也带回来 —— 下载链路的 `Content-Type` / `Content-Disposition` 是契约的一部分
+  // （判错会让浏览器把图片当附件下载，或者把文件名丢掉）。
+  const flat = {};
+  for (const [k, v] of res.headers) flat[k.toLowerCase()] = v;
+  return { status: res.status, text, parsed, headers: flat };
+}
+
+/** 单份 multipart 上传（`POST /upload`）。用 Node 自带的 FormData。 */
+async function hitForm(port, path, filename, content) {
+  const fd = new FormData();
+  fd.append('file', new Blob([content], { type: 'text/plain' }), filename);
+  const res = await fetch(`http://127.0.0.1:${port}${path}`, { method: 'POST', body: fd });
+  const text = await res.text();
+  let parsed;
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    parsed = undefined;
+  }
   return { status: res.status, text, parsed };
 }
 
@@ -538,6 +557,138 @@ compareEvents(
   compareEvents('B 先关 → A 收到 disconnect', results.Go, results.Rust);
 }
 
+
+// ── 文件 ──────────────────────────────────────────────────────────────
+
+console.log('\n=== 文件：分片上传 / 下载 / 删除 ===');
+
+/** uuid 是随机的，两边必然不同 —— 比之前抹平成 `<uuid>`。 */
+const UUID_RE = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/g;
+const scrubUuid = (v) => JSON.parse(JSON.stringify(v ?? null).replaceAll(UUID_RE, '<uuid>'));
+
+/** 在一台服务器上跑完整条文件流程，把每一步的响应都收回来。 */
+async function fileFlow(port) {
+  const init = await hit(port, 'POST', '/upload/chunk?room=ws-file', {
+    body: 'note.txt',
+    headers: { 'content-type': 'text/plain' },
+  });
+  const uuid = init.parsed?.result?.uuid;
+  const part1 = await hit(port, 'POST', `/upload/chunk/${uuid}`, { body: 'hello ' });
+  const part2 = await hit(port, 'POST', `/upload/chunk/${uuid}`, { body: 'world' });
+  const finish = await hit(port, 'POST', `/upload/finish/${uuid}?room=ws-file`);
+  const download = await hit(port, 'GET', `/file/${uuid}/note.txt`);
+  const attach = await hit(port, 'GET', `/file/${uuid}/note.txt?download=true`);
+  // ⚠️ Range 要在**删除之前**测。原来放在删除之后，两边都回 404、于是「通过」——
+  // 那是一条**假的绿**：什么都没验证。
+  const range = await hit(port, 'GET', `/file/${uuid}/note.txt`, {
+    headers: { range: 'bytes=0-4' },
+  });
+  const remove = await hit(port, 'DELETE', `/file/${uuid}/note.txt`);
+  const after = await hit(port, 'GET', `/file/${uuid}/note.txt`);
+  const single = await hitForm(port, '/upload?room=ws-file', 'single.txt', 'single-shot');
+  return { uuid, init, part1, part2, finish, download, attach, range, remove, after, single };
+}
+
+{
+  const [g, r] = await Promise.all([fileFlow(GO_PORT), fileFlow(RS_PORT)]);
+
+  const steps = [
+    // ⚠️ 每一步都要 `normalize(…, port)`：响应里的 `url` 带着**端口**，不抹平就永远是红的。
+    ['POST /upload/chunk 初始化', 'init', (x, p) => scrubUuid(normalize(x.parsed, p))],
+    ['POST /upload/chunk/<uuid> 第一片', 'part1', (x) => x.parsed],
+    ['POST /upload/chunk/<uuid> 第二片', 'part2', (x) => x.parsed],
+    ['POST /upload/finish/<uuid>', 'finish', (x, p) => scrubUuid(normalize(x.parsed, p))],
+    ['GET /file/<uuid>/<name> 正文', 'download', (x) => x.text],
+    ['GET /file/<uuid>/<name>?download=true', 'attach', (x) => x.text],
+    ['GET /file/<uuid>/<name> Range（视频拖动进度靠它）', 'range', (x) => `${x.status} ${x.text}`],
+    ['DELETE /file/<uuid>/<name>', 'remove', (x) => x.parsed],
+    ['GET 删完再取（404）', 'after', (x, p) => scrubUuid(normalize(x.parsed, p))],
+    ['POST /upload 单份 multipart', 'single', (x, p) => scrubUuid(normalize(x.parsed, p))],
+  ];
+
+  for (const [label, key, pick] of steps) {
+    const problems = [];
+    if (g[key].status !== r[key].status) {
+      problems.push(`状态码 Go=${g[key].status} Rust=${r[key].status}`);
+    }
+    const gv = canonical(pick(g[key], GO_PORT));
+    const rv = canonical(pick(r[key], RS_PORT));
+    if (gv !== rv) problems.push(`载荷不同\n    Go  : ${gv}\n    Rust: ${rv}`);
+
+    if (problems.length === 0) {
+      pass++;
+      console.log(`  ok   ${label}`);
+    } else {
+      fail++;
+      failures.push(`${label}\n  ${problems.join('\n  ')}`);
+      console.log(`  FAIL ${label}`);
+      for (const p of problems) console.log(`       ${p}`);
+    }
+  }
+
+  // ⚠️ 两边一致**还不够** —— 都回 404 也算「一致」。这条钉住 Range 真的生效：
+  // 必须 206、且只取到前 5 个字节。少了它，`ServeFile` 被换成不支持 Range 的实现也发现不了。
+  if (g.range.status === 206 && r.range.status === 206 && g.range.text === 'hello') {
+    pass++;
+    console.log(`  ok   Range 真的生效（206，只取到 ${JSON.stringify(g.range.text)}）`);
+  } else {
+    fail++;
+    failures.push(
+      `Range 没生效\n  Go=${g.range.status} ${JSON.stringify(g.range.text)}\n  Rust=${r.range.status} ${JSON.stringify(r.range.text)}`
+    );
+    console.log('  FAIL Range 没生效');
+  }
+
+  // 下载响应头单独比 —— 判错会让浏览器把图片当附件下载、或者丢掉文件名。
+  const headersToCheck = ['content-type', 'content-disposition', 'content-length'];
+  const gh = headersToCheck.map((h) => `${h}=${g.download.headers[h] ?? '-'}`).join(' | ');
+  const rh = headersToCheck.map((h) => `${h}=${r.download.headers[h] ?? '-'}`).join(' | ');
+  if (gh === rh) {
+    pass++;
+    console.log(`  ok   下载响应头  [${gh}]`);
+  } else {
+    fail++;
+    failures.push(`下载响应头\n  Go  : ${gh}\n  Rust: ${rh}`);
+    console.log('  FAIL 下载响应头');
+    console.log(`       Go  : ${gh}`);
+    console.log(`       Rust: ${rh}`);
+  }
+
+  // 分片拼出来的内容必须是原样 —— 这条是「分片追加」这个机制的核心。
+  if (g.download.text === 'hello world' && r.download.text === 'hello world') {
+    pass++;
+    console.log('  ok   两片拼起来正好是 hello world');
+  } else {
+    fail++;
+    failures.push(
+      `分片拼接结果不对\n  Go=${JSON.stringify(g.download.text)} Rust=${JSON.stringify(r.download.text)}`
+    );
+    console.log('  FAIL 分片拼接结果不对');
+  }
+
+  // ⚠️ Range 已经在上面那组步骤里测过了（删除**之前**）。
+  // 原来这里还有一段「删完再取 Range」，两边都回 404 —— 那是**假的绿**，删掉了。
+}
+
+// 文件条目在 `/content/<id>` 上的 JSON 形状。
+{
+  const [g, r] = await Promise.all([
+    hit(GO_PORT, 'GET', '/content/latest?room=ws-file&format=json'),
+    hit(RS_PORT, 'GET', '/content/latest?room=ws-file&format=json'),
+  ]);
+  const gv = canonical(scrubUuid(normalize(g.parsed, GO_PORT)));
+  const rv = canonical(scrubUuid(normalize(r.parsed, RS_PORT)));
+  if (g.status === r.status && gv === rv) {
+    pass++;
+    console.log(`  ok   文件条目的 /content/<id> JSON（type=${g.parsed?.type}）`);
+  } else {
+    fail++;
+    failures.push(`文件条目的 /content JSON\n  Go  : ${gv}\n  Rust: ${rv}`);
+    console.log('  FAIL 文件条目的 /content JSON');
+    console.log(`       Go  : ${gv}`);
+    console.log(`       Rust: ${rv}`);
+  }
+}
 
 // ── 已知的、刻意的差异 ────────────────────────────────────────────────
 console.log('\n=== 已知差异（刻意，不算失败） ===');

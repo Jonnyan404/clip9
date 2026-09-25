@@ -52,6 +52,16 @@ async fn main() -> anyhow::Result<()> {
     let store = Store::open_with(&db_path, Limits::default())?;
     tracing::info!(db = %db_path.display(), "存储已打开");
 
+    // ⚠️ 文件存储目录默认跟着 `--data` 走。配置里那个 `./uploads` 是相对 **cwd** 的，
+    // 而服务端可能从任何地方启动（systemd / Docker / OpenWrt procd）—— 相对路径会让
+    // 上传的文件散落到各处，重启后就找不到了。**配置里显式写了就尊重配置**。
+    if config.server.storage_dir == Config::default().server.storage_dir {
+        config.server.storage_dir = data_dir.join("uploads").to_string_lossy().into_owned();
+    }
+    std::fs::create_dir_all(&config.server.storage_dir)
+        .map_err(|e| anyhow::anyhow!("无法创建文件存储目录 {}：{e}", config.server.storage_dir))?;
+    tracing::info!(dir = %config.server.storage_dir, "文件存储目录");
+
     let state = AppState::new(config.clone(), store);
 
     let addr = SocketAddr::from(([0, 0, 0, 0], config.server.port));

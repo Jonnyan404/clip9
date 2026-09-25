@@ -149,7 +149,7 @@ fn extract_ws_token(headers: &HeaderMap, query: &HashMap<String, String>) -> Str
 ///
 /// ⚠️ 按 rune 截断而不是按字节 —— 按字节会把多字节字符切成半个，前端显示成乱码。
 /// 控制字符必须剔：它会污染服务端日志，也可能在前端渲染出意料之外的效果。
-fn sanitize_device_name(raw: &str) -> String {
+pub(crate) fn sanitize_device_name(raw: &str) -> String {
     let cleaned: String = raw
         .chars()
         // 和 Go 一致：只剔 C0 与 DEL（不用 `char::is_control()` —— 那会连 C1 一起剔，
