@@ -8,12 +8,17 @@ authors.workspace = true
 
 [dependencies]
 clip9-protocol = { workspace = true }
+# 模板引擎的日期偏移与动作库的 date.add 共用同一份实现（ARCHITECTURE §5.3 的
+# 「一份 Rust 编译两次」在另一个维度上的体现：这里不再抄一份「加月夹取」）。
+clip9-actions = { workspace = true }
 
 serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
 chrono = { workspace = true }
 chrono-tz = { workspace = true }
+regex = { workspace = true }
+uuid = { workspace = true }
 # 分享 / 会话令牌的签名（HMAC-SHA256）与 base64url 编码。
 # ⚠️ 这两样是**契约**，不是实现细节：Go 侧 `share_token.go` 用的就是它们 ——
 # 换算法等于让所有已发出的分享链接失效，也让 Go 签发的 token 在这边验不过（迁移期要能互通）。

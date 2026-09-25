@@ -62,6 +62,7 @@
 
 pub mod actions;
 pub mod error;
+pub mod offset;
 pub mod registry;
 
 pub use error::ActionError;
@@ -69,3 +70,10 @@ pub use registry::{
     ActionContext, ActionMeta, ChainStep, ParamCondition, ParamKind, ParamOption, ParamSpec,
     all_meta, group_enabled, is_implemented, meta, not_yet_implemented, run, run_chain,
 };
+
+/// 日期偏移的**唯一**实现（`date.add` 与 `core` 的模板引擎共用，见 [`offset::DateOffset`]）。
+///
+/// ⚠️ **不随 `date` feature 裁剪**：它是纯逻辑基础工具（几 KB），动作库与模板引擎都要用。
+/// 它被 feature gate 的后果是「裁剪动作分组」会连带弄坏 `core` 的模板引擎 —— 那种耦合
+/// 是错的（见 `offset` 模块文档）。
+pub use offset::{DateOffset, DateUnit};

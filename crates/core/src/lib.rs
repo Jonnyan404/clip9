@@ -7,6 +7,7 @@ pub mod auth;
 pub mod config;
 pub mod cron;
 pub mod share;
+pub mod template;
 
 pub use auth::{
     AutomationPolicy, RoomAuthRequirement, can_access_room, is_global_admin,
@@ -23,3 +24,4 @@ pub use share::{
     ShareKey, ShareVerdict, TYPE_CONTENT, TYPE_FILE, normalize_share_max_uses, normalize_share_ttl,
     should_consume_share_use,
 };
+pub use template::{RenderContext, TemplateError, latest_rooms, render, validate, variable_names};

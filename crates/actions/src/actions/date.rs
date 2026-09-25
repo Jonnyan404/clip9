@@ -23,12 +23,11 @@
 
 use std::sync::LazyLock;
 
-use chrono::{
-    DateTime, Datelike, Duration, FixedOffset, NaiveDate, NaiveDateTime, NaiveTime, TimeZone,
-};
+use chrono::{DateTime, Duration, FixedOffset, NaiveDate, NaiveTime};
 use regex::Regex;
 
 use crate::error::ActionError;
+use crate::offset::{DateOffset, DateUnit, at_local};
 use crate::registry::{ActionContext, Params};
 
 /// `date.add` 的输入约定：`基准 运算符 数量 单位`，基准可省（省了用 `ctx.now`）。
@@ -99,16 +98,6 @@ fn invalid(message: impl Into<String>) -> ActionError {
     ActionError::InvalidInput(message.into())
 }
 
-/// 把一个**墙上时间**（`naive`）按固定偏移变成时刻。
-///
-/// 用 `from_utc_datetime` 而不是 `from_local_datetime`：后者返回 `LocalResult`（要处理
-/// 夏令时的不存在/重叠），而固定偏移下那些分支永远走不到 —— 与其写一个 `unwrap_or` 兜底
-/// （等于把「不可能」写成一个假的默认值），不如直接用**总函数**，类型上就没有失败这条岔路。
-fn at_local(offset: FixedOffset, naive: NaiveDateTime) -> DateTime<FixedOffset> {
-    let utc = naive - Duration::seconds(i64::from(offset.local_minus_utc()));
-    offset.from_utc_datetime(&utc)
-}
-
 /// 某个时刻所在那一天的**本地零点**。
 fn start_of_day(t: &DateTime<FixedOffset>) -> DateTime<FixedOffset> {
     at_local(*t.offset(), t.date_naive().and_time(NaiveTime::MIN))
@@ -165,52 +154,6 @@ fn num<T: std::str::FromStr + Default>(raw: &str) -> T {
     raw.parse().unwrap_or_default()
 }
 
-/// 加 N 个月，并把「日」**夹到**目标月的最后一天。
-///
-/// ⚠️ 不能直接做月份加法：`1月31日 + 1个月` 会因为 2 月没有 31 号而**溢出到 3 月 3 日**。
-/// 正确结果应该是 2 月 28/29 日。前端的 `addMonths` 是同一套处理 ——
-/// 两侧不一致的话，同一个动作在预览区和定时任务里会给出不同的日期。
-fn add_months_clamped(
-    t: DateTime<FixedOffset>,
-    months: i64,
-) -> Result<DateTime<FixedOffset>, ActionError> {
-    let day = t.day();
-    let time = t.time();
-    // 先归到 1 号再加月，避免加法过程中发生溢出；再夹「日」。
-    let total = i64::from(t.year()) * 12 + i64::from(t.month()) - 1 + months;
-    let year = i32::try_from(total.div_euclid(12)).map_err(|_| invalid("日期超出可表示范围"))?;
-    let month = (total.rem_euclid(12) + 1) as u32;
-    let day = day.min(days_in_month(year, month));
-    let date =
-        NaiveDate::from_ymd_opt(year, month, day).ok_or_else(|| invalid("日期超出可表示范围"))?;
-    Ok(at_local(*t.offset(), date.and_time(time)))
-}
-
-/// 按天偏移。用 `checked_*` 而不是让 `NaiveDate` 自己滚：溢出要说出来。
-fn shift_days(t: DateTime<FixedOffset>, days: i64) -> Result<DateTime<FixedOffset>, ActionError> {
-    let date = t.date_naive();
-    let shifted = if days >= 0 {
-        date.checked_add_days(chrono::Days::new(days.unsigned_abs()))
-    } else {
-        date.checked_sub_days(chrono::Days::new(days.unsigned_abs()))
-    }
-    .ok_or_else(|| invalid("日期超出可表示范围"))?;
-    Ok(at_local(*t.offset(), shifted.and_time(t.time())))
-}
-
-/// 某年某月有多少天。
-///
-/// 自己算而不是借 `chrono` 的「下个月第 0 天」：Go 那边就是这个意思，而这个表一眼能核。
-const fn days_in_month(year: i32, month: u32) -> u32 {
-    match month {
-        1 | 3 | 5 | 7 | 8 | 10 | 12 => 31,
-        4 | 6 | 9 | 11 => 30,
-        2 if (year % 4 == 0 && year % 100 != 0) || year % 400 == 0 => 29,
-        2 => 28,
-        _ => 0,
-    }
-}
-
 fn date_add(input: &str, now: &DateTime<FixedOffset>) -> Result<String, ActionError> {
     let text = input.trim();
     let Some(caps) = DATE_ADD_RE.captures(text) else {
@@ -222,7 +165,6 @@ fn date_add(input: &str, now: &DateTime<FixedOffset>) -> Result<String, ActionEr
     let base_raw = caps.get(1).map_or("", |m| m.as_str());
     let sign = caps.get(2).map_or("", |m| m.as_str());
     let amount_raw = caps.get(3).map_or("", |m| m.as_str());
-    let unit = caps.get(4).map_or("", |m| m.as_str()).to_lowercase();
 
     let base = if base_raw.trim().is_empty() {
         *now
@@ -238,18 +180,12 @@ fn date_add(input: &str, now: &DateTime<FixedOffset>) -> Result<String, ActionEr
         .map_err(|e| invalid(format!("无法解析数量 {amount_raw:?}: {e}")))?;
     let amount = if sign == "-" { -amount } else { amount };
 
-    let result = match unit.as_str() {
-        "m" => add_months_clamped(base, amount)?,
-        "y" => add_months_clamped(
-            base,
-            amount.checked_mul(12).ok_or_else(|| invalid("年数太大"))?,
-        )?,
-        "w" => shift_days(
-            base,
-            amount.checked_mul(7).ok_or_else(|| invalid("周数太大"))?,
-        )?,
-        _ => shift_days(base, amount)?,
-    };
+    // ⚠️ 单位从正则里已经是小写（`[dwmy]`），`from_letter` 里那层 lower 只是防御。
+    let unit =
+        DateUnit::from_letter(caps.get(4).map_or("", |m| m.as_str())).unwrap_or(DateUnit::Days);
+    let result = DateOffset::new(amount, unit)
+        .apply(base)
+        .ok_or_else(|| invalid("日期超出可表示范围"))?;
 
     // 基准带不带时间决定输出带不带时间 —— 判据是**用户写的那段原始文本里有没有 `:`**
     // （不是解析结果里有没有），因为「2026-09-24」与「2026-09-24 00:00」应当得到不同形状的结果。
