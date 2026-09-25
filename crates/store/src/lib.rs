@@ -76,6 +76,13 @@ const META: TableDefinition<&str, u64> = TableDefinition::new("meta");
 /// ⚠️ **新增一张表不用改 `SCHEMA_VERSION`** —— 那个版本号管的是**已有表的结构**，
 /// 加表是纯增量，老库打开时 `init_schema` 会把它建出来。
 const FILES: TableDefinition<&str, &[u8]> = TableDefinition::new("files");
+/// 分享记录表：`jti -> ShareRecord`（JSON）。
+///
+/// ⚠️ 它和 Go 的 `share-log.json` 是同一份数据，只是换了载体（理由写在 [`Store::put_share`]）。
+/// 迁移工具要把那个 JSON 文件读进来写成这张表。
+///
+/// ⚠️ **新增一张表不用改 `SCHEMA_VERSION`** —— 见上面 `FILES` 的注释。
+const SHARES: TableDefinition<&str, &[u8]> = TableDefinition::new("shares");
 
 const K_SCHEMA_VERSION: &str = "schema_version";
 const K_NEXT_ID: &str = "next_id";
@@ -129,6 +136,76 @@ pub struct StoreStats {
     pub next_id: u64,
 }
 
+/// 一条分享的事实记录。
+///
+/// 为什么需要它：分享令牌是**无状态签名**，服务端不留痕迹 —— 于是「我最近分享过什么」
+/// 「这条链接被打开了几次」「限次链接还剩几次」三个问题都答不上来。这里只补最小的事实。
+///
+/// ⚠️ **不含 token 本身**：token 是 bearer 凭据，记录列表一旦带上它，就成了「谁都能把别人的
+/// 分享链接再抄一遍」的入口（Go 那边专门有一条注释讲这件事）。
+///
+/// ⚠️ 字段名与 `/share/list` 的响应**不是**一一对应：响应里还有 `used` 的实时值和 `expired`
+/// 这类派生字段，它们在 server 侧拼。这里存的是事实。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ShareRecord {
+    /// 档案号（`/share/list` 的 `jti`）。
+    pub jti: String,
+    /// 分享指向什么：`content` | `file`。
+    #[serde(rename = "type")]
+    pub share_type: String,
+    /// content id 或 file uuid。
+    pub id: String,
+    /// 创建时归属的房间（归一化过）。
+    pub room: String,
+    /// 最终指向的条目类型：`text` | `file`（内容分享才有区分）。
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub kind: String,
+    /// 文件名，或文本首行摘要 —— 记录列表里要能一眼认出「分享的是哪条」。
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub name: String,
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub size: i64,
+    #[serde(rename = "createdAt")]
+    pub created_at: i64,
+    /// 过期时刻（token 里的 `exp` 抄一份，裁剪时不用去解析 token）。
+    pub exp: i64,
+    #[serde(rename = "maxUses")]
+    pub max_uses: i64,
+    /// 这条分享要不要密码。**只存布尔值**，密码哈希在 token 里。
+    pub password: bool,
+    /// 分享页被真人打开的次数。
+    #[serde(default)]
+    pub visits: u64,
+    /// 其中来自二维码的次数（链接带 `?q=1`）。
+    #[serde(default)]
+    pub scans: u64,
+    /// 已用次数。
+    ///
+    /// ⚠️★ 这是**我们比 Go 多存的东西**：Go 把用量放在进程内的 map 里，
+    /// 重启之后「最多 3 次」的链接又能用 3 次 —— 限量被静默重置了。
+    /// 既然每条分享本来就有档案号，把用量挂在它上面是顺手的事。
+    #[serde(default)]
+    pub used: u64,
+}
+
+#[allow(clippy::trivially_copy_pass_by_ref)] // serde 的 skip_serializing_if 要的是引用
+fn is_zero(value: &i64) -> bool {
+    *value == 0
+}
+
+/// 扣一次使用额度的结论。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ShareUse {
+    /// 扣成功，`used` 是**扣完之后**的次数。
+    Consumed { used: u64 },
+    /// 次数用尽。
+    Exhausted { used: u64, max_uses: u64 },
+    /// 记录还在，但已经过期。
+    Expired,
+    /// 没有这条记录（被裁掉了，或者压根不是这条服务签的）。
+    Unknown,
+}
+
 /// redb 封装。
 ///
 /// `Database` 自身是 `Send + Sync`，`begin_write` 会串行化写事务 ——
@@ -178,6 +255,8 @@ impl Store {
             let _ = txn.open_table(MESSAGES)?;
             let _ = txn.open_table(BY_ID)?;
             let _ = txn.open_table(ROOMS)?;
+            let _ = txn.open_table(FILES)?;
+            let _ = txn.open_table(SHARES)?;
             let mut meta = txn.open_table(META)?;
 
             // ⚠️ 先把 guard 里的值取出来再写 —— 否则 `meta.get()` 的不可变借用
@@ -751,6 +830,176 @@ impl Store {
         txn.commit()?;
         Ok(rooms_written)
     }
+
+    // ── 分享记录（share log） ─────────────────────────────────────────
+
+    /// 记一条新分享，顺带把总条数裁到上限。
+    ///
+    /// ⚠️ 与 Go 的差别：Go 把它写在 `share-log.json` 里（和历史文件同目录），这里进 redb。
+    /// 理由是**同一件事只能有一个存储承诺**：历史已经进库了，再让分享记录单独走一个
+    /// 「运行中反复全量重写」的 JSON 文件，就多了一类半截 JSON 的失败模式，
+    /// 而迁移工具还得为它多写一条路径。
+    ///
+    /// ⚠️ 裁剪**只丢最旧/已失效的**，并把丢掉的条数返回给调用方去记日志 ——
+    /// 统计丢了不报错没关系（它不是审计系统），但不能是「悄悄丢」。
+    pub fn put_share(&self, record: &ShareRecord, now: i64) -> Result<usize> {
+        let payload = serde_json::to_vec(record)?;
+        let txn = self.db.begin_write()?;
+        let trimmed = {
+            let mut shares = txn.open_table(SHARES)?;
+            shares.insert(record.jti.as_str(), payload.as_slice())?;
+            trim_shares_table(&mut shares, now)?
+        };
+        txn.commit()?;
+        Ok(trimmed)
+    }
+
+    /// 取一条分享记录。
+    pub fn get_share(&self, jti: &str) -> Result<Option<ShareRecord>> {
+        let txn = self.db.begin_read()?;
+        let shares = txn.open_table(SHARES)?;
+        match shares.get(jti)? {
+            Some(v) => Ok(Some(serde_json::from_slice(v.value())?)),
+            None => Ok(None),
+        }
+    }
+
+    /// 某个房间最近的分享记录（新→旧），以及该房间的记录**总数**。
+    ///
+    /// ⚠️ 全表扫描 + 排序是**有意的**：这张表最多 [`MAX_SHARE_RECORDS`] 条，
+    /// 而维护第二张「按房间+时间」的索引表要多处理一处一致性（写、删、裁三处都得同步）。
+    /// 等上限真的涨到需要索引的时候再改 —— 现在改是拿一致性风险换不需要的性能。
+    ///
+    /// ⚠️ `total` 是**裁剪前**的总数（响应里要报「这个房间一共分享过多少条」），
+    /// 所以不能拿 `records.len()` 顶替。
+    pub fn shares_for_room(&self, room: &str, limit: usize) -> Result<(Vec<ShareRecord>, u64)> {
+        // ⚠️ 两边都要归一化：调用方可能传空串（= default 房间），而记录里存的是 `default`。
+        // 只归一化一边的话，空串查询会永远返回空列表 —— 而「没有记录」和「查错了名字」
+        // 在响应里长得一模一样。
+        let room = normalize_room_name(room);
+        let txn = self.db.begin_read()?;
+        let shares = txn.open_table(SHARES)?;
+
+        let mut matched = Vec::new();
+        for row in shares.iter()? {
+            let (_, value) = row?;
+            let record: ShareRecord = serde_json::from_slice(value.value())?;
+            if normalize_room_name(&record.room) == room {
+                matched.push(record);
+            }
+        }
+
+        // 新→旧。同一秒内的两条按 jti 兜底排序，让顺序**稳定**（否则每次刷新列表顺序都可能变）。
+        matched.sort_by(|a, b| {
+            b.created_at
+                .cmp(&a.created_at)
+                .then_with(|| a.jti.cmp(&b.jti))
+        });
+        let total = matched.len() as u64;
+        matched.truncate(limit);
+        Ok((matched, total))
+    }
+
+    /// 记一次「有人打开了这条分享」，返回累计的 `(visits, scans)`。
+    /// `None` = 没有这条记录（可能已被裁掉）。
+    ///
+    /// 去重不在这一层：它是**访客维度**的（同一个 IP 十分钟内只算一次），属于服务端的内存态。
+    /// 见 `clip9_server` 的 `mark_share_visit`。
+    pub fn record_share_open(&self, jti: &str, via_qr: bool) -> Result<Option<(u64, u64)>> {
+        let txn = self.db.begin_write()?;
+        let result = {
+            let mut shares = txn.open_table(SHARES)?;
+            let existing = shares.get(jti)?.map(|v| v.value().to_vec());
+            match existing {
+                None => None,
+                Some(bytes) => {
+                    let mut record: ShareRecord = serde_json::from_slice(&bytes)?;
+                    record.visits += 1;
+                    if via_qr {
+                        record.scans += 1;
+                    }
+                    shares.insert(jti, serde_json::to_vec(&record)?.as_slice())?;
+                    Some((record.visits, record.scans))
+                }
+            }
+        };
+        txn.commit()?;
+        Ok(result)
+    }
+
+    /// 扣一次使用额度。**读-判断-写在一个写事务里**，否则两个并发请求会同时通过检查、
+    /// 各扣一次却都放行（限量变成「最多 maxUses+并发数 次」）。
+    pub fn consume_share_use(&self, jti: &str, now: i64) -> Result<ShareUse> {
+        let txn = self.db.begin_write()?;
+        let outcome = {
+            let mut shares = txn.open_table(SHARES)?;
+            let existing = shares.get(jti)?.map(|v| v.value().to_vec());
+            match existing {
+                None => ShareUse::Unknown,
+                Some(bytes) => {
+                    let mut record: ShareRecord = serde_json::from_slice(&bytes)?;
+                    if record.exp > 0 && record.exp <= now {
+                        ShareUse::Expired
+                    } else if record.max_uses > 0 && record.used >= record.max_uses as u64 {
+                        ShareUse::Exhausted {
+                            used: record.used,
+                            max_uses: record.max_uses as u64,
+                        }
+                    } else {
+                        record.used += 1;
+                        shares.insert(jti, serde_json::to_vec(&record)?.as_slice())?;
+                        ShareUse::Consumed { used: record.used }
+                    }
+                }
+            }
+        };
+        txn.commit()?;
+        Ok(outcome)
+    }
+
+    /// 记录条数（`/share/list` 之外的诊断/测试用）。
+    pub fn share_count(&self) -> Result<usize> {
+        let txn = self.db.begin_read()?;
+        let shares = txn.open_table(SHARES)?;
+        Ok(shares.iter()?.count())
+    }
+}
+
+/// 裁剪参数：**保留多少条分享记录**。
+///
+/// 分享是高频动作，而这份记录只回答「最近分享过什么」，不是审计系统。
+/// 裁的时候**先丢已失效的**（过期 / 次数用尽），再丢最旧的 ——
+/// 这样一条还在有效期内的限次分享不会因为「别人分享了 500 条」而丢掉自己的用量计数。
+const MAX_SHARE_RECORDS: usize = 500;
+
+/// 裁剪一张分享表：超出上限时丢掉优先级最低的那些，返回丢掉的条数。
+///
+/// 优先级 = (还是不是「可用」的, 创建时间)：不可用的先丢，然后旧的先丢。
+/// 「可用」= 没过期，且（不限次 或 还有剩余次数）——判据和 `consume_share_use` 里那两条一致。
+fn trim_shares_table(shares: &mut Table<'_, &str, &[u8]>, now: i64) -> Result<usize> {
+    let mut all: Vec<(String, bool, i64)> = Vec::new();
+    for row in shares.iter()? {
+        let (key, value) = row?;
+        let record: ShareRecord = serde_json::from_slice(value.value())?;
+        let usable = (record.exp <= 0 || record.exp > now)
+            && (record.max_uses <= 0 || (record.used as i64) < record.max_uses);
+        all.push((key.value().to_owned(), usable, record.created_at));
+    }
+
+    if all.len() <= MAX_SHARE_RECORDS {
+        return Ok(0);
+    }
+
+    all.sort_by(|a, b| {
+        a.1.cmp(&b.1)
+            .then_with(|| a.2.cmp(&b.2))
+            .then_with(|| a.0.cmp(&b.0))
+    });
+    let doomed = all.len() - MAX_SHARE_RECORDS;
+    for (jti, _, _) in all.iter().take(doomed) {
+        shares.remove(jti.as_str())?;
+    }
+    Ok(doomed)
 }
 
 /// 更新某个房间的计数与高水位。
