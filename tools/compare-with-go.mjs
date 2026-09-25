@@ -932,6 +932,8 @@ for (const [name, port] of [
   const sent = await hit(port, 'POST', '/text?room=locked&auth=pw', { body: '被分享的正文' });
   sharedId[name] = sent.parsed?.id;
 }
+/** 按端口取「那条被分享的内容」在本实例里的 id（两个实例各自从 1 开始，但别假设）。 */
+const idFor = (port) => (port === GO_PORT ? sharedId.Go : sharedId.Rust);
 await compare('POST /share 缺 type', 'POST', '/share?room=locked&auth=pw', jsonPost({ id: '1' }));
 await compare('POST /share 凭据不对', 'POST', '/share?room=locked&auth=错', jsonPost({ type: 'content', id: '1' }));
 await compare('POST /share 不支持的 type', 'POST', '/share?room=locked&auth=pw', jsonPost({ type: 'nope' }));
@@ -949,6 +951,41 @@ await compare(
 );
 await compare('GET /share 令牌无效', 'GET', '/share?t=不是令牌');
 await compare('GET /share 无令牌', 'GET', '/share');
+// ⚠️ 上面两条都是**错误分支**。而 `GET /share?t=` 是分享页**唯一**消费的接口，
+// 它的成功形状以前一条都没比过 —— 补上。两边各自签一张自己的令牌再来问，比的是形状。
+await compareVia('GET /share 成功形状（不限次、无密码）', async (port) => {
+  const issued = await hit(
+    port,
+    'POST',
+    '/share?room=locked&auth=pw',
+    jsonPost({ type: 'content', id: idFor(port) })
+  );
+  return hit(port, 'GET', `/share?t=${issued.parsed?.token}`);
+});
+await compareVia('GET /share 带密码：没带头 → share_password_required', async (port) => {
+  const issued = await hit(
+    port,
+    'POST',
+    '/share?room=locked&auth=pw',
+    jsonPost({ type: 'content', id: idFor(port), password: 'sec' })
+  );
+  return hit(port, 'GET', `/share?t=${issued.parsed?.token}`);
+});
+await compareVia(
+  'GET /share 带密码：密码对 → 200（预览令牌两边各自不同，遮掉）',
+  async (port) => {
+    const issued = await hit(
+      port,
+      'POST',
+      '/share?room=locked&auth=pw',
+      jsonPost({ type: 'content', id: idFor(port), password: 'sec' })
+    );
+    return hit(port, 'GET', `/share?t=${issued.parsed?.token}`, {
+      headers: { 'x-share-password': 'sec' },
+    });
+  },
+  ['previewToken', 'previewExpiresAt']
+);
 await compare('GET /share/list 无凭据（受保护房间）', 'GET', '/share/list?room=locked');
 await compare('POST /share/visit 无令牌', 'POST', '/share/visit', jsonPost({}));
 await compare('POST /share/visit 令牌无效', 'POST', '/share/visit', jsonPost({ token: '不是令牌' }));
@@ -1055,16 +1092,80 @@ async function expectOn(label, port, method, path, check, opts = {}) {
 // 所以一张只读的分享令牌在 Go 上**能挪列**（而 `docs/api.md` 写的是「分享令牌不行」
 // —— 文档和实现本来就对不上）。写操作只认房间凭据是按最佳实践收的，
 // 所以这两条不能拿 Go 当基准，直接断言我们自己的行为。
-await expectOn(
-  '分享令牌不能挪列（写操作只认房间凭据）',
-  RS_PORT,
-  'POST',
-  // ⚠️ 必须拿**受保护房间**里的那条：default 房间是开放的，本来就不需要凭据，
-  // 那时「没被拒绝」说明不了任何事。
-  `/content/${sharedId.Rust}/column?room=locked&t=不是令牌`,
-  (r) => r.status === 401,
-  { body: JSON.stringify({ column: 'doing' }), headers: { 'content-type': 'application/json' } }
-);
+//
+// ⚠️ 必须用**真的**分享令牌。以前这里传的是 `t=不是令牌`，那等价于「没带凭据」——
+// 于是「有效的分享令牌也不能挪列」这件事压根没被测到，而这条断言的**名字说的正是它**。
+// 这是 HANDOVER §4 专门在防的那类假绿，只是这次发生在验证手段自己身上。
+{
+  const issued = await hit(
+    RS_PORT,
+    'POST',
+    '/share?room=locked&auth=pw',
+    jsonPost({ type: 'content', id: sharedId.Rust })
+  );
+  const columnToken = issued.parsed?.token;
+  if (!columnToken) {
+    fail++;
+    failures.push(
+      `分享令牌不能挪列（写操作只认房间凭据）\n  签发分享就失败了，这条测不了：${issued.status} ${issued.text}`
+    );
+    console.log('  FAIL 分享令牌不能挪列（签发分享失败，这条测不了）');
+  } else {
+    await expectOn(
+      '分享令牌不能挪列（写操作只认房间凭据）',
+      RS_PORT,
+      'POST',
+      // ⚠️ 必须拿**受保护房间**里的那条：default 房间是开放的，本来就不需要凭据，
+      // 那时「没被拒绝」说明不了任何事。
+      `/content/${sharedId.Rust}/column?room=locked&t=${columnToken}`,
+      (r) => r.status === 401,
+      { body: JSON.stringify({ column: 'doing' }), headers: { 'content-type': 'application/json' } }
+    );
+  }
+}
+
+// ── 刻意偏离：限次分享「刚签发」时就有 `used: 0` ────────────────────────
+//
+// Go 的用量在**进程内的 map** 里，而且条目要到第一次真正读取时才建（`validateShareToken`）——
+// 所以「刚签发、还没人读过」时它的 `GET /share` **没有** `used` 字段。
+// Rust 的用量跟分享记录一起落在 redb 里，签发那一刻就有事实可报 → 给 `used: 0`。
+//
+// 这属于「只影响响应形状、现有客户端两边都吃得下」那一档（读到 0 和读不到都是「还没用过」），
+// 按 CONTRIBUTING §6 的规则 Rust 可以领先契约，⚠️ 但 **Worker 侧要跟着对齐**
+// （记在 HANDOVER §6.1 的待办里）。这条偏离是补比对脚本时才发现的 —— 在此之前它是**无意识**的。
+{
+  const rsIssued = await hit(
+    RS_PORT,
+    'POST',
+    '/share?room=locked&auth=pw',
+    jsonPost({ type: 'content', id: idFor(RS_PORT), maxUses: 3 })
+  );
+  const rsInfo = await hit(RS_PORT, 'GET', `/share?t=${rsIssued.parsed?.token}`);
+  if (rsInfo.parsed?.used === 0) {
+    pass++;
+    console.log('  ok   限次分享刚签发：Rust 给 used=0（用量落盘，签发即有事实）');
+  } else {
+    fail++;
+    failures.push(
+      `限次分享刚签发时 Rust 应该给 used=0 → ${JSON.stringify(rsInfo.parsed)}`
+    );
+    console.log(`  FAIL 限次分享刚签发时 Rust 应该给 used=0 → ${JSON.stringify(rsInfo.parsed)}`);
+  }
+
+  // 顺手演示 Go 的行为（**不是在测 Go**，是给读者看两边差在哪）。
+  const goIssued = await hit(
+    GO_PORT,
+    'POST',
+    '/share?room=locked&auth=pw',
+    jsonPost({ type: 'content', id: idFor(GO_PORT), maxUses: 3 })
+  );
+  const goInfo = await hit(GO_PORT, 'GET', `/share?t=${goIssued.parsed?.token}`);
+  console.log(
+    `  ·  Go 同一时刻的响应里${'used' in (goInfo.parsed ?? {}) ? `有 used=${goInfo.parsed.used}` : '**没有** used 字段'}` +
+      '（用量在进程内 map 里，第一次读取才建条目）'
+  );
+}
+
 await expectOn(
   'POST /text?room=locked 不带凭据 → 401（曾漏掉闸门）',
   RS_PORT,
