@@ -27,7 +27,7 @@
 
 use std::collections::{HashMap, HashSet};
 use std::net::{SocketAddr, ToSocketAddrs};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use clip9_core::{AuthValue, Config};
 use clip9_server::{AppState, router};
@@ -385,13 +385,13 @@ struct Paths {
 /// 「服务端按配置里的 `dbPath` 找库，而迁移写到了别处」：用户以为迁完了，
 /// 其实服务读的是另一个文件，而且**两边都不报错**。那正是这个项目最忌讳的一类。
 ///
-/// 优先级：`-dbpath` / `-storage` > 配置文件 > `<data 目录>/…`。
+/// 优先级：`-dbpath` / `-storage` > 配置文件 > 默认名（`clip9.redb` / `uploads`）。
 /// （`-dbpath` / `-storage` 已经由 `apply_flags` 盖到 config 上了，所以这里只看 config。）
 ///
-/// ⚠️ 「配置文件里到底写没写」的判据是**和默认值比**：`dbPath` 的默认是
-/// `./data/clip9.redb`、`storageDir` 的默认是 `./uploads` —— 相等即「没写」，
-/// 于是 `-data` 仍能把这两样**一起**搬走（只搬一样是最难解释的状态）。
-/// ⚠️ 副作用：显式写成默认值会被当成没写 —— 已知的近似，写成别的值（或绝对路径）即可。
+/// ⚠️★ 解析规则见 `resolve_against`：**相对路径相对数据目录**、绝对路径原样。
+/// 这一版之前用的是「**值等于默认值就当没写**」的隐式魔法，配出来的效果是
+/// **配置文件里写的路径 ≠ 实际用的路径**（配置里是未解析的默认值、日志里是解析值）——
+/// 那正是「名字说的和实际做的不一样」，Jonny 2026-09-25 把它换掉了。
 fn resolve_paths(args: &Args, config: &mut Config) -> Paths {
     // ⚠️ `-data` 是**本实现独有的**（Go 不用数据库，没有「数据目录」这个概念）。
     let data_dir = args
@@ -399,23 +399,41 @@ fn resolve_paths(args: &Args, config: &mut Config) -> Paths {
         .map(PathBuf::from)
         .unwrap_or_else(|| PathBuf::from("./data"));
 
-    let defaults = Config::default();
-    let db = if config.server.db_path != defaults.server.db_path {
-        PathBuf::from(&config.server.db_path)
-    } else {
-        data_dir.join("clip9.redb")
-    };
-    let uploads = if config.server.storage_dir != defaults.server.storage_dir {
-        PathBuf::from(&config.server.storage_dir)
-    } else {
-        data_dir.join("uploads")
-    };
+    let db = resolve_against(&data_dir, &config.server.db_path, "clip9.redb");
+    let uploads = resolve_against(&data_dir, &config.server.storage_dir, "uploads");
 
     // 写回去：服务端读的是 config 里这两个字段（`files.rs` 用 `storage_dir`）。
+    // ⚠️ 写的是**解析后的实际路径** —— 后面再有谁读它们，看到的和日志里一致
+    // （上一版写回去的是「未解析的默认值」，于是配置与日志对不上，那是个坑）。
     config.server.db_path = db.to_string_lossy().into_owned();
     config.server.storage_dir = uploads.to_string_lossy().into_owned();
 
     Paths { db, uploads }
+}
+
+/// 把配置里那个路径解析成实际路径。
+///
+/// - **绝对路径** → 原样（`-data` 不再影响它；这是「我就是要放这儿」的表达）；
+/// - **相对路径** → 相对**数据目录**（`-data`，默认 `./data`）；
+/// - **空串** → 用 `default_name`（免得显式写了 `""` 时把库落到目录本身）。
+///
+/// ⚠️★ 相对**数据目录**，不是相对 **cwd**（Go 是后者）。理由：服务端可能从任何地方启动
+/// （systemd / Docker / OpenWrt procd），**cwd 没人能预测** —— 同一份配置在不同启动方式下
+/// 会落到不同地方，而症状是「上传的文件重启后找不到了」。数据目录是显式给的，相对它解析
+/// 唯一且可预测。Jonny 2026-09-25 拍的板（原话：Go 那个 `./` 很难理解和不好用）。
+fn resolve_against(data_dir: &Path, configured: &str, default_name: &str) -> PathBuf {
+    let configured = configured.trim();
+    let configured = if configured.is_empty() {
+        default_name
+    } else {
+        configured
+    };
+    let path = PathBuf::from(configured);
+    if path.is_absolute() {
+        path
+    } else {
+        data_dir.join(path)
+    }
 }
 
 /// 解析出来的命令行参数。

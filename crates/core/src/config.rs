@@ -101,7 +101,7 @@ pub struct ServerConfig {
     /// ⚠️ 旧的「每房间保留多少条」。新存储改用 `limits` 三个维度（见 ARCHITECTURE §3.3），
     /// 这个字段只为**读老配置**保留 —— 别在业务代码里用它做裁剪决策。
     pub history: i64,
-    /// **库文件的路径**（redb）。默认 `./data/clip9.redb`。
+    /// **库文件的路径**（redb）。默认 `"clip9.redb"`。
     ///
     /// ⚠️★ 这里**刻意不叫 `historyFile`**（Jonny 2026-09-25 定）。Go 那边那个名字的含义是
     /// 「历史记录 **JSON** 文件的路径」，而这边历史存在 redb 里 —— 沿用旧名会让
@@ -109,16 +109,29 @@ pub struct ServerConfig {
     /// 所以字段名、`serde` 名、命令行参数名**一起改**，不留旧名当别名：
     /// 旧名在这边的语义是**错的**，静默接受它比报错更坏。
     ///
-    /// ⚠️ 默认值给的是一个**看得见的路径**（生成的配置文件里能读到它落在哪），
-    /// 但服务端按「**等于默认值就当没写**」处理 —— 与 `storageDir` 同一套办法，
-    /// 这样 `-data` 仍然能把库整体搬走（否则配置文件里一旦写死，`-data` 就失效了）。
-    /// ⚠️ 副作用与 `storageDir` 相同：显式把它写成 `./data/clip9.redb` 会被当成没写。
-    /// 想钉死就写别的值（或绝对路径）。
+    /// # ⚠️★ 路径怎么解析（Jonny 2026-09-25 定的，与 Go 不同）
+    ///
+    /// - **相对路径**（默认就是）→ 相对**数据目录**（`-data`，默认 `./data`）；
+    /// - **绝对路径** → 原样用，`-data` 不再影响它。
+    ///
+    /// 为什么不用 Go 那套「相对 **cwd**」：服务端可能从任何地方启动
+    /// （systemd / Docker / OpenWrt procd），cwd 是个**没人能预测**的东西 ——
+    /// 同一个配置在不同启动方式下会落到不同地方，而症状是「上传的文件重启后找不到了」。
+    /// 数据目录是显式给的，相对它解析**唯一且可预测**。
+    ///
+    /// ⚠️ 代价（写在这儿免得下一个人困惑）：从 Go 迁过来的配置如果写了 `"./uploads"`，
+    /// 在这边会被解析成 `<data>/uploads`（那边是 cwd 相对）。**这是有意的**，
+    /// 而且多半正是迁移的人想要的：所有数据都收在 `-data` 一个目录下。
     ///
     /// ⚠️ 老配置里那个 `historyFile` 会被 serde 当成未知字段忽略掉 —— 这正是想要的：
     /// Go 版的 `history.json` 是**迁移工具的输入**，不该被这边覆盖。
     #[serde(rename = "dbPath")]
     pub db_path: String,
+    /// 上传文件的存放目录。默认 `"uploads"`。
+    ///
+    /// ⚠️ 解析规则与 `dbPath` **完全一致**（相对路径 → 相对数据目录；绝对路径原样）——
+    /// 见上面 `dbPath` 那段「路径怎么解析」。两处**必须同一套**，
+    /// 否则会出现「库在 A、上传在 B」这种一半跟着走的状态。
     #[serde(rename = "storageDir")]
     pub storage_dir: String,
     pub auth: AuthValue,
@@ -146,8 +159,8 @@ impl Default for ServerConfig {
             port: 9501,
             prefix: String::new(),
             history: 100,
-            db_path: "./data/clip9.redb".to_owned(),
-            storage_dir: "./uploads".to_owned(),
+            db_path: "clip9.redb".to_owned(),
+            storage_dir: "uploads".to_owned(),
             auth: AuthValue::default(),
             room_auth: RoomAuthConfig::default(),
             cert: String::new(),
