@@ -14,10 +14,12 @@
 //! 是**避免「靠人肉同步的第二份定义」**（`CONTRIBUTING.md` §6 点名的那条反模式）：
 //! 两份文件相同 → `cmp` 就能发现漂移；不同就只能靠人眼对 1900 行。
 //!
-//! - 刷新内容的方式：`cp ../cloud-clip/lib/automation_page.html crates/server/src/`
-//! - ⚠️ **别只在这一份上改** —— 过渡期 Go 那边还在跑同一个页面，改了一边等于制造分叉。
-//! - `tests/automation_page.rs` 的 `page_matches_go_byte_for_byte` 在父仓库还在时
-//!   **逐字节比对两个文件**；拆成独立仓库之后它会自动跳过（那时这份就是唯一的源）。
+//! - 刷新内容的方式（**从 Go 仓库**，它现在在隔壁）：
+//!   `cp <Go 仓库>/cloud-clip/lib/automation_page.html crates/server/src/`
+//! - ⚠️ **别只在这一份上改** —— Go 仓库那边还在跑同一个页面，改了一边等于制造分叉。
+//! - `tests/automation_page.rs` 的 `page_matches_go_byte_for_byte` **逐字节比对两个文件**。
+//!   它按顺序试几种摆法去找 Go 仓库；**找不到时会跳过** —— 那时这份就是唯一的源，
+//!   而「内容有没有漂」这条防线也就没了（要补的是把 Go 那七条静态检查移植过来）。
 //! - ⚠️ 模板分隔符仍是 Go 的 `[[ ]]`（不是 Rust 的语法，也不打算换成别的）：
 //!   换成别的记号就等于文件不再相同，上面那条性质就没了。
 //!   Go 那边换分隔符的原因是页面里到处是 `{{date}}` 这类示例文案（默认分隔符会在
@@ -32,7 +34,7 @@ use axum::response::{IntoResponse, Response};
 
 use crate::state::AppState;
 
-/// 页面本体。⚠️ 与 `cloud-clip/lib/automation_page.html` 逐字节相同 —— 见模块注释。
+/// 页面本体。⚠️ 与 Go 仓库里那份 `cloud-clip/lib/automation_page.html` 逐字节相同 —— 见模块注释。
 const PAGE: &str = include_str!("automation_page.html");
 
 const PREFIX_MARKER: &str = "[[.Prefix]]";

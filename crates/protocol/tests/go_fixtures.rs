@@ -30,12 +30,11 @@ use serde::Serialize;
 use serde::de::DeserializeOwned;
 use serde_json::Value;
 
-/// fixture 在父仓库的 `cases/protocol/`。
+/// fixture 在仓库根的 `cases/protocol/`。
 ///
-/// ⚠️ 它**不在** `rust/` 里面 —— 那份数据属于契约，和 `docs/api.md` 一个层级，
-/// 所以要跟着父仓库走（见 docs/ARCHITECTURE.md §5.4）。
-/// 拆成独立仓库时把它一起带走，否则这个测试会红，而且是**好事**：
-/// 说明契约数据没跟上。
+/// ⚠️ 这份数据**属于契约**：它由 Go 侧导出（`UPDATE_FIXTURES=1 go test ./lib -run
+/// TestProtocolFixtures`），这里的测试只**读**它。拆成独立仓库时它跟着一起过来了，
+/// 从此是**冻结的输入** —— 这边不再重新生成它。
 fn fixture_dir() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../../cases/protocol")
 }
@@ -100,8 +99,7 @@ fn fixture_stems() -> BTreeSet<String> {
     let entries = std::fs::read_dir(&dir).unwrap_or_else(|e| {
         panic!(
             "读不到 fixture 目录 {}: {e}\n\
-             它在父仓库的 cases/protocol/ —— 别把它搬到 rust/ 里面去，\n\
-             那是契约数据，Go 侧的测试也要读同一份。",
+             它在仓库根的 cases/protocol/ —— 那是契约数据，别挪位置、也别在这里重新生成。",
             dir.display()
         )
     });

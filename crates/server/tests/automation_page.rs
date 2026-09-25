@@ -1,7 +1,7 @@
 //! `/automation` 管理页的测试。
 //!
 //! 三组：
-//! 1. **与 Go 的那份 HTML 逐字节相同**（父仓库还在时才跑）—— 这是「第二份定义」的防线；
+//! 1. **与 Go 那份 HTML 逐字节相同**（能找到 Go 仓库时才跑）—— 这是「第二份定义」的防线；
 //! 2. **JS 字符串上下文的转义表** —— 逐字符钉住，`room` 是用户可控的；
 //! 3. **真的把页面服务出来** —— 响应头、`__CC__` 注入、以及「关掉总开关不影响页面本身」。
 //!
@@ -19,20 +19,18 @@ use clip9_server::{AppState, router};
 use clip9_store::Store;
 use tower::ServiceExt;
 
-/// 父仓库里 Go 那份页面。⚠️ 拆成独立仓库之后这个路径就没了 ——
-/// 那时下面那条测试会自动跳过（见它的注释）。
+/// Go 仓库里那份页面。⚠️ **本仓库没有它**（它是 Go 实现的源码），所以要按顺序找几种摆法
+/// （和 `tools/compare-with-go.mjs` 的 `findGoDir()` 同一套办法）：
 ///
-/// ⚠️ 但**过渡期还要能用**，所以按顺序试两个位置（和 `tools/compare-with-go.mjs` 的
-/// `findGoDir()` 同一套办法）：
-/// 1. `rust/` 还在父仓库里时的 `../cloud-clip`；
-/// 2. 拆出去之后的两种常见摆法：`../cloud-clipboard-go/cloud-clip`（隔壁）
-///    与 `../../cloud-clipboard-go/cloud-clip`（clone 进 Go 项目根目录）。
+/// ⚠️ 路径从 `CARGO_MANIFEST_DIR`（= `<仓库>/crates/server`）往上数三层就到**仓库的父目录**，
+/// 所以下面两个候选是：
+/// 1. `<父目录>/cloud-clipboard-go/cloud-clip` —— 两个仓库平级；
+/// 2. `<父目录>/cloud-clip` —— 本仓库在 Go 仓库里面（clone 进它的根目录，或老的 `rust/` 摆法）。
 fn go_page_path() -> Option<PathBuf> {
     let manifest = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let candidates = [
-        manifest.join("../../../cloud-clip/lib/automation_page.html"),
-        manifest.join("../../../../cloud-clipboard-go/cloud-clip/lib/automation_page.html"),
         manifest.join("../../../cloud-clipboard-go/cloud-clip/lib/automation_page.html"),
+        manifest.join("../../../cloud-clip/lib/automation_page.html"),
     ];
     candidates.into_iter().find(|p| p.exists())
 }
@@ -45,13 +43,13 @@ fn go_page_path() -> Option<PathBuf> {
 /// 七条静态检查（`TestAutomationPageMessagesCoverActionKeys` 那一族）
 /// **在文件相同的前提下对这边同样成立** —— 这比把七条测试抄一遍便宜得多，也可靠得多。
 ///
-/// ⚠️ 拆成独立仓库之后父仓库那份就没了，这条会自动跳过：**那时这份就是唯一的源**，
-/// 没有「漂移」可言。到那一步要补的是把 Go 那七条静态检查真正移植过来。
+/// ⚠️ **找不到 Go 仓库时这条会跳过** —— 那时这份就是唯一的源，没有「漂移」可言，
+/// 但防线也就没了。到那一步要补的是把 Go 那七条静态检查真正移植过来。
 #[test]
 fn page_matches_go_byte_for_byte() {
     let Some(go) = go_page_path() else {
         println!(
-            "跳过：找不到 Go 那份 automation_page.html（拆出去、且 Go 仓库不在隔壁时就该跳过）。\
+            "跳过：找不到 Go 那份 automation_page.html（Go 仓库不在旁边时就该跳过）。\
              ⚠️ 跳过意味着这条防线没了 —— 那时这份就是唯一的源，要补的是把 Go 那七条静态检查\
              （文案表 / i18n / 动作标签）真正移植过来"
         );
@@ -62,8 +60,8 @@ fn page_matches_go_byte_for_byte() {
     assert_eq!(
         ours.len(),
         expected.len(),
-        "页面大小与 Go 那份不同 —— 有人只改了一边。刷新方式：\
-         `cp ../cloud-clip/lib/automation_page.html crates/server/src/`"
+        "页面大小与 Go 那份不同 —— 有人只改了一边。刷新方式（从 Go 仓库）：\
+         `cp <Go 仓库>/cloud-clip/lib/automation_page.html crates/server/src/`"
     );
     assert!(
         ours == expected.as_slice(),

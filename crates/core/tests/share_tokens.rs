@@ -1,7 +1,8 @@
 //! 契约测试：**逐字节**复现 Go 签出来的分享令牌。
 //!
-//! fixture 由 `cloud-clip/lib/share_fixture_test.go` 生成（`cases/share/tokens.json`），
-//! 里面每组用例都带着 Go 派生出的**签名密钥**与签出来的 **token**。这里断言两件事：
+//! fixture 在 `cases/share/tokens.json`，里面每组用例都带着 Go 派生出的**签名密钥**与
+//! 签出来的 **token**。⚠️ 它是**冻结的输入**：拆库时从 Go 实现那边带过来，这边不再重新生成
+//! （理由见 `cases/README.md`）。这里断言两件事：
 //!
 //! 1. 同一份配置 → 派生出的密钥**逐字节相同**；
 //! 2. 同一份 claims → 签出来的 token 字符串**逐字节相同**，并且能被自己解析回来。

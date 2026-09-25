@@ -25,7 +25,7 @@
 // 定时自动化。P2 落地后它已经进入正常比对（连同 34 个动作的完整声明），见下面那一节。
 
 import { spawn, spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import http from 'node:http';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -37,17 +37,17 @@ const REPO_ROOT = resolve(RUST_DIR, '..');
 
 /** Go 仓库里的 `cloud-clip/` 目录。
  *
- * ⚠️★ **拆成独立仓库之后这个脚本仍然要能找到 Go**，否则那 160 多条逐请求比对
- * （目前**最强的验证面**）就废了。所以路径按顺序找，不写死：
+ * ⚠️★ **本仓库没有 Go**（它现在在另一个仓库里），所以路径按顺序找，不写死：
  * 1. 显式 `GO_DIR` 环境变量（CI 或别处签出时用）；
- * 2. 同仓库的 `../cloud-clip` —— **过渡期的布局**（`rust/` 还在父仓库里）；
- * 3. 隔壁的 `../cloud-clipboard-go/cloud-clip` —— **拆出去之后的布局**。
+ * 2. `<父目录>/cloud-clip` —— 本仓库在 Go 仓库里面（clone 进它的根目录，或老的 `rust/` 摆法）；
+ * 3. `<父目录>/cloud-clipboard-go/cloud-clip` —— 两个仓库平级。
  *
  * 判定用 `lib/handler.go` 在不在，而不是只看目录存不存在：目录存在但内容不对时
  * 会走到「找不到」那条路上，报错比 `go build` 失败清楚。
  *
- * ⚠️ 拆出去之后这个脚本就是**过渡期工具**了（它需要 Go 在隔壁），
- * 而 Rust 自己的验证面是 `cargo test` + 三个实机脚本（那两个不需要 Go）。
+ * ⚠️ 所以这个脚本是**过渡期工具**（它需要 Go 在旁边签出），而本仓库自己的验证面是
+ * `cargo test` + 三个实机脚本（`spa-acceptance` / `share-page-acceptance` / `page-smoke`，
+ * 它们只接受一个 URL，不需要 Go）。
  */
 function findGoDir() {
   const candidates = [
@@ -437,6 +437,61 @@ async function compareVia(label, fn, mask = []) {
 
 await waitReady(GO_PORT, goChild);
 await waitReady(RS_PORT, rsChild);
+
+// ── 契约数据（`cases/`）在两个仓库之间有没有漂 ──────────────────────────
+//
+// ⚠️★ 拆库之后 `cases/` 是**两份**，而且**角色不同**：
+// · Go 仓库那份 —— Go 自己测试的**校验基准**（非更新模式下它会读回来逐字比，
+//   不一致就 `t.Fatalf`「这是一次契约变更」）；
+// · 本仓库那份 —— Rust 测试的**冻结输入**（Rust 是对着哪份契约写的）。
+//
+// 拆库前它们是**同一份文件**，所以「不可能漂」；现在会漂。⚠️ **漂了不一定是坏事**：
+// 它意味着 Go 侧的契约变了、Rust 该跟。所以这条检查的作用是**把信号放大**，
+// 而不是把差异当成 bug —— 口径与 Go 那边 fixture 测试自己的措辞一致
+// （「**这是一次契约变更**，不是测试坏了」）。
+//
+// ⚠️ 只比 `*.json`：那才是契约数据。`README.md` 是说明文字，两边本来就该各说各的。
+console.log('\n=== 契约数据 cases/ 两个仓库一致吗 ===');
+{
+  const goCases = join(GO_DIR, '..', 'cases');
+  const ourCases = join(RUST_DIR, 'cases');
+  const collect = (dir, base = '') => {
+    const out = [];
+    for (const e of readdirSync(dir, { withFileTypes: true })) {
+      const rel = base ? `${base}/${e.name}` : e.name;
+      if (e.isDirectory()) out.push(...collect(join(dir, e.name), rel));
+      else if (e.name.endsWith('.json')) out.push(rel);
+    }
+    return out;
+  };
+  const goFiles = collect(goCases).sort();
+  const ourFiles = collect(ourCases).sort();
+  const onlyGo = goFiles.filter((f) => !ourFiles.includes(f));
+  const onlyOurs = ourFiles.filter((f) => !goFiles.includes(f));
+  const changed = goFiles
+    .filter((f) => ourFiles.includes(f))
+    .filter((f) => !readFileSync(join(goCases, f)).equals(readFileSync(join(ourCases, f))));
+
+  if (onlyGo.length === 0 && onlyOurs.length === 0 && changed.length === 0) {
+    pass++;
+    console.log(`  ok   ${goFiles.length} 个契约 JSON 两边逐字节相同`);
+  } else {
+    fail++;
+    const detail = [
+      onlyGo.length ? `只有 Go 那边有：${onlyGo.join(', ')}` : '',
+      onlyOurs.length ? `只有本仓库有：${onlyOurs.join(', ')}` : '',
+      changed.length ? `内容不同（${changed.length} 个）：${changed.join(', ')}` : '',
+    ].filter(Boolean);
+    failures.push(
+      `契约数据 cases/ 两个仓库不一致 —— **这是一次契约变更的信号，不是工具坏了**\n` +
+        `  ${detail.join('\n  ')}\n` +
+        `  先想清楚是哪边对：如果 Go 的改动是有意的，就把本仓库那份同步过来\n` +
+        `  （本仓库不重新生成 fixture，只接收 Go 侧导出的结果）。`
+    );
+    console.log('  FAIL 契约数据 cases/ 两个仓库不一致（契约变更的信号）');
+    for (const d of detail) console.log(`       ${d}`);
+  }
+}
 
 console.log('\n=== 发文本：三种 Content-Type ===');
 await compare('POST /text 纯文本（不声明 Content-Type）', 'POST', '/text', { body: 'hello world' });

@@ -4,11 +4,12 @@
 //! 而它的**行为基准仍然是 Go**（`ARCHITECTURE.md` §5.4）。自己测自己只能证明「我没改坏」，
 //! 证明不了「和现有的那个实现一样」—— 而后者才是切换时不出现「同一个任务、两个结果」的前提。
 //!
-//! fixture 由 `cloud-clip/lib/action_fixture_test.go` 生成：
+//! ⚠️ fixture 是**冻结的输入**：拆库时从 Go 实现那边带过来，这边**不再重新生成**
+//! （理由见 `cases/README.md`）。真要重生成得在 **Go 仓库**里跑：
 //!
 //! ```bash
-//! cd ../cloud-clip && UPDATE_FIXTURES=1 go test ./lib -run TestActionFixtures
-//! cd ../rust && cargo test -p clip9-actions
+//! cd <Go 仓库>/cloud-clip && UPDATE_FIXTURES=1 go test ./lib -run TestActionFixtures
+//! cargo test -p clip9-actions        # 回到本仓库根跑这个
 //! ```
 //!
 //! ⚠️ 第二个命令红了**不是「测试坏了」**：那是一次行为差异，先想清楚是哪边对。

@@ -1,8 +1,4 @@
-# clip9 —— Rust 重写版（过渡期住在这个目录里）
-#
-# ⚠️ 这个目录**完全本地开发**：父仓库 `cloud-clipboard-go` 的 .gitignore 里有一条
-#    `rust/`，它自己另有一个**无 remote** 的本地 git 仓库。开发完再拆成独立仓库推上去。
-#    详见 ./README.md 与 ./docs/ARCHITECTURE.md §10。
+# clip9 —— 自托管的跨设备剪贴板 / 文件中转（服务端）。
 #
 # 依赖单向：protocol ← core ← store ← server ← { bin, client }
 #            actions ← core / server / WASM

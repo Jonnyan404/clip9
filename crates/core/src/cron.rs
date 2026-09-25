@@ -41,12 +41,12 @@
 //!
 //! # 验证
 //!
-//! 行为基准是 Go 那 682 行（`cron.go`），期望值由 `cases/cron/cron.json` 给出、
-//! 由 `cloud-clip/lib/cron_fixture_test.go` **跑出来**：
+//! 行为基准是 Go 那 682 行（`cron.go`），期望值由 `cases/cron/cron.json` 给出 ——
+//! 那份 fixture 是**冻结的输入**（拆库时从 Go 实现那边带过来的，这边不再重新生成）：
 //!
 //! ```bash
-//! cd cloud-clip && UPDATE_FIXTURES=1 go test ./lib -run TestCronFixtures
-//! cd ../rust && cargo test -p clip9-core --test go_cron
+//! cd <Go 仓库>/cloud-clip && UPDATE_FIXTURES=1 go test ./lib -run TestCronFixtures
+//! cargo test -p clip9-core --test go_cron   # 回到本仓库根跑这个
 //! ```
 //!
 //! # ⚠️ 已知限制：时间只看固定偏移，不看时区数据库

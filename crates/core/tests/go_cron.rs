@@ -4,11 +4,12 @@
 //! 那 682 行自写 cron 的语义里全是「读代码看不出来」的边界（日/周 OR、`?` == `*`、
 //! 7 也是周日、跨月跳步的近似、闰年、迭代上限兜底），只能靠跑同一组输入去比。
 //!
-//! fixture 由 `cloud-clip/lib/cron_fixture_test.go` 生成：
+//! ⚠️ fixture 是**冻结的输入**：拆库时从 Go 实现那边带过来，这边**不再重新生成**
+//! （理由见 `cases/README.md`）。真要重生成得在 **Go 仓库**里跑：
 //!
 //! ```bash
-//! cd ../cloud-clip && UPDATE_FIXTURES=1 go test ./lib -run TestCronFixtures
-//! cd ../rust && cargo test -p clip9-core --test go_cron
+//! cd <Go 仓库>/cloud-clip && UPDATE_FIXTURES=1 go test ./lib -run TestCronFixtures
+//! cargo test -p clip9-core --test go_cron   # 回到本仓库根跑这个
 //! ```
 //!
 //! ⚠️ 第二个命令红了**不是「测试坏了」**：那是一次行为差异，先想清楚是哪边对。

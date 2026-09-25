@@ -30,12 +30,12 @@
 //! 引擎本身仍是纯的：读消息队列这件事由调用方注入（服务端侧见 `automation_source.go` 的
 //! 对应实现）。`latest` 为 `None` 时用 `{{latest}}` 会报错 —— 宁可报错也不要静默留下空替换。
 //!
-//! 验证基准仍是 Go（`render.go`），fixture 在 `cases/render/render.json`、
-//! 由 `cloud-clip/lib/render_fixture_test.go` 生成：
+//! 验证基准仍是 Go（`render.go`），fixture 在 `cases/render/render.json` ——
+//! 那份是**冻结的输入**（拆库时从 Go 实现那边带过来的，这边不再重新生成）：
 //!
 //! ```bash
-//! cd cloud-clip && UPDATE_FIXTURES=1 go test ./lib -run TestRenderFixtures
-//! cd ../rust && cargo test -p clip9-core --test go_render
+//! cd <Go 仓库>/cloud-clip && UPDATE_FIXTURES=1 go test ./lib -run TestRenderFixtures
+//! cargo test -p clip9-core --test go_render   # 回到本仓库根跑这个
 //! ```
 
 use std::sync::LazyLock;

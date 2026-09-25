@@ -7,6 +7,12 @@
 //       --static ../cloud-clip/lib/static
 //   node tools/spa-acceptance.mjs http://127.0.0.1:19531
 //
+// ⚠️ `--static` 指的是**前端构建产物**，而 SPA 的源码与构建都在 **Go 仓库**里
+// （`web-vue3/`，构建产物落在 `cloud-clip/lib/static`，已入库）。
+// 上面那个相对路径成立的前提是**本仓库在 Go 仓库里面**（clone 进它的根目录）；
+// 两个仓库平级时要改成 `../cloud-clipboard-go/cloud-clip/lib/static`。
+// ⚠️ **SPA 与 API 必须同源** —— 前端那些请求是相对根路径的。
+//
 // 这是 `ARCHITECTURE.md` §8 给 P0 定的**验收标准**：
 // 「现有 SPA 指向 Rust 服务端，发文本 / 传文件 / 删条目 / 看历史全部正常」。
 //
@@ -19,7 +25,7 @@
 // 也就是说它同时验证了 HTTP 写接口、存储、WebSocket 握手（`config` 事件）、广播分发、
 // 以及前端的渲染。**比逐个 curl 接口有意义得多** —— 那些 `tools/compare-with-go.mjs` 已经做了。
 //
-// ⚠️ 需要真浏览器：`cloud-clip/tools/page-smoke.mjs` 那套 DOM 桩只适用**服务端渲染页面**
+// ⚠️ 需要真浏览器：`../cloud-clip/tools/page-smoke.mjs` 那套 DOM 桩只适用**服务端渲染页面**
 // （它抽页面里的内联 `<script>`），Vue SPA 是打包出来的模块，桩跑不了。
 //
 // ⚠️ **必须在沙箱外跑**（`dangerouslyDisableSandbox`）：沙箱里 Chrome 起得来、调试端口也通，

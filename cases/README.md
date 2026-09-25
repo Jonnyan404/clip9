@@ -1,31 +1,51 @@
 # cases/ —— 语言无关的契约数据
 
-这个目录放**不属于任何一种语言**的契约数据。它要入库，因为 Go 与 Rust 的测试读**同一份**
-（见 `clip-sync/ARCHITECTURE.md` §5.4 与 §10.3）—— 复制一份到两边必然漂。
+这个目录放**不属于任何一种语言**的契约数据：字段名与形状、动作行为、cron 语义、
+模板求值、分享令牌的字节。它入库，因为它是 Rust 侧那些契约测试的**输入**。
+
+## ⚠️★ 这些是**冻结的输入**，本仓库不重新生成它们
+
+它们**由 Go 实现导出**（生成器在那个仓库里：`cloud-clip/lib/*_fixture_test.go`，
+`UPDATE_FIXTURES=1 go test ./lib -run TestXxxFixtures`）。拆库时它们被一起带了过来，
+从此在本仓库里是**只读的期望值**。
+
+### 为什么 Go 仓库里那份也得留着（两边角色不同）
+
+⚠️ Go 那边的 fixture 测试在**非更新模式下会读回文件逐字比**，不一致就
+`t.Fatalf("…**这是一次契约变更**，不是测试坏了")`。所以它那份是**Go 自己测试的校验基准**，
+删了会让 `go test` 在干净签出上先红一次（它会写出来再让你重跑）。两份的角色：
+
+| | 角色 | 会变吗 |
+|---|---|---|
+| Go 仓库的 `cases/` | Go **当前输出**的校验基准 | 会 —— Go 一改结构体它就跟着变（或者变红） |
+| 本仓库的 `cases/` | Rust 对着写的**冻结契约** | 只有人**手动同步**时才变 |
+
+拆库前它们是**同一份文件**，所以「不可能漂」；现在**会漂**。
+
+### ⚠️ 漂了是**信号**，不是 bug —— 但要看得见
+
+漂意味着 **Go 侧的契约变了、Rust 该跟**。所以别让它悄悄发生：
+
+- **跑双跑比对时会检查**（`node tools/compare-with-go.mjs` 的
+  「契约数据 cases/ 两个仓库一致吗」那一节，只比 `*.json`）——
+  不一致会**红**，并告诉你哪几个文件不同。
+- 手动查：`diff -rq ../cloud-clipboard-go/cases cases`（两个仓库平级时）。
+- 同步方向**永远是 Go → 本仓库**（这边只接收导出结果，不自己生成）。
+
+⚠️ **不要手工编辑这里的 JSON** —— 它们是导出产物。要改就改 Go 的结构体，然后重新生成。
+
+⚠️ 下面提到的 `web-vue3/…`、`cloud-clip/…` 这些路径**都在 Go 仓库里**，本仓库没有它们。
 
 ## protocol/ —— 从 Go 导出的 JSON fixture
 
-**谁生成**：`cloud-clip/lib/protocol_fixture_test.go`（Go），用 `encoding/json`
-直接序列化真实结构体。所以它就是**服务端真实吐出来的字节**，不是手抄的。
+**谁生成**：Go 侧的 `protocol_fixture_test.go`，用 `encoding/json` 直接序列化真实结构体。
+所以它就是**服务端真实吐出来的字节**，不是手抄的。
 
-**谁消费**：`rust/crates/protocol/tests/go_fixtures.rs`（Rust），
+**谁消费**：`crates/protocol/tests/go_fixtures.rs` ——
 读进来 → 反序列化 → 再序列化 → 与原文件深比较。
 
-**为什么值得**：这套契约的权威是 `docs/api.md`，但字段名与 `omitempty` 的**实际效果**
-只有 Go 的 `encoding/json` 说了算。「读代码觉得一致」和「真的一致」是两件事。
-
-```bash
-# 校验（改了 type.go 的字段名/omitempty 之后这个会红 —— 那是有意的，它是一次契约变更）
-cd cloud-clip && go test ./lib -run TestProtocolFixtures
-
-# 确认改动是有意的之后，重新生成
-cd cloud-clip && UPDATE_FIXTURES=1 go test ./lib -run TestProtocolFixtures
-
-# Rust 侧验收
-cd rust && cargo test -p clip9-protocol
-```
-
-⚠️ **不要手工编辑这里的 JSON** —— 它是导出产物。要改就改 Go 的结构体，然后重新生成。
+**为什么值得**：字段名与 `omitempty` 的**实际效果**只有 Go 的 `encoding/json` 说了算。
+「读代码觉得一致」和「真的一致」是两件事。
 
 ⚠️ 比的是 JSON **语义**（`serde_json::Value` 深比较），不是字节。两处刻意的字节差异：
 Go 默认开 HTML 转义（`<` → `\u003c`），serde_json 不转义；以及 key 顺序。
@@ -33,38 +53,41 @@ Go 默认开 HTML 转义（`<` → `\u003c`），serde_json 不转义；以及 k
 
 ## share/ —— 从 Go 导出的分享令牌 fixture
 
-**谁生成**：`cloud-clip/lib/share_fixture_test.go`（Go）。每组用例是「固定的配置 + 固定的
-claims」，它把**派生出的签名密钥**（`keyHex`）和**签出来的 token** 一起导出。
+**谁生成**：Go 侧的 `share_fixture_test.go`。每组用例是「固定的配置 + 固定的 claims」，
+它把**派生出的签名密钥**（`keyHex`）和**签出来的 token** 一起导出。
 
-**谁消费**：`rust/crates/core/tests/share_tokens.rs`（Rust）—— 逐字节复现密钥与 token，
+**谁消费**：`crates/core/tests/share_tokens.rs` —— 逐字节复现密钥与 token，
 并把 token 解析回同一份 claims。
 
 **为什么值得**：分享令牌的形状（`base64url(json).base64url(hmac)`）、claims 的
 `omitempty` 效果、**密钥派生时房间的升序** —— 这三样读代码都看不出来，
 而任何一处对不上都会导致「Go 签的链接在 Rust 上全变废链」，而且要等用户点开旧链接才发现。
 
-```bash
-# 校验（红了先别改 fixture —— 它意味着所有已发出的分享链接会一起失效）
-cd cloud-clip && go test ./lib -run TestShareTokenFixtures
+⚠️ 改它之前先读 `crates/core/src/share.rs` 的模块注释：**红了意味着所有已发出的分享链接会失效**。
+⚠️ 活的互验在 `tools/compare-with-go.mjs` 里（起两个真实实例，各签一张，看对方认不认）——
+fixture 钉的是静态的那一半。
 
-# 确认改动是有意的之后，重新生成
-cd cloud-clip && UPDATE_FIXTURES=1 go test ./lib -run TestShareTokenFixtures
+## actions/ —— 动作库的跨语言用例（190 条 / 34 个动作）
 
-# Rust 侧验收
-cd rust && cargo test -p clip9-core
-```
+**谁生成**：Go 侧把**注册表**与**每个动作的实际输出**导出成 JSON。期望值是**跑出来的**、
+不是人写的 —— 生成器第一次跑就抓出了三条人写错的期望值。
 
-⚠️ 活的互验在 `rust/tools/compare-with-go.mjs` 里（起两个真实实例，各签一张，
-看对方认不认）—— fixture 钉的是静态的那一半。
+**谁消费**：`crates/actions/tests/go_cases.rs` —— 逐条比对 + 逐字段对账元数据 +
+单独钉住**刻意的差异**（大小写映射、URL 里的 `\s`、时分秒越界）。
 
-## actions.json —— 动作行为用例（还没建）
+**为什么值得**：动作库的边界全是「读代码看不出来」的那类 —— emoji 要走 **UTF-16 代理对**、
+全角空格是 **U+3000**（不是 0x20+0xFEE0，那是未分配字符）、`[0-9]+` 是**贪婪**的、
+Go 的 base64 **不看**尾比特、`json.Indent` **保键序**。
+⚠️ 而且**同一串正则在三个引擎里语义不同**（`\d` / `\b` / `\s`）——
+「这边是 Unicode、Go 与 JS 是 ASCII」读代码永远看不出来，只能拿用例钉。
 
-按 §5.4 的计划，动作测试用例会抽成**语言无关的 JSON**，Go 与 Rust 都读它 = 双跑验证：
+## cron/ · render/ · task/ —— 语义边界
 
-```json
-{ "action": "text.replace", "input": "axb",
-  "params": { "mode": "text", "find": ".", "with": "-" }, "expect": "axb" }
-```
-
-它防的是「预览区替换了、定时任务没替换」那类错 —— 现在的契约测试**只验 id，验不了行为**。
-等 `rust/crates/actions` 开始实现时再建。
+- `cron/cron.json`：52 解析 + 44 描述 + 35 求时刻。日/周是 **OR**、`?` 等价 `*`、
+  **7 也是周日**、`a/n` 按 `a-max` 理解、跨月跳步的近似、闰日要等两年、
+  以及「语法合法但永远等不到」靠**迭代上限**兜底。
+- `render/render.json`：38 条。偏移**挂在变量自己身上**（`{{weekday:+1d}}`）、
+  **月溢出夹取**（1 月 31 日 +1m 要夹到 2 月底）、周几四种写法（`en` 是**全名**）、
+  求值**要么全成功要么整体失败**。⚠️ `{{uuid}}` / `{{timestamp}}` 是**不确定**的，
+  fixture 用 `uncertain` 标注、不记字面值。
+- `task/task.json`：10 求值 + 12 校验（四档频次的归一化、判到期用 `prev`）。
