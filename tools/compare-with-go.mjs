@@ -537,7 +537,9 @@ await compare(
 // 我们给扁平对象），所以它不在这儿比 —— 在下面的「刻意偏离」一节单独断言。
 await compare('GET /content/2 原文', 'GET', '/content/2');
 await compare('GET /content/2?format=json', 'GET', '/content/2?format=json');
-await compare('GET /content/2.json（后缀）', 'GET', '/content/2.json');
+// ⚠️ `.json` 后缀**已经删了**（2026-09-26），所以这条现在比的是「两边都拒绝它」——
+// 名字必须说清楚，否则看着像「后缀还能用」。
+await compare('GET /content/2.json（后缀已删，两边都应当拒）', 'GET', '/content/2.json');
 await compare('GET /content/999 不存在', 'GET', '/content/999');
 await compare('GET /content/latest?format=html 不支持的格式', 'GET', '/content/latest?format=html');
 await compare('GET /content/abc 非法 id', 'GET', '/content/abc');

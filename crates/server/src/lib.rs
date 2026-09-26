@@ -61,7 +61,7 @@ pub use state::AppState;
 /// POST   /auth/token/refresh     续期（不需要密码）
 /// POST   /text                   发文本（?id= 是覆盖已有条目）
 /// GET    /content/latest         最新一条（不传 room = 不限房间）
-/// GET    /content/<id>           按 id 取一条（`.json` 后缀也认）
+/// GET    /content/<id>           按 id 取一条
 /// POST   /content/<id>/column    看板挪列
 /// GET    /rooms                  房间列表
 /// POST   /revoke/<id>            删一条
@@ -127,7 +127,6 @@ pub fn router(state: Arc<AppState>) -> Router {
         // axum 里静态段优先，所以它和 `/content/latest`、`/content/{id}` 不冲突。
         .route("/content", get(handlers::content_list).fallback(only_get))
         .route("/content/latest", get(handlers::latest_content))
-        .route("/content/latest.json", get(handlers::latest_content))
         // ⚠️ Go 的 `handleContent` **没有方法检查** —— `POST /content/1` 会照 GET 的逻辑跑。
         // 这里收紧成只认 GET（同样的理由：读接口不该被非读方法触发）。
         .route("/content/{id}", get(handlers::content).fallback(only_get))

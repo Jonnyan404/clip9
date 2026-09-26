@@ -191,17 +191,15 @@ pub fn text_response(body: String) -> Response {
 
 // ── 内容格式 ──────────────────────────────────────────────────────────
 
-/// 读**显式**的格式信号：`?format=` > `.json` 后缀 > `?json=1`。
+/// 读**显式**的格式信号：`?format=` 与 `?json=1`。
 ///
-/// ⚠️ 兼容信号（`.json` 后缀、`?json=1`）**即将下线**：新客户端一律用 `?format=json`，
-/// 捷径侧已经改完。但**现在还不能删** —— 用户手机上装好的老捷径走的就是后缀那条路。
+/// ⚠️ 2026-09-26：**`.json` 路径后缀已经删掉了**（Jonny：「那个 .json 路径后缀也下线」）——
+/// 它挂了很久的「即将下线」牌子，而这个项目**没有老用户**。
+/// ⚠️ **`?json=1` 暂时保留**（同日：「只删 .json，其它暂时保留」），别顺手也删了。
 ///
 /// 返回 `Err(())` 表示给了个不认识的 format（比如 `?format=html`）：**必须报错、不能回落**，
 /// 否则客户端以为拿到 HTML、实际拿到原文。
-fn resolve_content_format(
-    query: &HashMap<String, String>,
-    has_json_suffix: bool,
-) -> Result<String, ()> {
+fn resolve_content_format(query: &HashMap<String, String>) -> Result<String, ()> {
     if let Some(explicit) = query.get("format") {
         match explicit.trim().to_ascii_lowercase().as_str() {
             "" => {}
@@ -209,9 +207,6 @@ fn resolve_content_format(
             "raw" | "text" | "plain" => return Ok("raw".to_owned()),
             _ => return Err(()),
         }
-    }
-    if has_json_suffix {
-        return Ok("json".to_owned());
     }
     if matches!(query.get("json").map(String::as_str), Some("true" | "1")) {
         return Ok("json".to_owned());
@@ -599,11 +594,9 @@ pub async fn content(
     Path(raw_id): Path<String>,
     Query(query): Query<HashMap<String, String>>,
 ) -> Response {
-    let has_json_suffix = raw_id.ends_with(".json");
-    let id_str = raw_id.trim_end_matches(".json");
-    // ⚠️ 后缀无论格式如何都要剥掉：`/content/999.json` 的 id 就是 999，
-    // 哪怕调用方用 `?format=raw` 显式要原文。
-    let Ok(id) = id_str.parse::<i32>() else {
+    // ⚠️ 2026-09-26：`.json` 路径后缀已经删了，所以 `/content/7.json` 会被当成 id="7.json"
+    // → `parse::<i32>` 失败 → 400 `invalid_content_id`。这是**有意的**（不是 404）。
+    let Ok(id) = raw_id.parse::<i32>() else {
         return write_error(
             StatusCode::BAD_REQUEST,
             codes::INVALID_CONTENT_ID,
@@ -611,7 +604,7 @@ pub async fn content(
             "无效的内容 ID",
         );
     };
-    let Ok(explicit_format) = resolve_content_format(&query, has_json_suffix) else {
+    let Ok(explicit_format) = resolve_content_format(&query) else {
         return write_error(
             StatusCode::BAD_REQUEST,
             codes::UNSUPPORTED_FORMAT,
@@ -795,13 +788,13 @@ pub async fn content_list(
     json_response(&json!({ "messages": messages }))
 }
 
-/// `GET /content/latest`（含 `latest.json`）。
+/// `GET /content/latest`。
 pub async fn latest_content(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
     Query(query): Query<HashMap<String, String>>,
 ) -> Response {
-    let Ok(explicit_format) = resolve_content_format(&query, false) else {
+    let Ok(explicit_format) = resolve_content_format(&query) else {
         return write_error(
             StatusCode::BAD_REQUEST,
             codes::UNSUPPORTED_FORMAT,
@@ -956,7 +949,7 @@ pub async fn content_column(
     Query(query): Query<HashMap<String, String>>,
     body: Bytes,
 ) -> Response {
-    let Ok(id) = raw_id.trim_end_matches(".json").parse::<i32>() else {
+    let Ok(id) = raw_id.parse::<i32>() else {
         return write_error(
             StatusCode::BAD_REQUEST,
             codes::INVALID_CONTENT_ID,
@@ -1302,27 +1295,28 @@ mod tests {
                 .collect()
         };
 
-        assert_eq!(resolve_content_format(&q(&[]), false), Ok(String::new()));
-        assert_eq!(resolve_content_format(&q(&[]), true), Ok("json".to_owned()));
+        assert_eq!(resolve_content_format(&q(&[])), Ok(String::new()));
+        // ⚠️ `?json=1` **仍然认**（2026-09-26：只删了 `.json` 路径后缀，其它暂时保留）。
         assert_eq!(
-            resolve_content_format(&q(&[("json", "1")]), false),
+            resolve_content_format(&q(&[("json", "1")])),
             Ok("json".to_owned())
         );
-        // ?format= 优先于后缀。
+        // ?format= 优先。
         assert_eq!(
-            resolve_content_format(&q(&[("format", "raw")]), true),
+            resolve_content_format(&q(&[("format", "raw")])),
             Ok("raw".to_owned())
         );
         // 不认识的 format 必须报错，不能回落。
-        assert_eq!(
-            resolve_content_format(&q(&[("format", "html")]), false),
-            Err(())
-        );
+        assert_eq!(resolve_content_format(&q(&[("format", "html")])), Err(()));
         // 空串的 format 当没给。
         assert_eq!(
-            resolve_content_format(&q(&[("format", "  ")]), false),
+            resolve_content_format(&q(&[("format", "  ")])),
             Ok(String::new())
         );
+        // ⚠️ `.json` 后缀**已经不是格式信号了** —— 它现在会被当成 id 的一部分
+        // （`/content/7.json` → `parse::<i32>` 失败 → 400 `invalid_content_id`）。
+        // 那个行为钉在 Go 侧的同名用例里（`TestContentFormatSelection`），这里测不到
+        // （本函数只看 query，看不到路径）。
     }
 
     #[test]
