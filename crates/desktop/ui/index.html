@@ -5,208 +5,463 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>clip9</title>
 <style>
-/*
-  设计令牌沿用 `docs/specs/desktop-client-mockup.html`（slate 色阶 + #4f8cff），
-  不重新发明配色。
+/* ⚠️★ **这一段是从两份界面稿逐字拼出来的**（`desktop-client-mockup.html` +
+   `desktop-client-settings-mockup.html`），剔除的只有演示页专属的块（说明条 / 标题 /
+   切主题按钮 / 托盘示意 / 稿 1 里那个旧设置面板）。**不要手抄、不要凭印象补** ——
+   2026-09-26 手抄过三次，每次都漏掉多行的容器规则（`.win` / `.sidebar` / `.main` /
+   `.composer` / `.sync` / `.room .dir`），页面整个塌掉。见 desktop-client.md §3.6.1。
+   拼接顺序：**稿 1 在前、稿 2 在后** —— 同名类以稿 2 为准（窗口级的差异在下面
+   「app 外壳」那段显式改回来，见那里的注释）。 */
 
-  ⚠️★ 这是**自己的**界面，不是 SPA 的产物（规格 §6：桌面端不打前端产物进安装包）。
-  但**渲染规则要照抄 SPA 的约定**（规格 §3.6 末 + §8 审计清单那条硬要求）：
-  markdown / 图片 / 文件 / 结构化内容 / 分类条 —— 那是手写 UI 唯一真实的漂移风险。
-
-  现状：**交互已接上**（W3，`app.js` 走 IPC 拿快照 + 发命令）。数据全部来自壳，
-  页面自己不碰服务端、不碰剪贴板。
-*/
-:root, :root[data-theme='light'] {
-    --sidebar-bg: #eef1f6;
-    --sidebar-fg: #334155;
-    --sidebar-head: #0f172a;
-    --sidebar-name: #1e293b;
-    --sidebar-sub: #64748b;
-    --sidebar-chip: #64748b;
-    --sidebar-chip-border: rgba(100, 116, 139, 0.4);
-    --sidebar-hover: rgba(15, 23, 42, 0.06);
-    --sidebar-active: rgba(79, 140, 255, 0.14);
-    --sidebar-active-border: rgba(79, 140, 255, 0.5);
-    --accent: #4f8cff;
-    --bg: #f1f5f9;
-    --card-bg: #ffffff;
-    --text: #1e293b;
-    --text-2: #64748b;
-    --border: rgba(148, 163, 184, 0.28);
-    --danger: #e11d48;
-    --ok: #10b981;
-}
+/* ══════════ 稿 1：主界面 ══════════ */
+/* ⚠️ 设计令牌**直接沿用 clip-sync 那套**（Jonny 说喜欢它的界面）：
+       slate 色阶 + #4f8cff 强调色 + data-theme 明暗切换。不重新发明配色。 */
+    :root, :root[data-theme='light'] {
+        --sidebar-bg: #eef1f6;
+        --sidebar-fg: #334155;
+        --sidebar-head: #0f172a;
+        --sidebar-name: #1e293b;
+        --sidebar-sub: #64748b;
+        --sidebar-chip: #64748b;
+        --sidebar-chip-border: rgba(100, 116, 139, 0.4);
+        --sidebar-hover: rgba(15, 23, 42, 0.06);
+        --sidebar-active: rgba(79, 140, 255, 0.14);
+        --sidebar-active-border: rgba(79, 140, 255, 0.5);
+        --sidebar-line: rgba(100, 116, 139, 0.4);
+        --accent: #4f8cff;
+        --bg: #f1f5f9;
+        --card-bg: #ffffff;
+        --text: #1e293b;
+        --text-2: #64748b;
+        --border: rgba(148, 163, 184, 0.28);
+        --danger: #e11d48;
+        --ok: #10b981;
+        --shadow: 0 18px 50px rgba(15, 23, 42, 0.18);
+    }
 :root[data-theme='dark'] {
-    --sidebar-bg: #0b1220;
-    --sidebar-fg: #cbd5e1;
-    --sidebar-head: #ffffff;
-    --sidebar-name: #f1f5f9;
-    --sidebar-sub: #7c8ea8;
-    --sidebar-chip: #8aa0b8;
-    --sidebar-chip-border: rgba(148, 163, 184, 0.28);
-    --sidebar-hover: rgba(148, 163, 184, 0.12);
-    --sidebar-active: rgba(79, 140, 255, 0.16);
-    --sidebar-active-border: rgba(79, 140, 255, 0.45);
-    --accent: #4f8cff;
-    --bg: #0f172a;
-    --card-bg: #1e293b;
-    --text: #e2e8f0;
-    --text-2: #94a3b8;
-    --border: rgba(71, 85, 105, 0.7);
-    --danger: #fb7185;
-    --ok: #34d399;
-}
+        --sidebar-bg: #0b1220;
+        --sidebar-fg: #cbd5e1;
+        --sidebar-head: #ffffff;
+        --sidebar-name: #f1f5f9;
+        --sidebar-sub: #7c8ea8;
+        --sidebar-chip: #8aa0b8;
+        --sidebar-chip-border: rgba(148, 163, 184, 0.28);
+        --sidebar-hover: rgba(148, 163, 184, 0.12);
+        --sidebar-active: rgba(79, 140, 255, 0.16);
+        --sidebar-active-border: rgba(79, 140, 255, 0.45);
+        --sidebar-line: rgba(148, 163, 184, 0.45);
+        --accent: #4f8cff;
+        --bg: #0f172a;
+        --card-bg: #1e293b;
+        --text: #e2e8f0;
+        --text-2: #94a3b8;
+        --border: rgba(71, 85, 105, 0.7);
+        --danger: #fb7185;
+        --ok: #34d399;
+        --shadow: 0 18px 50px rgba(0, 0, 0, 0.55);
+    }
 * { box-sizing: border-box; }
-html, body { height: 100%; }
 body {
-    margin: 0; display: flex; flex-direction: column;
-    background: var(--card-bg); color: var(--text);
-    font: 13px/1.55 -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", sans-serif;
-    -webkit-font-smoothing: antialiased;
-    /* ⚠️ 桌面窗口里不该有整页滚动 —— 滚动只发生在时间线那块。 */
-    overflow: hidden;
-}
-
-/* ── 标题栏 ───────────────────────────────────────────────── */
+        margin: 0; padding: 28px;
+        background: var(--bg); color: var(--text);
+        font: 13px/1.55 -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", sans-serif;
+        -webkit-font-smoothing: antialiased;
+    }
+/* ── 说明条（只在这份稿里有，不是界面的一部分）──────────────── */
+    .note {
+        max-width: 1120px; margin: 0 0 22px;
+        border-left: 3px solid var(--accent);
+        background: color-mix(in srgb, var(--accent) 7%, transparent);
+        padding: 10px 14px; border-radius: 0 8px 8px 0;
+        color: var(--text); font-size: 12.5px;
+    }
+/* ── 窗口壳 ─────────────────────────────────────────────── */
+    .win {
+        width: 760px; height: 520px; display: flex; flex-direction: column;
+        background: var(--card-bg); border: 1px solid var(--border);
+        border-radius: 12px; overflow: hidden; box-shadow: var(--shadow);
+    }
 .titlebar {
-    height: 38px; flex: none; display: flex; align-items: center; gap: 10px;
-    padding: 0 12px; background: var(--sidebar-bg);
-    border-bottom: 1px solid var(--border);
-}
-.titlebar .t { font-size: 12px; color: var(--sidebar-sub); }
+        height: 38px; flex: none; display: flex; align-items: center; gap: 10px;
+        padding: 0 12px; background: var(--sidebar-bg);
+        border-bottom: 1px solid var(--border);
+    }
+.lights { display: flex; gap: 7px; }
+.lights i { width: 11px; height: 11px; border-radius: 50%; display: block; }
+.lights i:nth-child(1) { background: #ff5f57; }
+.lights i:nth-child(2) { background: #febc2e; }
+.lights i:nth-child(3) { background: #28c840; }
+.titlebar .t { font-size: 12px; color: var(--sidebar-sub); margin-left: 4px; }
 .titlebar .spacer { flex: 1; }
 /* 同步开关：**桌面端独有** —— 手机上不需要「暂停剪贴板监听」这个动作 */
-.sync {
-    display: flex; align-items: center; gap: 7px;
-    padding: 3px 9px 3px 7px; border-radius: 999px;
-    border: 1px solid var(--sidebar-chip-border);
-    background: color-mix(in srgb, var(--ok) 12%, transparent);
-    font-size: 11.5px;
-}
+    .sync {
+        display: flex; align-items: center; gap: 7px;
+        padding: 3px 9px 3px 7px; border-radius: 999px;
+        border: 1px solid var(--sidebar-chip-border);
+        background: color-mix(in srgb, var(--ok) 12%, transparent);
+        font-size: 11.5px; color: var(--text);
+    }
 .sync .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--ok); }
-/* 「连接中」与「连不上」：状态点换色即可，别另做一套 UI。
-   ⚠️ 连不上**必须看得见** —— 静默的「同步中」是这类客户端最坏的一种假象。 */
-.sync.wait { background: color-mix(in srgb, var(--sidebar-sub) 14%, transparent); }
-.sync.wait .dot { background: var(--sidebar-sub); }
-.sync.off { background: color-mix(in srgb, var(--danger) 12%, transparent); }
+.sync.off { background: color-mix(in srgb, var(--danger) 10%, transparent); }
 .sync.off .dot { background: var(--danger); }
-
 .body { flex: 1; display: flex; min-height: 0; }
-
-/* ── 侧栏 ─────────────────────────────────────────────────── */
-.sidebar {
-    width: 208px; flex: none; background: var(--sidebar-bg);
-    border-right: 1px solid var(--border);
-    display: flex; flex-direction: column; min-height: 0;
-}
+/* ── 侧栏（沿用 clip-sync 的形状：房间列表 + 底部两个按钮）── */
+    .sidebar {
+        width: 208px; flex: none; background: var(--sidebar-bg);
+        border-right: 1px solid var(--border);
+        display: flex; flex-direction: column; min-height: 0;
+    }
 .sidebar-head {
-    padding: 12px 12px 8px; font-weight: 600; font-size: 12px;
-    color: var(--sidebar-head); letter-spacing: .02em;
-    display: flex; align-items: center; justify-content: space-between;
-}
-.sidebar-head .count { color: var(--sidebar-sub); font-weight: 400; }
+        padding: 12px 12px 8px; font-weight: 600; font-size: 12px;
+        color: var(--sidebar-head); letter-spacing: .02em;
+        display: flex; align-items: center; justify-content: space-between;
+    }
+.sidebar-head span.count { color: var(--sidebar-sub); font-weight: 400; }
 .rooms { flex: 1; overflow-y: auto; padding: 2px 6px 8px; }
 .room {
-    display: flex; align-items: center; gap: 8px;
-    padding: 7px 8px; border-radius: 7px; margin-bottom: 2px;
-    border: 1px solid transparent;
-}
+        display: flex; align-items: center; gap: 8px;
+        padding: 7px 8px; border-radius: 7px; cursor: default;
+        border: 1px solid transparent; margin-bottom: 2px;
+    }
 .room:hover { background: var(--sidebar-hover); }
-.room.on { background: var(--sidebar-active); border-color: var(--sidebar-active-border); }
+.room.on {
+        background: var(--sidebar-active); border-color: var(--sidebar-active-border);
+    }
 .room .ico { font-size: 13px; opacity: .85; }
 .room .nm { flex: 1; color: var(--sidebar-name); font-size: 12.5px; }
 .room .ct {
-    font-size: 10.5px; color: var(--sidebar-chip);
-    border: 1px solid var(--sidebar-chip-border);
-    border-radius: 999px; padding: 0 6px; line-height: 15px;
+        font-size: 10.5px; color: var(--sidebar-chip);
+        border: 1px solid var(--sidebar-chip-border);
+        border-radius: 999px; padding: 0 6px; line-height: 15px;
+    }
+/* 方向开关：↑ 上传（可多选）/ ↓ 下载（全局单选）—— 见设计稿 §4.1 */
+    .room .dir {
+        width: 17px; height: 17px; border-radius: 5px; flex: none;
+        border: 1px solid var(--sidebar-chip-border);
+        display: grid; place-items: center; font-size: 10px; line-height: 1;
+        color: var(--sidebar-sub); background: transparent;
+    }
+.room .dir.on.up { color: #fff; background: var(--accent); border-color: var(--accent); }
+.room .dir.on.dn { color: #fff; background: var(--ok); border-color: var(--ok); }
+.room.add { color: var(--sidebar-sub); font-size: 12.5px; }
+.sidebar-foot { border-top: 1px solid var(--sidebar-line); padding: 6px; }
+.sidebar-foot button {
+        width: 100%; text-align: left; background: none; border: 0;
+        color: var(--sidebar-fg); font: inherit; font-size: 12.5px;
+        padding: 7px 8px; border-radius: 7px; cursor: default;
+        display: flex; align-items: center; gap: 8px;
+    }
+.sidebar-foot button:hover { background: var(--sidebar-hover); }
+/* ── 主区 ───────────────────────────────────────────────── */
+    .main { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+.main-head {
+        flex: none; padding: 10px 14px; border-bottom: 1px solid var(--border);
+        display: flex; align-items: center; gap: 10px;
+    }
+.main-head .room-nm { font-weight: 600; font-size: 13px; }
+.main-head .meta { color: var(--text-2); font-size: 11.5px; }
+.main-head .spacer { flex: 1; }
+.devices {
+        display: flex; align-items: center; gap: 5px; color: var(--text-2); font-size: 11.5px;
+    }
+.devices .d {
+        width: 19px; height: 19px; border-radius: 50%;
+        border: 1px solid var(--border); display: grid; place-items: center;
+        font-size: 10px; background: var(--bg);
+    }
+.devices .d.me { border-color: var(--accent); color: var(--accent); }
+.tl { flex: 1; overflow-y: auto; padding: 12px 14px; display: flex; flex-direction: column; gap: 9px; }
+.card {
+        background: var(--bg); border: 1px solid var(--border);
+        border-radius: 9px; padding: 9px 11px; max-width: 88%;
+    }
+.card.me { align-self: flex-end; border-color: var(--sidebar-active-border); }
+.card .txt { white-space: pre-wrap; word-break: break-word; }
+.card .ft {
+        margin-top: 6px; display: flex; align-items: center; gap: 8px;
+        color: var(--text-2); font-size: 10.5px;
+    }
+.card .ft .spacer { flex: 1; }
+.card .ft .tag {
+        border: 1px solid var(--sidebar-chip-border); border-radius: 999px;
+        padding: 0 6px; line-height: 15px;
+    }
+.card .ft .tag.auto { color: var(--accent); border-color: var(--sidebar-active-border); }
+.thumb {
+        width: 132px; height: 84px; border-radius: 6px; margin-bottom: 7px;
+        background: linear-gradient(135deg, #94a3b8 0%, #64748b 45%, #475569 100%);
+        display: grid; place-items: center; color: #fff; font-size: 20px;
+    }
+.filerow { display: flex; align-items: center; gap: 9px; }
+.filerow .fi {
+        width: 30px; height: 30px; border-radius: 7px; flex: none;
+        background: color-mix(in srgb, var(--accent) 14%, transparent);
+        display: grid; place-items: center; font-size: 14px;
+    }
+.filerow .fn { font-weight: 500; }
+.filerow .fs { color: var(--text-2); font-size: 10.5px; }
+/* ── 输入区 ─────────────────────────────────────────────── */
+    .composer { flex: none; border-top: 1px solid var(--border); padding: 9px 12px 11px; }
+.composer .box {
+        border: 1px solid var(--border); border-radius: 9px; background: var(--bg);
+        padding: 8px 10px;
+    }
+.composer .ph { color: var(--text-2); font-size: 12.5px; }
+.composer .row { display: flex; align-items: center; gap: 8px; margin-top: 8px; }
+.composer .row .spacer { flex: 1; }
+.composer .lim { color: var(--text-2); font-size: 10.5px; }
+.btn {
+        border: 1px solid var(--border); background: var(--card-bg); color: var(--text);
+        border-radius: 7px; font: inherit; font-size: 12px; padding: 5px 11px; cursor: default;
+    }
+.btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 500; }
+.btn.icon { padding: 5px 8px; }
+/* ── 托盘菜单（**桌面端独有**，单独画在旁边）───────────── */
+    .tray {
+        width: 232px; background: var(--card-bg); border: 1px solid var(--border);
+        border-radius: 9px; box-shadow: var(--shadow); overflow: hidden;
+    }
+/* ── 设置面板 ───────────────────────────────────────────── */
+    .panel {
+        width: 380px; background: var(--card-bg); border: 1px solid var(--border);
+        border-radius: 12px; box-shadow: var(--shadow); overflow: hidden;
+    }
+.field { display: flex; flex-direction: column; gap: 5px; }
+.field label { font-size: 11.5px; color: var(--text-2); }
+.field .inp {
+        border: 1px solid var(--border); border-radius: 7px; background: var(--bg);
+        padding: 6px 9px; font-size: 12.5px; color: var(--text);
+    }
+.checks { display: flex; flex-direction: column; gap: 7px; }
+.chk { display: flex; align-items: center; gap: 8px; font-size: 12.5px; }
+.chk .sq {
+        width: 15px; height: 15px; border-radius: 4px; border: 1px solid var(--border);
+        display: grid; place-items: center; font-size: 10px; color: #fff;
+    }
+.chk .sq.on { background: var(--accent); border-color: var(--accent); }
+.chk .hint { margin-left: auto; color: var(--text-2); font-size: 10.5px; }
+.divider { height: 1px; background: var(--border); }
+/* ── 标注（说明用，不是界面）───────────────────────────── */
+    .tagnew {
+        display: inline-block; font-size: 10px; line-height: 15px; padding: 0 6px;
+        border-radius: 999px; background: var(--accent); color: #fff;
+        margin-left: 6px; vertical-align: 1px;
+    }
+
+/* ══════════ 稿 2：设置 / 本地服务端 / 配置面板 ══════════ */
+/* ⚠️ 令牌与 `desktop-client-mockup.html` **完全一致**（沿用 clip-sync 那套）。
+       两份稿共用一套令牌，别各写一份 —— 那是「第二份定义」。 */
+    :root, :root[data-theme='light'] {
+        --sidebar-bg: #eef1f6; --sidebar-fg: #334155; --sidebar-head: #0f172a;
+        --sidebar-name: #1e293b; --sidebar-sub: #64748b; --sidebar-chip: #64748b;
+        --sidebar-chip-border: rgba(100,116,139,.4); --sidebar-hover: rgba(15,23,42,.06);
+        --sidebar-active: rgba(79,140,255,.14); --sidebar-active-border: rgba(79,140,255,.5);
+        --sidebar-line: rgba(100,116,139,.4);
+        --accent: #4f8cff; --bg: #f1f5f9; --card-bg: #fff; --text: #1e293b;
+        --text-2: #64748b; --border: rgba(148,163,184,.28); --danger: #e11d48;
+        --ok: #10b981; --warn: #f59e0b; --shadow: 0 18px 50px rgba(15,23,42,.18);
+    }
+:root[data-theme='dark'] {
+        --sidebar-bg: #0b1220; --sidebar-fg: #cbd5e1; --sidebar-head: #fff;
+        --sidebar-name: #f1f5f9; --sidebar-sub: #7c8ea8; --sidebar-chip: #8aa0b8;
+        --sidebar-chip-border: rgba(148,163,184,.28); --sidebar-hover: rgba(148,163,184,.12);
+        --sidebar-active: rgba(79,140,255,.16); --sidebar-active-border: rgba(79,140,255,.45);
+        --sidebar-line: rgba(148,163,184,.45);
+        --accent: #4f8cff; --bg: #0f172a; --card-bg: #1e293b; --text: #e2e8f0;
+        --text-2: #94a3b8; --border: rgba(71,85,105,.7); --danger: #fb7185;
+        --ok: #34d399; --warn: #fbbf24; --shadow: 0 18px 50px rgba(0,0,0,.55);
+    }
+* { box-sizing: border-box; }
+body {
+        margin: 0; padding: 28px; background: var(--bg); color: var(--text);
+        font: 13px/1.55 -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", sans-serif;
+        -webkit-font-smoothing: antialiased;
+    }
+code { background: color-mix(in srgb, var(--text) 9%, transparent); padding: 1px 5px; border-radius: 4px; font-size: 11.5px; }
+.win { background: var(--card-bg); border: 1px solid var(--border); border-radius: 12px; overflow: hidden; box-shadow: var(--shadow); }
+.titlebar { height: 34px; display: flex; align-items: center; gap: 10px; padding: 0 12px; background: var(--sidebar-bg); border-bottom: 1px solid var(--border); }
+.lights { display: flex; gap: 7px; }
+.lights i { width: 11px; height: 11px; border-radius: 50%; display: block; }
+.lights i:nth-child(1) {background:#ff5f57}
+.lights i:nth-child(2) {background:#febc2e}
+.lights i:nth-child(3) {background:#28c840}
+.titlebar .t { font-size: 12px; color: var(--sidebar-sub); }
+/* 设置窗口：左侧分组 + 右侧内容 */
+    .settings { width: 640px; height: 470px; display: flex; flex-direction: column; }
+.settings .body { flex: 1; display: flex; min-height: 0; }
+.nav { width: 158px; flex: none; background: var(--sidebar-bg); border-right: 1px solid var(--border); padding: 8px 6px; }
+.nav .it { padding: 7px 9px; border-radius: 7px; font-size: 12.5px; color: var(--sidebar-name); display: flex; gap: 8px; align-items: center; }
+.nav .it:hover { background: var(--sidebar-hover); }
+.nav .it.on { background: var(--sidebar-active); border: 1px solid var(--sidebar-active-border); }
+.nav .grp { padding: 10px 9px 4px; font-size: 10.5px; color: var(--sidebar-sub); letter-spacing: .04em; }
+.pane { flex: 1; overflow-y: auto; padding: 14px 16px; }
+.pane h3 { margin: 0 0 3px; font-size: 13px; }
+.pane .sub { color: var(--text-2); font-size: 11.5px; margin: 0 0 13px; }
+.field { margin-bottom: 13px; }
+.field label { display: block; font-size: 11.5px; color: var(--text-2); margin-bottom: 5px; }
+.inp { border: 1px solid var(--border); border-radius: 7px; background: var(--bg); padding: 6px 9px; font-size: 12.5px; }
+.row2 { display: flex; gap: 10px; }
+.row2 > * { flex: 1; }
+.chk { display: flex; align-items: center; gap: 8px; font-size: 12.5px; padding: 3px 0; }
+.sq { width: 15px; height: 15px; border-radius: 4px; border: 1px solid var(--border); display: grid; place-items: center; font-size: 10px; color: #fff; flex: none; }
+.sq.on { background: var(--accent); border-color: var(--accent); }
+.sq.on.g { background: var(--ok); border-color: var(--ok); }
+.hint { margin-left: auto; color: var(--text-2); font-size: 10.5px; }
+.hint.warn { color: var(--warn); }
+.divider { height: 1px; background: var(--border); margin: 14px 0; }
+.subcard { border: 1px solid var(--border); border-radius: 9px; padding: 10px 12px; background: var(--bg); }
+.btn { border: 1px solid var(--border); background: var(--card-bg); color: var(--text); border-radius: 7px; font: inherit; font-size: 12px; padding: 5px 11px; }
+.btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 500; }
+.btn.danger { color: var(--danger); border-color: color-mix(in srgb, var(--danger) 40%, transparent); }
+.foot { flex: none; border-top: 1px solid var(--border); padding: 9px 14px; display: flex; align-items: center; gap: 8px; }
+.foot .spacer { flex: 1; }
+.foot .warnmsg { color: var(--warn); font-size: 11px; }
+/* 本地服务端面板 */
+    .srv { width: 470px; }
+.srv .hd { padding: 12px 14px; border-bottom: 1px solid var(--border); font-weight: 600; display: flex; align-items: center; gap: 8px; }
+.dot { width: 8px; height: 8px; border-radius: 50%; background: var(--ok); }
+.dot.off { background: var(--sidebar-sub); }
+.srv .bd { padding: 13px 14px; }
+.kv { display: grid; grid-template-columns: 84px 1fr; gap: 6px 10px; font-size: 12px; margin-bottom: 13px; }
+.kv .k { color: var(--text-2); }
+.kv .v { font-variant-numeric: tabular-nums; }
+.mode { border: 1px solid var(--border); border-radius: 9px; padding: 10px 12px; margin-bottom: 9px; }
+.mode.on { border-color: var(--sidebar-active-border); background: var(--sidebar-active); }
+.mode .t { font-size: 12.5px; font-weight: 500; display: flex; align-items: center; gap: 8px; }
+.mode .d { color: var(--text-2); font-size: 11px; margin-top: 3px; }
+/* 配置可视化（表单） */
+    .cfg { width: 660px; }
+.cfg .hd { padding: 12px 14px; border-bottom: 1px solid var(--border); display: flex; align-items: center; gap: 9px; }
+.cfg .hd .t { font-weight: 600; }
+.cfg .hd .path { color: var(--text-2); font-size: 11px; }
+.cfg .hd .spacer { flex: 1; }
+.cfg .bd { padding: 14px; max-height: 470px; overflow-y: auto; }
+.sec { margin-bottom: 18px; }
+.sec > .st { font-size: 11px; letter-spacing: .05em; color: var(--accent); margin-bottom: 9px; font-weight: 600; }
+table.ra { width: 100%; border-collapse: collapse; font-size: 12px; }
+table.ra th { text-align: left; font-weight: 500; color: var(--text-2); font-size: 11px; padding: 4px 6px; border-bottom: 1px solid var(--border); }
+table.ra td { padding: 5px 6px; border-bottom: 1px solid color-mix(in srgb, var(--border) 55%, transparent); }
+table.ra td .inp { padding: 3px 6px; font-size: 11.5px; }
+.pill { display: inline-block; font-size: 10.5px; line-height: 16px; padding: 0 7px; border-radius: 999px; border: 1px solid var(--sidebar-chip-border); color: var(--text-2); }
+.pill.room { color: var(--accent); border-color: var(--sidebar-active-border); }
+.pill.none { color: var(--text-2); }
+/* ══════════════════════════════════════════════════════════════════
+   app 外壳 —— 稿子里没有这三类东西（稿子是「一张张窗口摆在一起」，
+   app 是「主窗口铺满 + 两个浮层」）。**除了这三类，一行都不要加**。
+   ══════════════════════════════════════════════════════════════════ */
+
+/* ① 主窗口 = 整个页面（稿 1 的 .win 是演示用的 760×520 盒子，这里不要） */
+html, body { height: 100%; }
+body {
+    margin: 0; padding: 0; display: flex; flex-direction: column; overflow: hidden;
+    background: var(--card-bg); color: var(--text);
+    font: 13px/1.55 -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", sans-serif;
+    -webkit-font-smoothing: antialiased;
 }
-/* 方向开关：↑ 上传（可多选）/ ↓ 下载（**全局单选**）—— 见规格 §4.1 第 4 条。
-   ⚠️ 做成**小方块**而不是两个箭头字符：箭头在 16px 下分不出「开着」和「关着」，
-   而这两个开关的状态是用户最需要一眼看清的东西（下载全局只能一个，看错就白点）。
-   ⚠️ 上传用强调色、下载用绿色：两者**语义不同**（一个往外发、一个往里收），
-   颜色一样的话扫一眼分不出来。 */
+/* ⚠️ 两份稿的 .titlebar 高度不同（稿 1 是 38px 的主窗口、稿 2 是 34px 的设置窗口），
+   而它们**共用同一个类名**。拼接顺序让稿 2 赢了，所以这里把主窗口那个显式改回来。 */
+body > .titlebar { height: 38px; }
+
+/* ⚠️★ 同名不同义的两处，显式改回来。
+   稿 1 的 `.field` / `.chk` / `.divider` 是给它那个**已被稿 2 取代的旧设置面板**用的，
+   稿 2 又定义了同一批类名。拼接顺序让稿 2 的声明生效，但稿 1 的
+   `display:flex; gap:5px` 会**叠加**在稿 2 的 `margin-bottom` 上 ——
+   标签与输入框之间多出 5px。这类「叠加」不会报错、只是慢慢不像稿子，所以钉住。 */
+.settings .field, .cfg .field { display: block; gap: 0; }
+.settings .titlebar .t, .cfg .titlebar .t { margin-left: 0; }
+
+/* ② 浮层外壳：铺满 + 居中 + 半透明底。⚠️ 不碰任何窗口内部样式。 */
+.overlay {
+    position: fixed; inset: 0; z-index: 20;
+    display: flex; align-items: center; justify-content: center;
+    background: color-mix(in srgb, #0f172a 45%, transparent);
+}
+.overlay[hidden] { display: none; }
+/* 稿 1 的 .win 写死了 760×520（演示用）—— 浮层里的窗口按稿 2 自己的尺寸走，只加视口上限。 */
+.overlay .win { width: auto; height: auto; max-width: calc(100vw - 32px); max-height: calc(100vh - 32px); }
+.overlay .win.settings { width: 640px; height: 470px; }
+.overlay .win.cfg { width: 660px; }
+/* ⚠️ 稿 2 的 .cfg .bd 写死 max-height:470px；窗口变矮（小屏）时它会顶出去。
+   改成「跟着窗口伸缩」，并让它在窗口内滚动。 */
+.overlay .win.cfg .bd { flex: 1; min-height: 0; max-height: 470px; overflow-y: auto; }
+/* 设置页里的本地服务端卡片：稿 2 给它 470px 宽，而那一页只有 ~450px 可用 → 会溢出。 */
+.pane .srv { width: auto; }
+/* ⚠️★ 稿 2 的 .nav **没有滚动条，而它自己装不下**：4 个分组标题 + 10 个条目
+   在 470px 高的窗口里会多出约一行 —— 截稿时最下面那两项（日志 / 关于）**被切掉了**
+   （在稿子自己的渲染里就能看到）。这是稿子的一处疏漏，抄它就会丢两个入口，
+   所以这里偏离稿子加上滚动。⚠️ 同时这也是巡检脚本原来量不到的一类
+   （`.win` 是 `overflow:hidden`，「底部被切」不算在「右/下溢出」那条判据里）——
+   脚本已经补上了这个量法。 */
+.nav { overflow-y: auto; }
+
+/* ③ 稿子没画、而 app 会生成的元素 */
+/* 「空列表」占位 —— 稿子里没画空态，但 app 必须有（不能画成一片白） */
+.empty { color: var(--text-2); font-size: 12px; padding: 10px 4px; white-space: pre-wrap; line-height: 1.6; }
+/* 图片条目的预览（稿 1 用 .thumb 画的是占位色块，真实图片得有个尺寸约束） */
+.card img.preview { max-width: 100%; max-height: 220px; border-radius: 6px; display: block; }
+/* 方向开关在**设置表格**里也要能画（稿 1 只定义了 .room .dir，表格里不在 .room 下） */
 .dir {
     width: 17px; height: 17px; border-radius: 5px; flex: none;
     border: 1px solid var(--sidebar-chip-border);
-    display: grid; place-items: center;
-    font-size: 10px; line-height: 1; color: var(--sidebar-sub);
-    background: transparent;
+    display: grid; place-items: center; font-size: 10px; line-height: 1; cursor: default;
+    color: var(--sidebar-sub); background: transparent;
 }
 .dir.on.up { color: #fff; background: var(--accent); border-color: var(--accent); }
 .dir.on.dn { color: #fff; background: var(--ok); border-color: var(--ok); }
-.hint { padding: 2px 10px 8px; color: var(--sidebar-sub); font-size: 10.5px; line-height: 1.45; }
-.sidebar-foot { padding: 8px; border-top: 1px solid var(--border); display: grid; gap: 4px; }
-.sidebar-foot button {
-    text-align: left; padding: 6px 8px; border-radius: 6px; cursor: default;
-    border: 1px solid transparent; background: transparent;
-    color: var(--sidebar-fg); font-size: 12px; font-family: inherit;
-}
-.sidebar-foot button:hover { background: var(--sidebar-hover); }
+/* 表格里的窄列（↑ / ↓ / 删除） */
+table.ra td.tiny, table.ra th.tiny { width: 30px; text-align: center; }
 
-/* ── 主区 ─────────────────────────────────────────────────── */
-.main { flex: 1; display: flex; flex-direction: column; min-width: 0; min-height: 0; }
-.main-head {
-    height: 42px; flex: none; display: flex; align-items: center; gap: 8px;
-    padding: 0 14px; border-bottom: 1px solid var(--border);
+/* ⚠️★ 列宽**必须**自己定，而且必须用 `table-layout: fixed`。
+   稿 2 画的是**另一张表**（房间凭据那张，列是 房间/密码/文件过期/定时任务/开放/删），
+   所以这两张表的列宽在稿子里都没有可抄的。
+   不定的话（auto 布局）：单元格里的 <input> 有自己的固有宽度，表格会被撑得比容器宽 →
+   最右边那列（删除按钮）被切掉。这正是第一次巡检抓到的那 42 处溢出。
+   `fixed` 之后列宽**完全**由这里决定，`width:100%` 的输入框也就跟着列走了。 */
+#rooms-table { table-layout: fixed; }
+#rooms-table th:nth-child(1) { width: 14%; }  /* 名字 */
+#rooms-table th:nth-child(2) { width: 30%; }  /* 服务端（装 URL，最宽） */
+#rooms-table th:nth-child(3) { width: 13%; }  /* 房间 */
+#rooms-table th:nth-child(4) { width: 19%; }  /* 凭据 */
+#rooms-table th:nth-child(5),
+#rooms-table th:nth-child(6) { width: 7%; }   /* ↑ / ↓ */
+#rooms-table th:nth-child(7) { width: 10%; }  /* 删除 */
+#roomauth-table { table-layout: fixed; }
+#roomauth-table th:nth-child(1) { width: 18%; } /* 房间 */
+#roomauth-table th:nth-child(2) { width: 24%; } /* 密码 */
+#roomauth-table th:nth-child(3) { width: 18%; } /* 文件过期 */
+#roomauth-table th:nth-child(4) { width: 18%; } /* 定时任务 */
+#roomauth-table th:nth-child(5) { width: 9%; }  /* 开放 */
+#roomauth-table th:nth-child(6) { width: 13%; } /* 删除 */
+/* 表格里可编辑的文本框 —— 稿 2 画的是静态 .inp，编辑态得是真 <input> */
+table.ra td input[type='text'], table.ra td input[type='number'] {
+    width: 100%; border: 1px solid var(--border); border-radius: 7px;
+    background: var(--bg); padding: 3px 6px; font: inherit; font-size: 11.5px; color: var(--text);
 }
-.main-head .room-nm { font-weight: 600; }
-.main-head .meta { color: var(--text-2); font-size: 12px; }
-.main-head .spacer { flex: 1; }
+table.ra td input[type='checkbox'] { margin: 0; }
+/* ⚠️ 稿 2 的 `.inp` 是 <div>（块级，天然占满一行）；app 里得是真 <input>，
+   而 input 有自己的固有宽度 → 不写死 100% 的话表单是一排短框，
+   跟稿子差很远（`.row2` 的两列也会不等宽）。 */
+.cfg .field .inp, .pane .field .inp { width: 100%; }
 
-.tl { flex: 1; overflow-y: auto; padding: 12px 14px; display: flex; flex-direction: column; gap: 8px; }
-.card {
-    max-width: 78%; align-self: flex-start;
-    background: var(--bg); border: 1px solid var(--border);
-    border-radius: 9px; padding: 8px 11px;
-}
-.card.me { align-self: flex-end; background: color-mix(in srgb, var(--accent) 12%, transparent); }
-.card .txt { white-space: pre-wrap; word-break: break-word; }
-.card .ft {
-    display: flex; align-items: center; gap: 5px;
-    margin-top: 5px; color: var(--text-2); font-size: 10.5px;
-}
-.card .ft .spacer { flex: 1; }
-.card .filerow { display: flex; align-items: center; gap: 9px; }
-.card .fi { font-size: 20px; }
-.card .fn { font-weight: 500; }
-.card .fs { color: var(--text-2); font-size: 10.5px; }
-.tag {
-    border: 1px solid var(--sidebar-chip-border); border-radius: 999px;
-    padding: 0 6px; font-size: 10px; color: var(--sidebar-chip);
-}
-.tag.auto { color: var(--accent); border-color: var(--sidebar-active-border); }
+/* 稿 1 的 .sync 是个 <span>；app 里它是 <button>（要能点）—— 按钮的 UA 字体不带继承。 */
+button.sync { font-family: inherit; cursor: default; }
+/* app.js 用四种状态，稿 1 只画了 on/off。另外两种照 §4.1 的说法：灰=连接中、黄=服务端太旧。 */
+.sync.wait { background: var(--sidebar-hover); }
+.sync.wait .dot { background: var(--sidebar-sub); }
 
-.composer { flex: none; padding: 10px 14px 12px; border-top: 1px solid var(--border); }
-/* ⚠️ 输入区要有**看得见的框**（界面稿里就是一个圆角框 + 浅底）：
-   只靠一条顶边分隔的话，输入框和下面那行按钮看起来是散的，
-   而「往哪儿打字」是这块唯一要回答的问题。 */
-.composer .box {
-    border: 1px solid var(--sidebar-chip-border); border-radius: 9px;
-    background: var(--bg); padding: 8px 10px;
+/* 输入区：稿 1 画的是 <div class="ph">占位文本</div>，app 要的是真 <textarea>。 */
+.composer .box textarea {
+    display: block; width: 100%; border: 0; outline: none; padding: 0;
+    background: transparent; color: var(--text); font: inherit; font-size: 12.5px;
+    resize: none; min-height: 18px; max-height: 120px; overflow-y: auto;
 }
-.composer .ph { color: var(--text-2); min-height: 22px; }
-.composer .row { display: flex; align-items: center; gap: 8px; margin-top: 6px; }
-.composer .spacer { flex: 1; }
-.composer .lim { color: var(--text-2); font-size: 11px; }
-.btn {
-    border: 1px solid var(--border); background: transparent; color: var(--text);
-    border-radius: 6px; padding: 4px 10px; font-size: 12px; font-family: inherit; cursor: default;
-}
-.btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+/* 侧栏底部那行方向说明 —— ⚠️ 不能复用 .hint：那个是「右对齐的短提示」，语义不同。 */
+.side-hint { padding: 4px 12px 8px; color: var(--sidebar-sub); font-size: 10.5px; line-height: 1.6; }
+/* 「来源房间」那一格里的说明 —— ⚠️ 同样不能复用 .hint：稿 2 里它**紧跟在房间名后面**
+   （不是右对齐），而 .hint 是 `margin-left:auto` 的右对齐短提示。 */
+.inp .src-note { color: var(--text-2); font-size: 11px; margin-left: 8px; }
 
-/* 「服务端太旧」：连接是通的，但**边界说不清** → 客户端一行剪贴板都不写
-   （fail-safe，specs/desktop-client.md §4.2 ①）。所以这个状态**不能**画成「已连接」——
-   画成已连接的话，用户只会觉得「怎么同步不过来」，而真正的原因没人说。 */
-:root, :root[data-theme='light'] { --warn: #b45309; }
-:root[data-theme='dark'] { --warn: #fbbf24; }
-.sync.warn { background: color-mix(in srgb, var(--warn) 14%, transparent); }
-.sync.warn .dot { background: var(--warn); }
-/* 「监听已暂停」：连接可能仍然是通的，但**本机剪贴板不再被读** ——
-   这是两件不同的事，所以只淡化、不改颜色（改颜色会让人以为「断了」）。 */
-.sync.paused { opacity: .55; }
-
-/* 一次性提示（上传结果 / 存盘失败）。三种颜色对应三件不同的事 ——
-   「成功」「失败」「因为开关关着而跳过」，混成一种颜色就等于没说话。 */
+/* 主界面的即时提示（发不出去 / 存不上 / 配置有毛病）—— 稿子里没有，但 app 必须说 */
 .notice {
     flex: none; padding: 5px 14px; font-size: 11.5px;
     border-bottom: 1px solid var(--border); word-break: break-word;
@@ -214,497 +469,329 @@ body {
 .notice.ok { background: color-mix(in srgb, var(--ok) 12%, transparent); }
 .notice.err { background: color-mix(in srgb, var(--danger) 12%, transparent); }
 .notice.skip { background: var(--sidebar-hover); color: var(--text-2); }
-
-/* 空态 / 配置有毛病：两件都要**说清楚是哪一种**。
-   ⚠️ 「还没加载」与「这个房间确实是空的」长得一样，用户会以为坏了。 */
-.empty { color: var(--text-2); font-size: 12px; padding: 18px 4px; line-height: 1.6; }
 .problems {
     margin: 0 10px 8px; padding: 6px 8px; border-radius: 6px; font-size: 11px;
     line-height: 1.5; color: var(--warn);
     background: color-mix(in srgb, var(--warn) 12%, transparent);
 }
-
-/* 文件预览：⚠️ `previewUrl` 是**壳本地拼**的（不信条目里那个 url），
-   而图片不需要 CORS 就能显示 —— 所以 CSP 的 `img-src` 才是这条路的关卡。 */
-.card .preview { max-width: 100%; max-height: 220px; border-radius: 7px; display: block; }
-
-/* 输入区用 textarea：多行文本是剪贴板里最常见的内容，
-   而 <input> 一行就断了（粘贴多行会丢）。 */
-.composer textarea {
-    width: 100%; min-height: 22px; max-height: 140px; resize: none;
-    border: 0; outline: 0; background: transparent; color: var(--text);
-    font: inherit; line-height: 1.55; display: block;
-}
-.composer .box:focus-within { border-color: var(--sidebar-active-border); }
-/* ── 服务端配置（浮层）──────────────────────────────────────
-   ⚠️ 用主窗口里的浮层，而不是**再开一个 Tauri 窗口**：多一个窗口就多一套
-   capabilities / IPC 路由 / 生命周期要管，而收益只是「能拖到别处」。
-   这个界面是**改服务端配置**的（§3.5.2 ②），本来就该是「打开—改—关掉」。
-   ⚠️ 它能改密码 → 所以它是 **IPC 命令**，不是服务端的一条 HTTP 路由：
-   没有网络面，本机之外碰不到。 */
-.overlay {
-    position: fixed; inset: 0; z-index: 20;
-    background: color-mix(in srgb, #0f172a 45%, transparent);
-    display: flex; align-items: center; justify-content: center;
-}
-.overlay[hidden] { display: none; }
-/* ⚠️★ 面板宽度必须**自适应**：Tauri 窗口的 `minWidth` 是 640（`tauri.conf.json`），
-   而设置窗口设计成 720 —— 写死宽度的话，用户把窗口拖到最窄时**面板比窗口还宽**，
-   右边一排（凭据、↑↓、删除）全被切掉。
-   实测：640 视口下量出 **24 处元素超出容器**。改成 `min(设计宽, 视口 - 32)`。 */
-.panel {
-    width: min(660px, calc(100vw - 32px));
-    max-height: calc(100vh - 40px); overflow-y: auto;
-    background: var(--card-bg); border: 1px solid var(--border);
-    border-radius: 11px; box-shadow: 0 18px 50px rgba(15, 23, 42, .35);
-}
-.panel .ph {
-    padding: 12px 15px; border-bottom: 1px solid var(--border);
-    font-weight: 600; display: flex; align-items: center; gap: 9px;
-}
-.panel .ph .path { color: var(--text-2); font-size: 10.5px; font-weight: 400; word-break: break-all; }
-.panel .pb { padding: 13px 15px; display: grid; gap: 11px; }
-.panel .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 11px; }
-.panel .field label { display: block; font-size: 11.5px; color: var(--text-2); margin-bottom: 4px; }
-.panel .field input[type=text],
-.panel .field input[type=number] {
-    width: 100%; border: 1px solid var(--border); border-radius: 7px;
-    background: var(--bg); color: var(--text); font: inherit; padding: 6px 9px;
-}
-.panel .chk { display: flex; align-items: center; gap: 8px; font-size: 12.5px; }
-.panel .warnline {
-    padding: 9px 15px; font-size: 11.5px; color: var(--warn);
-    border-top: 1px solid var(--border);
-}
-.panel .pf {
-    padding: 10px 15px; border-top: 1px solid var(--border);
-    display: flex; align-items: center; gap: 8px;
-}
-.panel .pf .spacer { flex: 1; }
-
-/* ── 设置窗口（左分组 + 右内容）────────────────────────────
-   形状照 `docs/specs/desktop-client-settings-mockup.html` 那份稿子：
-   左边一组导航、右边一块内容，分组标题比正文小一号、颜色淡一档。
-   ⚠️ 用「分组导航」而不是一长条表单：设置项会越加越多，而一长条表单到十几项
-   就没人找得到了（找不到 = 以为没有这个设置）。 */
-.setwin { width: min(720px, calc(100vw - 32px)); height: min(470px, calc(100vh - 40px)); display: flex; flex-direction: column; }
-.setwin .body { flex: 1; display: flex; min-height: 0; }
-.nav { width: 158px; flex: none; background: var(--sidebar-bg); border-right: 1px solid var(--border); padding: 8px 6px; }
-.nav .grp { padding: 10px 9px 4px; font-size: 10.5px; color: var(--sidebar-sub); letter-spacing: .04em; }
-.nav .it {
-    padding: 7px 9px; border-radius: 7px; font-size: 12.5px;
-    color: var(--sidebar-name); display: flex; gap: 8px; align-items: center;
-}
-.nav .it:hover { background: var(--sidebar-hover); }
-.nav .it.on { background: var(--sidebar-active); border: 1px solid var(--sidebar-active-border); }
-.pane { flex: 1; overflow-y: auto; overflow-x: auto; padding: 14px 16px; }
-.pane[hidden] { display: none; }
-.pane h3 { margin: 0 0 3px; font-size: 13px; }
-.pane .sub { color: var(--text-2); font-size: 11.5px; margin: 0 0 13px; line-height: 1.55; }
-.subcard { border: 1px solid var(--border); border-radius: 9px; padding: 10px 12px; background: var(--bg); margin-bottom: 11px; }
-.subcard .st { font-size: 12.5px; font-weight: 500; margin-bottom: 7px; }
-.field { margin-bottom: 11px; }
-.field label { display: block; font-size: 11.5px; color: var(--text-2); margin-bottom: 4px; }
-.field input {
-    width: 100%; border: 1px solid var(--border); border-radius: 7px;
-    background: var(--bg); color: var(--text); font: inherit; padding: 5px 8px; font-size: 12.5px;
-}
-.row2 { display: flex; gap: 10px; } .row2 > * { flex: 1; }
-.kv { display: grid; grid-template-columns: 84px 1fr; gap: 5px 10px; font-size: 12px; }
-.kv .k { color: var(--text-2); }
-.kv .v { word-break: break-all; }
-/* 房间表格：⚠️ 用表格而不是一堆卡片 —— 这是**逐行对齐**的数据
-   （名字/地址/房间/凭据四列），卡片排版下用户没法竖着扫。
-   ⚠️★ `table-layout: fixed` + 显式列宽**必须**有：默认的自动布局下，
-   四个输入框会各自撑开，整张表**溢出面板** —— 表现是凭据列、↑↓ 和删除按钮
-   被切掉（截图上就是这个样子），而用户找不到「删」按钮只会以为没有这个功能。 */
-table.rooms { width: 100%; border-collapse: collapse; font-size: 12px; table-layout: fixed; }
-table.rooms th {
-    text-align: left; font-weight: 500; color: var(--text-2);
-    font-size: 10.5px; padding: 4px 4px; border-bottom: 1px solid var(--border);
-}
-table.rooms td { padding: 4px 4px; border-bottom: 1px solid color-mix(in srgb, var(--border) 55%, transparent); }
-/* ⚠️★ 输入框**必须** `width: 100%`：`<input>` 自带一个约 20 字符的固有宽度，
-   而 `table-layout: fixed` 只固定**格子**、不管内容 —— 于是输入框撑出格子、
-   把右边那几列（↑↓、删）盖住。实测：截图里 ↑ 整列不见了、↓ 跑到凭据列的位置上。
-   ⚠️ 这种「盖住邻居」**不会**超出面板，所以只查右边缘的检测器看不见，得看图。 */
-table.rooms input { width: 100%; box-sizing: border-box; padding: 3px 6px; font-size: 11.5px; }
-/* 列宽用**百分比**：写死像素的话，窗口一窄就放不下（左侧导航占掉 158px，
-   留给表格的宽度会从 562 掉到 450）。
-   ⚠️★ 三个开关列**必须留够**（各 9.5% ≈ 43px @450）：窄到 7.6% 时方块会被自己的
-   格子裁掉一半 —— 而那两列正是「一眼看清方向」的东西，裁掉等于白做。
-   ⚠️ 这类「被格子裁掉」**不会**超出面板，所以只查右边缘的检测器看不见它，
-   得靠截图看。 */
-table.rooms .c-name { width: 15%; }
-table.rooms .c-server { width: 26%; }
-table.rooms .c-room { width: 13%; }
-table.rooms .c-token { width: 17%; }
-table.rooms .tiny { width: 9.5%; text-align: center; }
-.pill {
-    display: inline-block; font-size: 10.5px; line-height: 16px; padding: 0 7px;
-    border-radius: 999px; border: 1px solid var(--sidebar-chip-border); color: var(--text-2);
-}
-.pill.ok { color: var(--ok); border-color: color-mix(in srgb, var(--ok) 45%, transparent); }
+/* 状态胶囊的两个 app 专属态（稿 1 只有 on/off） */
+.sync.warn { background: color-mix(in srgb, var(--warn) 14%, transparent); }
+.sync.warn .dot { background: var(--warn); }
+.sync.paused { opacity: .55; }
 </style>
 </head>
 <body>
+    <!-- ══ 主窗口（标记照界面稿 1）══ -->
     <div class="titlebar">
+        <div class="lights"><i></i><i></i><i></i></div>
         <span class="t">clip9</span>
         <div class="spacer"></div>
-        <!-- 连接状态。⚠️ 四种（等 / 通 / 断 / 老服务端）都由 `app.js` 按**真的**状态画，
-             「连不上」和「服务端太旧」都必须看得见 —— 静默的「同步中」是这类客户端
-             最坏的一种假象。点击可**暂停/恢复剪贴板监听**（桌面端独有的动作）。 -->
         <button class="sync wait" id="conn" title="点击暂停/恢复剪贴板监听">
             <span class="dot"></span><span id="conn-text">连接中…</span>
         </button>
     </div>
 
     <div class="body">
-        <aside class="sidebar">
-            <div class="sidebar-head"><span>房间</span><span class="count" id="room-count">—</span></div>
+        <div class="sidebar">
+            <div class="sidebar-head">房间 <span class="count" id="room-count">—</span></div>
             <div class="rooms" id="rooms"></div>
-            <div class="hint">↑ 发到房间（可多选）· ↓ 收进剪贴板（<b>全局只能一个</b>）<br><span id="max-entries"></span></div>
-            <!-- 配置有毛病时出现。⚠️ 不在内部悄悄修正：配了不生效要**说出来**。 -->
+            <div class="side-hint">↑ 发到房间（可多选）· ↓ 收进剪贴板（<b>全局只能一个</b>）<br><span id="max-entries"></span></div>
             <div class="problems" id="problems" hidden></div>
             <div class="sidebar-foot">
-                <!-- ⚠️ 只放**一个**（界面稿里就是「⚙ 全局设置」）：
-                     左下角是「设置」的位置，把别的入口也堆在这儿会让它变成杂物抽屉。
-                     ⚠️ 服务端配置在设置窗口的「本机」组里；网页版在「本地服务端」那一页里。 -->
                 <button id="btn-settings">⚙ 全局设置</button>
             </div>
-        </aside>
+        </div>
 
-        <main class="main">
+        <div class="main">
             <div class="main-head">
                 <span class="room-nm" id="room-name">—</span>
                 <span class="meta" id="room-meta"></span>
                 <div class="spacer"></div>
-                <button class="btn" id="btn-refresh">刷新</button>
+                <div class="devices" id="devices"></div>
             </div>
 
-            <!-- 一次性提示（上传结果 / 存盘失败 / 取历史失败）。 -->
             <div class="notice" id="notice" hidden></div>
-
             <div class="tl" id="timeline"></div>
 
             <div class="composer">
                 <div class="box">
-                    <textarea id="input" rows="1" placeholder="输入内容，回车发送（Shift+回车换行）"></textarea>
+                    <textarea id="input" rows="1" placeholder="输入内容，或直接把文件拖进来…"></textarea>
                     <div class="row">
-                        <span class="lim" id="limits"></span>
+                        <button class="btn icon" id="btn-attach" title="选文件发到房间">📎</button>
+                        <button class="btn icon" id="btn-image" title="选图片发到房间">🖼</button>
+                        <span class="lim" id="composer-hint"></span>
                         <div class="spacer"></div>
+                        <span class="lim" id="limits"></span>
                         <button class="btn primary" id="btn-send">发送</button>
                     </div>
                 </div>
             </div>
-        </main>
+        </div>
     </div>
-    <!-- 设置窗口（客户端自己的配置）。
-         形状照 `docs/specs/desktop-client-settings-mockup.html`：
-         左边一组导航、右边一块内容 —— 而不是一长条表单（设置项会越加越多，
-         一长条到十几项就没人找得到了，找不到 = 以为没有这个设置）。 -->
+
+    <!-- ══ 设置窗口（标记照界面稿 2 的 .win.settings）══ -->
     <div class="overlay" id="settings-overlay" hidden>
-        <div class="panel setwin">
-            <div class="ph"><span>设置</span></div>
-            <div class="body">
-                <div class="nav" id="settings-nav">
-                    <div class="grp">连接</div>
-                    <div class="it on" data-pane="rooms">🖧 服务端与房间</div>
-                    <div class="grp">同步</div>
-                    <div class="it" data-pane="sync">↑↓ 方向与内容</div>
-                    <div class="grp">桌面</div>
-                    <div class="it" data-pane="desktop">🖥 启动与托盘</div>
-                    <div class="grp">本机</div>
-                    <div class="it" data-pane="server">🗄 本地服务端</div>
-                    <!-- ⚠️ 这一项**不是一页**（没有 data-pane）—— 它打开的是那个改 config.json
-                         的浮层。`data-open` 就是区分「切页」和「开浮层」的。 -->
-                    <div class="it" data-open="server">⚙ 服务端配置</div>
-                    <div class="grp">其它</div>
-                    <div class="it" data-pane="log">≡ 日志</div>
-                    <div class="it" data-pane="diag">ⓘ 诊断</div>
+      <div class="win settings">
+        <div class="titlebar"><div class="lights"><i></i><i></i><i></i></div><span class="t">设置</span></div>
+        <div class="body">
+            <div class="nav" id="settings-nav">
+                <div class="grp">连接</div>
+                <div class="it on" data-pane="rooms">🖧 服务端与房间</div>
+                <div class="grp">同步</div>
+                <div class="it" data-pane="sync">↑↓ 方向与内容</div>
+                <div class="it" data-pane="watch">⏱ 监听与去重</div>
+                <div class="grp">桌面</div>
+                <div class="it" data-pane="desktop">🖥 窗口与托盘</div>
+                <div class="it" data-pane="hotkeys">⌨ 快捷键</div>
+                <div class="it" data-pane="notify">🔔 通知与主题</div>
+                <div class="grp">本机</div>
+                <div class="it" data-pane="server">🗄 本地服务端</div>
+                <div class="it" data-open="server">⚙ 服务端配置</div>
+                <div class="grp">其它</div>
+                <div class="it" data-pane="log">≡ 日志</div>
+                <div class="it" data-pane="diag">ⓘ 关于</div>
+            </div>
+
+            <div class="pane" id="pane-rooms">
+                <h3>服务端与房间</h3>
+                <p class="sub">每一行是一个房间：↑ 决定它收不收你的剪贴板，↓ 决定它的内容写不写进你的剪贴板。<br>
+                   ⚠️ <b>「收进剪贴板」全局只能一个</b> —— 两个房间同时往剪贴板写，你看到的是随机内容。</p>
+                <table class="ra" id="rooms-table">
+                    <thead><tr>
+                        <th class="c-name">名字</th><th class="c-server">服务端</th><th class="c-room">房间</th>
+                        <th class="c-token">凭据</th><th class="tiny">↑</th><th class="tiny">↓</th><th class="tiny"></th>
+                    </tr></thead>
+                    <tbody id="rooms-body"></tbody>
+                </table>
+                <button class="btn" id="room-add" style="margin-top:9px">＋ 添加房间</button>
+            </div>
+
+            <div class="pane" id="pane-sync" hidden>
+                <h3>方向与内容</h3>
+                <p class="sub">↑ <b>发到房间</b>：本机剪贴板的内容发到这个房间（可多选）。<br>
+                   ↓ <b>收进剪贴板</b>：这个房间的实时内容<b>写进本机剪贴板</b>（全局只能一个房间）。</p>
+
+                <div class="subcard" style="margin-bottom:13px">
+                    <div class="st">↑ 发到房间（可多房间同时开）</div>
+                    <div class="chk"><span class="sq on" id="sc-text">✓</span>文本<span class="hint">默认开</span></div>
+                    <div class="chk"><span class="sq on" id="sc-file">✓</span>文件（图片走这条）<span class="hint" id="sc-file-hint">上限还不知道</span></div>
+                    <!-- ⚠️ 这一行**故意没有 id**：本版不做富文本（设计稿 §6），
+                         所以它不能被点（点了一下什么都不发生 = 最坏的一种）。 -->
+                    <div class="chk" title="本版不做富文本：服务端的存储（api.md 的 ReceiveBase）和渲染都没有这条路径（设计稿 §6）"><span class="sq"></span>富文本 / HTML<span class="hint">本版按文本处理</span></div>
                 </div>
 
-                <div class="pane" id="pane-rooms">
-                    <h3>服务端与房间</h3>
-                    <p class="sub">
-                        每一行是一个房间：↑ 决定它收不收你的剪贴板，↓ 决定它的内容写不写进你的剪贴板。
-                        ⚠️ <b>「收进剪贴板」全局只能一个</b> —— 两个房间同时往剪贴板写，你看到的是随机内容。
-                    </p>
-                    <table class="rooms">
-                        <thead>
-                            <tr>
-                                <th class="c-name">名字</th>
-                                <th class="c-server">服务端</th>
-                                <th class="c-room">房间</th>
-                                <th class="c-token">凭据</th>
-                                <th class="tiny">↑</th>
-                                <th class="tiny">↓</th>
-                                <th class="tiny"></th>
-                            </tr>
-                        </thead>
-                        <tbody id="rooms-body"></tbody>
-                    </table>
-                    <button class="btn" id="room-add" style="margin-top:9px">＋ 添加房间</button>
-                </div>
-
-                <div class="pane" id="pane-sync" hidden>
-                    <h3>方向与内容</h3>
-                    <p class="sub">↑ <b>发到房间</b>：本机剪贴板的内容发到这个房间（可多选）。<br>↓ <b>收进剪贴板</b>：这个房间的实时内容<b>写进本机剪贴板</b>（全局只能一个房间 —— 两个房间同时写，你看到的是随机内容）。</p>
-                    <div class="subcard">
-                        <div class="st">↑ 发到房间（可多房间同时开）</div>
-                        <div class="chk"><input type="checkbox" id="sc-text" /><label for="sc-text">文本</label></div>
-                        <div class="chk"><input type="checkbox" id="sc-file" /><label for="sc-file">文件（图片走这条）</label></div>
+                <div class="subcard">
+                    <div class="st">↓ 收进剪贴板（全局只能一个房间）</div>
+                    <div class="chk"><span class="sq on g" id="sc-text-dl">✓</span>文本</div>
+                    <div class="chk"><span class="sq on g" id="sc-file-dl">✓</span>文件（含图片）</div>
+                    <div class="field" style="margin:9px 0 0">
+                        <label>来源房间</label>
+                        <div class="inp" id="sc-source">—<span class="hint">在左侧栏用 ↓ 选</span></div>
                     </div>
-                    <div class="subcard">
-                        <div class="st">↓ 收进剪贴板（全局只能一个房间）</div>
-                        <div class="chk"><input type="checkbox" id="sc-text-dl" /><label for="sc-text-dl">文本</label></div>
-                        <div class="chk"><input type="checkbox" id="sc-file-dl" /><label for="sc-file-dl">文件（含图片）</label></div>
-                    </div>
-                    <div class="row2">
-                        <div class="field">
-                            <label>监听间隔（毫秒）</label>
-                            <input type="number" id="sc-poll" min="1" />
-                        </div>
-                        <div class="field">
-                            <label>收到的文件存哪（相对 = 数据目录下）</label>
-                            <input type="text" id="sc-dir" />
-                        </div>
-                    </div>
-                    <p class="sub" style="margin:0">
-                        ⚠️ macOS / X11 上剪贴板**没有变更通知**，只能轮询 ——
-                        所以这个间隔是「延迟 vs 空转」的取舍，默认 500ms。
-                    </p>
-                </div>
-
-                <div class="pane" id="pane-desktop" hidden>
-                    <h3>启动与托盘</h3>
-                    <p class="sub">这些是桌面端独有的 —— 手机和网页版没有。</p>
-                    <div class="subcard">
-                        <div class="chk">
-                            <input type="checkbox" id="sc-autostart" />
-                            <label for="sc-autostart">开机自动启动</label>
-                        </div>
-                        <p class="sub" style="margin:7px 0 0">
-                            ⚠️ 这个勾画的是<b>系统里的真相</b>（启动项在不在），不是我们「想要」的值 ——
-                            你在系统设置里关掉它，这里就会显示没勾。装完默认**不开**：
-                            往你的机器里塞自启项这件事，得你说了算。
-                        </p>
+                    <div class="field" style="margin:9px 0 0">
+                        <label>收到的文件存哪（相对 = 数据目录下）</label>
+                        <input class="inp" id="sc-dir" type="text" />
                     </div>
                 </div>
 
-                <div class="pane" id="pane-server" hidden>
-                    <h3>本地服务端</h3>
-                    <p class="sub">
-                        桌面端**自带**服务端（这是它装完就能用的原因）。这里能看它、能重启它。
-                    </p>
-                    <div class="subcard">
+                <div class="divider"></div>
+                <div class="subcard" style="border-color:color-mix(in srgb, var(--warn) 40%, transparent)">
+                    <div style="font-size:12px;line-height:1.6">
+                        ⚠️ <b>「收进剪贴板」默认是关的</b>：装完不该自动接管你的剪贴板 ——
+                        要用哪个房间，在左边栏给它点开 ↓。<br>
+                        ⚠️ 连上时服务端会重放历史。<b>历史只进列表、不写剪贴板</b> ——
+                        边界由握手时给的<b>水印</b>（<code>config.latestId</code>）确定，<b>不靠时间窗猜</b>。
+                    </div>
+                </div>
+            </div>
+
+            <div class="pane" id="pane-watch" hidden>
+                <h3>监听与去重</h3>
+                <p class="sub">本机剪贴板是<b>轮询</b>读的（macOS / X11 上没有「剪贴板变了」这个通知）。<br>
+                   间隔就是「多快能同步过去」与「空转」之间的取舍。</p>
+                <div class="subcard">
+                    <div class="field" style="margin:0">
+                        <label>监听间隔（毫秒）</label>
+                        <input class="inp" id="sc-poll" type="number" min="1" />
+                    </div>
+                    <p class="sub" style="margin:7px 0 0">⚠️ 改完点「保存」才生效 —— 它会重启监听线程（改配置不影响一个已经在跑的线程）。</p>
+                </div>
+                <div class="subcard" style="margin-top:13px">
+                    <div class="st">去重</div>
+                    <div style="font-size:12px;line-height:1.6">
+                        同一份内容连着出现<b>不会重复发</b> —— 按类型（文本 / 图片 / 文件）各记一份指纹，
+                        短时间内一样就跳过。<b>没有开关</b>：关掉它只会让同一个东西发两遍。
+                    </div>
+                </div>
+            </div>
+
+            <div class="pane" id="pane-desktop" hidden>
+                <h3>窗口与托盘</h3>
+                <p class="sub">这些是桌面端独有的 —— 手机和网页版没有。</p>
+                <div class="subcard">
+                    <div class="chk"><span class="sq" id="sc-autostart"></span>开机自动启动</div>
+                    <p class="sub" style="margin:7px 0 0">⚠️ 这个勾画的是<b>系统里的真相</b>（启动项在不在），不是我们「想要」的值。装完默认<b>不开</b>。</p>
+                </div>
+                <div class="subcard" style="margin-top:13px">
+                    <div class="st">托盘</div>
+                    <p class="sub" style="margin:0">托盘菜单里有：暂停/恢复同步、切换房间、开机自启、显示主窗口、退出。<br>
+                       ⚠️ 关掉主窗口只是<b>藏起来</b> —— 同步照常跑，要真退出得用托盘里的「退出」。</p>
+                </div>
+            </div>
+
+            <div class="pane" id="pane-hotkeys" hidden>
+                <h3>快捷键</h3>
+                <p class="sub">还没做。</p>
+                <div class="subcard">
+                    <div style="font-size:12px;line-height:1.6">
+                        ⚠️ <b>这一页是占位</b>（界面稿 2 里有这一项，所以留着位置）。<br>
+                        真要做的话得先定：全局快捷键（系统级，要注册）还是窗口内快捷键（只在主窗口聚焦时生效）——
+                        前者会跟别的应用抢键，后者在很多场景下按不到。这个取舍没定之前不做。
+                    </div>
+                </div>
+            </div>
+
+            <div class="pane" id="pane-notify" hidden>
+                <h3>通知与主题</h3>
+                <p class="sub">还没做。</p>
+                <div class="subcard">
+                    <div style="font-size:12px;line-height:1.6">
+                        ⚠️ <b>这一页是占位</b>（界面稿 2 里有这一项）。<br>
+                        两件事都缺：① 收到新内容时发不发系统通知（现在**不发**，只有主界面在动）；
+                        ② 明暗主题（界面稿里两套令牌都画好了，但**没有地方切**）。
+                    </div>
+                </div>
+            </div>
+
+            <div class="pane" id="pane-server" hidden>
+                <h3>本地服务端</h3>
+                <p class="sub">桌面端<b>自带</b>服务端（这是它装完就能用的原因）。这里能看它、能重启它。</p>
+                <div class="srv" style="border:1px solid var(--border);border-radius:9px;background:var(--bg)">
+                    <div class="hd"><span class="dot" id="srv-dot"></span> <span id="srv-state">—</span></div>
+                    <div class="bd">
                         <div class="kv">
-                            <span class="k">状态</span><span class="v" id="srv-state">—</span>
                             <span class="k">数据目录</span><span class="v" id="srv-data">—</span>
                         </div>
-                    </div>
-                    <div style="display:flex;gap:8px">
-                        <button class="btn" id="srv-restart">重启</button>
-                        <button class="btn" id="srv-open">🌐 打开网页版</button>
-                    </div>
-                    <p class="sub" style="margin:12px 0 0">
-                        ⚠️ 「重启」会先把服务端停掉再起来 —— 所以**正在连着它的手机/其它设备会断开一次**，
-                        它们会自己重连。⚠️ 它**只停这个客户端自己起的那个**：你自己另外跑的服务端，它不碰。
-                    </p>
-                </div>
-
-                <div class="pane" id="pane-log" hidden>
-                    <h3>日志</h3>
-                    <p class="sub">
-                        内嵌服务端的日志（它的 stdout/stderr 都倒进这个文件）。
-                        ⚠️ 客户端自己那些「发不出去 / 存不上」的提示在**主界面顶部**闪一次，不在这儿。
-                    </p>
-                    <div class="subcard" style="padding:8px 10px">
-                        <div class="kv" style="grid-template-columns:56px 1fr">
-                            <span class="k">文件</span><span class="v" id="log-path">—</span>
-                        </div>
-                    </div>
-                    <div style="display:flex;gap:8px;margin-bottom:9px">
-                        <button class="btn" id="log-refresh">刷新</button>
-                        <span class="sub" style="margin:0;align-self:center" id="log-state"></span>
-                    </div>
-                    <!-- ⚠️ 用 <pre> 而不是 textarea：日志要能**选中复制**，但不该被误编辑。 -->
-                    <pre id="log-text" style="margin:0;padding:10px;border:1px solid var(--border);border-radius:8px;background:var(--bg);font-size:11px;line-height:1.5;max-height:250px;overflow:auto;white-space:pre-wrap;word-break:break-all"></pre>
-                </div>
-
-                <div class="pane" id="pane-diag" hidden>
-                    <h3>诊断</h3>
-                    <p class="sub">出问题时先看这里 —— 「配置在哪个文件」「连的是哪台服务端」是最常见的两个原因。</p>
-                    <div class="subcard">
-                        <div class="kv">
-                            <span class="k">数据目录</span><span class="v" id="dg-data">—</span>
-                            <span class="k">客户端配置</span><span class="v" id="dg-config">—</span>
-                            <span class="k">本地服务端</span><span class="v" id="dg-server">—</span>
+                        <div style="display:flex;gap:8px">
+                            <button class="btn" id="srv-restart">重启</button>
+                            <button class="btn" id="srv-open">🌐 打开网页版</button>
                         </div>
                     </div>
                 </div>
+                <p class="sub" style="margin:11px 0 0">⚠️ 「重启」会先停再起 —— 正连着它的设备会断开一次，它们会自己重连。⚠️ 它<b>只停这个客户端自己起的那个</b>。</p>
             </div>
-            <div class="pf">
-                <span id="settings-msg" style="font-size:11.5px;color:var(--text-2)"></span>
-                <div class="spacer"></div>
-                <button class="btn" id="settings-close">关闭</button>
-                <button class="btn primary" id="settings-save">保存</button>
+
+            <div class="pane" id="pane-log" hidden>
+                <h3>日志</h3>
+                <p class="sub">内嵌服务端的日志（它的 stdout/stderr 都倒进这个文件）。⚠️ 客户端自己那些「发不出去 / 存不上」的提示在<b>主界面顶部</b>闪一次，不在这儿。</p>
+                <div class="subcard"><div class="kv"><span class="k">文件</span><span class="v" id="log-path">—</span></div></div>
+                <div style="display:flex;gap:8px;margin-bottom:9px">
+                    <button class="btn" id="log-refresh">刷新</button>
+                    <span class="sub" style="margin:0;align-self:center" id="log-state"></span>
+                </div>
+                <pre id="log-text" style="margin:0;padding:10px;border:1px solid var(--border);border-radius:8px;background:var(--bg);font-size:11px;line-height:1.5;max-height:250px;overflow:auto;white-space:pre-wrap;word-break:break-all"></pre>
+            </div>
+
+            <div class="pane" id="pane-diag" hidden>
+                <h3>关于</h3>
+                <p class="sub">出问题时先看这里 —— 「配置在哪个文件」「连的是哪台服务端」是最常见的两个原因。</p>
+                <div class="subcard">
+                    <div class="kv">
+                        <span class="k">数据目录</span><span class="v" id="dg-data">—</span>
+                        <span class="k">客户端配置</span><span class="v" id="dg-config">—</span>
+                        <span class="k">本地服务端</span><span class="v" id="dg-server">—</span>
+                    </div>
+                </div>
             </div>
         </div>
+        <div class="foot">
+            <span id="settings-msg" style="font-size:11.5px;color:var(--text-2)"></span>
+            <div class="spacer"></div>
+            <button class="btn" id="settings-close">关闭</button>
+            <button class="btn primary" id="settings-save">保存</button>
+        </div>
+      </div>
     </div>
 
-    <!-- 服务端配置（浮层）。
-         ⚠️ 只放**最常改的几个**字段 —— 别的键**原样留着**：后端是「把补丁打到原始
-         JSON 上」，不认识的键不会被丢掉（那是这个界面最容易犯的错）。 -->
+    <!-- ══ 服务端配置（标记照界面稿 2 的 .win.cfg）══ -->
     <div class="overlay" id="server-overlay" hidden>
-        <div class="panel">
-            <div class="ph">
-                <span>服务端配置</span>
-                <span class="path" id="server-path"></span>
-            </div>
-            <!-- ⚠️ 分成区块（网络 / 访问控制 / 容量与内务 / 定时自动化）——
-                 照 `desktop-client-settings-mockup.html` 那份稿子的层级。
-                 平铺成一堆输入框的话，用户看不出哪些是一类、也找不到要找的那项。 -->
-            <div class="pb" style="display:block">
-                <div class="subcard">
-                    <div class="st">网络</div>
-                    <div class="grid2">
-                        <div class="field">
-                            <label>监听地址（0.0.0.0 = 局域网可访问）</label>
-                            <input type="text" id="cfg-host" placeholder="0.0.0.0" />
-                        </div>
-                        <div class="field">
-                            <label>端口</label>
-                            <input type="number" id="cfg-port" min="1" max="65535" />
-                        </div>
-                    </div>
-                    <div class="field">
-                        <label>子路径前缀（反代到 /clip 时填）</label>
-                        <input type="text" id="cfg-prefix" placeholder="（空）" />
-                    </div>
-                    <div class="grid2">
-                        <div class="field">
-                            <label>证书（空 = 不用 HTTPS）</label>
-                            <input type="text" id="cfg-cert" placeholder="（空）" />
-                        </div>
-                        <div class="field">
-                            <label>私钥</label>
-                            <input type="text" id="cfg-key" placeholder="（空）" />
-                        </div>
-                    </div>
-                </div>
-
-                <div class="subcard">
-                    <div class="st">访问控制</div>
-                    <div class="field" style="margin:0 0 10px">
-                        <label>全局密码（空 = 不设）</label>
-                        <input type="text" id="cfg-auth" placeholder="（空 = 不设）" />
-                    </div>
-                    <label style="font-size:11.5px;color:var(--text-2)">逐房间凭据（roomAuth）</label>
-                    <table class="rooms" style="margin-top:4px">
-                        <thead>
-                            <tr>
-                                <th class="c-name">房间</th>
-                                <th class="c-token">密码</th>
-                                <th class="c-room">文件过期</th>
-                                <th class="c-room">定时任务</th>
-                                <th class="tiny">开放</th>
-                                <th class="tiny"></th>
-                            </tr>
-                        </thead>
-                        <tbody id="roomauth-body"></tbody>
-                    </table>
-                    <button class="btn" id="roomauth-add" style="margin-top:7px">＋ 添加</button>
-                    <div class="sub" style="margin:8px 0 0">
-                        定时任务档位：留空 = 跟随房间鉴权；或 <code>none</code> / <code>single</code> / <code>room</code>。
-                        ⚠️ 「文件过期」留空 = <b>不改</b>（那个键在配置里可以是缺省的，清空它会让服务端读不了这份配置）。
-                    </div>
-                </div>
-
-                <div class="subcard">
-                    <div class="st">容量与限额</div>
-                    <div class="grid2">
-                        <div class="field">
-                            <label>历史条数</label>
-                            <input type="number" id="cfg-history" min="0" />
-                        </div>
-                        <div class="field">
-                            <label>文本上限（字节）</label>
-                            <input type="number" id="cfg-textlimit" min="0" />
-                        </div>
-                    </div>
-                    <div class="grid2">
-                        <div class="field">
-                            <label>文件过期（秒）</label>
-                            <input type="number" id="cfg-fileexpire" min="0" />
-                        </div>
-                        <div class="field">
-                            <label>分片大小（字节）</label>
-                            <input type="number" id="cfg-filechunk" min="0" />
-                        </div>
-                    </div>
-                    <div class="field" style="margin:0">
-                        <label>单文件上限（字节）</label>
-                        <input type="number" id="cfg-filelimit" min="0" />
-                    </div>
-                </div>
-
-                <div class="subcard">
-                    <div class="st">数据</div>
-                    <div class="field">
-                        <label>库文件（相对 = 服务端数据目录下）</label>
-                        <input type="text" id="cfg-dbpath" />
-                    </div>
-                    <div class="field" style="margin:0">
-                        <label>上传文件目录</label>
-                        <input type="text" id="cfg-storage" />
-                    </div>
-                </div>
-
-                <div class="subcard">
-                    <div class="st">定时自动化</div>
-                    <div class="chk">
-                        <input type="checkbox" id="cfg-automation" />
-                        <label for="cfg-automation">启用定时自动化</label>
-                    </div>
-                    <div class="grid2" style="margin-top:8px">
-                        <div class="field">
-                            <label>调度间隔（秒）</label>
-                            <input type="number" id="cfg-tick" min="1" />
-                        </div>
-                        <div class="field">
-                            <label>补发窗口（秒）</label>
-                            <input type="number" id="cfg-grace" min="0" />
-                        </div>
-                    </div>
-                    <div class="field" style="margin:0">
-                        <label>默认时区</label>
-                        <input type="text" id="cfg-tz" placeholder="Asia/Shanghai" />
-                    </div>
-                </div>
-
-                <div class="subcard">
-                    <div class="st">房间与内务</div>
-                    <div class="chk">
-                        <input type="checkbox" id="cfg-roomlist" />
-                        <label for="cfg-roomlist">启用房间列表</label>
-                    </div>
-                    <div class="field" style="margin:8px 0 0">
-                        <label>房间清理间隔（秒，0 = 不清理）</label>
-                        <input type="number" id="cfg-cleanup" min="0" />
-                    </div>
-                </div>
-                <div id="server-state" style="font-size:11.5px;color:var(--text-2)"></div>
-            </div>
-            <div class="warnline">⚠️ 保存后<b>需要重启服务端才生效</b>（配置只在启动时读一次）。</div>
-            <div class="pf">
-                <span id="server-msg" style="font-size:11.5px;color:var(--text-2)"></span>
-                <div class="spacer"></div>
-                <button class="btn" id="cfg-close">关闭</button>
-                <button class="btn" id="cfg-save">保存</button>
-                <button class="btn primary" id="cfg-save-restart">保存并重启</button>
-            </div>
+      <div class="win cfg">
+        <div class="titlebar"><div class="lights"><i></i><i></i><i></i></div><span class="t">服务端配置</span></div>
+        <div class="hd">
+            <span class="t">config.json</span>
+            <span class="path" id="server-path"></span>
+            <div class="spacer"></div>
+            <span class="pill">只读原始 JSON</span>
         </div>
+        <div class="bd">
+            <div class="sec">
+                <div class="st">网络</div>
+                <div class="row2">
+                    <div class="field"><label>监听地址（0.0.0.0 = 局域网可访问）</label><input class="inp" id="cfg-host" type="text" /></div>
+                    <div class="field"><label>端口</label><input class="inp" id="cfg-port" type="number" min="1" max="65535" /></div>
+                </div>
+                <div class="field"><label>子路径前缀（反代到 /clip 时填）</label><input class="inp" id="cfg-prefix" type="text" /></div>
+                <div class="row2">
+                    <div class="field"><label>证书（空 = 不用 HTTPS）</label><input class="inp" id="cfg-cert" type="text" /></div>
+                    <div class="field"><label>私钥</label><input class="inp" id="cfg-key" type="text" /></div>
+                </div>
+            </div>
+            <div class="sec">
+                <div class="st">访问控制</div>
+                <div class="field"><label>全局密码（空 = 不设）</label><input class="inp" id="cfg-auth" type="text" /></div>
+                <label style="font-size:11.5px;color:var(--text-2)">逐房间凭据（roomAuth）</label>
+                <table class="ra" id="roomauth-table">
+                    <thead><tr>
+                        <th class="c-name">房间</th><th class="c-token">密码</th><th class="c-room">文件过期</th>
+                        <th class="c-room">定时任务</th><th class="tiny">开放</th><th class="tiny"></th>
+                    </tr></thead>
+                    <tbody id="roomauth-body"></tbody>
+                </table>
+                <button class="btn" id="roomauth-add" style="margin-top:7px">＋ 添加</button>
+                <p class="sub" style="margin:8px 0 0">定时任务档位：留空 = 跟随房间鉴权；或 <code>none</code> / <code>single</code> / <code>room</code>。⚠️ 「文件过期」留空 = <b>不改</b>。</p>
+            </div>
+            <div class="sec">
+                <div class="st">容量与限额</div>
+                <div class="row2">
+                    <div class="field"><label>历史条数</label><input class="inp" id="cfg-history" type="number" min="0" /></div>
+                    <div class="field"><label>文本上限（字节）</label><input class="inp" id="cfg-textlimit" type="number" min="0" /></div>
+                </div>
+                <div class="row2">
+                    <div class="field"><label>文件过期（秒）</label><input class="inp" id="cfg-fileexpire" type="number" min="0" /></div>
+                    <div class="field"><label>分片大小（字节）</label><input class="inp" id="cfg-filechunk" type="number" min="0" /></div>
+                </div>
+                <div class="field"><label>单文件上限（字节）</label><input class="inp" id="cfg-filelimit" type="number" min="0" /></div>
+            </div>
+            <div class="sec">
+                <div class="st">数据</div>
+                <div class="field"><label>库文件（相对 = 服务端数据目录下）</label><input class="inp" id="cfg-dbpath" type="text" /></div>
+                <div class="field"><label>上传文件目录</label><input class="inp" id="cfg-storage" type="text" /></div>
+            </div>
+            <div class="sec">
+                <div class="st">定时自动化</div>
+                <div class="chk"><span class="sq" id="cfg-automation"></span>启用定时自动化</div>
+                <div class="row2" style="margin-top:8px">
+                    <div class="field"><label>调度间隔（秒）</label><input class="inp" id="cfg-tick" type="number" min="1" /></div>
+                    <div class="field"><label>补发窗口（秒）</label><input class="inp" id="cfg-grace" type="number" min="0" /></div>
+                </div>
+                <div class="field"><label>默认时区</label><input class="inp" id="cfg-tz" type="text" /></div>
+            </div>
+            <div class="sec">
+                <div class="st">房间与内务</div>
+                <div class="chk"><span class="sq" id="cfg-roomlist"></span>启用房间列表</div>
+                <div class="field" style="margin:8px 0 0"><label>房间清理间隔（秒，0 = 不清理）</label><input class="inp" id="cfg-cleanup" type="number" min="0" /></div>
+            </div>
+            <div id="server-state" style="font-size:11.5px;color:var(--text-2)"></div>
+        </div>
+        <div class="foot">
+            <span class="warnmsg">⚠️ 保存后<b>需要重启服务端才生效</b>（配置只在启动时读一次）</span>
+            <span id="server-msg" style="font-size:11.5px;color:var(--text-2)"></span>
+            <div class="spacer"></div>
+            <button class="btn" id="cfg-close">关闭</button>
+            <button class="btn" id="cfg-save">保存</button>
+            <button class="btn primary" id="cfg-save-restart">保存并重启</button>
+        </div>
+      </div>
     </div>
 
 <script src="./app.js" defer></script>

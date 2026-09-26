@@ -16,7 +16,7 @@
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
-use clip9_client::{ClientConfig, ReceiverStatus, ReceiverUpdate, ServerLimits};
+use clip9_client::{ClientConfig, PeerDevice, ReceiverStatus, ReceiverUpdate, ServerLimits};
 use clip9_protocol::ReceiveHolder;
 use serde::{Deserialize, Serialize};
 
@@ -117,6 +117,23 @@ pub struct Snapshot {
     pub data_dir: String,
     /// 每个房间最多留多少条（界面要照实说）。
     pub max_entries: usize,
+    /// 主区标题右侧那行设备（稿 1 的「N 台在线」）。
+    ///
+    /// ⚠️★ **空数组 = 「还不知道」**，不是「一台都没有」—— 界面因此什么都不画。
+    /// 混起来就是骗人：`0 台在线` 与「数不到」的下一步完全不同。
+    pub devices: Vec<DeviceView>,
+}
+
+/// 设备行里的一台设备。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DeviceView {
+    /// 设备名。⚠️ 可能是**空串**（客户端没声明过名字）—— 界面要自己兜底，别显示成空白。
+    pub name: String,
+    /// `desktop` / `smartphone` / `tablet`。⚠️ 界面**按它选图标**，不按名字猜。
+    pub kind: String,
+    /// 是不是本机。⚠️ 只有**真的连上**时才会出现本机那一个（见 `snapshot`）。
+    pub me: bool,
 }
 
 /// 限额给界面看的那一份。
@@ -159,6 +176,12 @@ struct Inner {
     /// `Cleared` **都不带房间名** —— 它们说的是「这个连接」发生的事，
     /// 而下行的那个连接**只对应下载通道那一个房间**。所以房间得自己记住。
     downlink_room: Option<String>,
+    /// 下行那个房间里的**别人**（本机不在里面，见 `clip9_client::PeerDevice`）。
+    ///
+    /// ⚠️ 它属于 `downlink_room`，**不是**「当前选中的房间」——
+    /// 客户端只有一个下行连接（§4.1 第 2 条），所以别的房间的设备**根本数不到**。
+    /// `snapshot` 里靠「选中的 == 下行的」来判要不要画。
+    peers: Vec<PeerDevice>,
 }
 
 /// 桌面端状态。
@@ -190,6 +213,7 @@ impl Store {
                 monitoring,
                 notice: None,
                 downlink_room: None,
+                peers: Vec::new(),
             }),
             config_path,
             data_dir,
@@ -228,16 +252,53 @@ impl Store {
         // `download_channel`）—— 那时把状态画成「连接中…」是**在骗人**：
         // 用户看到的是「连不上」，而真相是「没开」。
         // ⚠️ 这两件事的下一步**完全不同**：一个去查服务端，一个去设置里开下载。
-        // 而且它是**默认状态**（下载默认关），所以每个新用户第一眼看到的就是它。
+        // ⚠️★ 而且它是**默认状态**（Jonny 2026-09-26 定：下载默认关），
+        // 所以每个新用户第一眼看到的就是它 —— 必须把「收不到什么」一并说清，
+        // 否则他会以为「连上了但对方没发」。设备行（`snapshot` 里那段）也是同一个原因。
         let status = if inner.config.download_channel().is_none() {
             StatusView {
                 kind: "off",
-                text: "没有「收进剪贴板」的房间 —— 发到房间照常；要让某个房间的内容进你的剪贴板，去设置里给它打开 ↓".to_owned(),
+                text: "没有开「收进剪贴板」的房间：发到房间照常，但收不到实时消息、也看不到在线设备。在左侧栏给一个房间点开 ↓ 即可。".to_owned(),
                 latest_id: None,
                 room: None,
             }
         } else {
             inner.status.clone()
+        };
+        // ⚠️★ 设备行只在**正在收的那个房间**上画。客户端只有一个下行连接
+        //（§4.1 第 2 条：「收进剪贴板」全局只能一个），别的房间的设备**数不到** ——
+        // 给每个房间都画一个数字就是编的（§4.3 第 1 条是同一个道理）。
+        //
+        // ⚠️ 三个条件都要满足才画：① 连接是活的（`on` / `warn` —— 老服务端也照常发
+        // connect）；② 选中的就是下行那个房间；③ 那个房间在配置里找得到。
+        // 少任何一个都返回**空数组**（= 界面什么都不画），而不是 `1 台在线`。
+        let devices = if matches!(status.kind, "on" | "warn") {
+            let selected_room = inner
+                .config
+                .channels
+                .get(inner.selected)
+                .map(|channel| channel.room.as_str());
+            if selected_room.is_some() && selected_room == inner.downlink_room.as_deref() {
+                // ⚠️ 本机**算一台**：服务端那份列表里没有本机
+                //（`devices_in_room_except` 把自己排掉了），而稿 1 那行
+                //「3 台在线」是**含本机**的。这里补上。
+                let mut devices = vec![DeviceView {
+                    name: inner.config.device_name.clone(),
+                    // ⚠️ 这个客户端就是桌面端 —— 不是猜的。
+                    kind: "desktop".to_owned(),
+                    me: true,
+                }];
+                devices.extend(inner.peers.iter().map(|peer| DeviceView {
+                    name: peer.name.clone(),
+                    kind: peer.kind.clone(),
+                    me: false,
+                }));
+                devices
+            } else {
+                Vec::new()
+            }
+        } else {
+            Vec::new()
         };
         Snapshot {
             rooms,
@@ -252,6 +313,7 @@ impl Store {
             config_path: self.config_path.display().to_string(),
             data_dir: self.data_dir.display().to_string(),
             max_entries: MAX_ENTRIES_PER_ROOM,
+            devices,
         }
     }
 
@@ -336,11 +398,10 @@ impl Store {
                     inner.rooms[index].entries.clear();
                 }
             }
-            // ⚠️ 设备列表：客户端**只给「变了」这个信号，没有给列表**
-            // （`ReceiverUpdate::DevicesChanged` 就是这么定义的）。所以这里**什么也不做**
-            // —— 而不是编一个「1 台在线」出来。界面上因此**不显示**在线设备数，
-            // 写在这里免得下一个人以为是漏了。
-            ReceiverUpdate::DevicesChanged => {}
+            // ⚠️★ 整份替换，不是「增量更新」：客户端那边已经按 id 去好重了
+            //（同一台设备开两个标签页只算一台，见 `PeerDevice`），
+            // 这边再维护一份集合就是**第二份会漂的状态**。
+            ReceiverUpdate::DevicesChanged(peers) => inner.peers = peers,
             ReceiverUpdate::Status(status) => inner.apply_status(status),
         }
     }
@@ -535,6 +596,16 @@ impl Inner {
     /// 而不是「已连接」—— 因为此刻客户端**一行剪贴板都不写**（fail-safe，§4.2 ①）。
     /// 显示成「已连接」的话，用户会以为同步在工作（然后发现内容就是不过来）。
     fn apply_status(&mut self, status: ReceiverStatus) {
+        // ⚠️★ 换房间 / 掉线时**必须清掉设备列表**：服务端是在连接**建立之后**
+        // 才逐台发 `connect` 的（`ws.rs`），所以旧的那份在「正在连」这一刻已经作废。
+        // 不清的话，症状是「刚连上时显示的是上一个房间的设备」——
+        // 而且它会自己消失（新房间的 connect 到了就对了），所以最难被发现。
+        if matches!(
+            status,
+            ReceiverStatus::Connecting { .. } | ReceiverStatus::Disconnected { .. }
+        ) {
+            self.peers.clear();
+        }
         self.status = match status {
             ReceiverStatus::Connecting { room, .. } => {
                 self.downlink_room = Some(room.clone());
@@ -625,16 +696,23 @@ pub fn load_config(
         None => {
             // ⚠️ 用结构体更新语法而不是「先 default 再逐字段赋值」—— 后者会触发
             // `clippy::field_reassign_with_default`，而门禁是 `-D warnings`。
-            // ⚠️★ **默认房间要开「收进剪贴板」**（`enable_download`）。
-            // 不开的话客户端**一个下行连接都不会建**（`download_channel()` 返回 None）——
-            // 用户看到的就是「默认房间一直没连上」，而实际上它压根没去连。
-            // ⚠️ 「装完不该自动接管剪贴板」那个顾虑由**水印**兜着：历史只认领、不写剪贴板，
-            // 所以开着它也不会把房间里的旧内容灌进来（只有实时来的才会写）。
+            // ⚠️★ **默认房间不开「收进剪贴板」**（`Channel::new` 的 `enable_download`
+            // 本来就是 `false`，这里不去动它）。Jonny 2026-09-26 拍板：
+            // 「下载不要默认开，就默认关闭」—— 装完不该自动接管你的剪贴板。
+            //
+            // ⚠️⚠️ **代价要说清楚**（它不是一个没有后果的选择）：`download_channel()`
+            // 返回 `None` → 客户端**一个下行连接都不会建**（`spawn_receiver` 自己判它）。
+            // 所以装完的状态是：**发到房间照常，收不到任何东西**，设备行也数不到。
+            // 这不是 bug，是这个默认值的直接后果。
+            // 界面上的补救是 `snapshot()` 那条 `kind: "off"` 的状态文案 ——
+            // 它必须说清「不是连不上，是没开」，否则用户会跑去查服务端（错的方向）。
+            //
+            // ⚠️ 历史：2026-09-26 早些时候这里曾被改成 `true`，理由正是「默认房间一直没连上」
+            //（Jonny 报的那个现象）。改成 `false` 之后那个现象**会回来**，
+            // 但这次它有一个说得清的界面（上面那条状态），而不是「连接中…」。
+            // 两件事都记在 `desktop-client.md` §4.1 第 3 条，改之前先读那一条。
             let config = ClientConfig {
-                channels: vec![clip9_client::Channel {
-                    enable_download: true,
-                    ..clip9_client::Channel::new("默认", default_server)
-                }],
+                channels: vec![clip9_client::Channel::new("默认", default_server)],
                 ..ClientConfig::default()
             };
             save_config(config_path, &config)?;
@@ -782,6 +860,95 @@ mod tests {
         assert_eq!(snapshot.status.room.as_deref(), Some("work"));
         // ⚠️ 限额要跟着状态一起到位 —— 上行要用它，而它**只在握手里**下发。
         assert_eq!(snapshot.limits.text_limit, 4096);
+    }
+
+    /// 一台别人设备（用来喂 `DevicesChanged`）。
+    fn peer(id: &str, name: &str, kind: &str) -> PeerDevice {
+        PeerDevice {
+            id: id.to_owned(),
+            name: name.to_owned(),
+            kind: kind.to_owned(),
+        }
+    }
+
+    /// 让下行连上 `work`（第二个房间）。
+    fn connect_work(store: &Store) {
+        store.apply_update(ReceiverUpdate::Status(ReceiverStatus::Connecting {
+            server: "http://127.0.0.1:9501".to_owned(),
+            room: "work".to_owned(),
+        }));
+        store.apply_update(ReceiverUpdate::Status(ReceiverStatus::Connected {
+            latest_id: 1,
+            limits: ServerLimits::default(),
+        }));
+    }
+
+    /// ⚠️★ 设备行**只在正在收的那个房间**上有 —— 客户端只有一个下行连接（§4.1 第 2 条），
+    /// 别的房间的设备**数不到**。给它们也画一个数字就是编的。
+    #[test]
+    fn devices_show_up_only_on_the_downlink_room() {
+        let (_dir, store) = temp_store();
+        connect_work(&store);
+        store.apply_update(ReceiverUpdate::DevicesChanged(vec![
+            peer("d1", "iPhone", "smartphone"),
+            peer("d2", "MacBook", "desktop"),
+        ]));
+
+        // 选中的是「默认」，而下行连的是「work」→ 一个都不画（= 空数组）。
+        assert!(
+            store.snapshot().devices.is_empty(),
+            "不是下行那个房间时不能画设备"
+        );
+
+        store.select(1).expect("切到 work");
+        let devices = store.snapshot().devices;
+        // ⚠️ 本机要算一台：服务端那份列表里**没有本机**，而稿 1 的「N 台在线」是含本机的。
+        assert_eq!(devices.len(), 3, "本机 + 两台别人");
+        assert!(devices[0].me, "第一个是本机");
+        assert_eq!(devices[0].kind, "desktop");
+        assert_eq!(devices[1].name, "iPhone");
+        assert_eq!(devices[1].kind, "smartphone");
+        assert!(!devices[1].me);
+    }
+
+    /// ⚠️★ 没连上时**一个都不画**，而不是画「1 台在线（只有我）」——
+    /// 「数不到」和「只有我」是两件事。
+    #[test]
+    fn devices_are_empty_until_connected() {
+        let (_dir, store) = temp_store();
+        store.select(1).expect("切到 work");
+        store.apply_update(ReceiverUpdate::Status(ReceiverStatus::Connecting {
+            server: "http://127.0.0.1:9501".to_owned(),
+            room: "work".to_owned(),
+        }));
+        assert!(
+            store.snapshot().devices.is_empty(),
+            "还没连上就是「不知道」"
+        );
+    }
+
+    /// ⚠️★ 掉线 / 重连时**必须清掉**上一轮的设备：服务端是连接建立**之后**才逐台发
+    /// `connect` 的，所以旧那份在「正在连」这一刻已经作废。不清的话症状是
+    /// 「刚连上时显示的是上一个房间的设备」，而它会自己消失 —— 最难被发现的一种。
+    #[test]
+    fn a_stale_device_list_is_cleared_on_reconnect() {
+        let (_dir, store) = temp_store();
+        connect_work(&store);
+        store.apply_update(ReceiverUpdate::DevicesChanged(vec![peer(
+            "d1",
+            "iPhone",
+            "smartphone",
+        )]));
+        store.select(1).expect("切到 work");
+        assert_eq!(store.snapshot().devices.len(), 2);
+
+        store.apply_update(ReceiverUpdate::Status(ReceiverStatus::Disconnected {
+            reason: "断了".to_owned(),
+        }));
+        assert!(
+            store.snapshot().devices.is_empty(),
+            "断开之后不能还留着上一轮那几台"
+        );
     }
 
     /// ⚠️★ **老服务端（没有水印）不能显示成「已连接」** —— 那一刻客户端一行剪贴板都不写，
@@ -1011,11 +1178,14 @@ mod tests {
         assert!(path.exists(), "第一次运行就要落盘");
         assert_eq!(first.channels.len(), 1);
         assert_eq!(first.channels[0].room, "default");
-        // ⚠️★ 首次运行的默认房间**必须开「收进剪贴板」**：不开的话客户端
-        // **一个下行连接都不会建**，用户看到的就是「默认房间一直没连上」。
+        // ⚠️★ 首次运行的默认房间**不开**「收进剪贴板」——
+        // Jonny 2026-09-26 拍板：「下载不要默认开，就默认关闭」。装完不该自动接管剪贴板。
+        // ⚠️ 代价是**装完一个下行连接都不建**（`download_channel()` 返回 `None`），
+        // 于是状态会是那条「没有『收进剪贴板』的房间」而不是「连接中…」——
+        // 那正是这个断言要钉住的那件事的另一半（见下面那个测试）。
         assert!(
-            first.channels[0].enable_download,
-            "默认房间要能收，否则装完就是「一直没连上」"
+            !first.channels[0].enable_download,
+            "装完不该自动接管剪贴板（Jonny 2026-09-26 定）"
         );
         assert!(!first.client_id.is_empty());
 
@@ -1209,7 +1379,8 @@ mod tests {
     /// ⚠️★ **一个下载房间都没开**时，状态**不能**画成「连接中…」——
     /// 那时下行根本不会去连，而用户看到「连接中…」会以为「连不上」，
     /// 于是跑去查服务端（其实该去设置里给某个房间打开 ↓）。
-    /// ⚠️ 这是**默认状态**（下载默认关），所以**每个新用户第一眼看到的就是它**。
+    /// ⚠️★ 这是**默认状态**（Jonny 2026-09-26 定：下载默认关），
+    /// 所以**每个新用户第一眼看到的就是它** —— 这条文案的措辞比平时更重要。
     #[test]
     fn no_download_channel_says_so_instead_of_connecting_forever() {
         let dir = tempfile::tempdir().unwrap();

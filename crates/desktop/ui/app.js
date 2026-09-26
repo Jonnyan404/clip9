@@ -50,7 +50,59 @@ let lastShape = null;
  */
 let lastRooms = [];
 
+/** 上一次渲染的**限额**（握手下发的那一份）。只给输入区右下角那个计数器用。 */
+let lastLimits = { textLimit: 0, fileLimit: 0 };
+
 const el = (id) => document.getElementById(id);
+
+/** 一个方框开关（稿子里的 `<span class="sq">`）。
+ *
+ * ⚠️★ 为什么**不用** `<input type="checkbox">`：界面稿画的就是这个方块
+ *（稿 2 的 `.sq`）。换成本机复选框在 macOS 上是一颗蓝色胶囊，跟稿子不是一个东西 ——
+ * 而这一版的目标就是「1:1 还原稿子」（`desktop-client.md` §3.6.1）。
+ * ⚠️ 代价：它不是原生控件，**没有键盘可达性、也不进 tab 序**。这是明确换来的取舍，
+ * 不是漏掉的（要补的话得自己做 `tabindex` + 空格/回车，见 §3.6.1 的待办）。
+ */
+const sqGet = (id) => el(id).classList.contains('on');
+
+function sqSet(id, on) {
+  el(id).classList.toggle('on', on === true);
+  el(id).textContent = on === true ? '✓' : '';
+}
+
+// 让方块能点。⚠️ 用**委托**而不是逐个绑：`#cfg-*` 那批在浮层里，
+// 逐个绑的话每次打开浮层都要重绑一遍，漏一个就是「点了没反应」。
+for (const id of ['settings-overlay', 'server-overlay']) {
+  el(id).addEventListener('click', (event) => {
+    const box = event.target.closest('.sq');
+    if (!box?.id) return;
+    sqSet(box.id, !sqGet(box.id));
+  });
+}
+
+/** 主界面顶部那条**一次性**提示（发不出去 / 存不上 / 配置有毛病）。
+ *
+ * ⚠️ 抽出来是因为同一段三行已经抄了三四遍 —— 而抄的时候最容易漏掉
+ * `hidden = false`（漏了的症状是「设了文字但看不见」，而且不报错）。
+ *
+ * ⚠️★ **自己设的提示要自己收**：`render` 里那条清理走的是「壳里有没有 notice」
+ *（`invoke('clear_notice')`），而这里设的那些**壳里没有** —— 于是它们只会在
+ * 「下一次形状变化」时才被抹掉，而那可能是几分钟后。
+ * 15 秒：够看清、够去点一下，又不至于一直挂着（「它到底还有效吗」用户判断不了，
+ * 这与 `render` 里那条注释是同一个理由）。
+ */
+let noticeTimer = null;
+
+function showNotice(kind, text) {
+  const notice = el('notice');
+  notice.hidden = false;
+  notice.className = `notice ${kind}`;
+  notice.textContent = text;
+  clearTimeout(noticeTimer);
+  noticeTimer = setTimeout(() => {
+    notice.hidden = true;
+  }, 15000);
+}
 
 function shapeOf(state) {
   return JSON.stringify([
@@ -66,6 +118,9 @@ function shapeOf(state) {
     // 这两个是常量，放进来只是为了让「形状」覆盖整份快照 ——
     // 少一个字段就多一处「变了也不重画」的隐患。
     state.configPath, state.maxEntries,
+    // ⚠️ 设备行也一样：漏掉它，有人进/出房间时那一行**不会重画**
+    //（而它正是「有人进出了」这件事唯一的表现）。
+    state.devices,
   ]);
 }
 
@@ -161,7 +216,11 @@ function renderRooms(state) {
   state.rooms.forEach((room, index) => {
     const node = h('div', index === state.selected ? 'room on' : 'room');
     // ⚠️ 房间名是**用户配置**里的自由文本 → 只能走 textContent。
-    node.append(h('span', 'ico', index === state.selected ? '📂' : '💬'));
+    // ⚠️ 图标只分「选中的那个」和「别的」两种：稿 1 里每个房间的图标都不同
+    //（🏠 / 💼 / 🔒），但那是**照着演示用的房间名画的** —— 真实房间名是自由文本，
+    // 按名字猜图标只会猜错。🔒 那条尤其不能猜：客户端这边**拿不到**
+    //「这个房间要不要密码」（凭据在 `Channel::auth_token` 里，界面不读它）。
+    node.append(h('span', 'ico', index === state.selected ? '🏠' : '💬'));
     node.append(h('span', 'nm', room.name));
     const up = h('span', room.upload ? 'dir up on' : 'dir up', '↑');
     up.title = room.upload
@@ -229,9 +288,11 @@ function renderTimeline(state) {
   if (!state.entries.length) {
     // ⚠️ 「还没加载」与「这个房间确实是空的」**必须**分开说 ——
     // 两种都画成空列表的话，用户会以为功能坏了。
+    // ⚠️ 「还没加载」那句**不能**再说「点右上角刷新」：那个按钮按界面稿删掉了
+    //（历史是自动取的，见 `ensureHistory`），留着就是指向一个不存在的东西。
     host.append(h('div', 'empty', room.historyLoaded
       ? '这个房间还没有内容。'
-      : '还没加载这个房间的历史。点右上角「刷新」。'));
+      : '正在取这个房间的历史…（取不到会每 5 秒重试一次）'));
     return;
   }
   state.entries.forEach((entry) => host.append(renderEntry(entry)));
@@ -239,25 +300,67 @@ function renderTimeline(state) {
   if (wasPinned) host.scrollTop = host.scrollHeight;
 }
 
+/** 输入区右下角那个计数（稿 1 画的是 `0 / 4096`）。
+ *
+ * ⚠️ 上限是**握手**里下发的（不在 `/server`）。没连上就是「不知道」，
+ * 这时要写「还不知道」而不是 `0 / 0` —— 后者会让用户以为「一个字都发不了」。
+ * ⚠️ 用 `[...value].length` 而不是 `value.length`：后者数的是 UTF-16 码元，
+ * 一个 emoji 会算成 2，而服务端那边按**字节**判限额 —— 两个数都不是精确的，
+ * 但按「肉眼可见的字符」数最贴近用户心里的那个数，也最不容易吓到他。
+ */
+function updateCounter() {
+  const limit = lastLimits.textLimit;
+  el('limits').textContent = limit
+    ? `${[...el('input').value].length} / ${limit}`
+    : '上限还不知道（还没连上）';
+}
+
+/** 主区标题右侧的设备行（稿 1 有：几个圆圈 + 「N 台在线」）。
+ *
+ * ⚠️★ 只画**正在收的那个房间**。客户端只有一个下行连接（§4.1 第 2 条：
+ * 「收进剪贴板」全局只能一个），别的房间的设备**数不到** ——
+ * 给每个房间都画一个数字就是编的（§4.3 第 1 条是同一个道理）。
+ *
+ * ⚠️ 拿不到时**什么都不画**，而不是画「0 台在线」：
+ *「一台都没有」和「还不知道」是两件事，混起来就是骗人。
+ */
+function renderDevices(state) {
+  const host = el('devices');
+  host.textContent = '';
+  const devices = state.devices || [];
+  if (!devices.length) return;
+  for (const device of devices) {
+    // ⚠️ 图标按服务端认出来的 `kind` 选（`user_agent.rs` 的 desktop/smartphone/tablet），
+    // **不靠设备名猜** —— 名字是用户自己起的自由文本，猜出来的图标会乱。
+    // ⚠️ 没有平板专用的 emoji，平板与手机同用一个 📱（这是有意的，不是漏了）。
+    const icon = device.kind === 'smartphone' || device.kind === 'tablet' ? '📱' : '💻';
+    const dot = h('span', device.me ? 'd me' : 'd', icon);
+    // ⚠️ 名字可能是**空的**（客户端没声明过设备名）—— 那时要说「本机」/「未知设备」，
+    // 而不是留一个空 title（鼠标停上去什么都没有 = 看着像坏了）。
+    dot.title = device.me
+      ? (device.name ? `${device.name}（本机）` : '本机')
+      : (device.name || '未知设备');
+    host.append(dot);
+  }
+  host.append(h('span', null, `${devices.length} 台在线`));
+}
+
 /** 整个界面。⚠️ 「有没有房间」也要画出来 —— 半个状态是骗人的。 */
 function render(state) {
   lastRooms = state.rooms;
+  lastLimits = state.limits;
   renderStatus(state);
   el('room-count').textContent = String(state.rooms.length);
   renderRooms(state);
   renderTimeline(state);
+  renderDevices(state);
+  updateCounter();
 
   const room = state.rooms[state.selected];
   el('room-name').textContent = room ? room.name : '—';
   // ⚠️ 只留「几条」：房间 id 和服务端地址塞进标题是**噪音**，
   // 而它们都能在「设置」里查到（诊断那一页专门放这些）。
   el('room-meta').textContent = room ? `· ${room.count} 条` : '';
-
-  // ⚠️ 限额是**握手**里下发的（不在 `/server`）。没连上就是「不知道」，
-  // 这里要写「还不知道」而不是「0」—— 那会让用户以为「一个字都发不了」。
-  el('limits').textContent = state.limits.textLimit
-    ? `上限 ${state.limits.textLimit} 字`
-    : '上限还不知道（还没连上）';
 
   // ⚠️★ 本机窗口里**留多少条**要照实说：不说的话，用户看到列表停在 200 条
   // 会以为「前面的丢了」（`store.rs` 的 `MAX_ENTRIES_PER_ROOM` 注释里点名了这条要求）。
@@ -290,6 +393,10 @@ function render(state) {
 async function tick() {
   try {
     const state = await invoke('snapshot');
+    // ⚠️ 取历史是**每一轮**都要判的，不能放在 `render` 里 ——
+    // `render` 只在「形状变了」时跑，而「取不到历史」恰恰**什么都不改**
+    //（这正是这个文件开头那段注释说的那类坑）。放这里，失败才追得下去。
+    ensureHistory(state);
     const shape = shapeOf(state);
     if (shape !== lastShape) {
       lastShape = shape;
@@ -298,9 +405,7 @@ async function tick() {
   } catch (error) {
     // ⚠️ 取不到状态要把「为什么」说出来：最常见的是窗口比壳活得久（壳崩了/正在退出）。
     // 主界面上没有地方放它（侧栏那块调试信息已删），所以进一次性提示。
-    el('notice').hidden = false;
-    el('notice').className = 'notice err';
-    el('notice').textContent = `取不到状态：${error}`;
+    showNotice('err', `取不到状态：${error}`);
   } finally {
     setTimeout(tick, POLL_MS);
   }
@@ -310,16 +415,89 @@ function sendCurrentInput() {
   const input = el('input');
   const text = input.value;
   if (!text.trim()) return;
-  invoke('send_text', { text }).catch((error) => {
-    el('notice').hidden = false;
-    el('notice').className = 'notice err';
-    el('notice').textContent = `发不出去：${error}`;
-  });
+  invoke('send_text', { text }).catch((error) => showNotice('err', `发不出去：${error}`));
   input.value = '';
 }
 
+/* ── 从界面发文件：📎 / 🖼 / 拖进来 ──────────────────────────────────
+ *
+ * ⚠️★ 三条路（按钮 / 拖放 / 将来可能加的别的）**必须汇到同一条命令**
+ *（`send_files`）—— 它们只是「怎么选到文件」不同，「怎么发出去」是同一件事。
+ * 分开写一定会漂（比如只有按钮那条做了校验）。
+ *
+ * ⚠️★ 页面**不自己发请求**：走壳的命令，限额/凭据/多文件那些规则全在
+ * `clip9-client` 里（`runtime.rs` 的 `send_files` 注释）。
+ *
+ * ⚠️ 「粘贴即发送」**没有做**，而且不是漏了：粘进来的东西是**系统剪贴板**里的内容，
+ * 而本机的剪贴板监听（`clip9-client` 的 watcher）**已经在发它了** ——
+ * 再加一条粘贴路径就是「同一份内容发两遍」，靠去重兜住而已。
+ * 更关键的是 webview 里拿不到粘贴文件的**真实路径**（`File` 对象没有路径），
+ * 所以那条路本来也走不通。
+ */
+
+/** 把一批路径交给壳去发。⚠️ 空数组**什么都不做**：那是用户按了「取消」。 */
+function sendFiles(paths) {
+  const list = (paths || []).filter((path) => typeof path === 'string' && path.trim() !== '');
+  if (!list.length) return;
+  invoke('send_files', { paths: list }).catch((error) => showNotice('err', `发不出去：${error}`));
+}
+
+/** 📎 / 🖼：让**壳**弹系统文件选择框（页面自己没有这个能力，见 `commands::pick_files`）。 */
+async function pickAndSend(imagesOnly) {
+  try {
+    sendFiles(await invoke('pick_files', { imagesOnly }));
+  } catch (error) {
+    showNotice('err', `打不开文件选择框：${error}`);
+  }
+}
+
 el('btn-send').addEventListener('click', sendCurrentInput);
-el('btn-refresh').addEventListener('click', () => invoke('refresh'));
+el('btn-attach').addEventListener('click', () => pickAndSend(false));
+el('btn-image').addEventListener('click', () => pickAndSend(true));
+el('input').addEventListener('input', updateCounter);
+// ⚠️ 这一行是按界面稿写的（稿 1 的输入区左边那个 `.lim`）。
+// 说的是**本界面的**动作，不是稿子里的「粘贴即发送」—— 那个为什么不做，见上面那段。
+el('composer-hint').textContent = '回车发送 · Shift+回车换行';
+
+// 把文件**拖进窗口**。
+// ⚠️★ 用 Tauri 的 webview 拖放事件，**不是** HTML5 的 `dragover` / `drop`：
+// webview 默认把文件拖放交给系统，HTML5 那条路拿到的是一个 `File` 对象，
+// 而它**读不出真实路径**（只能拿到字节）—— 那就得把整份内容再过一次 IPC，
+// 而壳那边的上行本来就是按路径读文件的。
+// ⚠️ 只在 `drop` 那一拍发：`over` 会在鼠标每移动一下都来一次。
+{
+  const webview = window.__TAURI__?.webviewWindow?.getCurrentWebviewWindow?.();
+  if (webview?.onDragDropEvent) {
+    webview.onDragDropEvent((event) => {
+      if (event?.payload?.type === 'drop') sendFiles(event.payload.paths);
+    });
+  }
+}
+
+/** 历史是**自动取**的 —— 所以界面上没有「刷新」按钮（界面稿里也没有）。
+ *
+ * ⚠️★ 为什么需要它：切房间时壳会自己取一次（`commands::select`），
+ * 但**启动时**不会 —— 那时只有「下载通道」那个房间的历史由下行自己取回来。
+ * 少了它，用户切到别的房间会看到一个**永远空**的列表，而「刷新」按钮又按稿子删掉了
+ * → 他没有任何办法。
+ *
+ * ⚠️ 按房间记住「上一次什么时候问的」：取不到（服务端挂了 / 凭据不对）时
+ * **不能每 700ms 打一次** —— 那是在拿自己的客户端打自己的服务端。
+ * 5 秒既让用户感觉不到，故障时也不会把服务端打爆。
+ * ⚠️ 键用 `server + room` 而不是下标 —— 下标会随着增删房间指向别人。
+ */
+const historyAsked = new Map();
+const HISTORY_RETRY_MS = 5000;
+
+function ensureHistory(state) {
+  const room = state.rooms[state.selected];
+  if (!room || room.historyLoaded) return;
+  const key = `${room.server}\u0000${room.room}`;
+  const last = historyAsked.get(key) ?? 0;
+  if (Date.now() - last < HISTORY_RETRY_MS) return;
+  historyAsked.set(key, Date.now());
+  invoke('refresh').catch(() => {});
+}
 
 el('conn').addEventListener('click', () => {
   // ⚠️ 这里要的是「切换」而不是「按当前状态推断」—— 状态是 700ms 前的，
@@ -393,7 +571,7 @@ function serverPatch() {
       key: el('cfg-key').value.trim(),
       history: numField('cfg-history', 50),
       roomCleanup: numField('cfg-cleanup', 3600),
-      roomList: el('cfg-roomlist').checked,
+      roomList: sqGet('cfg-roomlist'),
       dbPath: el('cfg-dbpath').value.trim() || 'clip9.redb',
       storageDir: el('cfg-storage').value.trim() || 'uploads',
       roomAuth: roomAuthPatch(),
@@ -405,7 +583,7 @@ function serverPatch() {
       limit: numField('cfg-filelimit', 268435456),
     },
     automation: {
-      enabled: el('cfg-automation').checked,
+      enabled: sqGet('cfg-automation'),
       tickSeconds: numField('cfg-tick', 30),
       graceSeconds: numField('cfg-grace', 600),
       defaultTZ: el('cfg-tz').value.trim() || 'Asia/Shanghai',
@@ -487,14 +665,14 @@ async function openServerPanel() {
     el('cfg-key').value = server.key ?? '';
     el('cfg-history').value = server.history ?? 50;
     el('cfg-cleanup').value = server.roomCleanup ?? 3600;
-    el('cfg-roomlist').checked = server.roomList === true;
+    sqSet('cfg-roomlist', server.roomList === true);
     el('cfg-dbpath').value = server.dbPath ?? 'clip9.redb';
     el('cfg-storage').value = server.storageDir ?? 'uploads';
     el('cfg-textlimit').value = text.limit ?? 4096;
     el('cfg-fileexpire').value = file.expire ?? 3600;
     el('cfg-filechunk').value = file.chunk ?? 1048576;
     el('cfg-filelimit').value = file.limit ?? 268435456;
-    el('cfg-automation').checked = automation.enabled === true;
+    sqSet('cfg-automation', automation.enabled === true);
     el('cfg-tick').value = automation.tickSeconds ?? 30;
     el('cfg-grace').value = automation.graceSeconds ?? 600;
     el('cfg-tz').value = automation.defaultTZ ?? 'Asia/Shanghai';
@@ -572,6 +750,9 @@ function cellDir(on, kind, title, onToggle) {
 }
 
 function renderRoomRows() {
+  // ⚠️ 放**最前面**：下面「一个房间都没有」那条会提前 return，
+  // 放末尾的话那一格会留着上一次的内容（而列表已经空了）。
+  renderDownloadSource();
   const body = el('rooms-body');
   body.textContent = '';
   if (!roomDraft.length) {
@@ -611,6 +792,21 @@ function renderRoomRows() {
   });
 }
 
+/** 「来源房间」那一格（稿 2 里是只读的：写着房间名 + 一句「在左侧栏用 ↓ 选」）。
+ *
+ * ⚠️★ 从**草稿**里算，不是从壳里问 —— 草稿才是用户眼前这张表格的真相
+ *（他可能刚点了 ↓ 还没保存）。两边不一致的话，这一格会跟上面那张表打架，
+ * 而「同一屏里两处说的是两件事」正是这个项目最忌讳的一类。
+ */
+function renderDownloadSource() {
+  const host = el('sc-source');
+  const index = roomDraft.findIndex((room) => room.enable_download === true);
+  const name = index >= 0 ? roomDraft[index].name || roomDraft[index].room || '房间' : '没有';
+  host.textContent = '';
+  host.append(name);
+  host.append(h('span', 'src-note', index >= 0 ? '在左侧栏用 ↓ 选' : '没开：哪个房间的内容都收不到'));
+}
+
 async function refreshLog() {
   try {
     const view = await invoke('server_log');
@@ -642,14 +838,20 @@ async function openSettings() {
     // 但「草稿」这个概念要在代码里看得出来（下面保存时才发出去）。
     roomDraft = view.rooms.map((room) => ({ ...room }));
     renderRoomRows();
-    el('sc-text').checked = view.enableText;
-    el('sc-file').checked = view.enableFile;
-    el('sc-text-dl').checked = view.enableTextDownload;
-    el('sc-file-dl').checked = view.enableFileDownload;
+    sqSet('sc-text', view.enableText);
+    sqSet('sc-file', view.enableFile);
+    sqSet('sc-text-dl', view.enableTextDownload);
+    sqSet('sc-file-dl', view.enableFileDownload);
+    // ⚠️★ 文件上限**来自握手**（`ClientConfig::max_file_size_mb` 的默认是 **0 = 不限制**），
+    // 所以这里照实显示服务端给的那个数 —— 界面稿里写死的「大于 50 MB 跳过」
+    // 在代码里**根本不成立**，抄它就是抄一句假话。
+    el('sc-file-hint').textContent = lastLimits.fileLimit
+      ? `上限 ${sizeLabel(lastLimits.fileLimit)}`
+      : '上限还不知道（还没连上）';
     el('sc-poll').value = view.pollIntervalMs;
     el('sc-dir').value = view.downloadDir;
     // ⚠️ 自启那个勾画的是**系统里的真相**（壳去问的系统），不是配置里的意图。
-    el('sc-autostart').checked = view.autostart;
+    sqSet('sc-autostart', view.autostart);
     el('dg-data').textContent = view.dataDir;
     el('dg-config').textContent = view.configPath;
     el('dg-server').textContent = view.serverRunning ? '运行中' : '没在跑';
@@ -696,14 +898,14 @@ el('settings-save').addEventListener('click', async () => {
       enable_download: room.enable_download === true,
     })),
     sync: {
-      enableText: el('sc-text').checked,
-      enableFile: el('sc-file').checked,
-      enableTextDownload: el('sc-text-dl').checked,
-      enableFileDownload: el('sc-file-dl').checked,
+      enableText: sqGet('sc-text'),
+      enableFile: sqGet('sc-file'),
+      enableTextDownload: sqGet('sc-text-dl'),
+      enableFileDownload: sqGet('sc-file-dl'),
       pollIntervalMs: Number(el('sc-poll').value) || 500,
       downloadDir: el('sc-dir').value.trim() || 'downloads',
     },
-    autostart: el('sc-autostart').checked,
+    autostart: sqGet('sc-autostart'),
   };
   try {
     await invoke('apply_settings', { patch });

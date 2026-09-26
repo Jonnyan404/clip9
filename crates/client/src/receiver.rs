@@ -38,6 +38,7 @@
 //! 那些消息的 id **大于** `latestId` —— 所以它们**不能**被这次取历史顺手记成「已处理」，
 //! 否则 WS 那条会被判成重复、**丢一条真消息**。判据就是 [`Boundary::is_history`]。
 
+use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -97,6 +98,53 @@ pub fn parse_handshake(data: &Value) -> Handshake {
     }
 }
 
+/// 房间里**别人**的一台设备。
+///
+/// ⚠️★ 只用来画界面那行「N 台在线」（稿 1 里几个圆圈那个）。
+/// ⚠️ 服务端**不把本机算进来**（`state.rs` 的 `devices_in_room_except` 就把自己排掉了），
+/// 所以这里的列表**永远不含本机** —— 要显示「几台」时得自己加 1，
+/// 而「加 1」这件事只有壳知道（它知道自己连没连上）。
+///
+/// ⚠️ `kind` 的三个取值是服务端 `user_agent.rs` 认出来的
+///（`desktop` / `smartphone` / `tablet`，**小写**）—— 界面按它选图标，
+/// 不要按 `name` 猜（名字是用户自己起的自由文本）。
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+pub struct PeerDevice {
+    pub id: String,
+    pub name: String,
+    pub kind: String,
+}
+
+impl PeerDevice {
+    /// 从一条 `connect` / `disconnect` 的 `data` 里取设备信息。
+    ///
+    /// ⚠️ 认不出 `id` 就当**没有**（`None`）：设备进出这件事只能按 id 去重，
+    /// 没有 id 就没法回答「这台是不是已经在了」—— 用一个空 id 兜底会让
+    /// 所有认不出的设备挤成同一台。
+    #[must_use]
+    pub fn from_payload(data: &Value) -> Option<Self> {
+        let id = data.get("id").and_then(Value::as_str)?;
+        if id.is_empty() {
+            return None;
+        }
+        Some(Self {
+            id: id.to_owned(),
+            // ⚠️ 服务端把 `type` 这个名字给了「设备类型」（`protocol::DeviceMeta` 的
+            // `#[serde(rename = "type")]`），所以这里是 `type` 而不是 `kind`。
+            kind: data
+                .get("type")
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .to_owned(),
+            name: data
+                .get("name")
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .to_owned(),
+        })
+    }
+}
+
 /// 一条 WS 消息解析出来的东西。
 #[derive(Debug, Clone)]
 pub enum WsEvent {
@@ -116,8 +164,16 @@ pub enum WsEvent {
     /// 让 `config` / `revoke` 那些小事件陪着扛一个大结构，是白白的拷贝。
     /// ⚠️ 别用 `#[allow]` 把它压下去（`docs/CONTRIBUTING.md` §4：不许为了让自己的切片过而放宽门禁）。
     Entry(Box<ReceiveHolder>),
-    /// 设备进出 / 房间被清空 / 删除 —— 都只影响界面列表。
-    DevicesChanged,
+    /// 一台设备进/出了这个房间。
+    ///
+    /// ⚠️★ 这里**必须**带上是谁：老版本把它当成一个「变了」的信号就丢了，
+    /// 于是界面只能画「有人进出了」而画不出**几台在线** ——
+    /// 而稿 1 的那行设备（`3 台在线`）要的正是后者。
+    /// `device: None` = 认不出 payload（不是本机），照旧只当信号用。
+    DevicesChanged {
+        device: Option<PeerDevice>,
+        joined: bool,
+    },
     Revoked {
         id: i32,
     },
@@ -150,7 +206,10 @@ pub fn parse_event(raw: &str) -> WsEvent {
             // 文件条目变成一条空文本条目，然后被写进剪贴板（把用户的东西擦掉）。
             Err(_) => WsEvent::Other(format!("unparsable {kind} payload")),
         },
-        "connect" | "disconnect" => WsEvent::DevicesChanged,
+        "connect" | "disconnect" => WsEvent::DevicesChanged {
+            device: PeerDevice::from_payload(&data),
+            joined: kind == "connect",
+        },
         "revoke" => WsEvent::Revoked {
             id: data.get("id").and_then(Value::as_i64).unwrap_or(0) as i32,
         },
@@ -276,8 +335,11 @@ pub enum ReceiverUpdate {
     Revoked { id: i32 },
     /// 房间被清空了。
     Cleared,
-    /// 设备列表变了。
-    DevicesChanged,
+    /// 这个房间里的设备变了。⚠️ **只含别人**（服务端不把本机算进来）。
+    ///
+    /// ⚠️★ 给的是**整份列表**，不是「谁进 / 谁出」：界面要画的是「现在有几台」，
+    /// 让它自己维护一个集合 = 在界面上再存一份会漂的状态（而漂了不报错，只是数字不对）。
+    DevicesChanged(Vec<PeerDevice>),
     /// 状态变化（连接中 / 连上了 / 老服务端 / 断了）。
     Status(ReceiverStatus),
 }
@@ -493,6 +555,13 @@ async fn connect_once(
     // 等 `config`（它带着边界）到了再说。
     let mut history_requested = false;
 
+    // 房间里的**别人**（本机不在里面，见 [`PeerDevice`] 的文档）。
+    // ⚠️★ 用 `BTreeMap` 按 id 去重，不是 `Vec`：服务端在「同一台设备的**最后一个**
+    // 连接断开」时才广播 `disconnect`（`state.rs`），所以一台设备开两个标签页
+    // 会来两条 `connect` —— 用列表的话它会在界面里算成两台。
+    // ⚠️ `BTreeMap` 顺带给了**稳定顺序**（按 id）：界面那行圆圈不会每次重画都换位置。
+    let mut peers: BTreeMap<String, PeerDevice> = BTreeMap::new();
+
     loop {
         let frame = tokio::time::timeout(IDLE_TIMEOUT, stream.next()).await;
 
@@ -566,8 +635,19 @@ async fn connect_once(
                 }
             }
 
-            WsEvent::DevicesChanged => {
-                let _ = updates.send(ReceiverUpdate::DevicesChanged);
+            WsEvent::DevicesChanged { device, joined } => {
+                if let Some(device) = device {
+                    if joined {
+                        peers.insert(device.id.clone(), device);
+                    } else {
+                        peers.remove(&device.id);
+                    }
+                }
+                // ⚠️ 认不出 payload 时**照旧推一份**（`device` 是 `None`）：
+                // 「变了」这个信号本身仍然成立，界面至少能知道该重画了。
+                let _ = updates.send(ReceiverUpdate::DevicesChanged(
+                    peers.values().cloned().collect(),
+                ));
             }
             WsEvent::Revoked { id } => {
                 let _ = updates.send(ReceiverUpdate::Revoked { id });
@@ -802,13 +882,31 @@ mod tests {
             parse_event(r#"{"event":"clearAll","data":{"room":"default"}}"#),
             WsEvent::Cleared
         ));
-        assert!(matches!(
-            parse_event(r#"{"event":"connect","data":{"id":"d1"}}"#),
-            WsEvent::DevicesChanged
-        ));
+        // ⚠️ 设备事件要**带上是哪一台**（老版本只当信号，于是界面画不出「几台在线」）。
+        match parse_event(
+            r#"{"event":"connect","data":{"id":"d1","type":"smartphone","name":"iPhone"}}"#,
+        ) {
+            WsEvent::DevicesChanged { device, joined } => {
+                assert!(joined, "connect 是「进来」");
+                let device = device.expect("认得出 id 就该带出来");
+                assert_eq!(device.id, "d1");
+                assert_eq!(device.kind, "smartphone");
+                assert_eq!(device.name, "iPhone");
+            }
+            other => panic!("应当是设备事件，得到 {other:?}"),
+        }
         assert!(matches!(
             parse_event(r#"{"event":"disconnect","data":{"id":"d1"}}"#),
-            WsEvent::DevicesChanged
+            WsEvent::DevicesChanged { joined: false, .. }
+        ));
+        // ⚠️ 没有 id 就**当没有**：设备进出只能按 id 去重，兜一个空 id 会让
+        // 所有认不出的设备挤成同一台。信号本身仍然成立。
+        assert!(matches!(
+            parse_event(r#"{"event":"connect","data":{}}"#),
+            WsEvent::DevicesChanged {
+                device: None,
+                joined: true
+            }
         ));
         assert!(matches!(
             parse_event(r#"{"event":"pong","data":123}"#),
