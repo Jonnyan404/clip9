@@ -45,7 +45,7 @@ use std::time::Duration;
 use reqwest::header::{AUTHORIZATION, CONTENT_TYPE};
 use reqwest::{Client, multipart};
 use serde::Deserialize;
-use time::OffsetDateTime;
+use time::{OffsetDateTime, UtcOffset};
 
 use crate::config::{Channel, ClientConfig};
 use crate::endpoint;
@@ -312,6 +312,25 @@ pub fn build_client() -> Result<Client, String> {
         .map_err(|e| format!("建 HTTP 客户端失败：{e}"))
 }
 
+/// 现在的时刻 —— **上层要主动发事件时该用的唯一时钟**。
+///
+/// ⚠️ 为什么由这个 crate 提供，而不是让上层自己取：`upload_event` 要一个时间戳
+/// （图片文件名 `clipboard_<时间戳>.png` 靠它，而那个名字是**本机时区**的，
+/// 与行为基准 `clip-sync` 逐字一致），而 `docs/api.md` 里的 `timestamp`
+/// 是**服务端**落的秒级绝对时间 —— 两者不是一回事。上层各自造一个时钟，
+/// 就会出现「文件名是 UTC 的」这种没人能一眼看出来的偏差。
+///
+/// ⚠️★ 取不到本机时区时**退到 UTC**，而不是报错：这时只有**生成的文件名**上的时间
+/// 会差一个时区偏移（条目上的 `timestamp` 不受影响，它是服务端落的绝对秒）。
+/// 为一个「给人看的名字」让整个上行停摆，不划算 —— 这一条是有意的取舍，
+/// 不是「忘了处理错误」。
+#[must_use]
+pub fn now() -> OffsetDateTime {
+    UtcOffset::current_local_offset()
+        .map(|offset| OffsetDateTime::now_utc().to_offset(offset))
+        .unwrap_or_else(|_| OffsetDateTime::now_utc())
+}
+
 /// 把一次剪贴板事件发出去。
 ///
 /// ⚠️ **每个房间独立**：一个房间失败不影响别的（见模块文档第 3 条）。
@@ -480,14 +499,33 @@ mod tests {
     use std::path::PathBuf;
     use time::macros::datetime;
 
-    fn now() -> OffsetDateTime {
+    fn fixed_now() -> OffsetDateTime {
         datetime!(2026-09-26 13:45:00 +8)
+    }
+
+    /// ⚠️ 上层（「手动发一条」那条路）要的是一个**真实时钟** —— 而这个 crate 原来
+    /// 只有一个**写死**的测试时钟，于是上层要么自己再造一个（时区可能不一样），
+    /// 要么干脆发不出去。上面那个改名（`now` → `fixed_now`）就是为了让这条
+    /// 断言能说到真正的 `now()`。
+    ///
+    /// ⚠️ 只钉「真的是现在」，**不钉时区**：时区在不同机器上本来就不一样，
+    /// 而 `now()` 的契约是「本机时区，取不到时退到 UTC」（见它的文档）。
+    #[test]
+    fn now_is_the_real_current_time() {
+        let delta = (now() - OffsetDateTime::now_utc()).abs();
+        assert!(
+            delta < time::Duration::seconds(5),
+            "now() 应当就是现在，与 UTC 的差应当只有时区偏移，实际 {delta}"
+        );
     }
 
     /// ⚠️ 图片文件名与行为基准 `clip-sync` 逐字一致（它是 `clipboard_<时间戳>.png`）。
     #[test]
     fn image_file_name_matches_the_baseline_shape() {
-        assert_eq!(image_file_name(now()), "clipboard_20260926-134500.png");
+        assert_eq!(
+            image_file_name(fixed_now()),
+            "clipboard_20260926-134500.png"
+        );
         // 补零也要对（个位数月/日/时/分/秒）。
         assert_eq!(
             image_file_name(datetime!(2026-01-02 03:04:05 +8)),
@@ -561,7 +599,7 @@ mod tests {
     #[tokio::test]
     async fn image_becomes_a_file_payload() {
         let event = ClipboardEvent::Image { png: vec![1, 2, 3] };
-        let payloads = materialize(&event, now(), ServerLimits::default(), 0)
+        let payloads = materialize(&event, fixed_now(), ServerLimits::default(), 0)
             .await
             .expect("应当能发");
         assert_eq!(
@@ -587,7 +625,7 @@ mod tests {
         let event = ClipboardEvent::Files {
             paths: vec![a.clone(), b.clone()],
         };
-        let payloads = materialize(&event, now(), ServerLimits::default(), 0)
+        let payloads = materialize(&event, fixed_now(), ServerLimits::default(), 0)
             .await
             .unwrap();
         assert_eq!(payloads.len(), 2, "两个文件要发两次");
@@ -638,21 +676,21 @@ mod tests {
             subtype: Some(TextSubtype::Url),
         };
         assert!(
-            materialize(&empty_text, now(), ServerLimits::default(), 0)
+            materialize(&empty_text, fixed_now(), ServerLimits::default(), 0)
                 .await
                 .is_err()
         );
 
         let empty_image = ClipboardEvent::Image { png: Vec::new() };
         assert!(
-            materialize(&empty_image, now(), ServerLimits::default(), 0)
+            materialize(&empty_image, fixed_now(), ServerLimits::default(), 0)
                 .await
                 .is_err()
         );
 
         let no_files = ClipboardEvent::Files { paths: Vec::new() };
         assert!(
-            materialize(&no_files, now(), ServerLimits::default(), 0)
+            materialize(&no_files, fixed_now(), ServerLimits::default(), 0)
                 .await
                 .is_err()
         );
@@ -724,7 +762,8 @@ mod tests {
             content: "x".to_owned(),
             subtype: None,
         };
-        let report = upload_event(&cfg, &event, ServerLimits::default(), now(), &client).await;
+        let report =
+            upload_event(&cfg, &event, ServerLimits::default(), fixed_now(), &client).await;
         assert!(report.skipped);
         assert_eq!(report.payloads, 0);
         assert!(report.ok(), "跳过不是失败");
@@ -745,7 +784,8 @@ mod tests {
             content: "x".to_owned(),
             subtype: None,
         };
-        let report = upload_event(&cfg, &event, ServerLimits::default(), now(), &client).await;
+        let report =
+            upload_event(&cfg, &event, ServerLimits::default(), fixed_now(), &client).await;
         assert!(report.skipped);
         assert!(report.payloads == 0, "跳过的时候不该去材料化（更不该发）");
     }
@@ -776,7 +816,7 @@ mod tests {
         let event = ClipboardEvent::Files {
             paths: vec![PathBuf::from(&path)],
         };
-        let payloads = materialize(&event, now(), ServerLimits::default(), 0)
+        let payloads = materialize(&event, fixed_now(), ServerLimits::default(), 0)
             .await
             .unwrap();
         let UploadPayload::File { name, .. } = &payloads[0] else {
