@@ -18,9 +18,36 @@ use std::sync::Mutex;
 
 use clip9_client::{ClientConfig, ReceiverStatus, ReceiverUpdate, ServerLimits};
 use clip9_protocol::ReceiveHolder;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 use crate::model::{EntryView, StatusView};
+
+/// 「设置」里那些**不带房间**的项。`None` = **不改**。
+///
+/// ⚠️ 每个字段都是 `Option`：界面一次只改一项时，不该把别的项顺手覆盖成默认值
+/// （那是「改 A 把 B 改回去了」，用户会以为设置没保存）。
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct SyncScopePatch {
+    pub enable_text: Option<bool>,
+    pub enable_file: Option<bool>,
+    pub enable_text_download: Option<bool>,
+    pub enable_file_download: Option<bool>,
+    pub poll_interval_ms: Option<u64>,
+    pub download_dir: Option<PathBuf>,
+}
+
+/// 一个房间的**稳定标识**（换清单时搬状态用它）。
+///
+/// ⚠️ 用「服务端 + 房间」而不是显示名：显示名是给用户改的，
+/// **改个名字就把历史清空**是说不通的。也**不含凭据** —— 改密码同样不该清历史。
+fn room_key(channel: &clip9_client::Channel) -> String {
+    format!(
+        "{}|{}",
+        channel.server.trim().trim_end_matches('/'),
+        channel.room
+    )
+}
 
 /// 每个房间在界面上**留多少条**。
 ///
@@ -379,6 +406,70 @@ impl Store {
     /// 只改配置的话，用户勾了、界面上勾着、系统里没写，就是「配了不生效」。
     pub fn set_autostart(&self, on: bool) {
         self.lock().config.enable_autostart = on;
+    }
+
+    /// 换整份房间清单（界面上加 / 删 / 改房间）。
+    ///
+    /// ⚠️★ **房间清单和本机状态是按下标对齐的**（`Inner.rooms[i]` 属于
+    /// `config.channels[i]`）—— 所以换清单时**必须同时搬状态**。
+    /// 不搬的症状是「A 房间的消息显示在 B 房间下面」：界面照常渲染、**不报错**，
+    /// 而用户会以为「消息串台了」—— 那是这个项目最忌讳的一类。
+    ///
+    /// ⚠️ 按**房间名**（`server` + `room`）搬，不按下标：用户删掉第一个房间时，
+    /// 后面的下标全变了，按下标搬等于把每个房间的消息都错位一格。
+    ///
+    /// ⚠️ 认不出来的当**新房间**（空状态、`history_loaded = false`）——
+    /// 于是界面会显示「还没加载这个房间的历史」而不是一个骗人的空列表。
+    pub fn set_rooms(&self, channels: Vec<clip9_client::Channel>) -> Result<(), String> {
+        let mut inner = self.lock();
+        // ⚠️ 先把「房间名」收出来，**再** `drain` —— 两个字段同属 `inner`，
+        // 一边不可变借用 `config`、一边可变借用 `rooms` 会撞上借用检查。
+        let keys: Vec<String> = inner.config.channels.iter().map(room_key).collect();
+        let mut old: std::collections::HashMap<String, Room> =
+            keys.into_iter().zip(inner.rooms.drain(..)).collect();
+
+        inner.rooms = channels
+            .iter()
+            .map(|channel| old.remove(&room_key(channel)).unwrap_or_default())
+            .collect();
+        inner.config.channels = channels;
+
+        // ⚠️ 选中的那个下标可能已经不存在了（删掉了最后一个房间）→ 夹回合法范围。
+        // 不夹的话 `snapshot()` 里的 `rooms.get(selected)` 会拿到 `None`，
+        // 界面显示成「没有房间」而配置里明明有 —— 又一处「界面说一套」。
+        if inner.selected >= inner.rooms.len() {
+            inner.selected = inner.rooms.len().saturating_sub(1);
+        }
+        Ok(())
+    }
+
+    /// 换同步范围 / 轮询间隔 / 下载目录（「设置」里那些不带房间的项）。
+    ///
+    /// ⚠️ 只改**给进来的**那些字段（`None` = 不改）：界面一次只改一项时，
+    /// 不该把别的项顺手覆盖成默认值。
+    pub fn set_sync_scope(&self, patch: &SyncScopePatch) {
+        let mut inner = self.lock();
+        let config = &mut inner.config;
+        if let Some(value) = patch.enable_text {
+            config.enable_text = value;
+        }
+        if let Some(value) = patch.enable_file {
+            config.enable_file = value;
+        }
+        if let Some(value) = patch.enable_text_download {
+            config.enable_text_download = value;
+        }
+        if let Some(value) = patch.enable_file_download {
+            config.enable_file_download = value;
+        }
+        if let Some(value) = patch.poll_interval_ms {
+            // ⚠️ 下界 1ms：`0` 会让监听线程**空转**（`thread::sleep(0)` 立刻返回），
+            // 症状是「风扇转起来」，和「同步不准」完全联想不到一起。
+            config.poll_interval_ms = value.max(1);
+        }
+        if let Some(value) = &patch.download_dir {
+            config.download_dir = value.clone();
+        }
     }
 
     /// 界面上要用的配置副本（喂给 `clip9-client` 的那几个函数）。
@@ -1012,5 +1103,89 @@ mod tests {
         );
         // 什么都没有时给一个**相对**目录（而不是 panic）。
         assert_eq!(data_dir_for("linux", None, None), PathBuf::from("clip9"));
+    }
+
+    /// ⚠️★ 换房间清单要**按房间名搬状态**，不能按下标 ——
+    /// 删掉第一个房间时后面的下标全变，按下标搬等于把每个房间的消息**错位一格**，
+    /// 而界面上照常渲染、**不报错**（用户只会觉得「消息串台了」）。
+    #[test]
+    fn replacing_rooms_carries_the_state_by_name_not_by_index() {
+        let (_dir, store) = temp_store();
+        // 两个房间各放一条（`work` 是第二个）。
+        store.apply_update(ReceiverUpdate::Entry(Box::new(text(
+            1,
+            "default",
+            "来自默认",
+        ))));
+        store.apply_update(ReceiverUpdate::Entry(Box::new(text(2, "work", "来自工作"))));
+
+        // 删掉第一个（default）→ 现在 `work` 排到了下标 0。
+        let mut channels = store.config().channels;
+        channels.remove(0);
+        store.set_rooms(channels).unwrap();
+
+        let snapshot = store.snapshot();
+        assert_eq!(snapshot.rooms.len(), 1);
+        assert_eq!(snapshot.rooms[0].room, "work");
+        // ⚠️ 关键：`work` 那条要**跟着它走**，而不是留在下标 0 上。
+        store.select(0).unwrap();
+        let entries = &store.snapshot().entries;
+        assert_eq!(entries.len(), 1, "work 该带着自己的那一条");
+        assert_eq!(entries[0].text, "来自工作", "不能串到别的房间去");
+    }
+
+    /// ⚠️ 删掉最后一个房间之后，`selected` 要夹回合法范围 ——
+    /// 不夹的话 `snapshot()` 里 `rooms.get(selected)` 会拿到 `None`，
+    /// 界面显示成「没有房间」而配置里明明有。
+    #[test]
+    fn removing_the_selected_room_clamps_the_selection() {
+        let (_dir, store) = temp_store();
+        store.select(1).unwrap();
+        let mut channels = store.config().channels;
+        channels.truncate(1);
+        store.set_rooms(channels).unwrap();
+        assert_eq!(store.snapshot().selected, 0, "夹回最后一个合法下标");
+    }
+
+    /// 加一个新房间：它要是**空状态**（`history_loaded = false`）——
+    /// 于是界面显示「还没加载历史」，而不是一个骗人的空列表。
+    #[test]
+    fn a_new_room_starts_unloaded() {
+        let (_dir, store) = temp_store();
+        let mut channels = store.config().channels;
+        channels.push(Channel::new("新的", "http://127.0.0.1:9502"));
+        store.set_rooms(channels).unwrap();
+        let snapshot = store.snapshot();
+        assert_eq!(snapshot.rooms.len(), 3);
+        assert_eq!(snapshot.rooms[2].count, 0);
+        assert!(!snapshot.rooms[2].history_loaded, "新房间该是「还没加载」");
+    }
+
+    /// ⚠️ 同步范围的补丁是**逐字段**的：只改一项时别的项不动。
+    /// 全量覆盖的话，「改 A 把 B 改回去」—— 用户会以为设置没保存。
+    #[test]
+    fn a_sync_scope_patch_only_touches_what_it_carries() {
+        let (_dir, store) = temp_store();
+        let before = store.config();
+        store.set_sync_scope(&SyncScopePatch {
+            enable_file: Some(false),
+            ..SyncScopePatch::default()
+        });
+        let after = store.config();
+        assert!(!after.enable_file, "改的那项要生效");
+        assert_eq!(after.enable_text, before.enable_text, "别的项不许动");
+        assert_eq!(after.poll_interval_ms, before.poll_interval_ms);
+    }
+
+    /// ⚠️ 轮询间隔的 `0` 要夹到 1ms：`thread::sleep(0)` 会让监听线程**空转**，
+    /// 症状是「风扇转起来、CPU 高」，和「同步不准」完全联想不到一起。
+    #[test]
+    fn a_zero_poll_interval_is_clamped() {
+        let (_dir, store) = temp_store();
+        store.set_sync_scope(&SyncScopePatch {
+            poll_interval_ms: Some(0),
+            ..SyncScopePatch::default()
+        });
+        assert_eq!(store.config().poll_interval_ms, 1);
     }
 }

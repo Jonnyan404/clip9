@@ -442,3 +442,157 @@ el('cfg-save-restart').addEventListener('click', async () => {
   }
   await refreshServerState();
 });
+
+/* ── 设置窗口 ────────────────────────────────────────────────────────
+ *
+ * ⚠️★ 房间清单是**草稿**：用户在表单里改到一半时，壳里的配置**不该**变 ——
+ * 他还没点保存。所以这里维护一份 `roomDraft`，点「保存」才发出去。
+ * 界面上也因此要**说清**「改了要点保存」（保存按钮 + 保存后的提示）。
+ *
+ * ⚠️ 房间字段名是 `Channel` 自己的（`name` / `server` / `room` / `auth_token`）——
+ * 直接用它的形状，而不是再包一层镜像（少一份会漂的定义）。
+ */
+
+let roomDraft = [];
+
+/** 一个单元格里的文本框。⚠️ 用 `input` 事件更新草稿，不重渲染 ——
+ *  每次重渲染都把 `value` 重设会把用户正在输入的光标顶掉。 */
+function cellInput(value, onChange, placeholder) {
+  const td = h('td');
+  const input = document.createElement('input');
+  input.type = 'text';
+  input.value = value ?? '';
+  if (placeholder) input.placeholder = placeholder;
+  input.addEventListener('input', () => onChange(input.value));
+  td.append(input);
+  return td;
+}
+
+/** 一个方向开关（表格里的 ↑ / ↓）。 */
+function cellDir(on, kind, title, onToggle) {
+  const td = h('td', 'tiny');
+  const box = h('span', on ? `dir ${kind} on` : `dir ${kind}`, kind === 'up' ? '↑' : '↓');
+  box.title = title;
+  box.addEventListener('click', () => onToggle(!on));
+  td.append(box);
+  return td;
+}
+
+function renderRoomRows() {
+  const body = el('rooms-body');
+  body.textContent = '';
+  if (!roomDraft.length) {
+    const tr = h('tr');
+    const td = h('td', 'sub', '还没有房间。点下面的「添加房间」—— 服务端留空就是本机那个。');
+    td.colSpan = 7;
+    tr.append(td);
+    body.append(tr);
+    return;
+  }
+  roomDraft.forEach((room, index) => {
+    const tr = h('tr');
+    tr.append(cellInput(room.name, (v) => { roomDraft[index].name = v; }));
+    tr.append(cellInput(room.server, (v) => { roomDraft[index].server = v; }, 'http://127.0.0.1:9502'));
+    tr.append(cellInput(room.room, (v) => { roomDraft[index].room = v; }, 'default'));
+    tr.append(cellInput(room.auth_token, (v) => { roomDraft[index].auth_token = v; }, '（空 = 无密码）'));
+    // ⚠️ ↓ 是**全局单选**：点开一个，别的自动关掉。做成多选再靠后端「取第一个」
+    // 的话，用户点第二个会**没反应** —— 那正是「配了不生效」。
+    tr.append(cellDir(room.enable_upload !== false, 'up', '本机剪贴板要发到这个房间（可多选）', (on) => {
+      roomDraft[index].enable_upload = on;
+      renderRoomRows();
+    }));
+    tr.append(cellDir(room.enable_download === true, 'dn', '同步到本机剪贴板（全局只能一个）', (on) => {
+      roomDraft.forEach((other, position) => { other.enable_download = on && position === index; });
+      renderRoomRows();
+    }));
+    const del = h('td', 'tiny');
+    const button = h('button', 'btn', '删');
+    button.style.padding = '2px 7px';
+    button.addEventListener('click', () => {
+      roomDraft.splice(index, 1);
+      renderRoomRows();
+    });
+    del.append(button);
+    tr.append(del);
+    body.append(tr);
+  });
+}
+
+function showPane(name) {
+  for (const item of el('settings-nav').querySelectorAll('.it')) {
+    item.classList.toggle('on', item.dataset.pane === name);
+  }
+  for (const pane of el('settings-overlay').querySelectorAll('.pane')) {
+    pane.hidden = pane.id !== `pane-${name}`;
+  }
+}
+
+async function openSettings() {
+  el('settings-msg').textContent = '';
+  el('settings-overlay').hidden = false;
+  showPane('rooms');
+  try {
+    const view = await invoke('settings_view');
+    // ⚠️ 深拷贝一份草稿：`view` 是 IPC 回来的对象，改它不会影响壳，
+    // 但「草稿」这个概念要在代码里看得出来（下面保存时才发出去）。
+    roomDraft = view.rooms.map((room) => ({ ...room }));
+    renderRoomRows();
+    el('sc-text').checked = view.enableText;
+    el('sc-file').checked = view.enableFile;
+    el('sc-text-dl').checked = view.enableTextDownload;
+    el('sc-file-dl').checked = view.enableFileDownload;
+    el('sc-poll').value = view.pollIntervalMs;
+    el('sc-dir').value = view.downloadDir;
+    // ⚠️ 自启那个勾画的是**系统里的真相**（壳去问的系统），不是配置里的意图。
+    el('sc-autostart').checked = view.autostart;
+    el('dg-data').textContent = view.dataDir;
+    el('dg-config').textContent = view.configPath;
+    el('dg-server').textContent = view.serverRunning ? '运行中' : '没在跑';
+  } catch (error) {
+    el('settings-msg').textContent = `读不到设置：${error}`;
+  }
+}
+
+el('btn-settings').addEventListener('click', openSettings);
+el('settings-close').addEventListener('click', () => {
+  el('settings-overlay').hidden = true;
+});
+el('settings-nav').addEventListener('click', (event) => {
+  const item = event.target.closest('.it');
+  if (item) showPane(item.dataset.pane);
+});
+el('room-add').addEventListener('click', () => {
+  // ⚠️ 服务端留空**不是**省事：空地址会被 `ClientConfig::problems()` 报出来，
+  // 而界面会显示那条问题 —— 比悄悄填一个「大概是这个」强。
+  roomDraft.push({ name: '', server: '', room: 'default', auth_token: '', enable_upload: true, enable_download: false });
+  renderRoomRows();
+});
+
+el('settings-save').addEventListener('click', async () => {
+  const patch = {
+    rooms: roomDraft.map((room) => ({
+      name: room.name || room.room || '房间',
+      server: room.server.trim(),
+      room: (room.room || 'default').trim(),
+      auth_token: (room.auth_token || '').trim() || null,
+      enable_upload: room.enable_upload !== false,
+      enable_download: room.enable_download === true,
+    })),
+    sync: {
+      enableText: el('sc-text').checked,
+      enableFile: el('sc-file').checked,
+      enableTextDownload: el('sc-text-dl').checked,
+      enableFileDownload: el('sc-file-dl').checked,
+      pollIntervalMs: Number(el('sc-poll').value) || 500,
+      downloadDir: el('sc-dir').value.trim() || 'downloads',
+    },
+    autostart: el('sc-autostart').checked,
+  };
+  try {
+    await invoke('apply_settings', { patch });
+    el('settings-msg').textContent = '已保存';
+  } catch (error) {
+    // ⚠️ 失败要**留在界面上**：设置没存上而界面看着像存了，用户下次启动会发现白改。
+    el('settings-msg').textContent = `没保存：${error}`;
+  }
+});

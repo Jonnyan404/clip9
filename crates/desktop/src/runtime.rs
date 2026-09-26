@@ -79,6 +79,16 @@ impl Runtime {
         self.start_receiver();
     }
 
+    /// 只重启剪贴板监听。
+    ///
+    /// ⚠️ 轮询间隔变了要**重启线程**才生效 —— 那个间隔是 `spawn_watcher` 时读进
+    /// `WatchConfig` 的（见 [`watch_config`]），改配置不会影响一个已经在跑的线程。
+    /// 不重启的话症状是「设置里改了间隔，实际没变」—— 又一例「配了不生效」。
+    pub fn restart_watcher(self: &Arc<Self>) {
+        self.stop_watcher();
+        self.start_watcher();
+    }
+
     fn stop_watcher(&self) {
         if let Some(handle) = self
             .watcher

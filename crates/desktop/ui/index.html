@@ -121,13 +121,19 @@ body {
     border-radius: 999px; padding: 0 6px; line-height: 15px;
 }
 /* 方向开关：↑ 上传（可多选）/ ↓ 下载（**全局单选**）—— 见规格 §4.1 第 4 条。
-   ⚠️ 下载做成单选是**有意的**：原设计靠 `find` 取第一个，用户开第二个点了没反应
-   —— 那正是这个项目最忌讳的「配了不生效」。 */
+   ⚠️ 做成**小方块**而不是两个箭头字符：箭头在 16px 下分不出「开着」和「关着」，
+   而这两个开关的状态是用户最需要一眼看清的东西（下载全局只能一个，看错就白点）。
+   ⚠️ 上传用强调色、下载用绿色：两者**语义不同**（一个往外发、一个往里收），
+   颜色一样的话扫一眼分不出来。 */
 .dir {
-    width: 16px; text-align: center; font-size: 11px; font-weight: 700;
-    color: var(--sidebar-sub); opacity: .35; cursor: default;
+    width: 17px; height: 17px; border-radius: 5px; flex: none;
+    border: 1px solid var(--sidebar-chip-border);
+    display: grid; place-items: center;
+    font-size: 10px; line-height: 1; color: var(--sidebar-sub);
+    background: transparent;
 }
-.dir.on { color: var(--accent); opacity: 1; }
+.dir.on.up { color: #fff; background: var(--accent); border-color: var(--accent); }
+.dir.on.dn { color: #fff; background: var(--ok); border-color: var(--ok); }
 .hint { padding: 2px 10px 8px; color: var(--sidebar-sub); font-size: 10.5px; line-height: 1.45; }
 .sidebar-foot { padding: 8px; border-top: 1px solid var(--border); display: grid; gap: 4px; }
 .sidebar-foot button {
@@ -274,6 +280,53 @@ body {
     display: flex; align-items: center; gap: 8px;
 }
 .panel .pf .spacer { flex: 1; }
+
+/* ── 设置窗口（左分组 + 右内容）────────────────────────────
+   形状照 `docs/specs/desktop-client-settings-mockup.html` 那份稿子：
+   左边一组导航、右边一块内容，分组标题比正文小一号、颜色淡一档。
+   ⚠️ 用「分组导航」而不是一长条表单：设置项会越加越多，而一长条表单到十几项
+   就没人找得到了（找不到 = 以为没有这个设置）。 */
+.setwin { width: 660px; height: 470px; display: flex; flex-direction: column; }
+.setwin .body { flex: 1; display: flex; min-height: 0; }
+.nav { width: 158px; flex: none; background: var(--sidebar-bg); border-right: 1px solid var(--border); padding: 8px 6px; }
+.nav .grp { padding: 10px 9px 4px; font-size: 10.5px; color: var(--sidebar-sub); letter-spacing: .04em; }
+.nav .it {
+    padding: 7px 9px; border-radius: 7px; font-size: 12.5px;
+    color: var(--sidebar-name); display: flex; gap: 8px; align-items: center;
+}
+.nav .it:hover { background: var(--sidebar-hover); }
+.nav .it.on { background: var(--sidebar-active); border: 1px solid var(--sidebar-active-border); }
+.pane { flex: 1; overflow-y: auto; padding: 14px 16px; }
+.pane[hidden] { display: none; }
+.pane h3 { margin: 0 0 3px; font-size: 13px; }
+.pane .sub { color: var(--text-2); font-size: 11.5px; margin: 0 0 13px; line-height: 1.55; }
+.subcard { border: 1px solid var(--border); border-radius: 9px; padding: 10px 12px; background: var(--bg); margin-bottom: 11px; }
+.subcard .st { font-size: 12.5px; font-weight: 500; margin-bottom: 7px; }
+.field { margin-bottom: 11px; }
+.field label { display: block; font-size: 11.5px; color: var(--text-2); margin-bottom: 4px; }
+.field input {
+    width: 100%; border: 1px solid var(--border); border-radius: 7px;
+    background: var(--bg); color: var(--text); font: inherit; padding: 5px 8px; font-size: 12.5px;
+}
+.row2 { display: flex; gap: 10px; } .row2 > * { flex: 1; }
+.kv { display: grid; grid-template-columns: 84px 1fr; gap: 5px 10px; font-size: 12px; }
+.kv .k { color: var(--text-2); }
+.kv .v { word-break: break-all; }
+/* 房间表格：⚠️ 用表格而不是一堆卡片 —— 这是**逐行对齐**的数据
+   （名字/地址/房间/凭据四列），卡片排版下用户没法竖着扫。 */
+table.rooms { width: 100%; border-collapse: collapse; font-size: 12px; }
+table.rooms th {
+    text-align: left; font-weight: 500; color: var(--text-2);
+    font-size: 10.5px; padding: 4px 5px; border-bottom: 1px solid var(--border);
+}
+table.rooms td { padding: 4px 5px; border-bottom: 1px solid color-mix(in srgb, var(--border) 55%, transparent); }
+table.rooms input { padding: 3px 6px; font-size: 11.5px; }
+table.rooms .tiny { width: 1%; white-space: nowrap; }
+.pill {
+    display: inline-block; font-size: 10.5px; line-height: 16px; padding: 0 7px;
+    border-radius: 999px; border: 1px solid var(--sidebar-chip-border); color: var(--text-2);
+}
+.pill.ok { color: var(--ok); border-color: color-mix(in srgb, var(--ok) 45%, transparent); }
 </style>
 </head>
 <body>
@@ -299,7 +352,8 @@ body {
             <div class="sidebar-foot">
                 <!-- ⚠️ 按钮只有「真能做事」的才放这儿：一个点了没反应的按钮
                      比没有这个按钮更坏（它会让用户以为功能坏了）。 -->
-                <button id="btn-server">⚙ 服务端配置</button>
+                <button id="btn-settings">⚙ 设置</button>
+                <button id="btn-server">🗄 服务端配置</button>
                 <button id="btn-web">🌐 网页版 ↗</button>
             </div>
         </aside>
@@ -329,6 +383,109 @@ body {
             </div>
         </main>
     </div>
+    <!-- 设置窗口（客户端自己的配置）。
+         形状照 `docs/specs/desktop-client-settings-mockup.html`：
+         左边一组导航、右边一块内容 —— 而不是一长条表单（设置项会越加越多，
+         一长条到十几项就没人找得到了，找不到 = 以为没有这个设置）。 -->
+    <div class="overlay" id="settings-overlay" hidden>
+        <div class="panel setwin">
+            <div class="ph"><span>设置</span></div>
+            <div class="body">
+                <div class="nav" id="settings-nav">
+                    <div class="grp">连接</div>
+                    <div class="it on" data-pane="rooms">🖧 服务端与房间</div>
+                    <div class="grp">同步</div>
+                    <div class="it" data-pane="sync">↑↓ 方向与内容</div>
+                    <div class="grp">桌面</div>
+                    <div class="it" data-pane="desktop">🖥 启动与托盘</div>
+                    <div class="grp">其它</div>
+                    <div class="it" data-pane="diag">ⓘ 诊断</div>
+                </div>
+
+                <div class="pane" id="pane-rooms">
+                    <h3>服务端与房间</h3>
+                    <p class="sub">
+                        每一行是一个房间：本机剪贴板按 ↑↓ 的方向和它同步。
+                        ⚠️ <b>下载全局只能一个</b> —— 两个房间同时往剪贴板写，看到的是随机内容。
+                    </p>
+                    <table class="rooms">
+                        <thead>
+                            <tr>
+                                <th>名字</th><th>服务端</th><th>房间</th><th>凭据</th>
+                                <th class="tiny">↑</th><th class="tiny">↓</th><th class="tiny"></th>
+                            </tr>
+                        </thead>
+                        <tbody id="rooms-body"></tbody>
+                    </table>
+                    <button class="btn" id="room-add" style="margin-top:9px">＋ 添加房间</button>
+                </div>
+
+                <div class="pane" id="pane-sync" hidden>
+                    <h3>方向与内容</h3>
+                    <p class="sub">上传是「本机 → 房间」，下载是「房间 → 本机剪贴板」。两个方向各自独立。</p>
+                    <div class="subcard">
+                        <div class="st">↑ 上传（可多房间同时开）</div>
+                        <div class="chk"><input type="checkbox" id="sc-text" /><label for="sc-text">文本</label></div>
+                        <div class="chk"><input type="checkbox" id="sc-file" /><label for="sc-file">文件（图片走这条）</label></div>
+                    </div>
+                    <div class="subcard">
+                        <div class="st">↓ 下载（全局只能一个房间）</div>
+                        <div class="chk"><input type="checkbox" id="sc-text-dl" /><label for="sc-text-dl">文本</label></div>
+                        <div class="chk"><input type="checkbox" id="sc-file-dl" /><label for="sc-file-dl">文件（含图片）</label></div>
+                    </div>
+                    <div class="row2">
+                        <div class="field">
+                            <label>监听间隔（毫秒）</label>
+                            <input type="number" id="sc-poll" min="1" />
+                        </div>
+                        <div class="field">
+                            <label>下载目录（相对 = 数据目录下）</label>
+                            <input type="text" id="sc-dir" />
+                        </div>
+                    </div>
+                    <p class="sub" style="margin:0">
+                        ⚠️ macOS / X11 上剪贴板**没有变更通知**，只能轮询 ——
+                        所以这个间隔是「延迟 vs 空转」的取舍，默认 500ms。
+                    </p>
+                </div>
+
+                <div class="pane" id="pane-desktop" hidden>
+                    <h3>启动与托盘</h3>
+                    <p class="sub">这些是桌面端独有的 —— 手机和网页版没有。</p>
+                    <div class="subcard">
+                        <div class="chk">
+                            <input type="checkbox" id="sc-autostart" />
+                            <label for="sc-autostart">开机自动启动</label>
+                        </div>
+                        <p class="sub" style="margin:7px 0 0">
+                            ⚠️ 这个勾画的是<b>系统里的真相</b>（启动项在不在），不是我们「想要」的值 ——
+                            你在系统设置里关掉它，这里就会显示没勾。装完默认**不开**：
+                            往你的机器里塞自启项这件事，得你说了算。
+                        </p>
+                    </div>
+                </div>
+
+                <div class="pane" id="pane-diag" hidden>
+                    <h3>诊断</h3>
+                    <p class="sub">出问题时先看这里 —— 「配置在哪个文件」「连的是哪台服务端」是最常见的两个原因。</p>
+                    <div class="subcard">
+                        <div class="kv">
+                            <span class="k">数据目录</span><span class="v" id="dg-data">—</span>
+                            <span class="k">客户端配置</span><span class="v" id="dg-config">—</span>
+                            <span class="k">本地服务端</span><span class="v" id="dg-server">—</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div class="pf">
+                <span id="settings-msg" style="font-size:11.5px;color:var(--text-2)"></span>
+                <div class="spacer"></div>
+                <button class="btn" id="settings-close">关闭</button>
+                <button class="btn primary" id="settings-save">保存</button>
+            </div>
+        </div>
+    </div>
+
     <!-- 服务端配置（浮层）。
          ⚠️ 只放**最常改的几个**字段 —— 别的键**原样留着**：后端是「把补丁打到原始
          JSON 上」，不认识的键不会被丢掉（那是这个界面最容易犯的错）。 -->
@@ -338,38 +495,53 @@ body {
                 <span>服务端配置</span>
                 <span class="path" id="server-path"></span>
             </div>
-            <div class="pb">
-                <div class="grid2">
-                    <div class="field">
-                        <label>端口</label>
-                        <input type="number" id="cfg-port" min="1" max="65535" />
-                    </div>
-                    <div class="field">
-                        <label>子路径前缀（反代到 /clip 时填）</label>
-                        <input type="text" id="cfg-prefix" placeholder="（空）" />
-                    </div>
-                </div>
-                <div class="field">
-                    <label>全局密码（空 = 不设）</label>
-                    <input type="text" id="cfg-auth" placeholder="（空 = 不设）" />
-                </div>
-                <div class="grid2">
-                    <div class="field">
-                        <label>历史条数</label>
-                        <input type="number" id="cfg-history" min="0" />
-                    </div>
-                    <div class="field">
-                        <label>房间清理间隔（秒，0 = 不清理）</label>
-                        <input type="number" id="cfg-cleanup" min="0" />
+            <!-- ⚠️ 分成区块（网络 / 访问控制 / 容量与内务 / 定时自动化）——
+                 照 `desktop-client-settings-mockup.html` 那份稿子的层级。
+                 平铺成一堆输入框的话，用户看不出哪些是一类、也找不到要找的那项。 -->
+            <div class="pb" style="display:block">
+                <div class="subcard">
+                    <div class="st">网络</div>
+                    <div class="grid2">
+                        <div class="field">
+                            <label>端口</label>
+                            <input type="number" id="cfg-port" min="1" max="65535" />
+                        </div>
+                        <div class="field">
+                            <label>子路径前缀（反代到 /clip 时填）</label>
+                            <input type="text" id="cfg-prefix" placeholder="（空）" />
+                        </div>
                     </div>
                 </div>
-                <div class="chk">
-                    <input type="checkbox" id="cfg-roomlist" />
-                    <label for="cfg-roomlist">启用房间列表</label>
+                <div class="subcard">
+                    <div class="st">访问控制</div>
+                    <div class="field" style="margin:0">
+                        <label>全局密码（空 = 不设）</label>
+                        <input type="text" id="cfg-auth" placeholder="（空 = 不设）" />
+                    </div>
                 </div>
-                <div class="chk">
-                    <input type="checkbox" id="cfg-automation" />
-                    <label for="cfg-automation">启用定时自动化</label>
+                <div class="subcard">
+                    <div class="st">容量与内务</div>
+                    <div class="grid2">
+                        <div class="field">
+                            <label>历史条数</label>
+                            <input type="number" id="cfg-history" min="0" />
+                        </div>
+                        <div class="field">
+                            <label>房间清理间隔（秒，0 = 不清理）</label>
+                            <input type="number" id="cfg-cleanup" min="0" />
+                        </div>
+                    </div>
+                    <div class="chk">
+                        <input type="checkbox" id="cfg-roomlist" />
+                        <label for="cfg-roomlist">启用房间列表</label>
+                    </div>
+                </div>
+                <div class="subcard">
+                    <div class="st">定时自动化</div>
+                    <div class="chk" style="margin:0">
+                        <input type="checkbox" id="cfg-automation" />
+                        <label for="cfg-automation">启用定时自动化</label>
+                    </div>
                 </div>
                 <div id="server-state" style="font-size:11.5px;color:var(--text-2)"></div>
             </div>

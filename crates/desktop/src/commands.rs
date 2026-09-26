@@ -18,6 +18,122 @@ use crate::server_config::ServerConfigFile;
 use crate::server_process::ServerProcess;
 use crate::store::{Snapshot, Store};
 
+// ── 「设置」窗口（客户端自己的配置）──────────────────────────────────
+
+/// 一次保存要改的全部东西。
+///
+/// ⚠️★ 为什么是**一条**命令而不是七八条：界面一次保存改的是一**组**东西
+/// （房间清单 + 同步范围 + 桌面行为），分几条发的话中间任何一条失败都会留下
+/// **半套设置** —— 而用户看到的是「保存了，但有一半没生效」，那是这类功能里最难查的。
+///
+/// ⚠️ 每个字段都是可选的：`None` = 不改（界面只提交它改过的那几组）。
+#[derive(serde::Deserialize, Default)]
+#[serde(rename_all = "camelCase", default)]
+pub struct SettingsPatch {
+    /// 房间清单（给了就**整份替换** —— 界面拿的是完整列表）。
+    pub rooms: Option<Vec<clip9_client::Channel>>,
+    /// 同步范围 / 轮询间隔 / 下载目录。
+    pub sync: Option<crate::store::SyncScopePatch>,
+    /// 开机自启（**意图**；落到系统上由 `autostart::apply` 做）。
+    pub autostart: Option<bool>,
+}
+
+/// 保存「设置」窗口。
+#[tauri::command]
+pub fn apply_settings(
+    app: tauri::AppHandle,
+    store: State<'_, Arc<Store>>,
+    runtime: State<'_, Arc<Runtime>>,
+    patch: SettingsPatch,
+) -> Result<(), String> {
+    if let Some(rooms) = patch.rooms {
+        store.set_rooms(rooms)?;
+        // ⚠️ 房间清单变了 → **下行必须重连**：`spawn_receiver` 拿的是启动时那份
+        // 配置的副本（`set_download` 那条命令的注释里写着同一件事）。
+        runtime.restart_receiver();
+    }
+    if let Some(scope) = patch.sync {
+        // ⚠️ 只有**真的变了**才重启监听线程：没变也重启的话，用户每点一次保存
+        // 监听都会断一下（那段时间的剪贴板变化会漏）。
+        // ⚠️ 和 `set_sync_scope` 用**同一个**下界（`max(1)`），否则「填 0」会被
+        // 这里判成「变了」、而那边夹成 1 —— 每次都白重启一次。
+        let interval_changed = scope
+            .poll_interval_ms
+            .is_some_and(|value| store.config().poll_interval_ms != value.max(1));
+        store.set_sync_scope(&scope);
+        // ⚠️ 轮询间隔是 `spawn_watcher` 时读进 `WatchConfig` 的 ——
+        // 改配置不影响已经在跑的线程，得重启监听才生效。
+        if interval_changed {
+            runtime.restart_watcher();
+        }
+    }
+    if let Some(on) = patch.autostart {
+        store.set_autostart(on);
+        // ⚠️ 两件事都要做：改配置里的意图 + 落到系统上（见 `autostart` 的模块文档）。
+        crate::autostart::apply(&app, on);
+    }
+    runtime.persist();
+    Ok(())
+}
+
+/// 开机自启**现在到底开没开**（问系统，不是问配置）。
+///
+/// ⚠️★ 界面那个勾画的是**系统里的真相**：用户在系统设置里关掉之后，
+/// 画配置里的意图就是骗人（他会以为「开着呢，怎么没自启」）。
+#[tauri::command]
+pub fn autostart_enabled(app: tauri::AppHandle) -> bool {
+    crate::autostart::initial_checked(&app)
+}
+
+/// 「设置」窗口要读的那一份。
+///
+/// ⚠️★ 为什么**不是**把 `authToken` 塞进 `Snapshot`：快照是**每 700ms 轮询一次**的，
+/// 把房间凭据放进去等于**每 700ms 传一次密码**（本机 IPC，不泄露，但白传）。
+/// 设置窗口是「打开时读一次」的东西，所以单独一条命令。
+///
+/// ⚠️ 字段名**统一 camelCase**（`rooms` 里那几个除外 —— 那是 `Channel` 自己的
+/// 字段名，直接用它的类型而不是再包一层镜像：少一份会漂的定义）。
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SettingsView {
+    pub rooms: Vec<clip9_client::Channel>,
+    pub enable_text: bool,
+    pub enable_file: bool,
+    pub enable_text_download: bool,
+    pub enable_file_download: bool,
+    pub poll_interval_ms: u64,
+    pub download_dir: String,
+    /// ⚠️ **系统里的真相**（启动项在不在），不是配置里的意图。
+    pub autostart: bool,
+    pub data_dir: String,
+    pub config_path: String,
+    pub server_running: bool,
+}
+
+/// 读「设置」窗口要的那一份。
+#[tauri::command]
+pub fn settings_view(
+    app: tauri::AppHandle,
+    store: State<'_, Arc<Store>>,
+    server: State<'_, Option<Arc<ServerProcess>>>,
+) -> SettingsView {
+    let config = store.config();
+    let snapshot = store.snapshot();
+    SettingsView {
+        rooms: config.channels,
+        enable_text: config.enable_text,
+        enable_file: config.enable_file,
+        enable_text_download: config.enable_text_download,
+        enable_file_download: config.enable_file_download,
+        poll_interval_ms: config.poll_interval_ms,
+        download_dir: config.download_dir.display().to_string(),
+        autostart: crate::autostart::initial_checked(&app),
+        data_dir: snapshot.data_dir,
+        config_path: snapshot.config_path,
+        server_running: server.as_ref().is_some_and(|server| server.is_running()),
+    }
+}
+
 // ── 本地服务端 + 它的配置（`docs/specs/desktop-client.md` §3.5.2）──────
 //
 // ⚠️★ 这几条命令**就是**「配置可视化」的全部网络面 —— 也就是**没有网络面**：
