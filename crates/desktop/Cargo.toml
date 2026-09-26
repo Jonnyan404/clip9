@@ -2,7 +2,7 @@
 name = "clip9-desktop"
 version.workspace = true
 edition.workspace = true
-description = "clip9 桌面客户端（Tauri 壳）—— ⚠️ 现在只是 W0 的最小实验，不是成品"
+description = "clip9 桌面客户端（Tauri 壳）—— ⚠️ 骨架阶段：窗口 + 本地手写界面（`ui/`），业务逻辑按 docs/specs/desktop-client.md §0.1 的切片表逐步接上"
 
 [build-dependencies]
 tauri-build = { version = "2.0", features = [] }

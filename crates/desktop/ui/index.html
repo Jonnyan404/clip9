@@ -83,6 +83,12 @@ body {
     font-size: 11.5px;
 }
 .sync .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--ok); }
+/* 「连接中」与「连不上」：状态点换色即可，别另做一套 UI。
+   ⚠️ 连不上**必须看得见** —— 静默的「同步中」是这类客户端最坏的一种假象。 */
+.sync.wait { background: color-mix(in srgb, var(--sidebar-sub) 14%, transparent); }
+.sync.wait .dot { background: var(--sidebar-sub); }
+.sync.off { background: color-mix(in srgb, var(--danger) 12%, transparent); }
+.sync.off .dot { background: var(--danger); }
 
 .body { flex: 1; display: flex; min-height: 0; }
 
@@ -129,6 +135,16 @@ body {
     color: var(--sidebar-fg); font-size: 12px; font-family: inherit;
 }
 .sidebar-foot button:hover { background: var(--sidebar-hover); }
+/* 连接诊断（服务端地址 + 上一次自检的结果）。
+   ⚠️ 这是**产品界面**，不是脚手架：桌面端连的是哪台服务端、通没通，用户必须看得见
+   —— 一屏「同步中」背后到底有没有在同步，是这类工具最容易骗人的地方。 */
+.diag {
+    padding: 0 10px 8px; color: var(--sidebar-sub); font-size: 10.5px;
+    line-height: 1.45; word-break: break-all;
+    /* 两行：第一行服务端地址，第二行「HTTP … · WS …」—— 两个结果**分别**显示，
+       不是一个字符串谁后到谁留下（那样「看到哪一行」是随机的）。 */
+    white-space: pre-line;
+}
 
 /* ── 主区 ─────────────────────────────────────────────────── */
 .main { flex: 1; display: flex; flex-direction: column; min-width: 0; min-height: 0; }
@@ -188,8 +204,9 @@ body {
     <div class="titlebar">
         <span class="t">clip9</span>
         <div class="spacer"></div>
-        <!-- 同步开关：暂停 / 恢复剪贴板监听（桌面端独有） -->
-        <div class="sync"><span class="dot"></span>同步中</div>
+        <!-- 同步开关：暂停 / 恢复剪贴板监听（桌面端独有）。
+             ⚠️ 状态点由 `app.js` 改（连接中 / 已连接 / 连不上）—— 它现在反映**真的连接状态**。 -->
+        <div class="sync wait" id="conn"><span class="dot"></span><span id="conn-text">连接中…</span></div>
     </div>
 
     <div class="body">
@@ -210,6 +227,7 @@ body {
                 </div>
             </div>
             <div class="hint">↑ 上传（可多选）· ↓ 下载（<b>全局只能一个</b>）</div>
+            <div class="diag" id="diag">正在自检…</div>
             <div class="sidebar-foot">
                 <button>⚙ 全局设置</button>
                 <button>🌐 网页版 ↗</button>
@@ -268,5 +286,6 @@ body {
             </div>
         </main>
     </div>
+<script src="./app.js" defer></script>
 </body>
 </html>
