@@ -27,7 +27,7 @@ use axum::extract::{ConnectInfo, Query, State};
 use axum::http::{HeaderMap, StatusCode, header};
 use axum::response::Response;
 use clip9_core::resolve_room_auth;
-use clip9_protocol::normalize_room_name;
+use clip9_protocol::{ReceiveHolder, normalize_room_name};
 use futures_util::stream::SplitSink;
 use futures_util::{SinkExt, StreamExt};
 use serde_json::json;
@@ -111,6 +111,11 @@ pub async fn push(
         None => ws,
     };
 
+    // ⚠️ `?history=0` → 握手时不推历史（见 handle_socket 里那一段的注释）。
+    // **只认字面量 `0`**：`?history=1`、`?history=`、不传，一律按「推」处理 ——
+    // 默认行为不能变，那是向后兼容的全部内容。
+    let skip_history = query.get("history").map(String::as_str) == Some("0");
+
     upgrade.on_upgrade(move |socket| {
         handle_socket(
             state,
@@ -123,6 +128,7 @@ pub async fn push(
                 device_name,
             },
             auth_needed,
+            skip_history,
         )
     })
 }
@@ -189,6 +195,7 @@ async fn handle_socket(
     room: String,
     client: ClientInfo,
     auth_needed: bool,
+    skip_history: bool,
 ) {
     let conn_id = state.next_conn_id();
     let device_id = state.device_id_for(&client.remote, &client.user_agent);
@@ -214,17 +221,40 @@ async fn handle_socket(
 
     // ③ 历史消息，**旧的在前**（客户端是一条条 append 的）
     //
-    // ⚠️ 这里就是 ARCHITECTURE §6.2 说的那处契约变更：Go 把**整个房间**推一遍，
-    // 1 万条就是 2MB+，手机端直接崩。现在按 `server.history` 截断。
-    // 旧客户端的行为退化成「只能看到最近 N 条」，但不报错。
+    // ⚠️★ **握手顺序是契约，不是碰巧**（`docs/specs/ws-live-only.md` §2.2）：
+    //   ① connect × N → ② connect 广播 → ③ receive × N（历史）→ ④ config → 之后才是实时。
+    // ⚠️ **`config` 必须排在历史之后、实时之前** —— 新客户端在收到 `config` 之前
+    // **一条都不该写剪贴板**，这是它的第二道保险（万一 `?history=0` 没生效）。
+    // 别为了首屏快一点把 `config` 提前发。
+    //
+    // ⚠️ `?history=0` → **这一段整段跳过**。默认仍然推 —— 那是向后兼容的关键
+    // （已发布的 PWA / 老桌面端行为一个字都不变）。**别顺手把默认值改成「不推」**：
+    // 那会让所有已发布客户端**静默地只看得到空房间**。
     let limit = if state.config.server.history > 0 {
         state.config.server.history as usize
     } else {
         usize::MAX
     };
-    for entry in state.store.recent_asc(&room, limit).unwrap_or_default() {
-        if send_json(&mut sink, "receive", &entry).await.is_err() {
-            return cleanup(&state, &room, conn_id);
+    let recent = state.store.recent_asc(&room, limit).unwrap_or_default();
+
+    // `latestId`：连接时刻该房间的**最大消息 id**（没有消息时 `0`）。
+    //
+    // ⚠️ 为什么 `history=0` 之后**还要**它：`history=0` 只对**新客户端**生效，
+    // 而 `latestId` 让客户端**无论服务端推不推历史都能精确判断**
+    // （`id <= latestId` → 历史，只认领；`id > latestId` → 实时，可应用）。
+    //
+    // ⚠️★ **别用 `store.latest()`**：那个按 `(timestamp DESC, id DESC)` 取最新，
+    // 而 `POST /text?id=` **原地改正文**会把 timestamp 往前刷、id 不变 ——
+    // 于是它可能给出一个**偏小**的值，而偏小是**不安全**的方向
+    // （历史消息会被当成实时、写进剪贴板）。房间本来就按 `server.history` 裁剪过，
+    // 所以扫一遍是百来行，便宜，那就扫。
+    let latest_id = recent.iter().map(ReceiveHolder::id).max().unwrap_or(0);
+
+    if !skip_history {
+        for entry in &recent {
+            if send_json(&mut sink, "receive", entry).await.is_err() {
+                return cleanup(&state, &room, conn_id);
+            }
         }
     }
 
@@ -243,6 +273,12 @@ async fn handle_socket(
             "limit": state.config.file.limit,
         },
         "auth": auth_needed,
+        // 连接时刻该房间的**最大消息 id**（没有消息时 0）—— 客户端拿它区分历史与实时。
+        //
+        // ⚠️★ 它**必须在 WebSocket 握手载荷里**，**不是** `/server` 的 HTTP 响应 ——
+        // `config` 是前端 `app.config` 的**唯一来源**。加错地方会得到一个永远
+        // `undefined` 的字段，而这个坑**已经踩过两次**（`automation.enabled`、`prefix`）。
+        "latestId": latest_id,
         // 定时自动化的能力声明。前端 `PageToolbar` 的入口图标只认这里的 `enabled`
         // （`app.config` 来自握手这条 `config` 事件，不是 `/server` 的 HTTP 响应）。
         // Worker 部署没有这一族接口，所以它必须是个**明确的下发字段**，不能靠「有没有」推断。

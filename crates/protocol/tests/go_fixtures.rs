@@ -141,6 +141,34 @@ fn every_go_fixture_round_trips() {
             s if s.starts_with("text_receive") || s.starts_with("file_receive") => {
                 check::<ReceiveHolder>(&stem, &text);
             }
+            // `GET /content` 那一族的**投影**（`docs/specs/ws-live-only.md` 的 W0 导出）。
+            //
+            // ⚠️ 它们**不是协议类型**，所以不能走 `check::<T>` —— 投影由 `crates/server` 的
+            // `content_entry()` 生成，而 `protocol` **不能依赖 `server`**（依赖方向是单向的：
+            // `protocol ← core ← store ← server`）。这里只钉**形状**。
+            //
+            // ⚠️ 投影本身对不对由 `crates/server` 那边负责（对着同样这三份 fixture）。
+            // 这里钉的是「文件确实存在、而且是它该有的样子」—— 少了这条，
+            // 上面那句「加了 fixture 却忘了接上会直接红」就漏掉这一类。
+            s if s.starts_with("content_entry") => {
+                let v: Value = serde_json::from_str(&text).expect("content 条目不是合法 JSON");
+                assert!(v.get("type").is_some(), "{s}: 缺 type");
+                assert!(v.get("id").is_some(), "{s}: 缺 id");
+            }
+            "content_list" => {
+                let v: Value = serde_json::from_str(&text).expect("content_list 不是合法 JSON");
+                let msgs = v
+                    .get("messages")
+                    .and_then(Value::as_array)
+                    .expect("缺 messages 数组");
+                assert!(!msgs.is_empty(), "messages 不该是空的");
+                for m in msgs {
+                    assert!(
+                        m.get("type").is_some() && m.get("id").is_some(),
+                        "条目缺 type / id"
+                    );
+                }
+            }
             _ => unhandled.push(stem),
         }
     }

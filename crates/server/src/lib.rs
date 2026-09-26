@@ -126,6 +126,9 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/text", post(handlers::text).fallback(only_post))
         // ⚠️ WS 用 `get` 注册是刻意的：握手是一个 GET + `Upgrade` 头。
         .route("/push", get(ws::push))
+        // ⚠️ `/content`（**没有**尾斜杠）是**历史分页**（`docs/specs/ws-live-only.md` W1）。
+        // axum 里静态段优先，所以它和 `/content/latest`、`/content/{id}` 不冲突。
+        .route("/content", get(handlers::content_list).fallback(only_get))
         .route("/content/latest", get(handlers::latest_content))
         .route("/content/latest.json", get(handlers::latest_content))
         // ⚠️ Go 的 `handleContent` **没有方法检查** —— `POST /content/1` 会照 GET 的逻辑跑。

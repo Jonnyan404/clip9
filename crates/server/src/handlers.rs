@@ -669,18 +669,9 @@ pub async fn content(
                 );
             }
             if is_json_request {
-                return json_response(&json!({
-                    "type": determine_response_type(&f.name),
-                    "name": f.name,
-                    "size": f.size,
-                    "uuid": f.cache,
-                    "url": f.url,
-                    "id": id.to_string(),
-                    "timestamp": f.base.timestamp,
-                    "expire": f.expire,
-                    // 空串 = 待办（看板列，见 content_column）
-                    "column": f.base.column,
-                }));
+                // ⚠️ 形状与 `GET /content`（列表）**共用一份实现**（`content_entry`）——
+                // 列表里的条目和单条取出来的必须是同一个形状，否则客户端要写两套解析。
+                return json_response(&content_entry(&entry));
             }
             // P0 还没实现文件本体（`/upload` 那三件套）。这里按「磁盘上没有」报，
             // 和 Go 在文件被清理掉时的行为一致。
@@ -693,13 +684,8 @@ pub async fn content(
         }
         ReceiveHolder::Text(t) => {
             if wants_json(&explicit_format, &headers) {
-                return json_response(&json!({
-                    "type": "text",
-                    "content": t.content,
-                    "id": id.to_string(),
-                    "timestamp": t.base.timestamp,
-                    "column": t.base.column,
-                }));
+                // 形状与列表共用一份实现 —— 见文件分支的注释。
+                return json_response(&content_entry(&entry));
             }
             // 默认返回纯文本，且**保证以换行结尾**（`curl` 出来的东西不会和提示符粘一行）。
             let mut body = t.content.clone();
@@ -709,6 +695,103 @@ pub async fn content(
             text_response(body)
         }
     }
+}
+
+/// 把一条消息投影成 `/content/<id>` 与 `/content`（列表）共用的 JSON。
+///
+/// ⚠️ 抽成一个函数、而不是每个 handler 各写一份 `json!({…})`：两个端点的**响应形状必须逐字相同**
+/// —— 客户端拿列表里的条目直接渲染，不会为两个端点写两套解析。而这个项目的老毛病
+/// 正是「两份实现必然漂」（`CONTRIBUTING.md` §6 点名的反模式）。
+///
+/// ⚠️ 形状与 `cases/protocol/content_{entry_text,entry_file}.json` 逐字对齐 ——
+/// 那两份是 **Go 导出的 fixture**（`docs/specs/ws-live-only.md` 的 W0），
+/// 改这里之前先看那两份文件。
+#[must_use]
+pub fn content_entry(entry: &ReceiveHolder) -> serde_json::Value {
+    match entry {
+        ReceiveHolder::File(f) => json!({
+            "type": determine_response_type(&f.name),
+            "name": f.name,
+            "size": f.size,
+            "uuid": f.cache,
+            // ⚠️★ **拼上文件名**，与 `/content/latest` 逐字一致（2026-09-26 与 Go 同一天统一的）。
+            //
+            // 为什么统一到**这个**形式而不是裸的 `/file/<uuid>`：
+            //   ① 它与 `docs/api.md` 记的路由形状（`GET /file/:uuid/:name`）一致；
+            //   ② url **直接就能下载** —— 客户端不用自己拼，也就不会把转义漏掉或写错
+            //      （Android 捷径是自己拼的，而拼错正是这个项目付过一次代价的
+            //      「文本正常、文件 401」）；
+            //   ③ 反过来要动 `/content/latest`，而那边有 Worker 的测试钉着
+            //      （`check('url 带上了文件名')`）→ 动它就得三方一起改。
+            "url": format!("{}/{}", f.url, url_escape(&f.name)),
+            "id": entry.id().to_string(),
+            "timestamp": f.base.timestamp,
+            "expire": f.expire,
+            // 空串 = 待办（看板列，见 content_column）
+            "column": f.base.column,
+        }),
+        ReceiveHolder::Text(t) => json!({
+            "type": "text",
+            "content": t.content,
+            "id": entry.id().to_string(),
+            "timestamp": t.base.timestamp,
+            "column": t.base.column,
+        }),
+    }
+}
+
+/// `GET /content?room=&before=&limit=` —— **历史分页**。
+///
+/// 为什么要有它：历史以前只能从 WS 握手推来，于是「往回翻」做不到、而且每次连接都要把
+/// 整个房间的历史推一遍。有了它，WS 可以只推实时（`?history=0`），历史走这个正经的查询接口。
+/// 完整规格见 `docs/specs/ws-live-only.md`。
+///
+/// 契约要点（每条都有理由，改之前先读那份 spec）：
+///
+/// - 游标是 **`id` 而不是时间戳** —— 时间戳是**秒级**、同秒会重复，用它做游标会**漏条或重复**；
+/// - `limit` **被 `server.history` 夹住** —— 否则 `limit=999999` 等于把「一次推 2MB」
+///   从 WS 挪到 HTTP，**等于没改**；
+/// - 返回 **正序**（旧的在前）—— 客户端直接 append 渲染，拿 `messages[0].id` 当下一页游标；
+/// - **游标失效不报错**：`before` 指向一条已被撤销的消息是很正常的事，那不是客户端的错，
+///   退化成「最近 `limit` 条」就好，5xx 只会让它卡住。
+pub async fn content_list(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Query(query): Query<HashMap<String, String>>,
+) -> Response {
+    let room = normalize_room_name(query.get("room").map(String::as_str).unwrap_or(""));
+
+    // 鉴权与 `/content/latest` **同一套**（房间闸门 + 凭据），不是新写一份。
+    let token = extract_auth_token(&headers, query.get("auth").map(String::as_str));
+    if !state.can_access_room(&room, &token) {
+        return shortcuts::room_forbidden();
+    }
+
+    // ⚠️ 上限就是 `server.history`：缺省 / 非法 / 非正 / 超过上限，一律取上限。
+    let max = state.config.server.history.max(0) as usize;
+    let limit = query
+        .get("limit")
+        .and_then(|v| v.trim().parse::<usize>().ok())
+        .filter(|n| *n > 0 && *n <= max)
+        .unwrap_or(max);
+
+    // ⚠️ `before` 认不出 / 不传 → 用 `0`：`page_before` 对「锚点不存在」的处理就是
+    // 退化成「取最近 limit 条」，正好是「从最新往回取」那个语义（见 store 的注释）。
+    let before: i32 = query
+        .get("before")
+        .and_then(|v| v.trim().parse().ok())
+        .unwrap_or(0);
+
+    let mut page = state
+        .store
+        .page_before(&room, before, limit)
+        .unwrap_or_default();
+    // ⚠️ store 给的是**新的在前**，而这个接口的契约是**正序**（旧的在前）——
+    // 反过来的话客户端 append 渲染会得到倒序的列表，而它不会报错、只是看着不对。
+    page.reverse();
+
+    let messages: Vec<serde_json::Value> = page.iter().map(content_entry).collect();
+    json_response(&json!({ "messages": messages }))
 }
 
 /// `GET /content/latest`（含 `latest.json`）。
