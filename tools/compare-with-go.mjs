@@ -1050,10 +1050,19 @@ console.log('\n=== 历史分页 GET /content ===');
 
   await compare('GET /content?limit=2（最新 2 条、正序）', 'GET', `/content?room=${room}&limit=2`);
   await compare(
-    'GET /content?limit=999999（被 server.history 夹住）',
+    'GET /content?limit=999999（被**有效上限**夹住：min(server.history, 硬上限 100)）',
     'GET',
     `/content?room=${room}&limit=999999`
   );
+  // ⚠️ 非法 / 非正 / 超范围一律退回**有效上限**（缺省 = 上限，同一根旋钮）。
+  // 别漏了这条：它错了的表现是「不传」和「传个怪值」拿到不同的量 —— 静默的。
+  for (const bad of ['0', '-1', 'abc']) {
+    await compare(
+      `GET /content?limit=${bad}（非法值退回有效上限）`,
+      'GET',
+      `/content?room=${room}&limit=${bad}`
+    );
+  }
   await compare('GET /content 空房间 → messages 是 []', 'GET', '/content?room=ws-nobody');
   await compare(
     'GET /content?before=999999（游标失效不报错，退化成最近 limit 条）',

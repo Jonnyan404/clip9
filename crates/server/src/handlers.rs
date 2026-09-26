@@ -674,6 +674,32 @@ pub async fn content(
     }
 }
 
+/// 单次最多返回多少条 —— 一条**与 `server.history` 无关的硬上限**。
+///
+/// ⚠️★ 为什么必须另有一条：`server.history` 是**用户可配**的（设成 10000 也合法），
+/// 而一页要塞进**一次** HTTP 响应。只跟配置走的话，`limit=999999` 会被夹到 10000 ——
+/// 那正是这个变更要消灭的「一次推 2MB」，只是从 WS 挪到了 HTTP，**等于没改**。
+///
+/// 100：落在主流档里（Slack 100 / Discord 100），而且**比缺省 50 大**，
+/// 所以默认部署的行为一个字都不变（有效上限 = min(50, 100) = 50）。
+/// ⚠️ 与 Go 的 `contentListHardCap`、Worker 的 `CONTENT_LIST_HARD_CAP` 是同一个数。
+const CONTENT_LIST_HARD_CAP: usize = 100;
+
+/// 算这一次 `/content` 请求实际要取多少条。
+///
+/// 有效上限 = `min(server.history, CONTENT_LIST_HARD_CAP)`；
+/// 缺省 / 非法 / 非正 / 超过有效上限 → 一律取有效上限（**缺省 = 上限**，同一根旋钮）。
+///
+/// ⚠️ 与 Go 的 `resolveContentListLimit` 是**同一条规则**，改一边就要改另一边
+/// （那条规则有三层：配置值、硬上限、请求参数，而它错了的表现是**静默的**）。
+#[must_use]
+fn content_list_limit(raw: Option<&str>, history: i64) -> usize {
+    let max = history.max(0).min(CONTENT_LIST_HARD_CAP as i64) as usize;
+    raw.and_then(|v| v.trim().parse::<usize>().ok())
+        .filter(|n| *n > 0 && *n <= max)
+        .unwrap_or(max)
+}
+
 /// 把一条消息投影成 `/content/<id>` 与 `/content`（列表）共用的 JSON。
 ///
 /// ⚠️ 抽成一个函数、而不是每个 handler 各写一份 `json!({…})`：两个端点的**响应形状必须逐字相同**
@@ -761,13 +787,12 @@ pub async fn content_list(
         return shortcuts::room_forbidden();
     }
 
-    // ⚠️ 上限就是 `server.history`：缺省 / 非法 / 非正 / 超过上限，一律取上限。
-    let max = state.config.server.history.max(0) as usize;
-    let limit = query
-        .get("limit")
-        .and_then(|v| v.trim().parse::<usize>().ok())
-        .filter(|n| *n > 0 && *n <= max)
-        .unwrap_or(max);
+    // ⚠️★ 有效上限 = `min(server.history, CONTENT_LIST_HARD_CAP)` —— 见常量的注释。
+    // 取值规则抽成了纯函数 `content_list_limit`（它就是有测试的那一处）。
+    let limit = content_list_limit(
+        query.get("limit").map(String::as_str),
+        state.config.server.history,
+    );
 
     // ⚠️ `before` 认不出 / 不传 → 用 `0`：`page_before` 对「锚点不存在」的处理就是
     // 退化成「取最近 limit 条」，正好是「从最新往回取」那个语义（见 store 的注释）。
@@ -1212,6 +1237,58 @@ pub async fn clear_all(
 mod tests {
     use super::*;
     use axum::http::HeaderValue;
+
+    /// `GET /content` 的 limit 取值：**有效上限 = min(server.history, 硬上限)**。
+    ///
+    /// 规则错了的表现是**静默的**：要么一次返回太多（把「一次推 2MB」从 WS 挪到 HTTP），
+    /// 要么比配置少（SPA 突然少看一截历史）。纯函数，直接测。
+    #[test]
+    fn content_list_limit_clamps_to_history_and_the_hard_cap() {
+        // 缺省值 = 有效上限（同一根旋钮）
+        assert_eq!(content_list_limit(None, 50), 50);
+        assert_eq!(content_list_limit(None, 10000), CONTENT_LIST_HARD_CAP);
+        assert_eq!(
+            content_list_limit(None, CONTENT_LIST_HARD_CAP as i64),
+            CONTENT_LIST_HARD_CAP
+        );
+
+        // 显式 limit
+        assert_eq!(content_list_limit(Some("20"), 50), 20, "显式小于配置");
+        assert_eq!(content_list_limit(Some("50"), 50), 50, "显式等于配置");
+        assert_eq!(
+            content_list_limit(Some("999999"), 50),
+            50,
+            "超过配置 → 夹到配置"
+        );
+        assert_eq!(
+            content_list_limit(Some("999999"), 10000),
+            CONTENT_LIST_HARD_CAP,
+            "超过硬上限 → 夹到硬上限"
+        );
+
+        // 非法值退回有效上限，**不报错**
+        for raw in ["abc", "-1", "0", "   ", ""] {
+            assert_eq!(
+                content_list_limit(Some(raw), 50),
+                50,
+                "非法 limit {raw:?} 应退回有效上限"
+            );
+        }
+
+        // 病态配置（0 / 负）→ 一条都不返回，别悄悄放大
+        assert_eq!(content_list_limit(None, 0), 0);
+        assert_eq!(content_list_limit(None, -1), 0);
+        assert_eq!(content_list_limit(Some("10"), 0), 0);
+    }
+
+    /// 硬上限必须**真的**比内置缺省大 —— 否则默认部署的行为会变。
+    #[test]
+    fn hard_cap_leaves_the_default_deployment_alone() {
+        assert!(
+            clip9_core::config::ServerConfig::default().history <= CONTENT_LIST_HARD_CAP as i64,
+            "内置缺省已超过硬上限 —— 默认部署会少看历史"
+        );
+    }
 
     fn headers(pairs: &[(&str, &str)]) -> HeaderMap {
         let mut h = HeaderMap::new();
