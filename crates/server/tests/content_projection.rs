@@ -45,6 +45,40 @@ fn content_entry_matches_the_go_fixtures() {
     );
 }
 
+/// ⚠️★ **定时消息**的投影（`docs/specs/ws-live-only.md` §0.6）—— 单独一条测试。
+///
+/// 为什么要有它：上一轮只用「人发的消息」验「逐字段相等」，而 `source` / `scheduledAt` /
+/// `late` 是**只有定时消息才有**的键（人发的消息里根本不出现）。于是「相等 ✓」验过了、
+/// 缺口却漏了：历史改走 `/content` 之后，气泡上的「定时 / 补发」标记会**静默消失**。
+/// **只用人发的消息验逐字段相等，就是这个缺口的成因。**
+#[test]
+fn content_entry_matches_the_go_fixtures_for_automation_messages() {
+    // 文本：`text_receive_auto` 是 WS 载荷那条定时消息，`content_entry_text_auto` 是它的投影。
+    let text: ReceiveHolder = serde_json::from_value(fixture("text_receive_auto")).unwrap();
+    assert_eq!(
+        content_entry(&text),
+        fixture("content_entry_text_auto"),
+        "定时文本条目的投影与 Go 不一致"
+    );
+
+    // 文件：`content_entry` 的两个分支都有那三行，所以这里也钉一遍 ——
+    // 免得「两条分支只有一条被覆盖」，而那正是这个缺口第一次漏掉的方式。
+    // （定时任务目前只发文本，但投影函数是共用的，两分支的形状必须一致。）
+    let mut file = fixture("file_receive");
+    {
+        let obj = file.as_object_mut().expect("file_receive 应当是对象");
+        obj.insert("source".to_owned(), serde_json::json!("automation"));
+        obj.insert("scheduledAt".to_owned(), serde_json::json!(1758700000));
+        obj.insert("late".to_owned(), serde_json::json!(true));
+    }
+    let file: ReceiveHolder = serde_json::from_value(file).unwrap();
+    assert_eq!(
+        content_entry(&file),
+        fixture("content_entry_file_auto"),
+        "定时文件条目的投影与 Go 不一致"
+    );
+}
+
 /// 列表响应：`{"messages": [...]}`，**正序**（旧的在前）。
 ///
 /// ⚠️ 这条同时钉住「列表里的条目与单条取出来的是同一个形状」—— 它们共用 `content_entry()`，

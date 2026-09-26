@@ -702,6 +702,34 @@ fn content_list_limit(raw: Option<&str>, history: i64) -> usize {
 
 /// 把一条消息投影成 `/content/<id>` 与 `/content`（列表）共用的 JSON。
 ///
+/// 把「定时消息专有」的三个字段补进条目 —— **只在有值的时候补**。
+///
+/// ⚠️★ **空值必须省略**（与 `ReceiveBase` 上的 `skip_serializing_if` 一致）：
+/// 写成「总是给」的话，**每一条普通消息**都会凭空多出 `source` / `scheduledAt` / `late`
+/// 三个空键 —— 那等于把「少数派」从 Worker 换回 Go/Rust（Worker 没有自动化能力，
+/// 永远不输出它们），§0.5 刚统一好的三边条目形状又裂开。
+///
+/// ⚠️ **为什么要补它们**：`components/received-item/Text.vue` 的「定时」/「补发」两个标记
+/// 读的就是这三个字段（`util.js` 的 `isAutomationMessage` / `isLateMessage`）——
+/// 历史改走 `GET /content` 之后，少了它们会让标记**刷新后静默消失**（不报错、不 4xx）。
+/// 详见 `docs/specs/ws-live-only.md` §0.6。
+///
+/// ⚠️ 判「空」的三个阈值与 Go 的 `omitempty` 逐条对应：`""` / `0` / `false`。
+fn apply_automation_fields(value: &mut serde_json::Value, base: &clip9_protocol::ReceiveBase) {
+    let Some(obj) = value.as_object_mut() else {
+        return;
+    };
+    if !base.source.is_empty() {
+        obj.insert("source".to_owned(), json!(base.source));
+    }
+    if base.scheduled_at != 0 {
+        obj.insert("scheduledAt".to_owned(), json!(base.scheduled_at));
+    }
+    if base.late {
+        obj.insert("late".to_owned(), json!(base.late));
+    }
+}
+
 /// ⚠️ 抽成一个函数、而不是每个 handler 各写一份 `json!({…})`：两个端点的**响应形状必须逐字相同**
 /// —— 客户端拿列表里的条目直接渲染，不会为两个端点写两套解析。而这个项目的老毛病
 /// 正是「两份实现必然漂」（`CONTRIBUTING.md` §6 点名的反模式）。
@@ -711,7 +739,7 @@ fn content_list_limit(raw: Option<&str>, history: i64) -> usize {
 /// 改这里之前先看那两份文件。
 #[must_use]
 pub fn content_entry(entry: &ReceiveHolder) -> serde_json::Value {
-    match entry {
+    let mut value = match entry {
         ReceiveHolder::File(f) => json!({
             "type": determine_response_type(&f.name),
             "name": f.name,
@@ -757,7 +785,16 @@ pub fn content_entry(entry: &ReceiveHolder) -> serde_json::Value {
             "senderDevice": t.base.sender_device,
             "column": t.base.column,
         }),
-    }
+    };
+
+    // ⚠️★ 定时消息专有的三个字段 —— **只在有值时补**（`docs/specs/ws-live-only.md` §0.6）。
+    // 写成「总是给」会让**每一**条普通消息多出三个空键，见 `apply_automation_fields`。
+    let base = match entry {
+        ReceiveHolder::File(f) => &f.base,
+        ReceiveHolder::Text(t) => &t.base,
+    };
+    apply_automation_fields(&mut value, base);
+    value
 }
 
 /// `GET /content?room=&before=&limit=` —— **历史分页**。
