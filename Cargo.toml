@@ -11,8 +11,9 @@ members = [
     "crates/store",
     "crates/server",
     "crates/client",
-    # ⚠️ 桌面端（Tauri 壳）—— **现在只是 W0 的最小实验**，不是成品。
-    # 见 `docs/specs/desktop-client.md` §0.1。第一次编译要几分钟（几百个 crate）。
+    # 桌面端（Tauri 壳）—— 骨架阶段：窗口 + 本地手写界面（`ui/`）已立起来，
+    # 业务逻辑在 `crates/client`。见 `docs/specs/desktop-client.md` §0.1 的切片表。
+    # ⚠️ 第一次编译要几分钟（Tauri 的依赖树是几百个 crate）。
     "crates/desktop",
 ]
 
@@ -72,6 +73,16 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 parking_lot = "0.12"
 futures-util = "0.3"
+
+# ── 客户端（`crates/client`）─────────────────────────────────────────
+# 剪贴板读写 + 监听。**只给客户端用**（服务端不碰剪贴板）。
+#
+# ⚠️ 选它的理由（`docs/specs/desktop-client.md` §1）：它对**文件**与**富文本/HTML**
+# 是原生支持，而 Go 侧的 `golang.design/x/clipboard` 这两项分别是「仅桌面端」与
+# 「自定义 MIME 透传」—— 而剪贴板同步里这两类恰好是高频内容。
+# 而且 `clip-sync/src-tauri`（同父仓库的 Tauri 客户端）**已经在生产用它跑通**了
+# 「监听 + 去重防抖 + 三类处理 + 异步上传」整条链路 —— 不是「没得选」，是「已经验证过」。
+clipboard-rs = "0.3"
 
 [profile.release]
 # OpenWrt / Android 上体积是真约束，这里按「小」而不是「最快」调。

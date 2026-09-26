@@ -15,3 +15,7 @@ anyhow = { workspace = true }
 tokio = { workspace = true }
 futures-util = { workspace = true }
 tracing = { workspace = true }
+
+# 剪贴板读写（`SystemClipboard`）+ 文本子类型识别（URL / 邮箱 / 颜色）
+clipboard-rs = { workspace = true }
+regex = { workspace = true }
