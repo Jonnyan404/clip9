@@ -367,7 +367,7 @@ table.rooms .tiny { width: 9.5%; text-align: center; }
         <aside class="sidebar">
             <div class="sidebar-head"><span>房间</span><span class="count" id="room-count">—</span></div>
             <div class="rooms" id="rooms"></div>
-            <div class="hint">↑ 上传（可多选）· ↓ 下载（<b>全局只能一个</b>）<br><span id="max-entries"></span></div>
+            <div class="hint">↑ 发到房间（可多选）· ↓ 收进剪贴板（<b>全局只能一个</b>）<br><span id="max-entries"></span></div>
             <!-- 配置有毛病时出现。⚠️ 不在内部悄悄修正：配了不生效要**说出来**。 -->
             <div class="problems" id="problems" hidden></div>
             <div class="diag" id="diag">正在读配置…</div>
@@ -429,8 +429,8 @@ table.rooms .tiny { width: 9.5%; text-align: center; }
                 <div class="pane" id="pane-rooms">
                     <h3>服务端与房间</h3>
                     <p class="sub">
-                        每一行是一个房间：本机剪贴板按 ↑↓ 的方向和它同步。
-                        ⚠️ <b>下载全局只能一个</b> —— 两个房间同时往剪贴板写，看到的是随机内容。
+                        每一行是一个房间：↑ 决定它收不收你的剪贴板，↓ 决定它的内容写不写进你的剪贴板。
+                        ⚠️ <b>「收进剪贴板」全局只能一个</b> —— 两个房间同时往剪贴板写，你看到的是随机内容。
                     </p>
                     <table class="rooms">
                         <thead>
@@ -451,14 +451,14 @@ table.rooms .tiny { width: 9.5%; text-align: center; }
 
                 <div class="pane" id="pane-sync" hidden>
                     <h3>方向与内容</h3>
-                    <p class="sub">上传是「本机 → 房间」，下载是「房间 → 本机剪贴板」。两个方向各自独立。</p>
+                    <p class="sub">↑ <b>发到房间</b>：本机剪贴板的内容发到这个房间（可多选）。<br>↓ <b>收进剪贴板</b>：这个房间的实时内容<b>写进本机剪贴板</b>（全局只能一个房间 —— 两个房间同时写，你看到的是随机内容）。</p>
                     <div class="subcard">
-                        <div class="st">↑ 上传（可多房间同时开）</div>
+                        <div class="st">↑ 发到房间（可多房间同时开）</div>
                         <div class="chk"><input type="checkbox" id="sc-text" /><label for="sc-text">文本</label></div>
                         <div class="chk"><input type="checkbox" id="sc-file" /><label for="sc-file">文件（图片走这条）</label></div>
                     </div>
                     <div class="subcard">
-                        <div class="st">↓ 下载（全局只能一个房间）</div>
+                        <div class="st">↓ 收进剪贴板（全局只能一个房间）</div>
                         <div class="chk"><input type="checkbox" id="sc-text-dl" /><label for="sc-text-dl">文本</label></div>
                         <div class="chk"><input type="checkbox" id="sc-file-dl" /><label for="sc-file-dl">文件（含图片）</label></div>
                     </div>
@@ -468,7 +468,7 @@ table.rooms .tiny { width: 9.5%; text-align: center; }
                             <input type="number" id="sc-poll" min="1" />
                         </div>
                         <div class="field">
-                            <label>下载目录（相对 = 数据目录下）</label>
+                            <label>收到的文件存哪（相对 = 数据目录下）</label>
                             <input type="text" id="sc-dir" />
                         </div>
                     </div>
@@ -579,13 +579,28 @@ table.rooms .tiny { width: 9.5%; text-align: center; }
 
                 <div class="subcard">
                     <div class="st">访问控制</div>
-                    <div class="field" style="margin:0 0 8px">
+                    <div class="field" style="margin:0 0 10px">
                         <label>全局密码（空 = 不设）</label>
                         <input type="text" id="cfg-auth" placeholder="（空 = 不设）" />
                     </div>
-                    <div class="sub" style="margin:0">
-                        ⚠️ 逐房间的凭据（<code>roomAuth</code>：密码 / 文件过期 / 定时任务档位）
-                        <b>还没做进这个表单</b> —— 它是一张嵌套表。要改先直接编辑上面那个文件。
+                    <label style="font-size:11.5px;color:var(--text-2)">逐房间凭据（roomAuth）</label>
+                    <table class="rooms" style="margin-top:4px">
+                        <thead>
+                            <tr>
+                                <th class="c-name">房间</th>
+                                <th class="c-token">密码</th>
+                                <th class="c-room">文件过期</th>
+                                <th class="c-room">定时任务</th>
+                                <th class="tiny">状态</th>
+                                <th class="tiny"></th>
+                            </tr>
+                        </thead>
+                        <tbody id="roomauth-body"></tbody>
+                    </table>
+                    <button class="btn" id="roomauth-add" style="margin-top:7px">＋ 添加</button>
+                    <div class="sub" style="margin:8px 0 0">
+                        定时任务档位：留空 = 跟随房间鉴权；或 <code>none</code> / <code>single</code> / <code>room</code>。
+                        ⚠️ 「文件过期」留空 = **不改**（那个键在配置里可以是缺省的，清空它会让服务端读不了这份配置）。
                     </div>
                 </div>
 

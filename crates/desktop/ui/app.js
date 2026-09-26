@@ -164,11 +164,13 @@ function renderRooms(state) {
     node.append(h('span', 'ico', index === state.selected ? '📂' : '💬'));
     node.append(h('span', 'nm', room.name));
     const up = h('span', room.upload ? 'dir up on' : 'dir up', '↑');
-    up.title = room.upload ? '本机剪贴板要发到这个房间（点击关掉）' : '不发到这个房间（点击打开）';
+    up.title = room.upload
+      ? '↑ 发到房间：本机剪贴板的内容发到它（点击关掉）'
+      : '↑ 不发到这个房间（点击打开）';
     up.dataset.action = 'upload';
     up.dataset.index = String(index);
     const down = h('span', room.download ? 'dir dn on' : 'dir dn', '↓');
-    down.title = '同步到本机剪贴板（全局只能一个房间）';
+    down.title = '↓ 收进剪贴板：这个房间的实时内容写进本机剪贴板（全局只能一个）';
     down.dataset.action = 'download';
     down.dataset.index = String(index);
     node.append(up, down, h('span', 'ct', String(room.count)));
@@ -392,6 +394,7 @@ function serverPatch() {
       roomList: el('cfg-roomlist').checked,
       dbPath: el('cfg-dbpath').value.trim() || 'clip9.redb',
       storageDir: el('cfg-storage').value.trim() || 'uploads',
+      roomAuth: roomAuthPatch(),
     },
     text: { limit: numField('cfg-textlimit', 4096) },
     file: {
@@ -458,6 +461,22 @@ async function openServerPanel() {
     // ⚠️ `host` 服务端可能给数组（`["0.0.0.0"]`）—— 表单只显示一个字符串，
     // 数组就取第一个（保存时给回字符串，服务端两种都收）。
     const host = Array.isArray(server.host) ? (server.host[0] ?? '') : (server.host ?? '');
+    // ⚠️ `roomAuth` 三种形态都认（见文件末尾那段注释）—— 只认对象会显示成空、一保存就清密码。
+    const auth = view.value.server?.roomAuth || {};
+    roomAuthDraft = {};
+    roomAuthOriginal = Object.keys(auth);
+    for (const [room, entry] of Object.entries(auth)) {
+      roomAuthDraft[room] = typeof entry === 'string'
+        ? { password: entry, fileExpire: '', automation: '', open: false }
+        : {
+            password: entry?.password ?? '',
+            fileExpire: entry?.fileExpire ?? '',
+            automation: entry?.automation ?? '',
+            // ⚠️ 必须记住它：裸字符串换成对象时丢了它，开放房间会静默变上锁。
+            open: entry?.open === true,
+          };
+    }
+    renderRoomAuthRows();
     el('cfg-host').value = host;
     el('cfg-port').value = server.port ?? 9501;
     el('cfg-prefix').value = server.prefix ?? '';
@@ -570,11 +589,11 @@ function renderRoomRows() {
     tr.append(cellInput(room.auth_token, (v) => { roomDraft[index].auth_token = v; }, '（空 = 无密码）'));
     // ⚠️ ↓ 是**全局单选**：点开一个，别的自动关掉。做成多选再靠后端「取第一个」
     // 的话，用户点第二个会**没反应** —— 那正是「配了不生效」。
-    tr.append(cellDir(room.enable_upload !== false, 'up', '本机剪贴板要发到这个房间（可多选）', (on) => {
+    tr.append(cellDir(room.enable_upload !== false, 'up', '↑ 发到房间：本机剪贴板发到它（可多选）', (on) => {
       roomDraft[index].enable_upload = on;
       renderRoomRows();
     }));
-    tr.append(cellDir(room.enable_download === true, 'dn', '同步到本机剪贴板（全局只能一个）', (on) => {
+    tr.append(cellDir(room.enable_download === true, 'dn', '↓ 收进剪贴板：这个房间的内容写进本机剪贴板（全局只能一个）', (on) => {
       roomDraft.forEach((other, position) => { other.enable_download = on && position === index; });
       renderRoomRows();
     }));
@@ -671,3 +690,86 @@ el('settings-save').addEventListener('click', async () => {
     el('settings-msg').textContent = `没保存：${error}`;
   }
 });
+
+/* ── 逐房间凭据（roomAuth）─────────────────────────────────────────
+ *
+ * ⚠️★ 它有三种历史形态，读的时候**都要认**：
+ *   `"work": "密码"`（裸字符串，最常见）/ `{password, fileExpire, open, automation}` / `{}`。
+ *   只认对象的话，用裸字符串写的房间在界面上**显示成空**，一保存就把密码清了。
+ *
+ * ⚠️★ 保存时要**带上 `open`**：裸字符串形态被替换成对象时，`open` 会丢，
+ *   而它默认 `false` —— 于是一个**开放房间会静默变成上锁**。
+ *   界面上不编辑它（只显示状态），但必须原样带回去。
+ *
+ * ⚠️ 档位的真实取值是 `""`（跟随）/ `none` / `single` / `room`。
+ *   界面稿里写的 `admin` **不存在** —— 照它写会得到一个服务端读不了的配置。
+ */
+
+let roomAuthDraft = {};
+let roomAuthOriginal = [];
+
+function renderRoomAuthRows() {
+  const body = el('roomauth-body');
+  body.textContent = '';
+  const rooms = Object.keys(roomAuthDraft);
+  if (!rooms.length) {
+    const tr = h('tr');
+    const td = h('td', 'sub', '没有逐房间的凭据 —— 所有房间都用上面的全局密码（或都不需要密码）。');
+    td.colSpan = 6;
+    tr.append(td);
+    body.append(tr);
+    return;
+  }
+  rooms.forEach((room) => {
+    const entry = roomAuthDraft[room];
+    const tr = h('tr');
+    tr.append(cellInput(room, (v) => {
+      // ⚠️ 改房间名 = 换一个键：把内容搬到新键上，旧键删掉。
+      if (v === room) return;
+      roomAuthDraft[v] = roomAuthDraft[room];
+      delete roomAuthDraft[room];
+      renderRoomAuthRows();
+    }, 'work'));
+    tr.append(cellInput(entry.password, (v) => { entry.password = v; }, '（空 = 无密码）'));
+    // ⚠️ 「留空 = 不改」：这个键在配置里可以缺省，而清空它会让服务端解析失败。
+    tr.append(cellInput(entry.fileExpire, (v) => { entry.fileExpire = v; }, '（留空 = 不改）'));
+    tr.append(cellInput(entry.automation, (v) => { entry.automation = v; }, '（留空 = 跟随）'));
+    const state = h('td', 'tiny');
+    state.append(h('span', entry.open ? 'pill ok' : 'pill', entry.open ? '开放' : '要密码'));
+    tr.append(state);
+    const del = h('td', 'tiny');
+    const button = h('button', 'btn', '删');
+    button.style.padding = '2px 7px';
+    button.addEventListener('click', () => {
+      delete roomAuthDraft[room];
+      renderRoomAuthRows();
+    });
+    del.append(button);
+    tr.append(del);
+    body.append(tr);
+  });
+}
+
+el('roomauth-add').addEventListener('click', () => {
+  // 用一个不会撞上已有键的名字（空名字会被服务端归一化成 default，更糟）。
+  let name = '新房间';
+  let n = 2;
+  while (name in roomAuthDraft) name = `新房间${n++}`;
+  roomAuthDraft[name] = { password: '', fileExpire: '', automation: '', open: false };
+  renderRoomAuthRows();
+});
+
+/** 草稿 → 补丁。⚠️ 删掉的房间发 `null`（后端的深合并按 RFC 7396 删键）。 */
+function roomAuthPatch() {
+  const patch = {};
+  for (const [room, entry] of Object.entries(roomAuthDraft)) {
+    const one = { password: entry.password, automation: entry.automation, open: entry.open === true };
+    // ⚠️ 只有**填了**才带 `fileExpire`：留空 = 不改（见上面那段注释）。
+    if (String(entry.fileExpire).trim() !== '') one.fileExpire = Number(entry.fileExpire);
+    patch[room] = one;
+  }
+  for (const room of roomAuthOriginal) {
+    if (!(room in roomAuthDraft)) patch[room] = null;
+  }
+  return patch;
+}

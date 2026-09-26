@@ -224,11 +224,26 @@ impl Store {
             .get(inner.selected)
             .map(|room| room.entries.clone())
             .unwrap_or_default();
+        // ⚠️★ 一个下载房间都没开时，下行**根本不会去连**（`spawn_receiver` 自己判
+        // `download_channel`）—— 那时把状态画成「连接中…」是**在骗人**：
+        // 用户看到的是「连不上」，而真相是「没开」。
+        // ⚠️ 这两件事的下一步**完全不同**：一个去查服务端，一个去设置里开下载。
+        // 而且它是**默认状态**（下载默认关），所以每个新用户第一眼看到的就是它。
+        let status = if inner.config.download_channel().is_none() {
+            StatusView {
+                kind: "off",
+                text: "没有「收进剪贴板」的房间 —— 发到房间照常；要让某个房间的内容进你的剪贴板，去设置里给它打开 ↓".to_owned(),
+                latest_id: None,
+                room: None,
+            }
+        } else {
+            inner.status.clone()
+        };
         Snapshot {
             rooms,
             selected: inner.selected,
             entries,
-            status: inner.status.clone(),
+            status,
             limits: inner.limits.into(),
             problems: inner.config.problems(),
             monitoring: inner.monitoring,
@@ -1175,6 +1190,30 @@ mod tests {
         assert!(!after.enable_file, "改的那项要生效");
         assert_eq!(after.enable_text, before.enable_text, "别的项不许动");
         assert_eq!(after.poll_interval_ms, before.poll_interval_ms);
+    }
+
+    /// ⚠️★ **一个下载房间都没开**时，状态**不能**画成「连接中…」——
+    /// 那时下行根本不会去连，而用户看到「连接中…」会以为「连不上」，
+    /// 于是跑去查服务端（其实该去设置里给某个房间打开 ↓）。
+    /// ⚠️ 这是**默认状态**（下载默认关），所以**每个新用户第一眼看到的就是它**。
+    #[test]
+    fn no_download_channel_says_so_instead_of_connecting_forever() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = Store::new(
+            ClientConfig {
+                channels: vec![Channel::new("默认", "http://127.0.0.1:9502")],
+                ..ClientConfig::default()
+            },
+            dir.path().join("client.json"),
+            dir.path().to_path_buf(),
+        );
+        let status = store.snapshot().status;
+        assert_eq!(status.kind, "off", "不该是「连接中」");
+        assert!(
+            status.text.contains("收进剪贴板"),
+            "要说清是「没开收进剪贴板」而不是「连不上」：{}",
+            status.text
+        );
     }
 
     /// ⚠️ 轮询间隔的 `0` 要夹到 1ms：`thread::sleep(0)` 会让监听线程**空转**，

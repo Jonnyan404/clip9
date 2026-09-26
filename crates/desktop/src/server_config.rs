@@ -89,7 +89,12 @@ impl ServerConfigFile {
     }
 }
 
-/// 深合并：对象逐层合，其余（标量 / 数组 / null）**整体替换**。
+/// 深合并：对象逐层合，其余（标量 / 数组）**整体替换**。
+///
+/// ⚠️★ `null` 表示**删掉这个键**（JSON Merge Patch / RFC 7396）。
+/// 没有这条的话「删掉一个房间的凭据」做不到 —— 深合并只会把新键并进去、旧键永远留着，
+/// 而**界面看起来已经删掉了**（用户点了删、保存成功、下次打开它又回来了）。
+/// 那是「配了不生效」的反向版本：**看起来生效了，其实没有**。
 ///
 /// ⚠️ 数组是**整体替换**而不是拼接：这个配置里的数组只有 `host` 那种「地址列表」，
 /// 用户改它就是想换一份，不是想追加。
@@ -97,7 +102,11 @@ fn merge_into(target: &mut Value, patch: &Value) {
     match (target, patch) {
         (Value::Object(target), Value::Object(patch)) => {
             for (key, value) in patch {
-                merge_into(target.entry(key.clone()).or_insert(Value::Null), value);
+                if value.is_null() {
+                    target.remove(key);
+                } else {
+                    merge_into(target.entry(key.clone()).or_insert(Value::Null), value);
+                }
             }
         }
         (target, patch) => *target = patch.clone(),
@@ -226,6 +235,33 @@ mod tests {
             std::fs::read_to_string(&path).unwrap(),
             original,
             "被拒绝时磁盘上不该有任何变化"
+        );
+    }
+
+    /// ⚠️★ **`null` 是「删掉这个键」**（RFC 7396）。界面上「删掉一个房间的凭据」
+    /// 走的就是这条 —— 没有它，删完保存成功、下次打开它又回来了
+    ///（深合并只往并里加，不会移除），而用户会以为界面骗他。
+    #[test]
+    fn a_null_in_the_patch_removes_the_key() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.json");
+        std::fs::write(
+            &path,
+            r#"{"server":{"roomAuth":{"work":{"password":"a"},"home":{"password":"b"}}}}"#,
+        )
+        .unwrap();
+
+        let merged = file_in(dir.path())
+            .patch(&serde_json::json!({"server": {"roomAuth": {"work": null}}}))
+            .expect("删一个房间的凭据");
+        assert!(
+            merged["server"]["roomAuth"].get("work").is_none(),
+            "work 那条该被删掉：{}",
+            merged["server"]["roomAuth"]
+        );
+        assert_eq!(
+            merged["server"]["roomAuth"]["home"]["password"], "b",
+            "别的房间不许受影响"
         );
     }
 
