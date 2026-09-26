@@ -98,8 +98,15 @@ pub struct ServerConfig {
     pub port: u16,
     /// 子路径前缀（部署在反代子目录时用）。**每个端点都带它**。
     pub prefix: String,
-    /// ⚠️ 旧的「每房间保留多少条」。新存储改用 `limits` 三个维度（见 ARCHITECTURE §3.3），
-    /// 这个字段只为**读老配置**保留 —— 别在业务代码里用它做裁剪决策。
+    /// **客户端看得见的历史条数**：WS 握手推多少条、`GET /content` 的缺省与上限、
+    /// 以及下发在 `config.server.history` 里的那个数 —— 三件事共用这一根旋钮。
+    ///
+    /// ⚠️ **别拿它做裁剪决策**：存储侧的裁剪走 `limits` 的三个维度（见 ARCHITECTURE §3.3），
+    /// 两者是不同的问题（一个是「推给客户端多少」，一个是「留多少在库里」）。
+    ///
+    /// ⚠️ 缺省 50，与 Go 的 `defaultConfig()` 和 Worker 的 `HISTORY_LIMIT` 缺省
+    /// **是同一个数**（Jonny 2026-09-26 定：三端统一 50）——
+    /// 见 `docs/specs/ws-live-only.md` §2.1。
     pub history: i64,
     /// **库文件的路径**（redb）。默认 `"clip9.redb"`。
     ///
@@ -158,7 +165,7 @@ impl Default for ServerConfig {
             host: serde_json::json!(["0.0.0.0"]),
             port: 9501,
             prefix: String::new(),
-            history: 100,
+            history: 50,
             db_path: "clip9.redb".to_owned(),
             storage_dir: "uploads".to_owned(),
             auth: AuthValue::default(),
