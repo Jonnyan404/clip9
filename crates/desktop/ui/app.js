@@ -197,9 +197,16 @@ function renderStatus(state) {
   // **上下行的总开关**（`ClientConfig::download_channel` 开头就判它），所以点一下
   // 暂停之后，**下行也一起停了** —— 而文案只写「监听」的话，用户会以为只是不读剪贴板，
   // 然后发现「别人的内容也不来了」。这属于「界面说一套、实际做另一套」。
-  el('conn-text').textContent = state.monitoring
-    ? state.status.text
-    : '已暂停（上行与下行都停）';
+  // ⚠️★ 胶囊上的字说的是**同步状态**（界面稿里就是「剪贴板同步中」），不是连接状态 ——
+  // 两件事：连接由**点的颜色**表达（绿=通、灰=连、红=断、黄=服务端太旧），
+  // 而「现在到底同没同步」才是用户点它之前要看的。
+  // ⚠️ 但**出问题时要说问题**：连不上还写「同步中」就是在骗人（那是这个项目最忌讳的一类）。
+  const text = !state.monitoring
+    ? '已暂停（上行与下行都停）'
+    : state.status.kind === 'on'
+      ? '剪贴板同步中'
+      : state.status.text;
+  el('conn-text').textContent = text;
   pill.title = state.status.latestId === null || state.status.latestId === undefined
     ? '点击暂停/恢复同步（会同时停掉上行与下行）'
     : `边界 latestId=${state.status.latestId}；点击暂停/恢复同步`;
