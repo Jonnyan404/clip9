@@ -303,13 +303,13 @@ impl Store {
     /// ⚠️ 为什么要单独一条：下行的历史只覆盖**下载通道那一个房间**
     /// （`spawn_receiver` 只连那一个），而界面可以选中任何一个房间 ——
     /// 别的房间得自己按需取一次。
-    pub fn push_history(&self, entries: Vec<ReceiveHolder>) {
+    ///
+    /// ⚠️★ 房间名**由调用方给**，不从 `entries.first()` 猜：空响应（新房间 / 服务端说没有）
+    /// 时那个办法会回落到「下行房间」，于是把**另一个房间**标成「已加载」——
+    /// 症状是切到那个房间看到空列表且写着「这个房间还没有内容」，而它其实有内容。
+    pub fn push_history(&self, room: &str, entries: Vec<ReceiveHolder>) {
         let mut inner = self.lock();
-        let room = entries
-            .first()
-            .map(|entry| entry.room().to_owned())
-            .or_else(|| inner.downlink_room.clone());
-        if let Some(index) = room.and_then(|room| inner.room_index(&room)) {
+        if let Some(index) = inner.room_index(room) {
             let server = inner.config.channels[index].server.clone();
             let client_id = inner.config.client_id.clone();
             for entry in &entries {
@@ -503,8 +503,12 @@ pub fn load_config(
             )
         })?,
         None => {
-            let mut config = ClientConfig::default();
-            config.channels = vec![clip9_client::Channel::new("默认", default_server)];
+            // ⚠️ 用结构体更新语法而不是「先 default 再逐字段赋值」—— 后者会触发
+            // `clippy::field_reassign_with_default`，而门禁是 `-D warnings`。
+            let config = ClientConfig {
+                channels: vec![clip9_client::Channel::new("默认", default_server)],
+                ..ClientConfig::default()
+            };
             save_config(config_path, &config)?;
             return Ok(config);
         }
@@ -718,7 +722,10 @@ mod tests {
             dir.path().join("client.json"),
             dir.path().to_path_buf(),
         );
-        assert!(on.snapshot().monitoring, "默认是开的（ClientConfig 的默认）");
+        assert!(
+            on.snapshot().monitoring,
+            "默认是开的（ClientConfig 的默认）"
+        );
     }
 
     /// 历史来了要标成「取过了」；**并且乱序的 id 要插到正确位置**。
@@ -902,14 +909,42 @@ mod tests {
         );
     }
 
+    /// ⚠️★ **空响应也要落在正确的房间上**：以前是「从 `entries.first()` 猜房间，
+    /// 猜不到就回落到下行房间」—— 于是刷新一个**空的新房间**会把**另一个房间**
+    /// 标成「已加载」，而用户切过去看到空列表写着「这个房间还没有内容」，
+    /// 可它其实有内容。房间名由调用方给之后，这条就不可能再错。
+    #[test]
+    fn an_empty_refresh_marks_the_room_that_was_asked_for() {
+        let (_dir, store) = temp_store();
+        // 下行连的是 work（第二个），而刷新的是「默认」（第一个）。
+        store.apply_update(ReceiverUpdate::Status(ReceiverStatus::Connecting {
+            server: "http://127.0.0.1:9501".to_owned(),
+            room: "work".to_owned(),
+        }));
+        store.push_history("default", vec![]);
+
+        let snapshot = store.snapshot();
+        assert!(
+            snapshot.rooms[0].history_loaded,
+            "被刷新的那个房间要标成已加载"
+        );
+        assert!(
+            !snapshot.rooms[1].history_loaded,
+            "下行那个房间**不该**被顺手标上（它没被刷新过）"
+        );
+    }
+
     /// 原子写：写完之后没有临时文件残留，读回来的内容是**完整**的。
     #[test]
     fn saving_is_atomic_and_leaves_no_temp_file() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("nested").join("client.json");
-        let mut config = ClientConfig::default();
-        config.client_id = "client-a".to_owned();
-        config.channels = vec![Channel::new("默认", "http://127.0.0.1:9501")];
+        // ⚠️ 结构体更新语法，别「先 default 再逐字段赋值」（`clippy::field_reassign_with_default`）。
+        let config = ClientConfig {
+            client_id: "client-a".to_owned(),
+            channels: vec![Channel::new("默认", "http://127.0.0.1:9501")],
+            ..ClientConfig::default()
+        };
 
         save_config(&path, &config).unwrap();
         let back = load_config(&path, dir.path(), "http://127.0.0.1:9501").unwrap();

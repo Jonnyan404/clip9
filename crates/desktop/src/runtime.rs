@@ -101,13 +101,14 @@ impl Runtime {
         {
             return;
         }
-        if !self.store.config().enable_monitoring {
+        let config = self.store.config();
+        if !config.enable_monitoring {
             return;
         }
         let this = Arc::clone(self);
         let handle = spawn_watcher(
             Box::new(SystemClipboard),
-            WatchConfig::default(),
+            watch_config(&config),
             Arc::clone(&self.debouncer),
             move |event| this.schedule_upload(event),
         );
@@ -172,6 +173,22 @@ impl Runtime {
     }
 }
 
+/// 把客户端配置里的轮询间隔变成 [`WatchConfig`]。
+///
+/// ⚠️★ 抽成**纯函数**是为了能测 —— 这条接线原来写的是 `WatchConfig::default()`，
+/// 于是 `ClientConfig::poll_interval_ms` 这个字段**全项目没有一处读它**：
+/// 用户在配置里改了间隔，实际跑的永远是 500ms。这就是「配了不生效」，
+/// 而它**不会有任何报错**（`watcher.rs` 的字段注释写着「**必须可配**」，
+/// `desktop-client.md` §8 的审计清单也列了这条）。
+///
+/// ⚠️ 下界夹到 1ms：`0` 会让轮询线程**空转**（`thread::sleep(0)` 立刻返回），
+/// 症状是「风扇转起来、CPU 高」，和「同步不准」完全联想不到一起。
+fn watch_config(config: &clip9_client::ClientConfig) -> WatchConfig {
+    WatchConfig {
+        poll_interval: std::time::Duration::from_millis(config.poll_interval_ms.max(1)),
+    }
+}
+
 impl Runtime {
     /// 监听回调：**只把事件丢进异步任务**，然后立刻返回。
     ///
@@ -232,8 +249,11 @@ impl Runtime {
         self.tokio.spawn(async move {
             // ⚠️ 一次要多少条 = 界面上留多少条（`MAX_ENTRIES_PER_ROOM`）——
             // 多取的部分用户看不到，而每次序列化都要带着它。
+            // ⚠️ 房间名**在请求之前**取下来：空响应时 `store` 那边没有别的办法知道
+            // 这一页是给哪个房间取的（见 `Store::push_history` 的注释）。
+            let room = channel.room.clone();
             match fetch_history(&this.http, &channel, crate::store::MAX_ENTRIES_PER_ROOM).await {
-                Ok(entries) => this.store.push_history(entries),
+                Ok(entries) => this.store.push_history(&room, entries),
                 Err(reason) => this.store.notice("err", format!("取历史失败：{reason}")),
             }
         });
@@ -245,5 +265,38 @@ impl Runtime {
         if let Err(reason) = self.store.save() {
             self.store.notice("err", format!("配置没存上：{reason}"));
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use clip9_client::ClientConfig;
+
+    /// ⚠️★ 配了要生效。第一版这里写死的是 `WatchConfig::default()`，
+    /// 于是 `poll_interval_ms` 这个配置项**全项目没有一处读它**。
+    #[test]
+    fn the_poll_interval_comes_from_the_config() {
+        let config = ClientConfig {
+            poll_interval_ms: 1234,
+            ..ClientConfig::default()
+        };
+        assert_eq!(
+            watch_config(&config).poll_interval,
+            std::time::Duration::from_millis(1234)
+        );
+    }
+
+    /// `0` 不能原样传下去 —— 那会让轮询线程空转（CPU 打满，而症状看着像别的问题）。
+    #[test]
+    fn a_zero_interval_is_clamped_instead_of_spinning() {
+        let config = ClientConfig {
+            poll_interval_ms: 0,
+            ..ClientConfig::default()
+        };
+        assert_eq!(
+            watch_config(&config).poll_interval,
+            std::time::Duration::from_millis(1)
+        );
     }
 }
