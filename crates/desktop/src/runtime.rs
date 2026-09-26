@@ -20,8 +20,8 @@ use std::sync::{Arc, Mutex};
 use clip9_client::receiver::fetch_history;
 use clip9_client::uploader::{build_client, now};
 use clip9_client::{
-    ClipboardEvent, ClipboardSink, Debouncer, ReceiverHandle, SystemClipboard, WatchConfig,
-    WatchHandle, shared_debouncer, spawn_receiver, spawn_watcher, upload_event,
+    ClipboardContent, ClipboardEvent, ClipboardSink, Debouncer, ReceiverHandle, SystemClipboard,
+    WatchConfig, WatchHandle, shared_debouncer, spawn_receiver, spawn_watcher, upload_event,
 };
 
 use crate::store::Store;
@@ -264,6 +264,28 @@ impl Runtime {
             return;
         }
         self.schedule_upload(ClipboardEvent::Files { paths });
+    }
+
+    /// 「复制内容」（时间线的右键菜单，§4.4）。
+    ///
+    /// ⚠️★ **必须先 `prime` 再写**：不 prime 的话，监控线程下一次轮询会把这行
+    /// 当成一次**新的复制**，于是它又被发回房间 —— 用户只是想在本地复制一下，
+    /// 结果在房间里刷出一条重复消息。这正是下行写剪贴板时做的事
+    ///（`receiver::apply_entry` 里那条 prime），同一个道理。
+    ///
+    /// ⚠️ 写失败要**说出来**：剪贴板在部分平台上会被别的程序占着
+    ///（`clipboard-rs` 会返回错误），静默失败的话用户以为复制好了、粘出来是旧的。
+    pub fn copy_to_clipboard(self: &Arc<Self>, text: &str) {
+        if text.is_empty() {
+            return;
+        }
+        self.debouncer
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .prime(&ClipboardContent::Text(text.to_owned()));
+        if let Err(reason) = SystemClipboard.set_text(text) {
+            self.store.notice("err", reason);
+        }
     }
 
     /// 按需取回**选中房间**的历史（`GET /content`，不碰剪贴板）。

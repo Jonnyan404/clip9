@@ -209,6 +209,7 @@ fn main() {
             commands::set_download,
             commands::set_monitoring,
             commands::send_text,
+            commands::copy_to_clipboard,
             commands::pick_files,
             commands::send_files,
             commands::refresh,

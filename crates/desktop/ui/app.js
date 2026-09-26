@@ -53,6 +53,13 @@ let lastRooms = [];
 /** 上一次渲染的**限额**（握手下发的那一份）。只给输入区右下角那个计数器用。 */
 let lastLimits = { textLimit: 0, fileLimit: 0 };
 
+/** 上一次渲染的**条目**（右键菜单要靠它从卡片的下标找回那一条）。
+ *
+ * ⚠️ 不复用 `lastShape`（那是个 JSON 字符串）：为了读一条正文去解析整屏条目
+ * 是白费，而且 `shapeOf` 那份清单随时可能加减字段 —— 菜单不该被那个牵连。
+ */
+let lastEntries = [];
+
 const el = (id) => document.getElementById(id);
 
 /** 一个方框开关（稿子里的 `<span class="sq">`）。
@@ -154,9 +161,13 @@ function sizeLabel(bytes) {
 
 const IMAGE_SUFFIX = /\.(png|jpe?g|gif|webp|bmp|heic|svg)$/i;
 
-/** 一张卡片。 */
-function renderEntry(entry) {
+/** 一张卡片。`index` 是它在**这一屏**里的位置（右键菜单要靠它找回这条）。 */
+function renderEntry(entry, index) {
   const card = h('div', entry.mine ? 'card me' : 'card');
+  // ⚠️★ 只存**下标**，不把条目内容塞进 DOM：内容会随重画换掉，而下标
+  // 每次都跟着 `lastEntries` 一起更新（见 `openEntryMenu`）。
+  // ⚠️ 也**不存 id**：切房间之后同一个 id 可能属于另一个房间的条目。
+  card.dataset.index = String(index);
 
   if (entry.kind === 'file') {
     // ⚠️ 预览只认**壳本地拼出来的**地址，而且只认图片；别的按文件条目显示。
@@ -272,6 +283,9 @@ function renderStatus(state) {
 }
 
 function renderTimeline(state) {
+  // ⚠️ 先记下来，**不管后面走哪条提前返回**：右键菜单读的是它，
+  // 而「空列表」时它必须是**空数组**（否则菜单会拿到上一个房间的条目）。
+  lastEntries = state.entries;
   const host = el('timeline');
   // ⚠️★ 先记「刚才是不是贴在底部」，**再**清空 —— 清空之后 `scrollHeight` 已经是 0，
   // 那时候判会永远算出「贴底」，等于没判。
@@ -295,7 +309,7 @@ function renderTimeline(state) {
       : '正在取这个房间的历史…（取不到会每 5 秒重试一次）'));
     return;
   }
-  state.entries.forEach((entry) => host.append(renderEntry(entry)));
+  state.entries.forEach((entry, index) => host.append(renderEntry(entry, index)));
   // 新的内容在末尾 → 贴底时跟到底（用户刚复制的东西要立刻看见）。
   if (wasPinned) host.scrollTop = host.scrollHeight;
 }
@@ -473,6 +487,95 @@ el('composer-hint').textContent = '回车发送 · Shift+回车换行';
     });
   }
 }
+
+/* ── 时间线的右键菜单（§4.4）────────────────────────────────────────
+ *
+ * ⚠️★ 第一版**只放真能做的事**（设计稿 §4.4 的原话：
+ *「一条菜单里放一堆点了没反应的东西，比没有菜单更坏」）。所以：
+ * - ✅ 复制内容 —— 走壳的 `copy_to_clipboard`（页面碰不到系统剪贴板）；
+ * - ✅ 复制链接 —— **只有文件条目**才有，给的是本地拼的 `/file/<uuid>/<name>`；
+ * - ❌ **删除** —— 要服务端的 `/revoke`，而客户端**还没有**这个能力 → 不做；
+ * - ❌ 编辑 / 收藏 / 置顶 —— 那是**网页版**的功能，桌面端是紧凑界面（§3.6）。
+ *
+ * ⚠️ 菜单是**自己画的 HTML**，不是系统原生菜单：这份界面其余部分都是手写的，
+ * 混一个原生菜单进来就是两种视觉，而且它的样子我们控制不了。
+ */
+
+let menuNode = null;
+
+function closeMenu() {
+  menuNode?.remove();
+  menuNode = null;
+}
+
+// 关菜单的三个触发：点别处、按 Esc、窗口失焦。
+// ⚠️ 三条都要 —— 少一条就会留下一个「关不掉」的浮层。
+document.addEventListener('mousedown', (event) => {
+  if (menuNode && !menuNode.contains(event.target)) closeMenu();
+});
+document.addEventListener('keydown', (event) => {
+  if (event.key === 'Escape') closeMenu();
+});
+window.addEventListener('blur', closeMenu);
+
+/** 在鼠标位置弹一个菜单。 */
+function openEntryMenu(entry, x, y) {
+  closeMenu();
+  const menu = h('div', 'ctxmenu');
+
+  const copyText = h('div', 'mi');
+  copyText.append(h('span', null, '📋'), h('span', null, '复制内容'));
+  copyText.addEventListener('click', () => {
+    closeMenu();
+    // ⚠️ 文件条目**没有正文**，能复制的是**文件名**（§4.4 表格里写着这一条）。
+    const text = entry.kind === 'file' ? entry.fileName : entry.text;
+    if (!text) {
+      showNotice('skip', '这条没有可复制的内容。');
+      return;
+    }
+    invoke('copy_to_clipboard', { text }).catch((error) => showNotice('err', `复制失败：${error}`));
+  });
+  menu.append(copyText);
+
+  // ⚠️ 只有文件条目才有链接。文本条目**不画**这一项 —— 画一个点了没反应的项
+  // 比没有这一项更坏（§4.4 的原则）。
+  if (entry.kind === 'file' && entry.previewUrl) {
+    const copyLink = h('div', 'mi');
+    copyLink.append(h('span', null, '🔗'), h('span', null, '复制链接'));
+    // ⚠️★ 这条地址**不带凭据**（凭据只走请求头，见 `endpoint.rs` 那段）——
+    // 有密码的房间拿这条链接是**打不开**的。照实说，别让用户以为能用。
+    copyLink.title = '这条文件的下载地址。⚠️ 房间要密码的话，这条链接打不开（凭据只在请求头里）。';
+    copyLink.addEventListener('click', () => {
+      closeMenu();
+      invoke('copy_to_clipboard', { text: entry.previewUrl }).catch((error) =>
+        showNotice('err', `复制失败：${error}`),
+      );
+    });
+    menu.append(copyLink);
+  }
+
+  document.body.append(menu);
+  menuNode = menu;
+  // ⚠️ 先挂上去**再**量尺寸：挂之前 `getBoundingClientRect()` 全是 0，
+  // 那样算出来的位置会贴到边上。
+  const rect = menu.getBoundingClientRect();
+  // ⚠️ 贴边往回收 —— 不然在最后一条上点右键时，菜单会有一半在窗口外、点不到。
+  // ⚠️ 用 `clientX/clientY` + `position: fixed`（**不要** `pageX/pageY`）。
+  const left = Math.max(8, Math.min(x, window.innerWidth - rect.width - 8));
+  const top = Math.max(8, Math.min(y, window.innerHeight - rect.height - 8));
+  menu.style.left = `${left}px`;
+  menu.style.top = `${top}px`;
+}
+
+el('timeline').addEventListener('contextmenu', (event) => {
+  const card = event.target.closest('.card');
+  if (!card) return;
+  // ⚠️ 必须拦：不拦的话 webview 会再弹一次它自己的菜单（两个叠在一起）。
+  event.preventDefault();
+  // ⚠️ 从**下标**找回那条 —— 见 `renderEntry` 那段（不把内容塞进 DOM 的理由）。
+  const entry = lastEntries[Number(card.dataset.index)];
+  if (entry) openEntryMenu(entry, event.clientX, event.clientY);
+});
 
 /** 历史是**自动取**的 —— 所以界面上没有「刷新」按钮（界面稿里也没有）。
  *

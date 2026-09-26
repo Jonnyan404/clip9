@@ -336,6 +336,20 @@ pub fn refresh(runtime: State<'_, Arc<Runtime>>) {
     runtime.refresh_history();
 }
 
+/// 「复制内容」（时间线的右键菜单，§4.4）。
+///
+/// ⚠️★ 为什么这条在壳里而不是页面里：**webview 碰不到系统剪贴板**
+///（`ui/app.js` 开头那段注释就是为这件事写的）。页面能用的
+/// `navigator.clipboard` 在 `tauri://localhost` 这种非安全上下文里也不保证可用，
+/// 而壳这边本来就有 `clip9-client` 的 `SystemClipboard`。
+///
+/// ⚠️ 写下去之前会先 `prime` 去重指纹（见 `Runtime::copy_to_clipboard`）——
+/// 不 prime 的话监控线程会把它当成一次新复制、又发回房间。
+#[tauri::command]
+pub fn copy_to_clipboard(runtime: State<'_, Arc<Runtime>>, text: String) {
+    runtime.copy_to_clipboard(&text);
+}
+
 /// 弹一个**系统文件选择框**，把选中的路径还给页面。
 ///
 /// ⚠️★ 为什么这条命令在 Rust 侧而不在页面上：Tauri 2 的插件 JS API 是一个 npm 包
