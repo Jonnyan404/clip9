@@ -573,6 +573,7 @@ name = "clip9-desktop"
 version = "0.1.0"
 dependencies = [
  "clip9-client",
+ "clip9-core",
  "clip9-protocol",
  "reqwest",
  "serde",

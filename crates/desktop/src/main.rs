@@ -23,6 +23,7 @@ mod autostart;
 mod commands;
 mod model;
 mod runtime;
+mod server_config;
 mod server_process;
 mod store;
 mod tray;
@@ -182,6 +183,14 @@ fn main() {
         ))
         .manage(Arc::clone(&store))
         .manage(Arc::clone(&runtime))
+        // ⚠️ 服务端进程：`Option` 是因为二进制可能找不到（那时客户端照常能连别的服务端）。
+        // 命令（重启 / 看状态）要它，所以放进 Tauri 的 state。
+        .manage(server.clone())
+        // ⚠️★ 配置文件的路径**和本地服务端起服务端时用的是同一个函数**
+        //（`server_process::config_path`）—— 否则「界面上改了、服务端读的是另一个文件」。
+        .manage(server_config::ServerConfigFile::new(
+            server_process::config_path(&server_process::data_dir_under(&args.data_dir)),
+        ))
         .invoke_handler(tauri::generate_handler![
             commands::snapshot,
             commands::clear_notice,
@@ -192,6 +201,10 @@ fn main() {
             commands::send_text,
             commands::refresh,
             commands::open_web,
+            commands::server_config,
+            commands::server_config_save,
+            commands::server_running,
+            commands::server_restart,
         ])
         // ⚠️ 托盘在 `setup` 里建：那时 `app` 已经能建菜单了，而**晚于** `build` 就来不及
         // （窗口可能已经显示出来，用户会先看到「没有入口」）。见 `tray` 的模块文档。

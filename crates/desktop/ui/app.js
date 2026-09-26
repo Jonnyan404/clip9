@@ -342,3 +342,103 @@ el('input').addEventListener('keydown', (event) => {
 });
 
 tick();
+
+/* ── 服务端配置（浮层）─────────────────────────────────────────────
+ *
+ * ⚠️★ 这个界面能改**密码**，所以它走的是 **IPC 命令**，不是服务端的一条 HTTP 路由 ——
+ * 没有网络面，本机之外碰不到。§3.5.2 ① 那条硬要求是**由构造保证**的，
+ * 不是靠「记得加鉴权」保证的。
+ *
+ * ⚠️★ 保存 ≠ 生效：服务端的配置**只在启动时读一次**。所以这里必须说清，
+ * 并给一个「保存并重启」—— 否则用户会以为「改了没反应是坏了」。
+ */
+
+/** 表单里的数字。⚠️ 空/非法时用兜底值，而不是把 `NaN` 传给后端（那会得到一个
+ *  连服务端都读不了的配置 —— 而后端会**拒绝保存**，用户看到的是一句看不懂的错）。 */
+function numField(id, fallback) {
+  const value = Number(el(id).value);
+  return Number.isFinite(value) ? value : fallback;
+}
+
+/** 表单 → 补丁。
+ *  ⚠️ 只放**认识的**那几个键；其余键由后端**原样保留**（它是打补丁，不是整体替换）。 */
+function serverPatch() {
+  const auth = el('cfg-auth').value.trim();
+  return {
+    server: {
+      port: numField('cfg-port', 9501),
+      prefix: el('cfg-prefix').value.trim(),
+      // ⚠️ 空 = **不设密码**。服务端那边的 `auth` 是「false 或字符串」，
+      // 给一个空串会被当成「设了一个空密码」—— 那是另一件事。
+      auth: auth === '' ? false : auth,
+      history: numField('cfg-history', 50),
+      roomCleanup: numField('cfg-cleanup', 3600),
+      roomList: el('cfg-roomlist').checked,
+    },
+    automation: { enabled: el('cfg-automation').checked },
+  };
+}
+
+async function refreshServerState() {
+  // ⚠️ 在不在跑是**问出来的**（壳真的去打了一条 `GET /server`），不是壳记着的。
+  // 记着的那个在「进程被杀」「用户手动起了一个」时就是错的。
+  const running = await invoke('server_running');
+  el('server-state').textContent = running
+    ? '本地服务端：运行中'
+    : '本地服务端：没在跑（改完配置点「保存并重启」会把它起来）';
+}
+
+async function openServerPanel() {
+  el('server-msg').textContent = '';
+  el('server-overlay').hidden = false;
+  try {
+    const view = await invoke('server_config');
+    // ⚠️ 路径也要显示：用户要能自己去开那个文件 ——
+    // 「这个界面改的是哪个文件」是他判断「改了没生效」的第一条线索。
+    el('server-path').textContent = view.path;
+    const server = view.value.server || {};
+    el('cfg-port').value = server.port ?? 9501;
+    el('cfg-prefix').value = server.prefix ?? '';
+    el('cfg-auth').value = typeof server.auth === 'string' ? server.auth : '';
+    el('cfg-history').value = server.history ?? 50;
+    el('cfg-cleanup').value = server.roomCleanup ?? 3600;
+    el('cfg-roomlist').checked = server.roomList === true;
+    el('cfg-automation').checked = (view.value.automation || {}).enabled === true;
+  } catch (error) {
+    el('server-msg').textContent = `读不到配置：${error}`;
+  }
+  await refreshServerState();
+}
+
+el('btn-server').addEventListener('click', openServerPanel);
+el('cfg-close').addEventListener('click', () => {
+  el('server-overlay').hidden = true;
+});
+
+el('cfg-save').addEventListener('click', async () => {
+  try {
+    await invoke('server_config_save', { patch: serverPatch() });
+    el('server-msg').textContent = '已保存 —— 重启服务端后生效';
+  } catch (error) {
+    el('server-msg').textContent = `没保存：${error}`;
+  }
+});
+
+el('cfg-save-restart').addEventListener('click', async () => {
+  try {
+    await invoke('server_config_save', { patch: serverPatch() });
+  } catch (error) {
+    // ⚠️ 没保存成功就**别重启** —— 拿一份没生效的配置去重启，只会让用户更糊涂。
+    el('server-msg').textContent = `没保存：${error}`;
+    return;
+  }
+  el('server-msg').textContent = '正在重启…';
+  try {
+    await invoke('server_restart');
+    el('server-msg').textContent = '已保存并重启';
+  } catch (error) {
+    // ⚠️ 说清是「保存成功了、重启失败」—— 这两种的下一步完全不同。
+    el('server-msg').textContent = `保存了，但重启失败：${error}`;
+  }
+  await refreshServerState();
+});

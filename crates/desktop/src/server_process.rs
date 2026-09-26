@@ -103,7 +103,7 @@ impl ServerProcess {
             // 而桌面端进程的 cwd 可能是 `/` 或用户主目录，往那儿写文件是**不该发生**的事。
             // 给到数据目录下，那也正是 W5c 那个「配置可视化」要编辑的文件。
             .arg("-config")
-            .arg(self.data_dir.join("config.json"))
+            .arg(config_path(&self.data_dir))
             .stdout(Stdio::from(log2))
             .stderr(Stdio::from(log))
             .spawn()
@@ -205,6 +205,17 @@ pub fn default_binary() -> Result<PathBuf, String> {
         ));
     }
     Ok(path)
+}
+
+/// 服务端配置文件在哪：`<服务端数据目录>/config.json`。
+///
+/// ⚠️★ **起服务端和「配置可视化」必须用同一个路径** —— 所以它是**一个函数**，
+/// 不是两处各写一遍 `join("config.json")`。写歪了的症状是
+/// 「界面上改了、保存了，服务端读的却是另一个文件」：**保存成功、毫无效果**，
+/// 而那正是这个项目最忌讳的一类。
+#[must_use]
+pub fn config_path(data_dir: &Path) -> PathBuf {
+    data_dir.join("config.json")
 }
 
 /// 服务端数据目录：客户端数据目录下的 `server/`。

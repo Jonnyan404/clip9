@@ -14,7 +14,67 @@ use std::sync::Arc;
 use tauri::State;
 
 use crate::runtime::Runtime;
+use crate::server_config::ServerConfigFile;
+use crate::server_process::ServerProcess;
 use crate::store::{Snapshot, Store};
+
+// ── 本地服务端 + 它的配置（`docs/specs/desktop-client.md` §3.5.2）──────
+//
+// ⚠️★ 这几条命令**就是**「配置可视化」的全部网络面 —— 也就是**没有网络面**：
+// 它们走 Tauri 的 IPC，不是服务端的一条 HTTP 路由。所以那个「能改密码」的界面
+// **本机之外碰不到**，不需要鉴权、也不用担心被反代出去（§3.5.2 ① 那条硬要求
+// 是**由构造保证**的，不是靠配置保证的）。
+
+/// 「配置可视化」界面要的那一份：**文件在哪** + 里面的值。
+///
+/// ⚠️ 路径也要给：界面稿里就写着这一行，而且用户要能自己去开那个文件 ——
+/// 「这个界面改的是哪个文件」是他判断「改了没生效」的第一条线索。
+#[derive(serde::Serialize)]
+pub struct ServerConfigView {
+    pub path: String,
+    pub value: serde_json::Value,
+}
+
+/// 读服务端的**原始**配置（给那个表单；不认识的键也会原样带出来）。
+#[tauri::command]
+pub fn server_config(config: State<'_, ServerConfigFile>) -> Result<ServerConfigView, String> {
+    Ok(ServerConfigView {
+        path: config.path().display().to_string(),
+        value: config.read()?,
+    })
+}
+
+/// 把表单的改动保存回服务端配置。
+///
+/// ⚠️★ **保存 ≠ 生效**：服务端的配置是**启动时读一次**的，所以界面上必须说清
+/// 「保存后要重启」—— 否则用户会以为改了没生效是坏了。想一步到位的走
+/// [`server_restart`]。
+#[tauri::command]
+pub fn server_config_save(
+    config: State<'_, ServerConfigFile>,
+    patch: serde_json::Value,
+) -> Result<serde_json::Value, String> {
+    config.patch(&patch)
+}
+
+/// 本地服务端在不在跑 —— **问出来的**（真的打一条 `GET /server`），不是记的。
+#[tauri::command]
+pub fn server_running(server: State<'_, Option<Arc<ServerProcess>>>) -> bool {
+    server.as_ref().is_some_and(|server| server.is_running())
+}
+
+/// 重启本地服务端（「保存并重启」那条路）。
+///
+/// ⚠️ 只在**自带服务端**时做得到：找不到二进制就**报错**，
+/// 而不是画一个点了没反应的按钮（§3.5.2 ② 第 3 条）。
+#[tauri::command]
+pub fn server_restart(server: State<'_, Option<Arc<ServerProcess>>>) -> Result<(), String> {
+    let Some(server) = server.as_ref() else {
+        return Err("这个客户端没有自带服务端（找不到 clip9-server），没法替你重启。".to_owned());
+    };
+    server.stop()?;
+    server.start()
+}
 
 /// 界面上要渲染的那一份状态。
 ///
