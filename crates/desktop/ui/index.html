@@ -86,11 +86,6 @@ body {
         padding: 0 12px; background: var(--sidebar-bg);
         border-bottom: 1px solid var(--border);
     }
-.lights { display: flex; gap: 7px; }
-.lights i { width: 11px; height: 11px; border-radius: 50%; display: block; }
-.lights i:nth-child(1) { background: #ff5f57; }
-.lights i:nth-child(2) { background: #febc2e; }
-.lights i:nth-child(3) { background: #28c840; }
 .titlebar .t { font-size: 12px; color: var(--sidebar-sub); margin-left: 4px; }
 .titlebar .spacer { flex: 1; }
 /* 同步开关：**桌面端独有** —— 手机上不需要「暂停剪贴板监听」这个动作 */
@@ -280,11 +275,6 @@ body {
 code { background: color-mix(in srgb, var(--text) 9%, transparent); padding: 1px 5px; border-radius: 4px; font-size: 11.5px; }
 .win { background: var(--card-bg); border: 1px solid var(--border); border-radius: 12px; overflow: hidden; box-shadow: var(--shadow); }
 .titlebar { height: 34px; display: flex; align-items: center; gap: 10px; padding: 0 12px; background: var(--sidebar-bg); border-bottom: 1px solid var(--border); }
-.lights { display: flex; gap: 7px; }
-.lights i { width: 11px; height: 11px; border-radius: 50%; display: block; }
-.lights i:nth-child(1) {background:#ff5f57}
-.lights i:nth-child(2) {background:#febc2e}
-.lights i:nth-child(3) {background:#28c840}
 .titlebar .t { font-size: 12px; color: var(--sidebar-sub); }
 /* 设置窗口：左侧分组 + 右侧内容 */
     .settings { width: 640px; height: 470px; display: flex; flex-direction: column; }
@@ -358,9 +348,30 @@ body {
     font: 13px/1.55 -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", sans-serif;
     -webkit-font-smoothing: antialiased;
 }
-/* ⚠️ 两份稿的 .titlebar 高度不同（稿 1 是 38px 的主窗口、稿 2 是 34px 的设置窗口），
-   而它们**共用同一个类名**。拼接顺序让稿 2 赢了，所以这里把主窗口那个显式改回来。 */
-body > .titlebar { height: 38px; }
+/* ⚠️★ 主窗口**没有标题栏**（Jonny 2026-09-26）—— 整条 `.titlebar` 删掉了。
+   原来是靠一条 `body > .titlebar { height: 38px }` 把稿 1 那个 38px 改回来的
+   （稿 2 的 34px 会赢），现在那条规则**没有对象了**，删掉。
+   ⚠️ 稿 2 的 `.titlebar`（34px）仍然用在两个**浮层**的标题栏上。 */
+
+/* ⚠️★ 房间行改成**两行**（Jonny 2026-09-26：「侧栏图标改成单独一行」）：
+   第一行 = 图标 + 名字 + 延迟 + 条数；第二行 = ↑ / ↓ 那两个开关。
+   为什么要改：侧栏 208px 里要塞「名字 + 延迟胶囊 + ↑ + ↓ + 条数」五样东西，
+   名字会被挤到只剩二十几像素（换行或省略号，两样都难看）。
+   ⚠️ 做法是 `flex-wrap: wrap` + 给 `.dirs` 一个 `width: 100%` 逼它换行 ——
+   不用多包一层 DOM，`app.js` 那边只要把两个开关包进一个 `<span class="dirs">`。
+   ⚠️ 这是**偏离稿 1** 的（稿子里是一行），所以写在这里，不写进生成的那一段。 */
+.room { flex-wrap: wrap; }
+.room .dirs {
+    width: 100%; display: flex; align-items: center; gap: 6px;
+    /* ⚠️ 靠右：跟第一行末尾那个「条数」对齐，看着像它的一部分。 */
+    justify-content: flex-end;
+}
+
+/* ⚠️★ 主区那一行现在还要装下**状态胶囊**（主窗口标题栏删掉之后它并进来了）。
+   窗口最窄 640px、侧栏占 208px → 主区只剩 432px，而这一行有
+   「房间名 + 条数 + 设备圆圈 + N 台在线 + 胶囊」五样。
+   装不下时**让它换行**，而不是把胶囊挤没（那是最要紧的一个状态指示）。 */
+.main-head { flex-wrap: wrap; row-gap: 6px; }
 
 /* ⚠️★ 同名不同义的两处，显式改回来。
    稿 1 的 `.field` / `.chk` / `.divider` 是给它那个**已被稿 2 取代的旧设置面板**用的，
@@ -517,16 +528,12 @@ button.sync { font-family: inherit; cursor: default; }
 </style>
 </head>
 <body>
-    <!-- ══ 主窗口（标记照界面稿 1）══ -->
-    <div class="titlebar">
-        <div class="lights"><i></i><i></i><i></i></div>
-        <span class="t">clip9</span>
-        <div class="spacer"></div>
-        <button class="sync wait" id="conn" title="点击暂停/恢复剪贴板监听">
-            <span class="dot"></span><span id="conn-text">连接中…</span>
-        </button>
-    </div>
-
+    <!-- ══ 主窗口（标记照界面稿 1，**但去掉了标题栏** —— 见下）══
+         ⚠️★ 主窗口**没有标题栏**（Jonny 2026-09-26）：
+         ① 那三个红黄绿圆点是**假的 macOS 交通灯**（稿子里画着玩的），
+            而这个窗口**本来就有系统标题栏** —— 画上去就是两套；
+         ② 于是标题栏里只剩「clip9」+ 状态胶囊，而窗口标题栏上已经写着 clip9 了。
+         所以整条删掉，**状态胶囊并进主区那一行**（房间名 + 设备图标那一栏）。 -->
     <div class="body">
         <div class="sidebar">
             <div class="sidebar-head">房间 <span class="count" id="room-count">—</span></div>
@@ -544,6 +551,9 @@ button.sync { font-family: inherit; cursor: default; }
                 <span class="meta" id="room-meta"></span>
                 <div class="spacer"></div>
                 <div class="devices" id="devices"></div>
+                <button class="sync wait" id="conn" title="点击暂停/恢复剪贴板监听">
+                    <span class="dot"></span><span id="conn-text">连接中…</span>
+                </button>
             </div>
 
             <div class="notice" id="notice" hidden></div>
@@ -568,7 +578,9 @@ button.sync { font-family: inherit; cursor: default; }
     <!-- ══ 设置窗口（标记照界面稿 2 的 .win.settings）══ -->
     <div class="overlay" id="settings-overlay" hidden>
       <div class="win settings">
-        <div class="titlebar"><div class="lights"><i></i><i></i><i></i></div><span class="t">设置</span></div>
+        <!-- ⚠️ 浮层的标题栏**没有**那三个红黄绿圆点 —— 它们是假的 macOS 交通灯，
+             而这几个窗口本来就有系统标题栏（Jonny 2026-09-26：「mac 样式都删了」）。 -->
+        <div class="titlebar"><span class="t">设置</span></div>
         <div class="body">
             <div class="nav" id="settings-nav">
                 <div class="grp">连接</div>
@@ -766,7 +778,7 @@ button.sync { font-family: inherit; cursor: default; }
     <!-- ══ 服务端配置（标记照界面稿 2 的 .win.cfg）══ -->
     <div class="overlay" id="server-overlay" hidden>
       <div class="win cfg">
-        <div class="titlebar"><div class="lights"><i></i><i></i><i></i></div><span class="t">服务端配置</span></div>
+        <div class="titlebar"><span class="t">服务端配置</span></div>
         <div class="hd">
             <span class="t">config.json</span>
             <span class="path" id="server-path"></span>

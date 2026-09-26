@@ -255,6 +255,20 @@ function renderRooms(state) {
     //「这个房间要不要密码」（凭据在 `Channel::auth_token` 里，界面不读它）。
     node.append(h('span', 'ico', index === state.selected ? '🏠' : '💬'));
     node.append(h('span', 'nm', room.name));
+    // ⚠️★ 延迟**每个房间都画**（Jonny 2026-09-26：「每个在连接状态的都要显示延迟」）——
+    // 每个房间各自有一条连接（§4.7），所以每个房间都量得到自己那个数。
+    // ⚠️ 还没连上时画 `—`（**不是**不画）：这个房间是在量的，
+    //「正在量但还没有数字」和「这个房间量不到」是两件事。
+    node.append(renderLatency(room.connection?.latency));
+    node.append(h('span', 'ct', String(room.count)));
+
+    // ⚠️★ 两个方向开关包进一个 `.dirs`，**它是房间行的第二行**
+    //（Jonny 2026-09-26：「侧栏图标改成单独一行」）——
+    // 一行里塞不下「名字 + 延迟 + ↑ + ↓ + 条数」，名字会被挤到只剩二十几像素。
+    // ⚠️ 顺序要紧：`dirs` 必须**排在条数后面** —— 它有 `width: 100%`，
+    // 排在条数前面的话条数会被一起挤到第三行去。
+    // ⚠️ 换行本身靠 CSS（`.room { flex-wrap: wrap }` + `.dirs { width: 100% }`），
+    // 这里只负责把它们包起来 —— 布局的事别写进 JS。
     const up = h('span', room.upload ? 'dir up on' : 'dir up', '↑');
     up.title = room.upload
       ? '↑ 发到房间：本机剪贴板的内容发到它（点击关掉）'
@@ -265,12 +279,10 @@ function renderRooms(state) {
     down.title = '↓ 收进剪贴板：这个房间的实时内容写进本机剪贴板（全局只能一个）';
     down.dataset.action = 'download';
     down.dataset.index = String(index);
-    // ⚠️★ 延迟**每个房间都画**（Jonny 2026-09-26：「每个在连接状态的都要显示延迟」）——
-    // 每个房间各自有一条连接（§4.7），所以每个房间都量得到自己那个数。
-    // ⚠️ 还没连上时画 `—`（**不是**不画）：这个房间是在量的，
-    //「正在量但还没有数字」和「这个房间量不到」是两件事。
-    node.append(renderLatency(room.connection?.latency));
-    node.append(up, down, h('span', 'ct', String(room.count)));
+    const dirs = h('span', 'dirs');
+    dirs.append(up, down);
+    node.append(dirs);
+
     node.dataset.index = String(index);
     host.append(node);
   });
