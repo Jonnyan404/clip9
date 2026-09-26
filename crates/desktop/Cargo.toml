@@ -11,6 +11,11 @@ tauri-build = { version = "2.0", features = [] }
 # ⚠️ `tray-icon` + `image-png` 是**托盘菜单**要的（§7 第 5 条）：
 # 前者的图标在 macOS 上要从 PNG 解出来，所以两者得一起开。
 tauri = { version = "2.11", features = ["tray-icon", "image-png"] }
+# ⚠️ 开机自启**跨平台**（macOS LaunchAgent / Linux `~/.config/autostart` / Windows 注册表）。
+# 自己写要三套，而这三套的细节都会变 —— 这里用一个官方插件是划算的
+# （对比：`open_web` 那条**没有**引插件，因为系统自带的 `open`/`start`/`xdg-open`
+#  二十年没变过。**判断标准是「这东西稳不稳」，不是「是不是插件」。**）
+tauri-plugin-autostart = "2"
 # ⚠️ 业务逻辑全在这个 crate 里（去重 / 防抖 / 分类 / 边界水印 / 上下行）。
 # 壳只做「把事件转成它的调用」+ 窗口 —— 见 docs/specs/desktop-client.md §2 的硬边界。
 clip9-client = { path = "../client" }

@@ -156,6 +156,22 @@ pub struct ClientConfig {
     #[serde(default)]
     pub device_name: String,
 
+    /// 开机自动启动。**只有桌面端会用**（Android / OpenWrt 那边忽略它）。
+    ///
+    /// ⚠️ 为什么它在**这个**配置里、而不是壳自己的文件里：**只留一个配置文件**。
+    /// 多一个文件就多一处要备份、要迁移、要跟用户解释的东西
+    /// （§5：客户端与服务端**同一套路径规则**，用户已经知道配置在数据目录下了）。
+    ///
+    /// ⚠️ 默认 **false**：装完就往系统里塞一个自启项，那是**未经同意**改用户的机器。
+    /// 想自启的人去勾一下，而不是「先勾上，不想要再去关」—— 后者会让用户在
+    /// 「为什么这软件开机自己跑」上花时间。
+    ///
+    /// ⚠️ 它在系统里的**落地方式随平台不同**（macOS 是 LaunchAgent、Linux 是
+    /// `~/.config/autostart/*.desktop`、Windows 是注册表），由桌面壳负责，
+    /// 这个 crate **不碰**（它连 `tauri` 都不许出现，见 `desktop-client.md` §2）。
+    #[serde(default)]
+    pub enable_autostart: bool,
+
     /// **相对路径的解析基准**（应用的数据/配置目录）。
     ///
     /// ⚠️ 它**不落盘**（`#[serde(skip)]`）——
@@ -191,6 +207,8 @@ impl Default for ClientConfig {
             poll_interval_ms: default_poll_interval_ms(),
             client_id: new_client_id(),
             device_name: String::new(),
+            // ⚠️ 默认关（理由见字段注释）—— 显式写出来，别靠 `Default` 的隐式值。
+            enable_autostart: false,
             base_dir: None,
             channels: Vec::new(),
         }
@@ -545,5 +563,24 @@ mod tests {
         cfg.channels[1].enable_upload = false;
         assert_eq!(cfg.upload_channels().len(), 1);
         assert_eq!(cfg.upload_channels()[0].name, "a");
+    }
+
+    /// ⚠️★ 开机自启**默认必须是关**的：装完就往系统里塞一个自启项，是**未经同意**
+    /// 改用户的机器。这条钉的是**产品决定**，不是实现细节。
+    ///
+    /// ⚠️ 顺带钉住「**老配置读出来也不能变成开着**」：配置文件里没有这个键时，
+    /// `#[serde(default)]` 必须落到 `false` —— 那正是「加字段不能让已有用户的行为变掉」
+    /// 这条规矩在这一处的样子（老用户升级上来，机器上不该多出一个自启项）。
+    #[test]
+    fn autostart_is_off_by_default_and_for_old_configs() {
+        assert!(
+            !ClientConfig::default().enable_autostart,
+            "默认要关（理由见字段注释）"
+        );
+        let parsed: ClientConfig = serde_json::from_str("{}").expect("空对象也要能读出来");
+        assert!(
+            !parsed.enable_autostart,
+            "老配置里没有这个键，读出来必须是关的"
+        );
     }
 }

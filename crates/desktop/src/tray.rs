@@ -33,6 +33,8 @@ use crate::store::Store;
 pub enum Action {
     /// 暂停 / 恢复剪贴板监听（**上下行都停** —— 见 `app.js` 里那段同名的说明）。
     Toggle,
+    /// 开机自启的开 / 关（落地见 [`crate::autostart`]）。
+    ToggleAutostart,
     /// 把主窗口叫出来（关掉窗口之后唯一的回头路）。
     Open,
     /// 退出。
@@ -54,6 +56,7 @@ const ROOM_PREFIX: &str = "room:";
 pub fn action_for(id: &str) -> Option<Action> {
     match id {
         "toggle" => Some(Action::Toggle),
+        "autostart" => Some(Action::ToggleAutostart),
         "open" => Some(Action::Open),
         "quit" => Some(Action::Quit),
         other => other
@@ -98,6 +101,11 @@ pub fn install(
     let toggle = CheckMenuItemBuilder::with_id("toggle", toggle_label(snapshot.monitoring))
         .checked(snapshot.monitoring)
         .build(app)?;
+    // ⚠️★ 自启那个勾画的是**系统里的真相**（`autostart::initial_checked`），
+    // 不是配置里的意图 —— 用户在系统设置里关掉之后，画意图就是骗人。
+    let autostart = CheckMenuItemBuilder::with_id("autostart", "开机自动启动")
+        .checked(crate::autostart::initial_checked(app))
+        .build(app)?;
     let quit = MenuItemBuilder::with_id("quit", "退出").build(app)?;
 
     // 房间子菜单：下标就是配置里的下标（`Action::SelectRoom` 拿它去 `store.select`）。
@@ -114,7 +122,7 @@ pub fn install(
     let rooms = rooms.build()?;
 
     let menu = MenuBuilder::new(app)
-        .items(&[&open, &toggle])
+        .items(&[&open, &toggle, &autostart])
         .separator()
         .item(&rooms)
         .separator()
@@ -162,6 +170,18 @@ pub fn install(
                     }
                     runtime_for_menu.refresh_history();
                     show_main_window(app);
+                }
+                Action::ToggleAutostart => {
+                    // ⚠️★ **两件事都要做**：改配置里的意图（下次启动的依据）+ 落到系统上。
+                    // 只做前者 = 「配了不生效」；只做后者 = 下次启动又变回去。
+                    let wanted = !store_for_menu.snapshot().autostart;
+                    store_for_menu.set_autostart(wanted);
+                    crate::autostart::apply(app, wanted);
+                    runtime_for_menu.persist();
+                    // ⚠️★ 勾跟着**系统里的真相**走，不跟着我们想要的值走 ——
+                    // 写失败时（权限 / 被策略挡）要显示「没开」，否则用户以为成了。
+                    // 这是 `autostart::is_enabled` 存在的全部理由。
+                    let _ = autostart.set_checked(crate::autostart::initial_checked(app));
                 }
             }
         })
@@ -228,6 +248,19 @@ mod tests {
         for index in [0, 1, 7, 42] {
             assert_eq!(action_for(&room_id(index)), Some(Action::SelectRoom(index)));
         }
+    }
+
+    /// ⚠️★ **自启和暂停是两个不同的开关**，不能混成一个动作：
+    /// 一个管「现在同步吗」，一个管「开机自己起吗」。混了的后果是
+    /// 「点一下暂停，把开机自启也关了」—— 而用户根本不会往那上面想。
+    #[test]
+    fn the_autostart_item_is_its_own_action() {
+        assert_eq!(action_for("autostart"), Some(Action::ToggleAutostart));
+        assert_ne!(
+            action_for("autostart"),
+            action_for("toggle"),
+            "两个开关不能落到同一个动作上"
+        );
     }
 
     /// ⚠️ 认不出来的 id 必须是 `None`，**不能**猜一个动作。

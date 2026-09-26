@@ -19,6 +19,7 @@
 //! 互不影响」）。主窗口是 `ui/` 里**手写的**本地页面，实测记录见规格 §0.1.3。
 //! 别再往那个方向试。
 
+mod autostart;
 mod commands;
 mod model;
 mod runtime;
@@ -134,6 +135,11 @@ fn main() {
     runtime.start();
 
     let app = tauri::Builder::default()
+        // ⚠️ 开机自启走官方插件（跨平台那三套自己写会各漂各的）。
+        .plugin(tauri_plugin_autostart::init(
+            tauri_plugin_autostart::MacosLauncher::LaunchAgent,
+            None,
+        ))
         .manage(Arc::clone(&store))
         .manage(Arc::clone(&runtime))
         .invoke_handler(tauri::generate_handler![
@@ -155,6 +161,9 @@ fn main() {
             move |app| {
                 tray::install(app.handle(), &store, &runtime)
                     .map_err(|err| Box::new(err) as Box<dyn std::error::Error>)?;
+                // ⚠️ 把配置里的自启意图**落到系统上**（幂等）。系统里那份可能被用户在
+                // 系统设置里删掉，而界面上还勾着 —— 不补的话就是「界面说一套、实际做另一套」。
+                autostart::apply(app.handle(), store.config().enable_autostart);
                 Ok(())
             }
         })

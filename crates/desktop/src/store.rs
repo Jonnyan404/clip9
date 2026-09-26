@@ -80,6 +80,10 @@ pub struct Snapshot {
     pub problems: Vec<String>,
     /// 剪贴板监听是不是开着（标题栏那个开关）。
     pub monitoring: bool,
+    /// 开机自启 —— ⚠️ 这是**配置里的意图**，不是系统里的真相。
+    /// 真相要问 `autostart::is_enabled`（那要 `AppHandle`，而 `Store` 里**不许有 `tauri`**）。
+    /// 界面要画真相时走命令，别拿这个字段当「现在到底开没开」。
+    pub autostart: bool,
     pub notice: Option<Notice>,
     /// 配置与数据目录（用户要知道自己的配置在哪）。
     pub config_path: String,
@@ -201,6 +205,7 @@ impl Store {
             limits: inner.limits.into(),
             problems: inner.config.problems(),
             monitoring: inner.monitoring,
+            autostart: inner.config.enable_autostart,
             notice: inner.notice.clone(),
             config_path: self.config_path.display().to_string(),
             data_dir: self.data_dir.display().to_string(),
@@ -365,6 +370,15 @@ impl Store {
         let mut inner = self.lock();
         inner.monitoring = on;
         inner.config.enable_monitoring = on;
+    }
+
+    /// 换「开机自启」（**只有桌面端会用**）。
+    ///
+    /// ⚠️ 这里只改**配置里的意图**；落到系统上由 `autostart::apply` 做
+    /// （那要 `AppHandle`，而这里不许有 `tauri`）。调用方**两个都要做** ——
+    /// 只改配置的话，用户勾了、界面上勾着、系统里没写，就是「配了不生效」。
+    pub fn set_autostart(&self, on: bool) {
+        self.lock().config.enable_autostart = on;
     }
 
     /// 界面上要用的配置副本（喂给 `clip9-client` 的那几个函数）。
