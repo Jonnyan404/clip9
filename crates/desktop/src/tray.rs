@@ -2,9 +2,14 @@
 //!
 //! # 为什么托盘是主入口
 //!
-//! 窗口可以关掉，而同步要一直跑。所以「暂停 / 恢复」「切房间」「退出」这些动作
-//! **不能只活在窗口里** —— 那等于「关掉窗口就没法暂停」。
+//! 窗口可以关掉，而同步要一直跑。所以「切房间」「退出」这些动作
+//! **不能只活在窗口里** —— 那等于「关掉窗口就没法退出」。
 //! 界面稿见 `docs/specs/desktop-client-mockup.html`。
+//!
+//! ⚠️ 托盘里原来还有一项「暂停 / 恢复剪贴板同步」。**2026-09-26 删掉了** ——
+//! 它背后的那个总开关（`ClientConfig::enable_monitoring`）整条没了：
+//! 要不要发出去只看每个房间的 ↑，而那个开关在**侧栏**（Jonny：「侧栏的图标功能足够了」）。
+//! ⚠️ 所以这里**没有**留下一个「点了没反应」的菜单项 —— 那是这个项目最忌讳的一类。
 //!
 //! # 为什么这个文件里**有** `tauri`
 //!
@@ -31,8 +36,6 @@ use crate::store::Store;
 /// 回调本身要有窗口才能跑，而「id 认不认得出来」是纯字符串判断。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Action {
-    /// 暂停 / 恢复剪贴板监听（**上下行都停** —— 见 `app.js` 里那段同名的说明）。
-    Toggle,
     /// 开机自启的开 / 关（落地见 [`crate::autostart`]）。
     ToggleAutostart,
     /// 把主窗口叫出来（关掉窗口之后唯一的回头路）。
@@ -55,7 +58,6 @@ const ROOM_PREFIX: &str = "room:";
 #[must_use]
 pub fn action_for(id: &str) -> Option<Action> {
     match id {
-        "toggle" => Some(Action::Toggle),
         "autostart" => Some(Action::ToggleAutostart),
         "open" => Some(Action::Open),
         "quit" => Some(Action::Quit),
@@ -66,21 +68,10 @@ pub fn action_for(id: &str) -> Option<Action> {
     }
 }
 
-/// 房间项 / 暂停项的 id（建菜单与解析两边**共用**，免得手写两份）。
+/// 房间项的 id（建菜单与解析两边**共用**，免得手写两份）。
 #[must_use]
 pub fn room_id(index: usize) -> String {
     format!("{ROOM_PREFIX}{index}")
-}
-
-/// 暂停项的文字。⚠️ 文字要**说清停的是什么**（不是「暂停同步」四个字）——
-/// 这个开关在配置层是上下行的总开关，用户以为只停读剪贴板的话会去查别的地方。
-#[must_use]
-pub fn toggle_label(monitoring: bool) -> &'static str {
-    if monitoring {
-        "暂停剪贴板同步（上下行都停）"
-    } else {
-        "恢复剪贴板同步"
-    }
 }
 
 /// 建托盘 + 接事件。在 `setup` 里调（那时 `app` 已经能建菜单了）。
@@ -88,8 +79,8 @@ pub fn toggle_label(monitoring: bool) -> &'static str {
 /// ⚠️ 菜单是**建一次**的：房间列表在启动时读一次，之后用户在窗口里改了配置
 /// （加房间之类）**不会**反映到托盘上 —— 窗口里的房间列表才是权威。
 /// 这是有意的取舍：重建菜单要动 `tauri` 的菜单句柄，而收益只是「托盘里的房间名新一点」。
-/// **但暂停项的勾选状态必须跟着走**（它是高频动作，状态错了用户会以为没生效），
-/// 所以下面起了一个轮询任务专门同步它。
+/// ⚠️ 原来这里还有一个轮询任务，专门同步「暂停项」的勾选状态。**它跟着那个开关一起删了**
+/// （见模块文档）—— 现在菜单里唯一有勾选状态的是自启，而它每次点完就地更新。
 pub fn install(
     app: &AppHandle<Wry>,
     store: &Arc<Store>,
@@ -98,9 +89,6 @@ pub fn install(
     let snapshot = store.snapshot();
 
     let open = MenuItemBuilder::with_id("open", "打开主窗口").build(app)?;
-    let toggle = CheckMenuItemBuilder::with_id("toggle", toggle_label(snapshot.monitoring))
-        .checked(snapshot.monitoring)
-        .build(app)?;
     // ⚠️★ 自启那个勾画的是**系统里的真相**（`autostart::initial_checked`），
     // 不是配置里的意图 —— 用户在系统设置里关掉之后，画意图就是骗人。
     let autostart = CheckMenuItemBuilder::with_id("autostart", "开机自动启动")
@@ -122,20 +110,15 @@ pub fn install(
     let rooms = rooms.build()?;
 
     let menu = MenuBuilder::new(app)
-        .items(&[&open, &toggle, &autostart])
+        .items(&[&open, &autostart])
         .separator()
         .item(&rooms)
         .separator()
         .item(&quit)
         .build()?;
 
-    let handle = app.clone();
     let store_for_menu = Arc::clone(store);
     let runtime_for_menu = Arc::clone(runtime);
-    // ⚠️ 句柄要**两份**：一份进菜单事件闭包（点一下立刻改勾选），一份进下面的轮询任务
-    // （窗口里改了也要跟上）。`CheckMenuItem` 不是 `Copy`，所以 clone —— 两处改的是
-    // **同一个**菜单项（它内部是句柄）。
-    let toggle_for_poll = toggle.clone();
     TrayIconBuilder::with_id("main")
         // ⚠️ 用应用自己的图标（`tauri.conf.json` 的 `bundle.icon`）。
         // 托盘图标缺了的话在 macOS 上是个**看不见的空位** —— 用户找不到入口。
@@ -155,14 +138,6 @@ pub fn install(
             match action {
                 Action::Open => show_main_window(app),
                 Action::Quit => app.exit(0),
-                Action::Toggle => {
-                    let on = !store_for_menu.snapshot().monitoring;
-                    runtime_for_menu.set_monitoring(on);
-                    runtime_for_menu.persist();
-                    // ⚠️ 立刻把勾选改过来，别等轮询 —— 用户点完马上要看结果。
-                    let _ = toggle.set_checked(on);
-                    let _ = toggle.set_text(toggle_label(on));
-                }
                 Action::SelectRoom(index) => {
                     if let Err(reason) = store_for_menu.select(index) {
                         eprintln!("托盘：切房间失败：{reason}");
@@ -187,30 +162,6 @@ pub fn install(
         })
         .build(app)?;
 
-    // ⚠️ 暂停项的勾选**必须跟着配置走**：窗口里点一下暂停、托盘里还打着勾的话，
-    // 用户会以为没生效（而它其实生效了）—— 「界面说一套、实际做另一套」的反方向，同样坏。
-    // 这里用轮询（和 `ui/app.js` 取快照同一个频率与理由）：状态在 `Store` 里，
-    // 而它没有观察者机制，加一个只为这一件事的推送通道不划算。
-    let handle_for_poll = handle.clone();
-    let store_for_poll = Arc::clone(store);
-    tauri::async_runtime::spawn(async move {
-        let mut last = store_for_poll.snapshot().monitoring;
-        loop {
-            tokio::time::sleep(std::time::Duration::from_millis(700)).await;
-            let now = store_for_poll.snapshot().monitoring;
-            if now == last {
-                continue;
-            }
-            last = now;
-            // ⚠️ 拿不到托盘就当没这回事（窗口已经在关了）—— 不值得为它 panic。
-            if let Some(tray) = handle_for_poll.tray_by_id("main") {
-                let _ = tray.set_visible(true);
-            }
-            let _ = toggle_for_poll.set_checked(now);
-            let _ = toggle_for_poll.set_text(toggle_label(now));
-        }
-    });
-
     Ok(())
 }
 
@@ -234,11 +185,17 @@ mod tests {
 
     /// ⚠️★ 三个固定项**逐字**钉住。拼错了的表现是「点了没反应」——
     /// 不报错、不 panic、日志里也没有（`on_menu_event` 根本不会被触发，因为 id 对不上）。
+    ///
+    /// ⚠️ 三个动作还必须**互不相同**：落到同一个动作上的后果是
+    ///「点一下开机自启，结果退出了」—— 而用户根本不会往那上面想。
     #[test]
     fn the_fixed_items_map_to_their_actions() {
-        assert_eq!(action_for("toggle"), Some(Action::Toggle));
         assert_eq!(action_for("open"), Some(Action::Open));
         assert_eq!(action_for("quit"), Some(Action::Quit));
+        assert_eq!(action_for("autostart"), Some(Action::ToggleAutostart));
+        assert_ne!(Action::Open, Action::Quit);
+        assert_ne!(Action::Open, Action::ToggleAutostart);
+        assert_ne!(Action::Quit, Action::ToggleAutostart);
     }
 
     /// 房间项：id 与下标**双向**都要对得上（建菜单用的是 [`room_id`]，解析用的是
@@ -250,41 +207,19 @@ mod tests {
         }
     }
 
-    /// ⚠️★ **自启和暂停是两个不同的开关**，不能混成一个动作：
-    /// 一个管「现在同步吗」，一个管「开机自己起吗」。混了的后果是
-    /// 「点一下暂停，把开机自启也关了」—— 而用户根本不会往那上面想。
-    #[test]
-    fn the_autostart_item_is_its_own_action() {
-        assert_eq!(action_for("autostart"), Some(Action::ToggleAutostart));
-        assert_ne!(
-            action_for("autostart"),
-            action_for("toggle"),
-            "两个开关不能落到同一个动作上"
-        );
-    }
-
     /// ⚠️ 认不出来的 id 必须是 `None`，**不能**猜一个动作。
     /// 猜的后果是「点了个莫名其妙的菜单项，结果退出了」—— 比没反应更坏。
+    ///
+    /// ⚠️★ 清单里的 `"toggle"` 是**特意留的**：那是 2026-09-26 删掉的那一项
+    /// （暂停 / 恢复剪贴板同步）。留着它是在钉「**删掉的动作不许被重新认出来**」——
+    /// 万一哪天有人把一个旧菜单项接回来，这里会红，而不是静默地什么都不做。
     #[test]
     fn unknown_ids_are_refused_instead_of_guessed() {
         for bad in [
-            "", "Toggle", "TOGGLE", "open ", "room", "room:", "room:x", "room:-1", "room:1.5",
-            "quit2",
+            "", "Toggle", "TOGGLE", "toggle", "open ", "room", "room:", "room:x", "room:-1",
+            "room:1.5", "quit2",
         ] {
             assert_eq!(action_for(bad), None, "{bad:?} 不该被认出来");
         }
-    }
-
-    /// 暂停项的文案要说清「停的是什么」：这个开关是**上下行总开关**，
-    /// 只写「暂停同步」的话用户会以为只停读剪贴板，然后去别处找原因。
-    #[test]
-    fn the_toggle_label_says_what_it_stops() {
-        assert!(toggle_label(true).contains("暂停"));
-        assert!(
-            toggle_label(true).contains("上下行"),
-            "要写明是总开关：{}",
-            toggle_label(true)
-        );
-        assert!(toggle_label(false).contains("恢复"));
     }
 }

@@ -22,6 +22,14 @@
 //!    而那正是这个项目最忌讳的一类（配了不生效）。所以这里：
 //!    **UI 用单选**，而手改过的配置（真的开了两个）由 [`ClientConfig::problems`] **报出来**，
 //!    不是悄悄挑一个。
+//! 5. ⚠️★ **没有「全局暂停」**（2026-09-26 删掉了 `enable_monitoring`）。
+//!    要不要读本机剪贴板、发不发出去，**只看每个房间的 ↑**（§4.7 之后连接本来就与它无关）。
+//!    删的理由（Jonny）：「**侧栏的图标功能足够了**」——
+//!    多一个「只停一半」的开关，只会让人分不清「是没开 ↑ 还是被暂停了」。
+//!    ⚠️ 代价（明说）：**监听线程常开** —— 一个房间都没开 ↑ 时，它照样按
+//!    `poll_interval_ms` 读剪贴板，只是每次都被 [`ClientConfig::upload_channels`]
+//!    筛成空、什么也不发。这是**有意的**：为省这点空转去让「开 ↑」顺带起线程，
+//!    会把「开关」和「线程生命周期」重新绑在一起，而那正是 §4.7 刚解开的那团结。
 //!
 //! # 路径规则：与服务端同一套（§5）
 //!
@@ -114,10 +122,6 @@ impl Channel {
 /// 客户端配置。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ClientConfig {
-    /// 总开关。关掉 = 既不监听也不收（上行下行一起停）。
-    #[serde(default = "default_true")]
-    pub enable_monitoring: bool,
-
     // ── 上传范围 ───────────────────────────────────────────────────
     /// 文本（含 URL / 邮箱 / 颜色）要不要上行。
     #[serde(default = "default_true")]
@@ -202,7 +206,6 @@ fn new_client_id() -> String {
 impl Default for ClientConfig {
     fn default() -> Self {
         Self {
-            enable_monitoring: true,
             enable_text: true,
             enable_file: true,
             enable_text_download: true,
@@ -262,9 +265,6 @@ impl ClientConfig {
     /// [`ClientConfig::is_upload_enabled`] 单独判（两维要分得开，见模块文档）。
     #[must_use]
     pub fn upload_channels(&self) -> Vec<&Channel> {
-        if !self.enable_monitoring {
-            return Vec::new();
-        }
         self.channels.iter().filter(|c| c.enable_upload).collect()
     }
 
@@ -274,8 +274,9 @@ impl ClientConfig {
     /// 连接与 ↑/↓ **无关**（每个房间各自一条连接，见 [`crate::receiver::spawn_receiver`]）。
     /// Jonny 2026-09-26：「下载本就不应该控制房间的任何功能」。
     ///
-    /// ⚠️★ 这里**不再判 `enable_monitoring`**。原来判它是错的，而且错得很隐蔽：
-    /// 「暂停剪贴板监听」是**上行**的事（要不要读本机剪贴板），而它顺手把下行也停了 ——
+    /// ⚠️★ 这里**只读每个房间的 ↓** —— 没有任何全局开关能顺手把它关掉。
+    /// 踩过的坑：它原来开头判 `enable_monitoring`（那个总开关 2026-09-26 已经删了），
+    /// 「暂停剪贴板监听」是**上行**的事，却顺手把下行也停了 ——
     /// 于是用户点一下暂停，设备行、延迟、实时消息**全都消失**。
     /// 照实说「上下行都停」只是把谎说圆了，行为本身还是错的。
     ///
@@ -298,11 +299,10 @@ impl ClientConfig {
     /// 这一类内容要不要上行。
     #[must_use]
     pub fn is_upload_enabled(&self, kind: UploadKind) -> bool {
-        self.enable_monitoring
-            && match kind {
-                UploadKind::Text => self.enable_text,
-                UploadKind::File => self.enable_file,
-            }
+        match kind {
+            UploadKind::Text => self.enable_text,
+            UploadKind::File => self.enable_file,
+        }
     }
 
     /// 这一类内容要不要写本机剪贴板。
@@ -349,8 +349,8 @@ impl ClientConfig {
             }
         }
 
-        if self.enable_monitoring && self.channels.is_empty() {
-            out.push("监控开着，但一个房间都没配".to_owned());
+        if self.channels.is_empty() {
+            out.push("一个房间都没配".to_owned());
         }
 
         out
@@ -484,30 +484,48 @@ mod tests {
         assert!(problems.iter().any(|p| p.contains("无法解析")));
     }
 
-    /// ⚠️★ 总开关**只停上行**（读本机剪贴板），**不停下行**。
+    /// ⚠️★ **一个房间都没开 ↑ = 上行是空的**，而且**下行不受影响**。
     ///
-    /// Jonny 2026-09-26：「下载本就不应该控制房间的任何功能，也就是监听剪贴板关闭了，
-    /// 也不影响本地客户端的功能」。
-    ///
-    /// ⚠️ 原来这条叫 `monitoring_off_stops_both_directions`，断言的是
-    /// 「`download_channel()` 也变成 `None`」—— 那是错的，而且错得很隐蔽：
-    /// 「暂停剪贴板监听」是**上行**的事，顺手把下行也停掉之后，用户点一下暂停，
-    /// 设备行、延迟、实时消息**全都消失**。照实说「上下行都停」只是把谎说圆了。
+    /// 这是删掉 `enable_monitoring` 之后留下的那条不变式（模块文档第 5 条）：
+    /// 上行只看每个房间的 ↑，下行只看每个房间的 ↓，两个方向各自独立（§4.7）。
+    /// ⚠️ 顺带钉住「**空 ≠ 错**」：没有上行目标时 `upload_channels()` 给空列表，
+    /// 调用方（`uploader`）据此记 `skipped` 而不是 `error` —— 默认配置就是这个状态。
     #[test]
-    fn monitoring_off_stops_only_the_upload() {
+    fn no_upload_channel_does_not_touch_the_download() {
         let cfg = ClientConfig {
-            enable_monitoring: false,
-            channels: vec![ch("a", true)],
+            channels: vec![Channel {
+                enable_upload: false,
+                ..ch("a", true)
+            }],
             ..ClientConfig::default()
         };
-        assert!(cfg.upload_channels().is_empty(), "上行要停");
+        assert!(
+            cfg.upload_channels().is_empty(),
+            "没开 ↑ 就一个上行目标都没有"
+        );
         assert!(
             cfg.download_channel().is_some(),
-            "下行**不能**跟着停 —— 那是另一件事（§4.7）"
+            "上行空了**不能**影响下行 —— 那是另一件事（§4.7）"
         );
-        // 按内容类型的那两个上传开关也一起停（它们判的就是「要不要发出去」）。
-        assert!(!cfg.is_upload_enabled(UploadKind::Text));
-        assert!(!cfg.is_upload_enabled(UploadKind::File));
+        // ⚠️ 按内容类型的那两个开关**仍然说「可以发」**：它们回答的是「这一类内容发不发」，
+        // 与「有没有房间要收」是两回事。混在一起的话，界面就没法区分
+        //「是你自己关掉了文本」和「你一个房间都没开」。
+        assert!(cfg.is_upload_enabled(UploadKind::Text));
+        assert!(cfg.is_upload_enabled(UploadKind::File));
+    }
+
+    /// ⚠️★ 配置文件里**多出来的键**（比如已经删掉的 `enableMonitoring`）不能让配置读不出来。
+    ///
+    /// 这是 `serde` 的默认行为（没有 `deny_unknown_fields`），钉一下免得将来有人加上它 ——
+    /// 那时候**磁盘上已有的 `client.json` 会当场读不出来**，而症状是「客户端起不来」，
+    /// 与「加了个字段」联想不到一起。
+    #[test]
+    fn unknown_keys_in_the_config_file_are_ignored() {
+        let parsed: ClientConfig =
+            serde_json::from_str(r#"{"enableMonitoring": false, "enableText": true}"#)
+                .expect("老配置必须还能读出来");
+        assert!(parsed.enable_text);
+        assert!(parsed.channels.is_empty());
     }
 
     /// §5 那条路径规则：**相对 → 数据目录；绝对 → 原样**。
@@ -589,9 +607,9 @@ mod tests {
         assert!(!cfg.is_download_enabled(UploadKind::File));
     }
 
-    /// 上传目录跟着房间的开关走，也受总开关管。
+    /// 上行目标**只看每个房间的 ↑**（没有全局开关了，见模块文档第 5 条）。
     #[test]
-    fn upload_channels_respects_both_switches() {
+    fn upload_channels_respects_the_room_switch() {
         let mut cfg = ClientConfig {
             channels: vec![ch("a", false), ch("b", false)],
             ..ClientConfig::default()

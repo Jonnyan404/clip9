@@ -207,7 +207,6 @@ fn main() {
             commands::select,
             commands::set_upload,
             commands::set_download,
-            commands::set_monitoring,
             commands::send_text,
             commands::copy_to_clipboard,
             commands::pick_files,

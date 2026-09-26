@@ -143,8 +143,6 @@ pub struct Snapshot {
     pub limits: ServerLimitsView,
     /// 配置里的毛病（`ClientConfig::problems`）—— **摆出来，而不是自己在内部悄悄修正**。
     pub problems: Vec<String>,
-    /// 剪贴板监听是不是开着（标题栏那个开关）。
-    pub monitoring: bool,
     /// 开机自启 —— ⚠️ 这是**配置里的意图**，不是系统里的真相。
     /// 真相要问 `autostart::is_enabled`（那要 `AppHandle`，而 `Store` 里**不许有 `tauri`**）。
     /// 界面要画真相时走命令，别拿这个字段当「现在到底开没开」。
@@ -295,7 +293,6 @@ struct Inner {
     rooms: Vec<Room>,
     selected: usize,
     limits: ServerLimits,
-    monitoring: bool,
     notice: Option<Notice>,
 }
 
@@ -314,17 +311,12 @@ impl Store {
     #[must_use]
     pub fn new(config: ClientConfig, config_path: PathBuf, data_dir: PathBuf) -> Self {
         let rooms = config.channels.iter().map(|_| Room::default()).collect();
-        // ⚠️⚠️ 这里**必须**读配置，而不是写死 true：写死的话，配置里把监听关掉的
-        // 用户会看到界面上写着「监听中」—— 而实际上本机剪贴板**根本没被读**。
-        // 那种「界面说一套、实际做另一套」正是这个项目最忌讳的一类假象。
-        let monitoring = config.enable_monitoring;
         Self {
             inner: Mutex::new(Inner {
                 config,
                 rooms,
                 selected: 0,
                 limits: ServerLimits::default(),
-                monitoring,
                 notice: None,
             }),
             config_path,
@@ -367,7 +359,6 @@ impl Store {
             entries,
             limits: inner.limits.into(),
             problems: inner.config.problems(),
-            monitoring: inner.monitoring,
             autostart: inner.config.enable_autostart,
             notice: inner.notice.clone(),
             config_path: self.config_path.display().to_string(),
@@ -517,14 +508,6 @@ impl Store {
             channel.enable_download = index == Some(position);
         }
         Ok(())
-    }
-
-    /// 换「剪贴板监听」总开关（**只管上行监听**；下行与它无关 ——
-    /// §0.5 第 3 条那条规则的另一半：关掉下载开关关的是剪贴板，不是列表）。
-    pub fn set_monitoring(&self, on: bool) {
-        let mut inner = self.lock();
-        inner.monitoring = on;
-        inner.config.enable_monitoring = on;
     }
 
     /// 换「开机自启」（**只有桌面端会用**）。
@@ -1165,33 +1148,6 @@ mod tests {
         let snapshot = store.snapshot();
         assert_eq!(snapshot.entries.len(), 1, "同一条只能有一张卡片");
         assert_eq!(snapshot.entries[0].text, "改过的");
-    }
-
-    /// ⚠️★ 界面上那个「监听中/已暂停」**必须**跟着配置走 ——
-    /// 写死成「开着」的话，配置里关了监听的用户会看到界面说「监听中」，
-    /// 而实际上本机剪贴板**根本没被读**（§0.5 第 3 条那条规则的同类问题）。
-    #[test]
-    fn the_listening_pill_follows_the_config() {
-        let dir = tempfile::tempdir().unwrap();
-        let off = Store::new(
-            ClientConfig {
-                enable_monitoring: false,
-                ..ClientConfig::default()
-            },
-            dir.path().join("client.json"),
-            dir.path().to_path_buf(),
-        );
-        assert!(!off.snapshot().monitoring, "配置说关，界面上就该是关的");
-
-        let on = Store::new(
-            ClientConfig::default(),
-            dir.path().join("client.json"),
-            dir.path().to_path_buf(),
-        );
-        assert!(
-            on.snapshot().monitoring,
-            "默认是开的（ClientConfig 的默认）"
-        );
     }
 
     /// 历史来了要标成「取过了」；**并且乱序的 id 要插到正确位置**。

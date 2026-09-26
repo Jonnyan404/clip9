@@ -114,7 +114,7 @@ function showNotice(kind, text) {
 function shapeOf(state) {
   return JSON.stringify([
     state.rooms, state.selected, state.entries, state.status,
-    state.limits, state.problems, state.monitoring, state.dataDir,
+    state.limits, state.problems, state.dataDir,
     // ⚠️★ `notice` **必须**在里面。漏掉它的话，「上传失败」「因为开关关着而跳过」
     // 这两类提示**永远不会画出来** —— 因为它们**不改动上面任何一个字段**：
     // 上传失败什么都没变；而上传成功时，消息要靠下行回传才会进 `entries`，
@@ -255,82 +255,50 @@ function renderRooms(state) {
     //「这个房间要不要密码」（凭据在 `Channel::auth_token` 里，界面不读它）。
     node.append(h('span', 'ico', index === state.selected ? '🏠' : '💬'));
     node.append(h('span', 'nm', room.name));
-    // ⚠️★ 延迟**每个房间都画**（Jonny 2026-09-26：「每个在连接状态的都要显示延迟」）——
+    node.append(h('span', 'ct', String(room.count)));
+
+    // ⚠️★ 第二行：**↑ / ↓ 靠左、延迟靠右**（Jonny 2026-09-26：
+    // 「把主界面的上传下载图标居左，延迟也挪下来居右」）。
+    // 延迟原来在第一行（排在条数前面），挪下来之后名字那一格宽出十几个像素。
+    // ⚠️ 延迟**每个房间都画**（Jonny 2026-09-26：「每个在连接状态的都要显示延迟」）——
     // 每个房间各自有一条连接（§4.7），所以每个房间都量得到自己那个数。
     // ⚠️ 还没连上时画 `—`（**不是**不画）：这个房间是在量的，
     //「正在量但还没有数字」和「这个房间量不到」是两件事。
-    node.append(renderLatency(room.connection?.latency));
-    node.append(h('span', 'ct', String(room.count)));
-
-    // ⚠️★ 两个方向开关包进一个 `.dirs`，**它是房间行的第二行**
-    //（Jonny 2026-09-26：「侧栏图标改成单独一行」）——
-    // 一行里塞不下「名字 + 延迟 + ↑ + ↓ + 条数」，名字会被挤到只剩二十几像素。
-    // ⚠️ 顺序要紧：`dirs` 必须**排在条数后面** —— 它有 `width: 100%`，
-    // 排在条数前面的话条数会被一起挤到第三行去。
-    // ⚠️ 换行本身靠 CSS（`.room { flex-wrap: wrap }` + `.dirs { width: 100% }`），
-    // 这里只负责把它们包起来 —— 布局的事别写进 JS。
+    // ⚠️★ 它们包进一个 `.dirs`，因为**换行和靠右都是 CSS 的事**
+    //（`.room { flex-wrap: wrap }` + `.dirs { width: 100% }` + `.dirs .ms { margin-left: auto }`）——
+    // 这里只负责把它们放在一起。⚠️ `dirs` 必须**排在条数后面**：它有 `width: 100%`，
+    // 排在前面的话条数会被一起挤到第三行去。
     const up = h('span', room.upload ? 'dir up on' : 'dir up', '↑');
-    up.title = room.upload
-      ? '↑ 发到房间：本机剪贴板的内容发到它（点击关掉）'
-      : '↑ 不发到这个房间（点击打开）';
+    // ⚠️ 悬停提示只写「这个图标是干什么的」，不写「点击开/关」：
+    // 开关的形状（按下去会变色）本身就在说这件事，而 Jonny 给的文案就这两句。
+    up.title = '发送本地剪贴板到远程房间';
     up.dataset.action = 'upload';
     up.dataset.index = String(index);
     const down = h('span', room.download ? 'dir dn on' : 'dir dn', '↓');
-    down.title = '↓ 收进剪贴板：这个房间的实时内容写进本机剪贴板（全局只能一个）';
+    down.title = '获取远程房间最新消息写入本地剪贴板';
     down.dataset.action = 'download';
     down.dataset.index = String(index);
     const dirs = h('span', 'dirs');
-    dirs.append(up, down);
+    dirs.append(up, down, renderLatency(room.connection?.latency));
     node.append(dirs);
 
     node.dataset.index = String(index);
     host.append(node);
   });
-  // ⚠️★ 末尾这行「＋ 添加房间」不是装饰：没有它，用户在这个界面里**找不到加房间的入口**
-  //（界面稿里就有这一行）。点了打开设置窗口的房间那一页。
-  const add = h('div', 'room add');
-  add.append(h('span', 'ico', '＋'), h('span', 'nm', '添加房间'));
-  add.addEventListener('click', () => {
-    openSettings();
-    showPane('rooms');
-  });
-  host.append(add);
+  // ⚠️ 「＋ 添加房间」**不在这里**了：Jonny 2026-09-26 把它挪到侧栏底部
+  //（「全局设置」上面），见 `index.html` 的 `#btn-room-add` 与它那段注释。
+  // ⚠️ 挪走是有理由的：原来它是列表的最后一项，房间一多就得**滚到底**才看得见。
 }
 
-/** 标题栏那个状态点。
- *
- * ⚠️★ 圆点画的是**当前选中那个房间**的连接状态 —— 每个房间各自有一条连接（§4.7），
- * 已经没有一个「全局连接」可画了。主区显示的也是这个房间，两者对得上。
- * ⚠️ 胶囊上的**字**说的是**剪贴板监听**（点它就是切这个），而且必须照实说：
- * 上传默认是关的，所以「剪贴板同步中」在没开 ↑ 的时候是**假话** ——
- * 那时本机剪贴板一个字节都不会发出去。
- */
-function renderStatus(state) {
-  const pill = el('conn');
-  const room = state.rooms[state.selected];
-  const connection = room?.connection ?? { kind: 'off', text: '还没有房间' };
-  const kind = ['on', 'off', 'wait', 'warn'].includes(connection.kind) ? connection.kind : 'wait';
-  pill.className = `sync ${kind}${state.monitoring ? '' : ' paused'}`;
-
-  // ⚠️ 「有没有东西真的在发」= 至少一个房间开着 ↑ **且**总开关没关。
-  // 两者缺一，「同步中」都是假话。
-  const sending = state.monitoring && state.rooms.some((one) => one.upload);
-  el('conn-text').textContent = !state.monitoring
-    ? '已暂停：不发你的剪贴板'
-    : sending
-      ? '剪贴板同步中'
-      : '没开「发到房间」';
-
-  const name = room ? room.name : '没有房间';
-  const boundary =
-    connection.latestId === null || connection.latestId === undefined
-      ? ''
-      : `｜边界 latestId=${connection.latestId}`;
-  pill.title =
-    `${name}：${connection.text}${boundary}` +
-    `\n点击${state.monitoring ? '暂停' : '恢复'} —— 只影响**上行**（要不要读本机剪贴板），` +
-    '不影响连接、接收与延迟。';
-}
+/* ⚠️★ 这里原来有一个 `renderStatus`（主区那一行右边那个「剪贴板同步中」胶囊）。
+   2026-09-26 删掉了 —— Jonny：「移除房间手机/电脑图标旁边的剪贴板同步状态，
+   **功能也一并移除**，侧栏的图标功能足够了」。
+   ⚠️ 删掉它**不是**「少画一个胶囊」：它背后的那个总开关
+   （`ClientConfig::enable_monitoring`，管「要不要读本机剪贴板」）整条没了，
+   连托盘菜单里那一项一起。**要不要发出去只看每个房间的 ↑**（侧栏）。
+   ⚠️ 所以这里**没有**留下一个「状态在哪看」的缺口：每个房间的连接状态仍然在
+   `rooms[i].connection` 上，只是不再重复画第二遍（侧栏那个房间行是它唯一的落点）。
+   留一份就会有两份「哪条连接」的定义 —— §4.7 明说了不要。 */
 
 function renderTimeline(state) {
   // ⚠️ 先记下来，**不管后面走哪条提前返回**：右键菜单读的是它，
@@ -379,19 +347,33 @@ function updateCounter() {
     : '上限还不知道（还没连上）';
 }
 
-/** 主区标题右侧的设备行（稿 1 有：几个圆圈 + 「N 台在线」）。
+/** 主区那一行**右边**的设备行（稿 1 有：几个圆圈 + 「N 台在线」）。
  *
  * ⚠️★ 画的是**当前选中那个房间**的设备 —— 每个房间各自有一条连接（§4.7），
  * 所以每个房间都有自己的设备列表（`rooms[i].connection.devices`）。
  *
- * ⚠️ 拿不到时**什么都不画**，而不是画「0 台在线」：
- *「一台都没有」和「还不知道」是两件事，混起来就是骗人。
+ * ⚠️★ **永远画一行**，哪怕一个设备都没有。
+ * 原来这里是「空数组就直接 `return`」—— 理由是「『一台都没有』和『还不知道』
+ * 是两件事，混起来就是骗人」，那个理由**仍然成立**，所以这里**不画「0 台在线」**；
+ * 但「什么都不画」有个更坏的后果：**整条状态栏的右半边会凭空消失**，
+ * 看着像功能被删了。Jonny 2026-09-26 就是这么以为的 ——
+ * 「手机图标和统计，你怎么也给我删了?恢复」。
+ * ⚠️ 所以现在**照实说**：数不到就说数不到（把房间的连接状态摆出来，
+ * 那也正是原来那个同步胶囊删掉之后、主窗口里唯一还说得清「连上没有」的地方）。
+ * ⚠️ 设备列表只在连接活着（`on` / `warn`）时才有内容（`store.rs` 的
+ * `connection_view`）—— 所以「空」和「没连上」在这个界面上是同一件事，不是两件。
  */
 function renderDevices(state) {
   const host = el('devices');
   host.textContent = '';
-  const devices = state.rooms[state.selected]?.connection?.devices || [];
-  if (!devices.length) return;
+  const room = state.rooms[state.selected];
+  const devices = room?.connection?.devices || [];
+  if (!devices.length) {
+    // ⚠️ 用连接状态自己的那句话（「还没开始连」/「已断开：连接被拒绝」…），
+    // **不在这里另编一句** —— 那句话是壳给的，两处说法不一致就是第二份定义。
+    host.append(h('span', null, room ? (room.connection?.text || '还没连上') : '没有房间'));
+    return;
+  }
   for (const device of devices) {
     // ⚠️ 图标按服务端认出来的 `kind` 选（`user_agent.rs` 的 desktop/smartphone/tablet），
     // **不靠设备名猜** —— 名字是用户自己起的自由文本，猜出来的图标会乱。
@@ -412,7 +394,6 @@ function renderDevices(state) {
 function render(state) {
   lastRooms = state.rooms;
   lastLimits = state.limits;
-  renderStatus(state);
   el('room-count').textContent = String(state.rooms.length);
   renderRooms(state);
   renderTimeline(state);
@@ -428,9 +409,14 @@ function render(state) {
   // ⚠️★ 本机窗口里**留多少条**要照实说：不说的话，用户看到列表停在 200 条
   // 会以为「前面的丢了」（`store.rs` 的 `MAX_ENTRIES_PER_ROOM` 注释里点名了这条要求）。
   // 这不是历史长度 —— 历史长度是服务端的 `server.history`，两件事别混。
-  el('max-entries').textContent = state.maxEntries
-    ? `本机最多留最近 ${state.maxEntries} 条`
-    : '';
+  // ⚠️ 它原来在**侧栏底部**（`#max-entries`，跟着那行 ↑↓ 说明一起），2026-09-26 那行说明
+  // 被 Jonny 要求删掉，于是这一句搬到了「设置 → 关于」那一页（`#dg-max`）——
+  // 搬而不是删：这一句是「列表为什么停在 200 条」的唯一解释。
+  // ⚠️ 在 `render` 里写它（而不是 `openSettings` 里）是有意的：`maxEntries` 在
+  // **快照**里、不在 `settings_view` 里，而这一页随时可能开着 —— 在 `render` 里写，
+  // 它就不会是一个「打开设置那一刻的旧值」。
+  // ⚠️ 值里**不重复**「本机」：左边那一格的标签已经写着「本机保留」了。
+  el('dg-max').textContent = state.maxEntries ? `最多留最近 ${state.maxEntries} 条` : '—';
 
   const problems = el('problems');
   if (state.problems.length) {
@@ -651,12 +637,8 @@ function ensureHistory(state) {
   invoke('refresh').catch(() => {});
 }
 
-el('conn').addEventListener('click', () => {
-  // ⚠️ 这里要的是「切换」而不是「按当前状态推断」—— 状态是 700ms 前的，
-  // 拿旧状态去取反会来回横跳。
-  const paused = el('conn').classList.contains('paused');
-  invoke('set_monitoring', { on: paused });
-});
+// ⚠️ 这里原来绑的是 `#conn`（那个同步胶囊的点击 → `set_monitoring`）。
+// 胶囊和那条命令 2026-09-26 一起删了，见上面那段注释。
 el('rooms').addEventListener('click', (event) => {
   const target = event.target.closest('[data-action], .room');
   if (!target) return;
@@ -923,11 +905,15 @@ function renderRoomRows() {
     tr.append(cellInput(room.auth_token, (v) => { roomDraft[index].auth_token = v; }, '（空 = 无密码）'));
     // ⚠️ ↓ 是**全局单选**：点开一个，别的自动关掉。做成多选再靠后端「取第一个」
     // 的话，用户点第二个会**没反应** —— 那正是「配了不生效」。
-    tr.append(cellDir(room.enable_upload !== false, 'up', '↑ 发到房间：本机剪贴板发到它（可多选）', (on) => {
+    // ⚠️★ 悬停提示与侧栏那两个开关**逐字一致**（Jonny 2026-09-26 给的文案）——
+    // 同一个图标在同一个 app 里说两句不同的话，就是第二份定义。
+    // ⚠️「可多选」「全局只能一个」不再写进 title：这一页的说明文字
+    //（上面那段 `.sub`）已经写着「收进剪贴板全局只能一个」了。
+    tr.append(cellDir(room.enable_upload !== false, 'up', '发送本地剪贴板到远程房间', (on) => {
       roomDraft[index].enable_upload = on;
       renderRoomRows();
     }));
-    tr.append(cellDir(room.enable_download === true, 'dn', '↓ 收进剪贴板：这个房间的内容写进本机剪贴板（全局只能一个）', (on) => {
+    tr.append(cellDir(room.enable_download === true, 'dn', '获取远程房间最新消息写入本地剪贴板', (on) => {
       roomDraft.forEach((other, position) => { other.enable_download = on && position === index; });
       renderRoomRows();
     }));
@@ -1032,11 +1018,43 @@ el('settings-nav').addEventListener('click', (event) => {
   // ⚠️ 日志只在**切到那一页**时读一次：它可能很大，打开设置就读是白读。
   if (item.dataset.pane === 'log') refreshLog();
 });
-el('room-add').addEventListener('click', () => {
-  // ⚠️ 服务端留空**不是**省事：空地址会被 `ClientConfig::problems()` 报出来，
-  // 而界面会显示那条问题 —— 比悄悄填一个「大概是这个」强。
-  roomDraft.push({ name: '', server: '', room: 'default', auth_token: '', enable_upload: true, enable_download: false });
+/** 往草稿里加一个空房间。
+ *
+ * ⚠️★ **两个入口共用这一个函数**：设置页里那个「＋ 添加房间」（`#room-add`）和
+ * 侧栏底部那个（`#btn-room-add`）。分开写的话，两边迟早会不一样
+ * （比如只有一边补了某个新字段）—— 而这个项目最忌讳「同一个动作两套定义」。
+ *
+ * ⚠️ 服务端留空**不是**省事：空地址会被 `ClientConfig::problems()` 报出来，
+ * 而界面会显示那条问题 —— 比悄悄填一个「大概是这个」强。
+ */
+function addRoomRow() {
+  roomDraft.push({
+    name: '',
+    server: '',
+    room: 'default',
+    auth_token: '',
+    // ⚠️ 上行**默认开**（新建的房间是要用的那个），下行**默认关**（全局只能一个，
+    // 而且装完不该自动接管剪贴板 —— §4.1 第 3 条）。这两个默认值与
+    // `Channel::new` 那边**不一样**（那边两个都关），是有意的：
+    // 那是「首次运行的默认房间」，这是「用户自己点出来的房间」。
+    enable_upload: true,
+    enable_download: false,
+  });
   renderRoomRows();
+}
+
+el('room-add').addEventListener('click', addRoomRow);
+
+// 侧栏底部那个「＋ 添加房间」：**先把设置窗口打开到房间那一页，再加一行**。
+// ⚠️ 顺序不能反：`openSettings()` 会拿壳里的配置**重铺**一遍草稿
+//（`roomDraft = view.rooms.map(...)`），先加的那一行会被它冲掉。
+// ⚠️ 为什么要「打开 + 加一行」而不是只打开设置页（那正是原来 `.room.add` 的行为）：
+// 用户点的是「添加房间」，那就该**看到一个新的空行**等着填；
+// 只把他丢到一个页面上、还要再点一次「＋ 添加房间」，是「点了没反应」的一种。
+// ⚠️ 不用再 `showPane('rooms')` —— `openSettings` 自己就落在房间那一页。
+el('btn-room-add').addEventListener('click', async () => {
+  await openSettings();
+  addRoomRow();
 });
 
 el('settings-save').addEventListener('click', async () => {

@@ -294,8 +294,14 @@ impl UploadReport {
                 self.failures.join("；")
             );
         }
-        if self.skipped || self.delivered == 0 {
+        if self.skipped {
             return "没有发出去（相关开关关着）".to_owned();
+        }
+        // ⚠️ `delivered == 0` 而**不是**被开关跳过 —— 那是界面上「点一下发送」那条路
+        //（[`upload_explicit`]）会走到的分支：它一个开关都不判，所以**不能说**
+        // 「相关开关关着」，那是一句假话（用户会去关着的地方找原因）。
+        if self.delivered == 0 {
+            return "没有发出去".to_owned();
         }
         format!("已发到 {} 个房间", self.delivered)
     }
@@ -331,9 +337,12 @@ pub fn now() -> OffsetDateTime {
         .unwrap_or_else(|_| OffsetDateTime::now_utc())
 }
 
-/// 把一次剪贴板事件发出去。
+/// 把**本机剪贴板的一次变化**发出去 —— 走配置：哪些房间开了 ↑、这类内容发不发。
 ///
 /// ⚠️ **每个房间独立**：一个房间失败不影响别的（见模块文档第 3 条）。
+///
+/// ⚠️★ **它只服务剪贴板那条路。** 界面上「点一下发送」走
+/// [`upload_explicit`] —— 那一跳**一个开关都不看**，理由见那个函数的文档。
 pub async fn upload_event(
     cfg: &ClientConfig,
     event: &ClipboardEvent,
@@ -341,17 +350,63 @@ pub async fn upload_event(
     now: OffsetDateTime,
     client: &Client,
 ) -> UploadReport {
-    let mut report = UploadReport::default();
-
     if !cfg.is_upload_enabled(event.upload_kind()) {
-        report.skipped = true;
-        return report;
+        return UploadReport {
+            skipped: true,
+            ..UploadReport::default()
+        };
     }
     let targets = cfg.upload_channels();
     if targets.is_empty() {
-        report.skipped = true;
-        return report;
+        return UploadReport {
+            skipped: true,
+            ..UploadReport::default()
+        };
     }
+    send_to(cfg, &targets, event, limits, now, client).await
+}
+
+/// 从界面**显式**发一次（输入框的「发送」/ 📎 / 🖼 / 拖进来的文件）。
+///
+/// ⚠️★ 与 [`upload_event`] 的区别只有一处，但那一处是**功能上的**：
+/// **目标由调用方给（界面上选中的那个房间），而且一个同步开关都不判**
+/// （既不判房间的 ↑，也不判「文本 / 文件」那两个内容开关）。
+///
+/// 理由（Jonny 2026-09-26）：「**上传和下载是本地剪贴板的功能，是独立的，
+/// 不要影响本地客户端的功能**，它们只负责获取本地剪贴板上传到远程房间
+/// 和获取远程房间消息写入本地剪贴板」。
+///
+/// ⚠️★ 反过来说：↑ **默认是关的**（§4.1 第 3 条）。判开关的话，装完第一次
+/// 在输入框里打字点「发送」会**什么都不发生** —— 而那正是这个项目最忌讳的一类
+/// （点了没反应）。用户自己敲的字 + 自己按的按钮，是**明确的意图**，不该被
+/// 「自动同步」的开关拦下来。
+///
+/// ⚠️ 仍然要过的两道关（它们不是同步开关）：`max_file_size_mb`（本机自设的上限）
+/// 与服务端的限额 —— 服务端会自己拒掉超限的那次，并把带具体数字的话带回来。
+pub async fn upload_explicit(
+    cfg: &ClientConfig,
+    target: &Channel,
+    event: &ClipboardEvent,
+    limits: ServerLimits,
+    now: OffsetDateTime,
+    client: &Client,
+) -> UploadReport {
+    send_to(cfg, &[target], event, limits, now, client).await
+}
+
+/// 真的发：材料化 + 逐个房间发。
+///
+/// ⚠️★ **开关的判断不在这里** —— 它属于「谁决定目标」那一层（上面两个入口）。
+/// 放进来的话，两个入口就又变成同一件事了，而它们本来就该不一样。
+async fn send_to(
+    cfg: &ClientConfig,
+    targets: &[&Channel],
+    event: &ClipboardEvent,
+    limits: ServerLimits,
+    now: OffsetDateTime,
+    client: &Client,
+) -> UploadReport {
+    let mut report = UploadReport::default();
 
     let payloads = match materialize(event, now, limits, cfg.max_file_size_mb).await {
         Ok(payloads) => payloads,
@@ -363,7 +418,7 @@ pub async fn upload_event(
 
     for payload in payloads {
         report.payloads += 1;
-        let outcome = upload_payload(client, &targets, cfg, &payload).await;
+        let outcome = upload_payload(client, targets, cfg, &payload).await;
         report.push(outcome);
     }
     report
@@ -788,6 +843,62 @@ mod tests {
             upload_event(&cfg, &event, ServerLimits::default(), fixed_now(), &client).await;
         assert!(report.skipped);
         assert!(report.payloads == 0, "跳过的时候不该去材料化（更不该发）");
+    }
+
+    /// ⚠️★ 界面上「点一下发送」**不看任何同步开关** —— 这条钉的就是那个区分。
+    ///
+    /// 场景照实来：↑ 默认是关的（§4.1 第 3 条），所以判开关的话，装完第一次
+    /// 在输入框里打字点「发送」会**什么都不发生**。Jonny 2026-09-26：
+    /// 「上传和下载是本地剪贴板的功能，是独立的，不要影响本地客户端的功能」。
+    ///
+    /// ⚠️ 地址故意指向一个**没人监听**的端口：要证的是「它**没有**在开关那一层短路」
+    /// （`payloads == 1` 且 `skipped == false`），不是「它发成功了」——
+    /// 后者要真服务端，那是端到端的事。
+    #[tokio::test]
+    async fn an_explicit_send_ignores_every_sync_switch() {
+        let target = Channel {
+            enable_upload: false,
+            ..Channel::new("家里", "http://127.0.0.1:1")
+        };
+        let cfg = ClientConfig {
+            // 三个开关全部关掉：房间的 ↑、内容类型的文本、文件。
+            enable_text: false,
+            enable_file: false,
+            channels: vec![target.clone()],
+            ..ClientConfig::default()
+        };
+        let client = build_client().unwrap();
+        let event = ClipboardEvent::Text {
+            content: "我按的是发送，不是自动同步".to_owned(),
+            subtype: None,
+        };
+
+        // ⚠️ 先钉住「剪贴板那条路确实会被开关拦住」—— 少了这一条，
+        // 下面的断言可能只是碰巧成立（比如两个入口其实走了同一段代码）。
+        let automatic =
+            upload_event(&cfg, &event, ServerLimits::default(), fixed_now(), &client).await;
+        assert!(automatic.skipped, "剪贴板那条路要过开关");
+        assert_eq!(automatic.payloads, 0);
+
+        // 同一条事件、同一份配置，走显式那条路就该**照发不误**。
+        let explicit = upload_explicit(
+            &cfg,
+            &target,
+            &event,
+            ServerLimits::default(),
+            fixed_now(),
+            &client,
+        )
+        .await;
+        assert!(
+            !explicit.skipped,
+            "显式发送不许被同步开关拦下来（那正是「点了没反应」）"
+        );
+        assert_eq!(explicit.payloads, 1, "该去材料化、该发出去");
+        assert!(
+            !explicit.ok(),
+            "地址是空的，所以它该失败 —— 但失败的是**网络**，不是开关"
+        );
     }
 
     /// ⚠️★ **凭据只走请求头，不进 URL** —— 这条在 `endpoint` 那边也有断言，

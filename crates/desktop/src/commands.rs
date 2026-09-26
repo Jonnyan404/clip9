@@ -312,19 +312,6 @@ pub fn set_download(
     Ok(())
 }
 
-/// 剪贴板监听的暂停/恢复（**只管上行**；下行不归它管）。
-#[tauri::command]
-pub fn set_monitoring(
-    store: State<'_, Arc<Store>>,
-    runtime: State<'_, Arc<Runtime>>,
-    on: bool,
-) -> Result<(), String> {
-    store.set_monitoring(on);
-    runtime.set_monitoring(on);
-    runtime.persist();
-    Ok(())
-}
-
 /// 界面上「发一条」—— 走**和剪贴板完全一样**的那条上行（`clip9-client` 的那一条）。
 ///
 /// ⚠️ 页面**不能**自己 `fetch` 服务端：那会有**第二条上行路径**，

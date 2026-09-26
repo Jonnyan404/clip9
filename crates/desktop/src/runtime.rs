@@ -4,6 +4,9 @@
 //!
 //! 1. **起监听（上行）**：[`spawn_watcher`]，回调里**不做 IO** —— 只把事件丢给异步任务
 //!    再 [`upload_event`]（回调跑在**监控线程**上，阻塞它就等于漏掉后面的变化）；
+//!    ⚠️★ 界面上「点一下发送」走的是**同一个搬运工、不同的目标**（[`UploadSource`]）：
+//!    剪贴板那条过同步开关，界面那条**一个都不看**（Jonny 2026-09-26：
+//!    「上传和下载是本地剪贴板的功能，是独立的，不要影响本地客户端的功能」）；
 //! 2. **起下行**：[`spawn_receiver`]，读它的更新通道搬进 [`Store`]；
 //! 3. ⚠️★ 两者**共享同一个 [`Debouncer`]**（[`shared_debouncer`]）—— 这**不是优化，是功能前提**：
 //!    下行写剪贴板前要 `prime` 指纹来防回环，而「谁记得上一次是什么」只能有一处；
@@ -22,6 +25,7 @@ use clip9_client::uploader::{build_client, now};
 use clip9_client::{
     ClipboardContent, ClipboardEvent, ClipboardSink, Debouncer, ReceiverHandle, SystemClipboard,
     WatchConfig, WatchHandle, shared_debouncer, spawn_receiver, spawn_watcher, upload_event,
+    upload_explicit,
 };
 
 use crate::store::Store;
@@ -62,17 +66,6 @@ impl Runtime {
         self.start_receiver();
     }
 
-    /// 只起/停剪贴板监听（标题栏那个开关）—— ⚠️ **不碰下行**：
-    /// 「暂停监听」和「暂停同步到剪贴板」是两件不同的事（§0.5 第 3 条那条规则的另一半）。
-    pub fn set_monitoring(self: &Arc<Self>, on: bool) {
-        self.store.set_monitoring(on);
-        if on {
-            self.start_watcher();
-        } else {
-            self.stop_watcher();
-        }
-    }
-
     /// 配置变了（房间清单、任一方向开关）→ **下行要重连**才生效。
     ///
     /// ⚠️★ 它是「**全部**重连」，不是「只重连改了的那个」：连接任务拿的是一份
@@ -110,6 +103,13 @@ impl Runtime {
         }
     }
 
+    /// 起剪贴板监听。
+    ///
+    /// ⚠️★ **它没有开关了**（2026-09-26）：原来这里开头判 `enable_monitoring`，
+    /// 那个字段已经删掉 —— 要不要发出去只看每个房间的 ↑（`config.rs` 模块文档第 5 条）。
+    /// 所以一个房间都没开 ↑ 时，这个线程**照样在跑**，只是每次都被
+    /// `upload_channels()` 筛成空。代价是那点空转，换来的是「开关」与
+    /// 「线程生命周期」不再绑在一起（§4.7 刚解开的那团结，别再打回去）。
     fn start_watcher(self: &Arc<Self>) {
         if self
             .watcher
@@ -120,15 +120,12 @@ impl Runtime {
             return;
         }
         let config = self.store.config();
-        if !config.enable_monitoring {
-            return;
-        }
         let this = Arc::clone(self);
         let handle = spawn_watcher(
             Box::new(SystemClipboard),
             watch_config(&config),
             Arc::clone(&self.debouncer),
-            move |event| this.schedule_upload(event),
+            move |event| this.schedule_upload(event, UploadSource::Clipboard),
         );
         *self.watcher.lock().unwrap_or_else(|e| e.into_inner()) = Some(handle);
     }
@@ -208,25 +205,63 @@ fn watch_config(config: &clip9_client::ClientConfig) -> WatchConfig {
     }
 }
 
+/// 一次上行**是谁发起的**。
+///
+/// ⚠️★ 这个区分是**功能上的**，不是记账 —— 两条路走的是同一套材料化 / 凭据 / 多文件
+/// 逻辑（都在 `clip9-client` 里），但**「该不该发」这一问的答案不一样**：
+///
+/// - [`UploadSource::Clipboard`]：本机剪贴板变了 → 要过 ↑ 和「文本 / 文件」那几个开关；
+/// - [`UploadSource::FromUi`]：用户自己敲了字、自己按了按钮 → **一个同步开关都不看**。
+///
+/// Jonny 2026-09-26：「上传和下载是本地剪贴板的功能，是独立的，
+/// **不要影响本地客户端的功能**，它们只负责获取本地剪贴板上传到远程房间
+/// 和获取远程房间消息写入本地剪贴板」。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum UploadSource {
+    /// 剪贴板监听报上来的变化。
+    Clipboard,
+    /// 界面上点的（输入框「发送」/ 📎 / 🖼 / 拖进来）。
+    FromUi,
+}
+
 impl Runtime {
     /// 监听回调：**只把事件丢进异步任务**，然后立刻返回。
     ///
     /// ⚠️ 这个回调跑在**监控线程**上：在这里做 IO 会把轮询卡住、漏掉后面的变化
     /// （`spawn_watcher` 的文档里点名了这条）。
-    fn schedule_upload(self: &Arc<Self>, event: ClipboardEvent) {
+    fn schedule_upload(self: &Arc<Self>, event: ClipboardEvent, source: UploadSource) {
         let this = Arc::clone(self);
         self.tokio.spawn(async move {
-            this.upload(event).await;
+            this.upload(event, source).await;
         });
     }
 
     /// 真的发一次上行。
-    async fn upload(&self, event: ClipboardEvent) {
+    async fn upload(&self, event: ClipboardEvent, source: UploadSource) {
         // ⚠️ 限额是**握手时**那份（`/server` 里没有），拿不到就是「不知道」——
         // 这时只有用户自己配的 `max_file_size_mb` 生效，而服务端会自己拒掉超限的那次
         // 并带回一句带数字的话（`uploader` 的模块文档第 2 条）。
         let limits = self.store.limits();
-        let report = upload_event(&self.store.config(), &event, limits, now(), &self.http).await;
+        let config = self.store.config();
+        let report = match source {
+            UploadSource::Clipboard => {
+                upload_event(&config, &event, limits, now(), &self.http).await
+            }
+            UploadSource::FromUi => {
+                // ⚠️★ **界面上的发送只发到「当前选中的那个房间」**，而且不判任何同步开关
+                //（理由见 `clip9_client::upload_explicit` 的文档）。
+                // 为什么是「选中的那个」：主区显示的就是它的时间线 —— 用户看到的那个房间
+                // 就是他以为在发过去的那个。发给「所有开着 ↑ 的房间」是另一回事，
+                // 而且 ↑ 默认全关，那条路装完就是**点了没反应**。
+                let Some(target) = self.store.selected_channel() else {
+                    // ⚠️ 一个房间都没配：**说出来**。静默吞掉的话，用户按了发送
+                    // 只看到「什么都没发生」—— 那是这个项目最忌讳的一类。
+                    self.store.notice("err", "没有房间可以发 —— 先在侧栏加一个");
+                    return;
+                };
+                upload_explicit(&config, &target, &event, limits, now(), &self.http).await
+            }
+        };
         // ⚠️ 上传结果**要能被界面看到**，包括「因为开关关着而跳过」——
         // 「点了没反应」是这类客户端最难查的一类故障。
         if !report.ok() {
@@ -238,7 +273,7 @@ impl Runtime {
         }
     }
 
-    /// 界面上「发一条」：走**和剪贴板完全一样**的那条上行。
+    /// 界面上「发一条」。
     ///
     /// ⚠️ 为什么不让界面自己 `fetch` 服务端：那样会有**第二条上行路径**，
     /// 于是「限额从哪来」「凭据怎么带」「多文件怎么办」这些规则要各写一遍 ——
@@ -247,18 +282,22 @@ impl Runtime {
         if text.is_empty() {
             return;
         }
-        self.schedule_upload(ClipboardEvent::Text {
-            content: text.to_owned(),
-            // ⚠️ `subtype` **只影响界面上的标签**（像不像网址/颜色），不改变上传方式
-            // （`event.rs` 的注释），所以这里不猜 —— 让服务端那边按正文判断。
-            subtype: None,
-        });
+        self.schedule_upload(
+            ClipboardEvent::Text {
+                content: text.to_owned(),
+                // ⚠️ `subtype` **只影响界面上的标签**（像不像网址/颜色），不改变上传方式
+                // （`event.rs` 的注释），所以这里不猜 —— 让服务端那边按正文判断。
+                subtype: None,
+            },
+            UploadSource::FromUi,
+        );
     }
 
-    /// 界面上「发文件」：📎 / 🖼 / 拖进来 / 粘贴进来的都走这条。
+    /// 界面上「发文件」：📎 / 🖼 / 拖进来的都走这条。
     ///
-    /// ⚠️★ 也走 [`Self::schedule_upload`]（= 和剪贴板那条上行**同一条路**）：
-    /// 多文件、限额、凭据、跳过规则全在 `clip9-client` 里，这里一行都不重写。
+    /// ⚠️★ 与剪贴板那条上行**共用材料化 / 限额 / 凭据 / 多文件**的全部实现
+    ///（都在 `clip9-client` 里，这里一行都不重写）—— **不同的只有「谁决定目标」**，
+    /// 见 [`UploadSource`]。
     ///
     /// ⚠️ 空列表直接返回：`upload_event` 收到空列表会回一句「0 个文件」的提示，
     /// 而用户只是按了「取消」（`pick_files` 那时给的就是空数组）——
@@ -272,7 +311,7 @@ impl Runtime {
         if paths.is_empty() {
             return;
         }
-        self.schedule_upload(ClipboardEvent::Files { paths });
+        self.schedule_upload(ClipboardEvent::Files { paths }, UploadSource::FromUi);
     }
 
     /// 「复制内容」（时间线的右键菜单，§4.4）。
