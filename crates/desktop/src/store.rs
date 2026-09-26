@@ -16,7 +16,9 @@
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
-use clip9_client::{ClientConfig, PeerDevice, ReceiverStatus, ReceiverUpdate, ServerLimits};
+use clip9_client::{
+    ClientConfig, Latency, PeerDevice, ReceiverEvent, ReceiverStatus, ReceiverUpdate, ServerLimits,
+};
 use clip9_protocol::ReceiveHolder;
 use serde::{Deserialize, Serialize};
 
@@ -78,6 +80,40 @@ pub struct RoomView {
     pub count: usize,
     /// 取过历史没有（界面上据此显示「还没加载」而不是一个空列表）。
     pub history_loaded: bool,
+    /// 这个房间**自己那条连接**的状态（§4.7）。
+    pub connection: ConnectionView,
+}
+
+/// 一个房间那条连接给界面看的样子。
+///
+/// ⚠️★ 它挂在 [`RoomView`] 上、**不是** `Snapshot` 的顶层字段 ——
+/// 每个房间各自有一条连接（§4.7），顶层的「唯一那条连接」已经不存在了。
+/// 原来 `Snapshot` 上那两个 `devices` / `latency` 就是靠「只有一个下行房间」
+/// 这个前提才成立的，那个前提**已经没了**。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ConnectionView {
+    /// `off`（没连上 / 还没开始）/ `wait`（正在连）/ `on`（连上了）/ `warn`（老服务端）。
+    pub kind: &'static str,
+    pub text: String,
+    /// 边界水印（`None` = 还不知道）。
+    pub latest_id: Option<i32>,
+    /// 这条连接的往返延迟（§4.3）。
+    pub latency: LatencyView,
+    /// 在线设备（**含本机**）。⚠️ 空 = **还不知道**，不是「一台都没有」。
+    pub devices: Vec<DeviceView>,
+}
+
+impl Default for ConnectionView {
+    fn default() -> Self {
+        Self {
+            kind: "off",
+            text: "还没开始连".to_owned(),
+            latest_id: None,
+            latency: Latency::Unknown.into(),
+            devices: Vec::new(),
+        }
+    }
 }
 
 /// 界面上「刚刚发生的一件事」（上传结果之类）。
@@ -100,8 +136,10 @@ pub struct Snapshot {
     pub selected: usize,
     /// 当前房间的时间线（**旧的在前**，末尾最新）。
     pub entries: Vec<EntryView>,
-    pub status: StatusView,
     /// 服务端限额（`0` = 还没连上、**不知道**）。
+    ///
+    /// ⚠️ 它是**一份**、不是每个房间一份：限额来自握手，而同一个服务端的每个房间
+    /// 给的是同一套值。上行拿它当提示（超限由服务端自己拒，见 `uploader` 的模块文档）。
     pub limits: ServerLimitsView,
     /// 配置里的毛病（`ClientConfig::problems`）—— **摆出来，而不是自己在内部悄悄修正**。
     pub problems: Vec<String>,
@@ -117,11 +155,35 @@ pub struct Snapshot {
     pub data_dir: String,
     /// 每个房间最多留多少条（界面要照实说）。
     pub max_entries: usize,
-    /// 主区标题右侧那行设备（稿 1 的「N 台在线」）。
+}
+
+/// 延迟给界面看的那一份。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LatencyView {
+    /// `unknown`（还没测到）/ `rtt`（有数字）/ `timeout`（有 ping 没回来）。
     ///
-    /// ⚠️★ **空数组 = 「还不知道」**，不是「一台都没有」—— 界面因此什么都不画。
-    /// 混起来就是骗人：`0 台在线` 与「数不到」的下一步完全不同。
-    pub devices: Vec<DeviceView>,
+    /// ⚠️★ 三个取值都要留着：`timeout` **绝不能**退化成一个很大的 `ms` ——
+    /// 那看起来只是「慢」，而真相是这条连接其实已经坏了（§4.3 第 4 条）。
+    pub kind: &'static str,
+    /// ⚠️ 只有 `kind == "rtt"` 时有意义；别的取值下界面**不许**读它。
+    pub ms: u32,
+}
+
+impl From<Latency> for LatencyView {
+    fn from(latency: Latency) -> Self {
+        match latency {
+            Latency::Unknown => Self {
+                kind: "unknown",
+                ms: 0,
+            },
+            Latency::Rtt(ms) => Self { kind: "rtt", ms },
+            Latency::Timeout => Self {
+                kind: "timeout",
+                ms: 0,
+            },
+        }
+    }
 }
 
 /// 设备行里的一台设备。
@@ -154,11 +216,77 @@ impl From<ServerLimits> for ServerLimitsView {
     }
 }
 
-/// 一个房间在本机的状态。
+/// 一个房间在本机的状态（**时间线 + 它自己那条连接**）。
 #[derive(Debug, Default)]
 struct Room {
     entries: Vec<EntryView>,
     history_loaded: bool,
+    /// 这个房间**自己那条连接**的状态（§4.7）。
+    ///
+    /// ⚠️★ 每个房间一份，**不是**一份全局的 —— 每个房间各自有一条连接，
+    /// 所以「谁连上了、谁有几台设备、谁的延迟是多少」都是**按房间**的。
+    connection: Connection,
+}
+
+/// 一条连接的运行状态（每个房间一份）。
+#[derive(Debug)]
+struct Connection {
+    /// 这条连接的状态。`None` = 连接任务还没报第一拍。
+    status: Option<StatusView>,
+    /// 这个房间里的**别人**（本机不在里面，见 `clip9_client::PeerDevice`）。
+    peers: Vec<PeerDevice>,
+    latency: Latency,
+}
+
+impl Default for Connection {
+    fn default() -> Self {
+        Self {
+            status: None,
+            peers: Vec::new(),
+            latency: Latency::Unknown,
+        }
+    }
+}
+
+/// 一个房间那条连接给界面看的样子。
+///
+/// ⚠️★ 设备行与延迟**只在连接活着时**（`on` / `warn`）才有内容 ——
+/// `off` / `wait` 时给空数组与 `unknown`，而不是「1 台在线（只有我）」。
+/// 「数不到」和「只有我」是两件事，混起来就是骗人。
+fn connection_view(inner: &Inner, room: &Room) -> ConnectionView {
+    let Some(status) = &room.connection.status else {
+        // 连接任务还没报第一拍 —— 照实说「还没开始连」。
+        return ConnectionView::default();
+    };
+    let live = matches!(status.kind, "on" | "warn");
+    let mut devices = Vec::new();
+    if live {
+        // ⚠️ 本机**算一台**：服务端那份列表里没有本机
+        //（`devices_in_room_except` 把自己排掉了），而稿 1 那行「3 台在线」是**含本机**的。
+        devices.push(DeviceView {
+            name: inner.config.device_name.clone(),
+            // ⚠️ 这个客户端就是桌面端 —— 不是猜的。
+            kind: "desktop".to_owned(),
+            me: true,
+        });
+        devices.extend(room.connection.peers.iter().map(|peer| DeviceView {
+            name: peer.name.clone(),
+            kind: peer.kind.clone(),
+            me: false,
+        }));
+    }
+    ConnectionView {
+        kind: status.kind,
+        text: status.text.clone(),
+        latest_id: status.latest_id,
+        latency: if live {
+            room.connection.latency
+        } else {
+            Latency::Unknown
+        }
+        .into(),
+        devices,
+    }
 }
 
 /// 全部内存状态。
@@ -166,22 +294,9 @@ struct Inner {
     config: ClientConfig,
     rooms: Vec<Room>,
     selected: usize,
-    status: StatusView,
     limits: ServerLimits,
     monitoring: bool,
     notice: Option<Notice>,
-    /// 下行连的是哪个房间。
-    ///
-    /// ⚠️ 为什么需要它：[`ReceiverUpdate`] 里的 `History`（空历史时）/ `Revoked` /
-    /// `Cleared` **都不带房间名** —— 它们说的是「这个连接」发生的事，
-    /// 而下行的那个连接**只对应下载通道那一个房间**。所以房间得自己记住。
-    downlink_room: Option<String>,
-    /// 下行那个房间里的**别人**（本机不在里面，见 `clip9_client::PeerDevice`）。
-    ///
-    /// ⚠️ 它属于 `downlink_room`，**不是**「当前选中的房间」——
-    /// 客户端只有一个下行连接（§4.1 第 2 条），所以别的房间的设备**根本数不到**。
-    /// `snapshot` 里靠「选中的 == 下行的」来判要不要画。
-    peers: Vec<PeerDevice>,
 }
 
 /// 桌面端状态。
@@ -208,12 +323,9 @@ impl Store {
                 config,
                 rooms,
                 selected: 0,
-                status: StatusView::waiting(),
                 limits: ServerLimits::default(),
                 monitoring,
                 notice: None,
-                downlink_room: None,
-                peers: Vec::new(),
             }),
             config_path,
             data_dir,
@@ -241,6 +353,7 @@ impl Store {
                 download: channel.enable_download,
                 count: room.entries.len(),
                 history_loaded: room.history_loaded,
+                connection: connection_view(&inner, room),
             })
             .collect();
         let entries = inner
@@ -248,63 +361,10 @@ impl Store {
             .get(inner.selected)
             .map(|room| room.entries.clone())
             .unwrap_or_default();
-        // ⚠️★ 一个下载房间都没开时，下行**根本不会去连**（`spawn_receiver` 自己判
-        // `download_channel`）—— 那时把状态画成「连接中…」是**在骗人**：
-        // 用户看到的是「连不上」，而真相是「没开」。
-        // ⚠️ 这两件事的下一步**完全不同**：一个去查服务端，一个去设置里开下载。
-        // ⚠️★ 而且它是**默认状态**（Jonny 2026-09-26 定：下载默认关），
-        // 所以每个新用户第一眼看到的就是它 —— 必须把「收不到什么」一并说清，
-        // 否则他会以为「连上了但对方没发」。设备行（`snapshot` 里那段）也是同一个原因。
-        let status = if inner.config.download_channel().is_none() {
-            StatusView {
-                kind: "off",
-                text: "没有开「收进剪贴板」的房间：发到房间照常，但收不到实时消息、也看不到在线设备。在左侧栏给一个房间点开 ↓ 即可。".to_owned(),
-                latest_id: None,
-                room: None,
-            }
-        } else {
-            inner.status.clone()
-        };
-        // ⚠️★ 设备行只在**正在收的那个房间**上画。客户端只有一个下行连接
-        //（§4.1 第 2 条：「收进剪贴板」全局只能一个），别的房间的设备**数不到** ——
-        // 给每个房间都画一个数字就是编的（§4.3 第 1 条是同一个道理）。
-        //
-        // ⚠️ 三个条件都要满足才画：① 连接是活的（`on` / `warn` —— 老服务端也照常发
-        // connect）；② 选中的就是下行那个房间；③ 那个房间在配置里找得到。
-        // 少任何一个都返回**空数组**（= 界面什么都不画），而不是 `1 台在线`。
-        let devices = if matches!(status.kind, "on" | "warn") {
-            let selected_room = inner
-                .config
-                .channels
-                .get(inner.selected)
-                .map(|channel| channel.room.as_str());
-            if selected_room.is_some() && selected_room == inner.downlink_room.as_deref() {
-                // ⚠️ 本机**算一台**：服务端那份列表里没有本机
-                //（`devices_in_room_except` 把自己排掉了），而稿 1 那行
-                //「3 台在线」是**含本机**的。这里补上。
-                let mut devices = vec![DeviceView {
-                    name: inner.config.device_name.clone(),
-                    // ⚠️ 这个客户端就是桌面端 —— 不是猜的。
-                    kind: "desktop".to_owned(),
-                    me: true,
-                }];
-                devices.extend(inner.peers.iter().map(|peer| DeviceView {
-                    name: peer.name.clone(),
-                    kind: peer.kind.clone(),
-                    me: false,
-                }));
-                devices
-            } else {
-                Vec::new()
-            }
-        } else {
-            Vec::new()
-        };
         Snapshot {
             rooms,
             selected: inner.selected,
             entries,
-            status,
             limits: inner.limits.into(),
             problems: inner.config.problems(),
             monitoring: inner.monitoring,
@@ -313,7 +373,6 @@ impl Store {
             config_path: self.config_path.display().to_string(),
             data_dir: self.data_dir.display().to_string(),
             max_entries: MAX_ENTRIES_PER_ROOM,
-            devices,
         }
     }
 
@@ -349,60 +408,53 @@ impl Store {
     /// 那些全在 `clip9-client` 里判完了（§2 的硬边界）。这边只把结果摆进列表。
     pub fn apply_update(&self, update: ReceiverUpdate) {
         let mut inner = self.lock();
-        match update {
+        // ⚠️★ 房间名**由这条更新自己带**（§4.7）：每个房间各自有一条连接，
+        // 「这条是谁的」不再是隐含的 —— 原来靠「只有一个下行房间」推出来的那个前提
+        // **已经不存在了**。少了它，N 条连接的状态会互相覆盖。
+        let Some(index) = inner.room_index(&update.room) else {
+            // 配置刚被改过、这个房间已经不在列表里了 —— 丢掉，不要 panic。
+            return;
+        };
+        match update.event {
             // ⚠️ `update`（原地改正文）与 `receive` **走的是同一个分支** ——
             // 靠 id 就地**替换**掉原来那条，而不是再添一张卡片。
             // 替换而不是追加，是为了「同一条消息被改过之后，界面上还是一张卡片」。
-            ReceiverUpdate::Entry(entry) => {
-                let room = entry.room().to_owned();
-                if let Some(index) = inner.room_index(&room) {
-                    let server = inner.config.channels[index].server.clone();
-                    let client_id = inner.config.client_id.clone();
-                    let view = EntryView::from_holder(&entry, &client_id, &server);
-                    inner.rooms[index].upsert(view);
-                }
+            ReceiverEvent::Entry(entry) => {
+                let server = inner.config.channels[index].server.clone();
+                let client_id = inner.config.client_id.clone();
+                let view = EntryView::from_holder(&entry, &client_id, &server);
+                inner.rooms[index].upsert(view);
             }
             // ⚠️ 空历史也要标成「取过了」—— 否则界面分不出
             // 「这个房间确实是空的」与「还没取过」。这两种都画成空列表，用户会以为坏了。
-            ReceiverUpdate::History(entries) => {
-                let room = entries
-                    .first()
-                    .map(|entry| entry.room().to_owned())
-                    .or_else(|| inner.downlink_room.clone());
-                if let Some(index) = room.and_then(|room| inner.room_index(&room)) {
-                    let server = inner.config.channels[index].server.clone();
-                    let client_id = inner.config.client_id.clone();
-                    for entry in &entries {
-                        let view = EntryView::from_holder(entry, &client_id, &server);
-                        inner.rooms[index].upsert(view);
-                    }
-                    inner.rooms[index].history_loaded = true;
+            ReceiverEvent::History(entries) => {
+                let server = inner.config.channels[index].server.clone();
+                let client_id = inner.config.client_id.clone();
+                for entry in &entries {
+                    let view = EntryView::from_holder(entry, &client_id, &server);
+                    inner.rooms[index].upsert(view);
                 }
+                inner.rooms[index].history_loaded = true;
             }
-            ReceiverUpdate::Revoked { id } => {
-                // ⚠️ 先把下标算出来再改 —— 边借用 `inner` 边改它会踩到借用检查。
-                let index = inner
-                    .downlink_room
-                    .as_deref()
-                    .and_then(|room| inner.room_index(room));
-                if let Some(index) = index {
-                    inner.rooms[index].entries.retain(|entry| entry.id != id);
-                }
+            ReceiverEvent::Revoked { id } => {
+                inner.rooms[index].entries.retain(|entry| entry.id != id);
             }
-            ReceiverUpdate::Cleared => {
-                let index = inner
-                    .downlink_room
-                    .as_deref()
-                    .and_then(|room| inner.room_index(room));
-                if let Some(index) = index {
-                    inner.rooms[index].entries.clear();
-                }
+            ReceiverEvent::Cleared => {
+                inner.rooms[index].entries.clear();
             }
             // ⚠️★ 整份替换，不是「增量更新」：客户端那边已经按 id 去好重了
             //（同一台设备开两个标签页只算一台，见 `PeerDevice`），
             // 这边再维护一份集合就是**第二份会漂的状态**。
-            ReceiverUpdate::DevicesChanged(peers) => inner.peers = peers,
-            ReceiverUpdate::Status(status) => inner.apply_status(status),
+            ReceiverEvent::DevicesChanged(peers) => inner.rooms[index].connection.peers = peers,
+            ReceiverEvent::Latency(latency) => inner.rooms[index].connection.latency = latency,
+            ReceiverEvent::Status(status) => {
+                // ⚠️ 限额也在这里存一份：它**只在握手里下发**（`uploader` 的模块文档），
+                // 上行要用。⚠️ 一份就够 —— 同一个服务端的每个房间给的是同一套值。
+                if let ReceiverStatus::Connected { limits, .. } = &status {
+                    inner.limits = *limits;
+                }
+                inner.apply_status(index, status);
+            }
         }
     }
 
@@ -590,56 +642,55 @@ impl Inner {
             .position(|channel| channel.room == room)
     }
 
-    /// 状态变化。
+    /// 状态变化（**某个房间**那条连接的）。
     ///
     /// ⚠️★ `NoWatermark`（老服务端握手不带 `latestId`）**必须显示成一条警告**，
     /// 而不是「已连接」—— 因为此刻客户端**一行剪贴板都不写**（fail-safe，§4.2 ①）。
     /// 显示成「已连接」的话，用户会以为同步在工作（然后发现内容就是不过来）。
-    fn apply_status(&mut self, status: ReceiverStatus) {
-        // ⚠️★ 换房间 / 掉线时**必须清掉设备列表**：服务端是在连接**建立之后**
+    ///
+    /// ⚠️ 房间**由调用方给下标**（`apply_update` 里已经从更新的 `room` 算出来了）——
+    /// 状态里那个 `room` 只用来显示，不该再拿它找一次（找错了就是挂到别的房间上）。
+    fn apply_status(&mut self, index: usize, status: ReceiverStatus) {
+        let Some(room) = self.rooms.get_mut(index) else {
+            return;
+        };
+        // ⚠️★ 掉线 / 重连时**必须清掉设备与延迟**：服务端是在连接**建立之后**
         // 才逐台发 `connect` 的（`ws.rs`），所以旧的那份在「正在连」这一刻已经作废。
-        // 不清的话，症状是「刚连上时显示的是上一个房间的设备」——
-        // 而且它会自己消失（新房间的 connect 到了就对了），所以最难被发现。
+        // 不清的话，症状是「刚连上时显示的是上一轮的那几台 / 那个数字」——
+        // 而它会自己消失（新的 connect 到了就对了），所以最难被发现。
         if matches!(
             status,
             ReceiverStatus::Connecting { .. } | ReceiverStatus::Disconnected { .. }
         ) {
-            self.peers.clear();
+            room.connection.peers.clear();
+            room.connection.latency = Latency::Unknown;
         }
-        self.status = match status {
-            ReceiverStatus::Connecting { room, .. } => {
-                self.downlink_room = Some(room.clone());
-                StatusView {
-                    kind: "wait",
-                    text: format!("连接 {room} …"),
-                    latest_id: None,
-                    room: Some(room),
-                }
-            }
-            ReceiverStatus::Connected { latest_id, limits } => {
-                // ⚠️ 限额也在这里存一份：它**只在握手里下发**（`uploader` 的模块文档），
-                // 上行要用；而 `ServerLimits::default()`（两个 0）是「不知道」的意思。
-                self.limits = limits;
-                StatusView {
-                    kind: "on",
-                    text: "已连接".to_owned(),
-                    latest_id: Some(latest_id),
-                    room: self.downlink_room.clone(),
-                }
-            }
+        room.connection.status = Some(match status {
+            ReceiverStatus::Connecting { room: name, .. } => StatusView {
+                kind: "wait",
+                text: format!("连接 {name} …"),
+                latest_id: None,
+                room: Some(name),
+            },
+            ReceiverStatus::Connected { latest_id, .. } => StatusView {
+                kind: "on",
+                text: "已连接".to_owned(),
+                latest_id: Some(latest_id),
+                room: None,
+            },
             ReceiverStatus::NoWatermark => StatusView {
                 kind: "warn",
                 text: "服务端版本太旧：边界说不清，已暂停写剪贴板".to_owned(),
                 latest_id: None,
-                room: self.downlink_room.clone(),
+                room: None,
             },
             ReceiverStatus::Disconnected { reason } => StatusView {
                 kind: "off",
                 text: format!("已断开：{reason}"),
                 latest_id: None,
-                room: self.downlink_room.clone(),
+                room: None,
             },
-        };
+        });
     }
 }
 
@@ -815,14 +866,22 @@ mod tests {
         })
     }
 
-    /// 一个两房间的配置（`default` / `work`），下载通道在第二个上。
+    /// 一个两房间的配置（`default` / `work`），**两个房间都开着 ↑**、`work` 开着 ↓。
+    ///
+    /// ⚠️ 这里**故意**不照抄「两个方向默认都关」（Jonny 2026-09-26 定的那个默认值）：
+    /// 这些用例要测的是「开关之间互不影响」，两个都关着就什么都测不出来。
+    /// ⚠️ 默认值本身由 `the_first_run_writes_the_config_so_the_client_id_survives` 钉住。
     fn store_with(dir: &Path) -> Store {
         let config = ClientConfig {
             client_id: "client-a".to_owned(),
             channels: vec![
-                Channel::new("默认", "http://127.0.0.1:9501"),
+                Channel {
+                    enable_upload: true,
+                    ..Channel::new("默认", "http://127.0.0.1:9501")
+                },
                 Channel {
                     room: "work".to_owned(),
+                    enable_upload: true,
                     enable_download: true,
                     ..Channel::new("工作", "http://127.0.0.1:9501")
                 },
@@ -842,22 +901,26 @@ mod tests {
     #[test]
     fn a_connected_status_carries_the_watermark() {
         let (_dir, store) = temp_store();
-        store.apply_update(ReceiverUpdate::Status(ReceiverStatus::Connecting {
-            server: "http://127.0.0.1:9501".to_owned(),
-            room: "work".to_owned(),
-        }));
-        store.apply_update(ReceiverUpdate::Status(ReceiverStatus::Connected {
-            latest_id: 137,
-            limits: ServerLimits {
-                text_limit: 4096,
-                file_limit: 268_435_456,
+        store.apply_update(from_work(ReceiverEvent::Status(
+            ReceiverStatus::Connecting {
+                server: "http://127.0.0.1:9501".to_owned(),
+                room: "work".to_owned(),
             },
-        }));
+        )));
+        store.apply_update(from_work(ReceiverEvent::Status(
+            ReceiverStatus::Connected {
+                latest_id: 137,
+                limits: ServerLimits {
+                    text_limit: 4096,
+                    file_limit: 268_435_456,
+                },
+            },
+        )));
 
         let snapshot = store.snapshot();
-        assert_eq!(snapshot.status.kind, "on");
-        assert_eq!(snapshot.status.latest_id, Some(137));
-        assert_eq!(snapshot.status.room.as_deref(), Some("work"));
+        assert_eq!(snapshot.rooms[1].connection.kind, "on");
+        assert_eq!(snapshot.rooms[1].connection.latest_id, Some(137));
+        assert_eq!(snapshot.rooms[1].room, "work", "状态挂在报它的那个房间上");
         // ⚠️ 限额要跟着状态一起到位 —— 上行要用它，而它**只在握手里**下发。
         assert_eq!(snapshot.limits.text_limit, 4096);
     }
@@ -871,44 +934,95 @@ mod tests {
         }
     }
 
-    /// 让下行连上 `work`（第二个房间）。
-    fn connect_work(store: &Store) {
-        store.apply_update(ReceiverUpdate::Status(ReceiverStatus::Connecting {
-            server: "http://127.0.0.1:9501".to_owned(),
+    /// 造一条属于 **`work`** 房间的更新。
+    ///
+    /// ⚠️ 大多数用例都用它 —— `work` 是 `store_with` 里的第二个房间，
+    /// 也是唯一开着 ↓ 的那个。**要测「挂错房间」的用例才需要自己造**（见
+    /// `each_room_keeps_its_own_connection`）。
+    fn from_work(event: ReceiverEvent) -> ReceiverUpdate {
+        ReceiverUpdate {
             room: "work".to_owned(),
-        }));
-        store.apply_update(ReceiverUpdate::Status(ReceiverStatus::Connected {
-            latest_id: 1,
-            limits: ServerLimits::default(),
-        }));
+            event,
+        }
     }
 
-    /// ⚠️★ 设备行**只在正在收的那个房间**上有 —— 客户端只有一个下行连接（§4.1 第 2 条），
-    /// 别的房间的设备**数不到**。给它们也画一个数字就是编的。
+    /// 某个房间那条连接（省得每处都写一长串）。
+    fn connection(store: &Store, index: usize) -> ConnectionView {
+        let snapshot = store.snapshot();
+        snapshot.rooms[index].connection.clone()
+    }
+
+    /// 让**某个房间**那条连接连上（其余房间不受影响）。
+    fn connect_room(store: &Store, room: &str) {
+        for event in [
+            ReceiverEvent::Status(ReceiverStatus::Connecting {
+                server: "http://127.0.0.1:9501".to_owned(),
+                room: room.to_owned(),
+            }),
+            ReceiverEvent::Status(ReceiverStatus::Connected {
+                latest_id: 1,
+                limits: ServerLimits::default(),
+            }),
+        ] {
+            store.apply_update(ReceiverUpdate {
+                room: room.to_owned(),
+                event,
+            });
+        }
+    }
+
+    /// 让 `work` 房间那条连接连上（大多数用例只用得上这一个）。
+    fn connect_work(store: &Store) {
+        connect_room(store, "work");
+    }
+
+    /// ⚠️★ **每个房间各存各的**（§4.7）：每个房间**各自**有一条连接，
+    /// 所以「谁有几台设备 / 谁的边界在哪」必须按房间分开。混在一起的话，
+    /// 两个房间的 `connect` 会互相覆盖 —— 表现是数字乱跳，而且不报错。
     #[test]
-    fn devices_show_up_only_on_the_downlink_room() {
+    fn each_room_keeps_its_own_connection() {
         let (_dir, store) = temp_store();
+        // 两个房间**都**连上（这正是新的模型：连接与 ↑/↓ 无关）。
         connect_work(&store);
-        store.apply_update(ReceiverUpdate::DevicesChanged(vec![
+        store.apply_update(ReceiverUpdate {
+            room: "default".to_owned(),
+            event: ReceiverEvent::Status(ReceiverStatus::Connecting {
+                server: "http://127.0.0.1:9501".to_owned(),
+                room: "default".to_owned(),
+            }),
+        });
+        store.apply_update(ReceiverUpdate {
+            room: "default".to_owned(),
+            event: ReceiverEvent::Status(ReceiverStatus::Connected {
+                latest_id: 5,
+                limits: ServerLimits::default(),
+            }),
+        });
+
+        // 各自报各自的设备。
+        store.apply_update(from_work(ReceiverEvent::DevicesChanged(vec![
             peer("d1", "iPhone", "smartphone"),
             peer("d2", "MacBook", "desktop"),
-        ]));
+        ])));
+        store.apply_update(ReceiverUpdate {
+            room: "default".to_owned(),
+            event: ReceiverEvent::DevicesChanged(vec![peer("d3", "iPad", "tablet")]),
+        });
 
-        // 选中的是「默认」，而下行连的是「work」→ 一个都不画（= 空数组）。
-        assert!(
-            store.snapshot().devices.is_empty(),
-            "不是下行那个房间时不能画设备"
-        );
-
-        store.select(1).expect("切到 work");
-        let devices = store.snapshot().devices;
+        assert_eq!(connection(&store, 0).kind, "on");
+        assert_eq!(connection(&store, 1).kind, "on");
         // ⚠️ 本机要算一台：服务端那份列表里**没有本机**，而稿 1 的「N 台在线」是含本机的。
-        assert_eq!(devices.len(), 3, "本机 + 两台别人");
-        assert!(devices[0].me, "第一个是本机");
-        assert_eq!(devices[0].kind, "desktop");
-        assert_eq!(devices[1].name, "iPhone");
-        assert_eq!(devices[1].kind, "smartphone");
-        assert!(!devices[1].me);
+        assert_eq!(connection(&store, 0).devices.len(), 2, "本机 + iPad");
+        assert_eq!(
+            connection(&store, 1).devices.len(),
+            3,
+            "本机 + iPhone + MacBook"
+        );
+        assert_eq!(connection(&store, 0).devices[1].name, "iPad");
+        assert_eq!(connection(&store, 1).devices[1].name, "iPhone");
+        // 边界（水印）也是各一份 —— 共用的话一个房间的历史会被当成另一个房间的实时消息。
+        assert_eq!(connection(&store, 0).latest_id, Some(5));
+        assert_eq!(connection(&store, 1).latest_id, Some(1));
     }
 
     /// ⚠️★ 没连上时**一个都不画**，而不是画「1 台在线（只有我）」——
@@ -917,12 +1031,14 @@ mod tests {
     fn devices_are_empty_until_connected() {
         let (_dir, store) = temp_store();
         store.select(1).expect("切到 work");
-        store.apply_update(ReceiverUpdate::Status(ReceiverStatus::Connecting {
-            server: "http://127.0.0.1:9501".to_owned(),
-            room: "work".to_owned(),
-        }));
+        store.apply_update(from_work(ReceiverEvent::Status(
+            ReceiverStatus::Connecting {
+                server: "http://127.0.0.1:9501".to_owned(),
+                room: "work".to_owned(),
+            },
+        )));
         assert!(
-            store.snapshot().devices.is_empty(),
+            store.snapshot().rooms[1].connection.devices.is_empty(),
             "还没连上就是「不知道」"
         );
     }
@@ -934,21 +1050,66 @@ mod tests {
     fn a_stale_device_list_is_cleared_on_reconnect() {
         let (_dir, store) = temp_store();
         connect_work(&store);
-        store.apply_update(ReceiverUpdate::DevicesChanged(vec![peer(
+        store.apply_update(from_work(ReceiverEvent::DevicesChanged(vec![peer(
             "d1",
             "iPhone",
             "smartphone",
-        )]));
+        )])));
         store.select(1).expect("切到 work");
-        assert_eq!(store.snapshot().devices.len(), 2);
+        assert_eq!(store.snapshot().rooms[1].connection.devices.len(), 2);
 
-        store.apply_update(ReceiverUpdate::Status(ReceiverStatus::Disconnected {
-            reason: "断了".to_owned(),
-        }));
+        store.apply_update(from_work(ReceiverEvent::Status(
+            ReceiverStatus::Disconnected {
+                reason: "断了".to_owned(),
+            },
+        )));
         assert!(
-            store.snapshot().devices.is_empty(),
+            store.snapshot().rooms[1].connection.devices.is_empty(),
             "断开之后不能还留着上一轮那几台"
         );
+    }
+
+    /// ⚠️★ 延迟是**每个房间一份**（§4.3 + §4.7），而且掉线之后**必须清掉** ——
+    /// 上一个房间的 12ms 挂在新房间上是编的。
+    ///
+    /// ⚠️ 这条测试以前叫 `the_latency_only_shows_on_the_downlink_room`，
+    /// 断言的是「只有下行那个房间有数字」—— 那个前提**已经没了**
+    ///（连接与 ↓ 解耦，每个房间各自量自己的）。
+    #[test]
+    fn the_latency_is_kept_per_room() {
+        let (_dir, store) = temp_store();
+        connect_work(&store);
+        store.apply_update(from_work(ReceiverEvent::Latency(Latency::Rtt(12))));
+
+        // 另一个房间没报过延迟 → 它是「还不知道」，**不能**跟着变成 12ms。
+        assert_eq!(connection(&store, 0).latency.kind, "unknown");
+
+        let latency = connection(&store, 1).latency;
+        assert_eq!(latency.kind, "rtt");
+        assert_eq!(latency.ms, 12);
+
+        store.apply_update(from_work(ReceiverEvent::Status(
+            ReceiverStatus::Disconnected {
+                reason: "断了".to_owned(),
+            },
+        )));
+        assert_eq!(
+            connection(&store, 1).latency.kind,
+            "unknown",
+            "断开之后不能还挂着上一轮的数字"
+        );
+    }
+
+    /// ⚠️★ **超时不能退化成一个很大的数字**（§4.3 第 4 条）——
+    /// 界面靠 `kind` 区分「慢」和「坏了」，压成一个 `ms` 就分不出来了。
+    #[test]
+    fn a_timeout_keeps_its_own_kind() {
+        let (_dir, store) = temp_store();
+        connect_work(&store);
+        store.apply_update(from_work(ReceiverEvent::Latency(Latency::Timeout)));
+        let latency = connection(&store, 1).latency;
+        assert_eq!(latency.kind, "timeout");
+        assert_eq!(latency.ms, 0, "超时时那个 ms 不许被界面读到");
     }
 
     /// ⚠️★ **老服务端（没有水印）不能显示成「已连接」** —— 那一刻客户端一行剪贴板都不写，
@@ -956,13 +1117,15 @@ mod tests {
     #[test]
     fn an_old_server_is_shown_as_a_warning_not_as_connected() {
         let (_dir, store) = temp_store();
-        store.apply_update(ReceiverUpdate::Status(ReceiverStatus::NoWatermark));
+        store.apply_update(from_work(ReceiverEvent::Status(
+            ReceiverStatus::NoWatermark,
+        )));
         let snapshot = store.snapshot();
-        assert_eq!(snapshot.status.kind, "warn");
+        assert_eq!(snapshot.rooms[1].connection.kind, "warn");
         assert!(
-            snapshot.status.text.contains("太旧"),
+            snapshot.rooms[1].connection.text.contains("太旧"),
             "要说清是「服务端版本太旧」：{}",
-            snapshot.status.text
+            snapshot.rooms[1].connection.text
         );
     }
 
@@ -970,15 +1133,17 @@ mod tests {
     #[test]
     fn a_disconnect_keeps_the_reason() {
         let (_dir, store) = temp_store();
-        store.apply_update(ReceiverUpdate::Status(ReceiverStatus::Disconnected {
-            reason: "未授权".to_owned(),
-        }));
+        store.apply_update(from_work(ReceiverEvent::Status(
+            ReceiverStatus::Disconnected {
+                reason: "未授权".to_owned(),
+            },
+        )));
         let snapshot = store.snapshot();
-        assert_eq!(snapshot.status.kind, "off");
+        assert_eq!(snapshot.rooms[1].connection.kind, "off");
         assert!(
-            snapshot.status.text.contains("未授权"),
+            snapshot.rooms[1].connection.text.contains("未授权"),
             "{}",
-            snapshot.status.text
+            snapshot.rooms[1].connection.text
         );
     }
 
@@ -986,11 +1151,17 @@ mod tests {
     #[test]
     fn an_update_replaces_the_card_instead_of_adding_one() {
         let (_dir, store) = temp_store();
-        store.apply_update(ReceiverUpdate::Entry(Box::new(text(9, "work", "原文"))));
+        store.apply_update(from_work(ReceiverEvent::Entry(Box::new(text(
+            9, "work", "原文",
+        )))));
         store.select(1).unwrap();
         assert_eq!(store.snapshot().entries.len(), 1);
 
-        store.apply_update(ReceiverUpdate::Entry(Box::new(text(9, "work", "改过的"))));
+        store.apply_update(from_work(ReceiverEvent::Entry(Box::new(text(
+            9,
+            "work",
+            "改过的",
+        )))));
         let snapshot = store.snapshot();
         assert_eq!(snapshot.entries.len(), 1, "同一条只能有一张卡片");
         assert_eq!(snapshot.entries[0].text, "改过的");
@@ -1027,16 +1198,18 @@ mod tests {
     #[test]
     fn history_is_ordered_and_marked_as_loaded() {
         let (_dir, store) = temp_store();
-        store.apply_update(ReceiverUpdate::Status(ReceiverStatus::Connecting {
-            server: "http://127.0.0.1:9501".to_owned(),
-            room: "work".to_owned(),
-        }));
+        store.apply_update(from_work(ReceiverEvent::Status(
+            ReceiverStatus::Connecting {
+                server: "http://127.0.0.1:9501".to_owned(),
+                room: "work".to_owned(),
+            },
+        )));
         // 服务端按 id 升序给，但**别依赖它** —— 客户端要自己保证顺序。
-        store.apply_update(ReceiverUpdate::History(vec![
+        store.apply_update(from_work(ReceiverEvent::History(vec![
             text(12, "work", "c"),
             text(10, "work", "a"),
             text(11, "work", "b"),
-        ]));
+        ])));
         store.select(1).unwrap();
         let snapshot = store.snapshot();
         let ids: Vec<i32> = snapshot.entries.iter().map(|entry| entry.id).collect();
@@ -1051,11 +1224,13 @@ mod tests {
     #[test]
     fn an_empty_history_still_counts_as_loaded() {
         let (_dir, store) = temp_store();
-        store.apply_update(ReceiverUpdate::Status(ReceiverStatus::Connecting {
-            server: "http://127.0.0.1:9501".to_owned(),
-            room: "work".to_owned(),
-        }));
-        store.apply_update(ReceiverUpdate::History(vec![]));
+        store.apply_update(from_work(ReceiverEvent::Status(
+            ReceiverStatus::Connecting {
+                server: "http://127.0.0.1:9501".to_owned(),
+                room: "work".to_owned(),
+            },
+        )));
+        store.apply_update(from_work(ReceiverEvent::History(vec![])));
         assert!(store.snapshot().rooms[1].history_loaded);
     }
 
@@ -1063,18 +1238,20 @@ mod tests {
     #[test]
     fn revoked_and_cleared_remove_entries() {
         let (_dir, store) = temp_store();
-        store.apply_update(ReceiverUpdate::Status(ReceiverStatus::Connecting {
-            server: "http://127.0.0.1:9501".to_owned(),
-            room: "work".to_owned(),
-        }));
-        store.apply_update(ReceiverUpdate::History(vec![
+        store.apply_update(from_work(ReceiverEvent::Status(
+            ReceiverStatus::Connecting {
+                server: "http://127.0.0.1:9501".to_owned(),
+                room: "work".to_owned(),
+            },
+        )));
+        store.apply_update(from_work(ReceiverEvent::History(vec![
             text(1, "work", "a"),
             text(2, "work", "b"),
-        ]));
-        store.apply_update(ReceiverUpdate::Revoked { id: 1 });
+        ])));
+        store.apply_update(from_work(ReceiverEvent::Revoked { id: 1 }));
         assert_eq!(store.snapshot().rooms[1].count, 1);
 
-        store.apply_update(ReceiverUpdate::Cleared);
+        store.apply_update(from_work(ReceiverEvent::Cleared));
         assert_eq!(store.snapshot().rooms[1].count, 0);
     }
 
@@ -1083,7 +1260,9 @@ mod tests {
     fn the_list_is_bounded_and_the_bound_is_visible() {
         let (_dir, store) = temp_store();
         for id in 1..=(MAX_ENTRIES_PER_ROOM as i32 + 50) {
-            store.apply_update(ReceiverUpdate::Entry(Box::new(text(id, "work", "x"))));
+            store.apply_update(from_work(ReceiverEvent::Entry(Box::new(text(
+                id, "work", "x",
+            )))));
         }
         let snapshot = store.snapshot();
         assert_eq!(snapshot.rooms[1].count, MAX_ENTRIES_PER_ROOM);
@@ -1178,14 +1357,18 @@ mod tests {
         assert!(path.exists(), "第一次运行就要落盘");
         assert_eq!(first.channels.len(), 1);
         assert_eq!(first.channels[0].room, "default");
-        // ⚠️★ 首次运行的默认房间**不开**「收进剪贴板」——
-        // Jonny 2026-09-26 拍板：「下载不要默认开，就默认关闭」。装完不该自动接管剪贴板。
-        // ⚠️ 代价是**装完一个下行连接都不建**（`download_channel()` 返回 `None`），
-        // 于是状态会是那条「没有『收进剪贴板』的房间」而不是「连接中…」——
-        // 那正是这个断言要钉住的那件事的另一半（见下面那个测试）。
+        // ⚠️★ 首次运行的默认房间**两个方向都不开** ——
+        // Jonny 2026-09-26 拍板：「上传和下载都默认关闭」。
+        // 装完不该动你的剪贴板，也不该把本机剪贴板往房间里发。
+        // ⚠️ 而客户端**照常连着**每个房间（§4.7）—— 所以第一眼看到的是
+        //「都连上了、看得到设备和延迟，但没有东西在流」，而不是「连不上」。
         assert!(
             !first.channels[0].enable_download,
             "装完不该自动接管剪贴板（Jonny 2026-09-26 定）"
+        );
+        assert!(
+            !first.channels[0].enable_upload,
+            "装完也不该自动把本机剪贴板发出去（Jonny 2026-09-26 定）"
         );
         assert!(!first.client_id.is_empty());
 
@@ -1221,10 +1404,12 @@ mod tests {
     fn an_empty_refresh_marks_the_room_that_was_asked_for() {
         let (_dir, store) = temp_store();
         // 下行连的是 work（第二个），而刷新的是「默认」（第一个）。
-        store.apply_update(ReceiverUpdate::Status(ReceiverStatus::Connecting {
-            server: "http://127.0.0.1:9501".to_owned(),
-            room: "work".to_owned(),
-        }));
+        store.apply_update(from_work(ReceiverEvent::Status(
+            ReceiverStatus::Connecting {
+                server: "http://127.0.0.1:9501".to_owned(),
+                room: "work".to_owned(),
+            },
+        )));
         store.push_history("default", vec![]);
 
         let snapshot = store.snapshot();
@@ -1311,12 +1496,17 @@ mod tests {
     fn replacing_rooms_carries_the_state_by_name_not_by_index() {
         let (_dir, store) = temp_store();
         // 两个房间各放一条（`work` 是第二个）。
-        store.apply_update(ReceiverUpdate::Entry(Box::new(text(
-            1,
-            "default",
-            "来自默认",
-        ))));
-        store.apply_update(ReceiverUpdate::Entry(Box::new(text(2, "work", "来自工作"))));
+        // ⚠️★ 房间名由**更新自己带**（§4.7），不是从条目的 `room` 字段推 ——
+        // 所以这里要显式给 `default`，不能图省事全用 `from_work`。
+        store.apply_update(ReceiverUpdate {
+            room: "default".to_owned(),
+            event: ReceiverEvent::Entry(Box::new(text(1, "default", "来自默认"))),
+        });
+        store.apply_update(from_work(ReceiverEvent::Entry(Box::new(text(
+            2,
+            "work",
+            "来自工作",
+        )))));
 
         // 删掉第一个（default）→ 现在 `work` 排到了下标 0。
         let mut channels = store.config().channels;
@@ -1376,13 +1566,16 @@ mod tests {
         assert_eq!(after.poll_interval_ms, before.poll_interval_ms);
     }
 
-    /// ⚠️★ **一个下载房间都没开**时，状态**不能**画成「连接中…」——
-    /// 那时下行根本不会去连，而用户看到「连接中…」会以为「连不上」，
-    /// 于是跑去查服务端（其实该去设置里给某个房间打开 ↓）。
-    /// ⚠️★ 这是**默认状态**（Jonny 2026-09-26 定：下载默认关），
-    /// 所以**每个新用户第一眼看到的就是它** —— 这条文案的措辞比平时更重要。
+    /// ⚠️★ **没开「收进剪贴板」也要照常连**（§4.7）。
+    ///
+    /// 这条测试**推翻的是它自己以前那个版本**：原来它断言的是
+    /// 「一个下载房间都没开 → 状态是 `off`、文案说『没开收进剪贴板』」——
+    /// 那个行为的前提是「连接由 ↓ 控制」，而 Jonny 2026-09-26 明确否掉了它：
+    /// 「下载本就不应该控制房间的任何功能」。
+    /// ⚠️ 老行为的具体后果是：装完（两个开关都默认关）**一个连接都不建**，
+    /// 于是设备行、延迟、实时消息、历史全部消失，看起来像「客户端坏了」。
     #[test]
-    fn no_download_channel_says_so_instead_of_connecting_forever() {
+    fn rooms_connect_even_with_download_off() {
         let dir = tempfile::tempdir().unwrap();
         let store = Store::new(
             ClientConfig {
@@ -1392,13 +1585,21 @@ mod tests {
             dir.path().join("client.json"),
             dir.path().to_path_buf(),
         );
-        let status = store.snapshot().status;
-        assert_eq!(status.kind, "off", "不该是「连接中」");
-        assert!(
-            status.text.contains("收进剪贴板"),
-            "要说清是「没开收进剪贴板」而不是「连不上」：{}",
-            status.text
-        );
+
+        // ⚠️ 默认两个方向都关（Jonny 2026-09-26）。
+        assert!(!store.config().channels[0].enable_download);
+        assert!(!store.config().channels[0].enable_upload);
+
+        // 连接任务还没报第一拍 → 「还没开始连」，**不是**「连不上」。
+        let before = connection(&store, 0);
+        assert_eq!(before.kind, "off");
+        assert!(before.devices.is_empty(), "还没连上就是「不知道」");
+
+        // 连接任务报上来了 —— **即使 ↓ 是关的**，状态也该正常变成「已连接」。
+        connect_room(&store, "default");
+        let after = connection(&store, 0);
+        assert_eq!(after.kind, "on", "↓ 关着也要连（连接与 ↓ 无关）");
+        assert_eq!(after.devices.len(), 1, "至少能看到本机这一台");
     }
 
     /// ⚠️ 轮询间隔的 `0` 要夹到 1ms：`thread::sleep(0)` 会让监听线程**空转**，

@@ -80,8 +80,13 @@ pub struct Channel {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub auth_token: Option<String>,
 
-    /// 上行：本机剪贴板的内容要不要发到这个房间。**默认开。**
-    #[serde(default = "default_true")]
+    /// 上行：本机剪贴板的内容要不要发到这个房间。⚠️★ **默认关**（Jonny 2026-09-26：
+    /// 「上传和下载都默认关闭」）。
+    ///
+    /// ⚠️ 装完**一个方向都不流**，但客户端**照常连着**每个房间（§4.7）——
+    /// 所以第一眼看到的是「都连上了、能看到设备和延迟，但没有东西在流」。
+    /// 这正是要的：装完不该动你的剪贴板，也不该装作在工作。
+    #[serde(default = "default_false")]
     pub enable_upload: bool,
 
     /// 下行：这个房间的内容要不要写进本机剪贴板。⚠️★ **默认关。**
@@ -90,9 +95,9 @@ pub struct Channel {
 }
 
 impl Channel {
-    /// 建一个「默认开上行、关下行」的通道。
+    /// 建一个**两个方向都关**的通道。
     ///
-    /// 用它、别用结构体字面量：默认值就是规则本身（第 3 条），散在各处的字面量迟早会漂。
+    /// 用它、别用结构体字面量：默认值就是规则本身，散在各处的字面量迟早会漂。
     #[must_use]
     pub fn new(name: impl Into<String>, server: impl Into<String>) -> Self {
         Self {
@@ -100,7 +105,7 @@ impl Channel {
             server: server.into(),
             room: default_room(),
             auth_token: None,
-            enable_upload: true,
+            enable_upload: false,
             enable_download: false,
         }
     }
@@ -265,14 +270,20 @@ impl ClientConfig {
 
     /// 下行目标：**单数**。
     ///
+    /// ⚠️★ 它**只回答「哪个房间的内容会写进本机剪贴板」**，不再回答「连不连」——
+    /// 连接与 ↑/↓ **无关**（每个房间各自一条连接，见 [`crate::receiver::spawn_receiver`]）。
+    /// Jonny 2026-09-26：「下载本就不应该控制房间的任何功能」。
+    ///
+    /// ⚠️★ 这里**不再判 `enable_monitoring`**。原来判它是错的，而且错得很隐蔽：
+    /// 「暂停剪贴板监听」是**上行**的事（要不要读本机剪贴板），而它顺手把下行也停了 ——
+    /// 于是用户点一下暂停，设备行、延迟、实时消息**全都消失**。
+    /// 照实说「上下行都停」只是把谎说圆了，行为本身还是错的。
+    ///
     /// 手改过的配置里真的开了两个时，这里返回**第一个**（总得有个确定行为），
     /// 但那是错配置 —— [`ClientConfig::problems`] 会把这件事报出来，
     /// 界面上的开关是单选（[`ClientConfig::set_download_channel`]），正常走不到这里。
     #[must_use]
     pub fn download_channel(&self) -> Option<&Channel> {
-        if !self.enable_monitoring {
-            return None;
-        }
         self.channels.iter().find(|c| c.enable_download)
     }
 
@@ -350,25 +361,36 @@ impl ClientConfig {
 mod tests {
     use super::*;
 
+    /// 一个开着**上行**的房间（`download` 单独给）。
+    ///
+    /// ⚠️ 这里**故意**不照抄「两个方向默认都关」（Jonny 2026-09-26 定的那个默认值）：
+    /// 下面那些用例测的是「上行是复数 / 下行是单数」这类**筛选逻辑**，
+    /// 两个都关着就什么都筛不出来。⚠️ 默认值本身由
+    /// `both_directions_default_to_off` 单独钉住。
     fn ch(name: &str, download: bool) -> Channel {
         Channel {
+            enable_upload: true,
             enable_download: download,
             ..Channel::new(name, "http://127.0.0.1:9501")
         }
     }
 
-    /// ⚠️★ **下载默认关**（§4.1 第 3 条）：装完不许自动接管用户的剪贴板。
-    /// 这条同时钉住「上传默认开」—— 两个方向的默认值不一样，是刻意的。
+    /// ⚠️★ **两个方向默认都关**（Jonny 2026-09-26：「上传和下载都默认关闭」）：
+    /// 装完既不许动你的剪贴板，也不许把本机剪贴板往房间里发。
+    ///
+    /// ⚠️ 而客户端**照常连着**每个房间（§4.7）—— 所以第一眼看到的是
+    ///「都连上了、看得到设备和延迟，但没有东西在流」，而不是「连不上」。
     #[test]
-    fn download_defaults_to_off_and_upload_to_on() {
+    fn both_directions_default_to_off() {
         let c = Channel::new("家里", "http://127.0.0.1:9501");
-        assert!(c.enable_upload, "上传默认应当开");
+        assert!(!c.enable_upload, "上传默认必须是关的");
         assert!(!c.enable_download, "下载默认必须是关的");
 
-        // 反序列化（读配置文件）那条路也要是同一个默认值。
+        // 反序列化（读配置文件）那条路也要是同一个默认值 —— 两条路漂了的话，
+        // 「手写的配置」与「程序生成的配置」行为会不一样，而那是最难查的一种。
         let from_json: Channel =
             serde_json::from_str(r#"{"name":"家里","server":"http://127.0.0.1:9501"}"#).unwrap();
-        assert!(from_json.enable_upload);
+        assert!(!from_json.enable_upload);
         assert!(!from_json.enable_download);
     }
 
@@ -462,16 +484,30 @@ mod tests {
         assert!(problems.iter().any(|p| p.contains("无法解析")));
     }
 
-    /// 总开关关掉 → 两个方向都停（不是只停一个）。
+    /// ⚠️★ 总开关**只停上行**（读本机剪贴板），**不停下行**。
+    ///
+    /// Jonny 2026-09-26：「下载本就不应该控制房间的任何功能，也就是监听剪贴板关闭了，
+    /// 也不影响本地客户端的功能」。
+    ///
+    /// ⚠️ 原来这条叫 `monitoring_off_stops_both_directions`，断言的是
+    /// 「`download_channel()` 也变成 `None`」—— 那是错的，而且错得很隐蔽：
+    /// 「暂停剪贴板监听」是**上行**的事，顺手把下行也停掉之后，用户点一下暂停，
+    /// 设备行、延迟、实时消息**全都消失**。照实说「上下行都停」只是把谎说圆了。
     #[test]
-    fn monitoring_off_stops_both_directions() {
+    fn monitoring_off_stops_only_the_upload() {
         let cfg = ClientConfig {
             enable_monitoring: false,
             channels: vec![ch("a", true)],
             ..ClientConfig::default()
         };
-        assert!(cfg.upload_channels().is_empty());
-        assert!(cfg.download_channel().is_none());
+        assert!(cfg.upload_channels().is_empty(), "上行要停");
+        assert!(
+            cfg.download_channel().is_some(),
+            "下行**不能**跟着停 —— 那是另一件事（§4.7）"
+        );
+        // 按内容类型的那两个上传开关也一起停（它们判的就是「要不要发出去」）。
+        assert!(!cfg.is_upload_enabled(UploadKind::Text));
+        assert!(!cfg.is_upload_enabled(UploadKind::File));
     }
 
     /// §5 那条路径规则：**相对 → 数据目录；绝对 → 原样**。

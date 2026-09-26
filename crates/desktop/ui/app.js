@@ -125,9 +125,9 @@ function shapeOf(state) {
     // 这两个是常量，放进来只是为了让「形状」覆盖整份快照 ——
     // 少一个字段就多一处「变了也不重画」的隐患。
     state.configPath, state.maxEntries,
-    // ⚠️ 设备行也一样：漏掉它，有人进/出房间时那一行**不会重画**
-    //（而它正是「有人进出了」这件事唯一的表现）。
-    state.devices,
+    // ⚠️★ 设备、延迟、连接状态都挂在 `state.rooms` 上了（§4.7：每个房间各自一条连接），
+    // 所以上面那个 `state.rooms` 已经覆盖了它们 —— **不要再单独列一遍**
+    //（列了也不会错，只是会让人以为顶层还有 `devices` / `latency` 这两个字段）。
   ]);
 }
 
@@ -216,6 +216,28 @@ function renderEntry(entry, index) {
   return card;
 }
 
+/** 那个延迟胶囊（§4.3）。三种取值**分开画**。 */
+function renderLatency(latency) {
+  const kind = latency?.kind ?? 'unknown';
+  if (kind === 'rtt') {
+    const node = h('span', 'ms', `${latency.ms}ms`);
+    node.title = '这条连接的往返延迟（最近几次的中位数）。⚠️ 只量得到正在收的那个房间。';
+    return node;
+  }
+  // ⚠️★ 超时**必须说出来**（§4.3 第 4 条）：画一个 `9999ms` 看起来只是「慢」，
+  // 而真相是这条连接其实已经坏了、客户端正在重连。不说的话用户只会觉得界面坏了。
+  if (kind === 'timeout') {
+    const node = h('span', 'ms warn', '超时');
+    node.title = 'ping 没有回来：这条连接其实已经坏了，客户端会自己重连。';
+    return node;
+  }
+  // ⚠️ 刚连上还没测到 —— 画 `—` 而不是不画：这个房间**是**在量的，
+  // 「正在量但还没有数字」和「这个房间量不到」是两件事。
+  const node = h('span', 'ms', '—');
+  node.title = '还没测到延迟（刚连上，第一次 ping 还没回来）。';
+  return node;
+}
+
 /** 侧栏的房间列表。 */
 function renderRooms(state) {
   const host = el('rooms');
@@ -243,6 +265,11 @@ function renderRooms(state) {
     down.title = '↓ 收进剪贴板：这个房间的实时内容写进本机剪贴板（全局只能一个）';
     down.dataset.action = 'download';
     down.dataset.index = String(index);
+    // ⚠️★ 延迟**每个房间都画**（Jonny 2026-09-26：「每个在连接状态的都要显示延迟」）——
+    // 每个房间各自有一条连接（§4.7），所以每个房间都量得到自己那个数。
+    // ⚠️ 还没连上时画 `—`（**不是**不画）：这个房间是在量的，
+    //「正在量但还没有数字」和「这个房间量不到」是两件事。
+    node.append(renderLatency(room.connection?.latency));
     node.append(up, down, h('span', 'ct', String(room.count)));
     node.dataset.index = String(index);
     host.append(node);
@@ -258,28 +285,39 @@ function renderRooms(state) {
   host.append(add);
 }
 
-/** 标题栏那个状态点。四种状态**都要画出来**。 */
+/** 标题栏那个状态点。
+ *
+ * ⚠️★ 圆点画的是**当前选中那个房间**的连接状态 —— 每个房间各自有一条连接（§4.7），
+ * 已经没有一个「全局连接」可画了。主区显示的也是这个房间，两者对得上。
+ * ⚠️ 胶囊上的**字**说的是**剪贴板监听**（点它就是切这个），而且必须照实说：
+ * 上传默认是关的，所以「剪贴板同步中」在没开 ↑ 的时候是**假话** ——
+ * 那时本机剪贴板一个字节都不会发出去。
+ */
 function renderStatus(state) {
   const pill = el('conn');
-  const kind = ['on', 'off', 'wait', 'warn'].includes(state.status.kind) ? state.status.kind : 'wait';
+  const room = state.rooms[state.selected];
+  const connection = room?.connection ?? { kind: 'off', text: '还没有房间' };
+  const kind = ['on', 'off', 'wait', 'warn'].includes(connection.kind) ? connection.kind : 'wait';
   pill.className = `sync ${kind}${state.monitoring ? '' : ' paused'}`;
-  // ⚠️⚠️ 「暂停」时要说清**它到底停了什么**：`enable_monitoring` 在配置里是
-  // **上下行的总开关**（`ClientConfig::download_channel` 开头就判它），所以点一下
-  // 暂停之后，**下行也一起停了** —— 而文案只写「监听」的话，用户会以为只是不读剪贴板，
-  // 然后发现「别人的内容也不来了」。这属于「界面说一套、实际做另一套」。
-  // ⚠️★ 胶囊上的字说的是**同步状态**（界面稿里就是「剪贴板同步中」），不是连接状态 ——
-  // 两件事：连接由**点的颜色**表达（绿=通、灰=连、红=断、黄=服务端太旧），
-  // 而「现在到底同没同步」才是用户点它之前要看的。
-  // ⚠️ 但**出问题时要说问题**：连不上还写「同步中」就是在骗人（那是这个项目最忌讳的一类）。
-  const text = !state.monitoring
-    ? '已暂停（上行与下行都停）'
-    : state.status.kind === 'on'
+
+  // ⚠️ 「有没有东西真的在发」= 至少一个房间开着 ↑ **且**总开关没关。
+  // 两者缺一，「同步中」都是假话。
+  const sending = state.monitoring && state.rooms.some((one) => one.upload);
+  el('conn-text').textContent = !state.monitoring
+    ? '已暂停：不发你的剪贴板'
+    : sending
       ? '剪贴板同步中'
-      : state.status.text;
-  el('conn-text').textContent = text;
-  pill.title = state.status.latestId === null || state.status.latestId === undefined
-    ? '点击暂停/恢复同步（会同时停掉上行与下行）'
-    : `边界 latestId=${state.status.latestId}；点击暂停/恢复同步`;
+      : '没开「发到房间」';
+
+  const name = room ? room.name : '没有房间';
+  const boundary =
+    connection.latestId === null || connection.latestId === undefined
+      ? ''
+      : `｜边界 latestId=${connection.latestId}`;
+  pill.title =
+    `${name}：${connection.text}${boundary}` +
+    `\n点击${state.monitoring ? '暂停' : '恢复'} —— 只影响**上行**（要不要读本机剪贴板），` +
+    '不影响连接、接收与延迟。';
 }
 
 function renderTimeline(state) {
@@ -331,9 +369,8 @@ function updateCounter() {
 
 /** 主区标题右侧的设备行（稿 1 有：几个圆圈 + 「N 台在线」）。
  *
- * ⚠️★ 只画**正在收的那个房间**。客户端只有一个下行连接（§4.1 第 2 条：
- * 「收进剪贴板」全局只能一个），别的房间的设备**数不到** ——
- * 给每个房间都画一个数字就是编的（§4.3 第 1 条是同一个道理）。
+ * ⚠️★ 画的是**当前选中那个房间**的设备 —— 每个房间各自有一条连接（§4.7），
+ * 所以每个房间都有自己的设备列表（`rooms[i].connection.devices`）。
  *
  * ⚠️ 拿不到时**什么都不画**，而不是画「0 台在线」：
  *「一台都没有」和「还不知道」是两件事，混起来就是骗人。
@@ -341,7 +378,7 @@ function updateCounter() {
 function renderDevices(state) {
   const host = el('devices');
   host.textContent = '';
-  const devices = state.devices || [];
+  const devices = state.rooms[state.selected]?.connection?.devices || [];
   if (!devices.length) return;
   for (const device of devices) {
     // ⚠️ 图标按服务端认出来的 `kind` 选（`user_agent.rs` 的 desktop/smartphone/tablet），

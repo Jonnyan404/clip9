@@ -130,7 +130,10 @@ fn device_label(device: Option<&std::collections::HashMap<String, String>>) -> S
     String::new()
 }
 
-/// 连接状态（标题栏那个圆点 + 一句话）。
+/// 一条连接的状态（房间行 + 标题栏那个圆点 + 一句话）。
+///
+/// ⚠️★ 它现在是**按房间**的一份（`store::ConnectionView` 里嵌着它）——
+/// 每个房间各自有一条连接（§4.7），所以「唯一那条连接的状态」已经不存在了。
 #[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct StatusView {
@@ -140,21 +143,8 @@ pub struct StatusView {
     /// 连上之后拿到的边界（`latestId`）—— 界面上用它核对「历史到哪为止」。
     pub latest_id: Option<i32>,
 
-    /// 下行连的是哪个房间（下载通道），`None` = 没连。
+    /// 「正在连哪台」—— 只有 `wait` 那一拍有值（给那句「连接 work …」用）。
     pub room: Option<String>,
-}
-
-impl StatusView {
-    /// 还没连上。
-    #[must_use]
-    pub fn waiting() -> Self {
-        Self {
-            kind: "wait",
-            text: "连接中…".to_owned(),
-            latest_id: None,
-            room: None,
-        }
-    }
 }
 #[cfg(test)]
 mod tests {

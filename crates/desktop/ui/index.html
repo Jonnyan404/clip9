@@ -461,6 +461,42 @@ button.sync { font-family: inherit; cursor: default; }
    （不是右对齐），而 .hint 是 `margin-left:auto` 的右对齐短提示。 */
 .inp .src-note { color: var(--text-2); font-size: 11px; margin-left: 8px; }
 
+/* 房间行右侧的延迟胶囊（§4.3）。
+   ⚠️ 稿 1 里**没有**这一项（延迟是 Jonny 2026-09-26 后加的要求），所以照
+   `.ct` 那个胶囊的样式做，只是颜色更弱 —— 不另发明一种标签长相。
+   ⚠️ `tabular-nums`：数字位数变化时宽度不变，不然「9ms → 12ms」会让整行抖一下。 */
+.room .ms {
+    font-size: 10px; color: var(--sidebar-sub);
+    border: 1px solid var(--sidebar-chip-border);
+    border-radius: 999px; padding: 0 4px; line-height: 15px;
+    font-variant-numeric: tabular-nums;
+}
+.room .ms.warn {
+    color: var(--danger);
+    border-color: color-mix(in srgb, var(--danger) 45%, transparent);
+}
+/* ⚠️★ 房间名要**截断**，不能换行。侧栏 208px 里现在多了那个延迟胶囊，
+   名字那一格会被挤到只剩二十几像素 —— 不截断的话「默认」会断成两行，
+   整行变高、列表看着就散了。
+   ⚠️ `min-width: 0` 是必须的：flex 项默认 `min-width: auto`，不给它 0
+   的话 `overflow: hidden` 根本不起作用（这是 flex 里最容易漏的一条）。 */
+.room .nm { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+/* ⚠️★ 时间线的右键菜单（设计稿 §4.4）。
+   稿子**没画**它 —— 但稿 1 里有一套**同视觉**的菜单（托盘那张 `.tray`：
+   圆角 9px / 一行 7px 12px / 悬停底色 / 1px 分隔线）。这里照抄那一套，
+   **不另发明一种菜单长相**（同一个 app 里两种菜单是最没必要的第二套设计）。 */
+.ctxmenu {
+    position: fixed; z-index: 40; min-width: 176px;
+    background: var(--card-bg); border: 1px solid var(--border);
+    border-radius: 9px; box-shadow: var(--shadow); overflow: hidden;
+    padding: 4px 0;
+}
+.ctxmenu .mi { padding: 7px 12px; display: flex; align-items: center; gap: 9px; font-size: 12.5px; cursor: default; }
+.ctxmenu .mi:hover { background: var(--sidebar-hover); }
+.ctxmenu .mi .k { margin-left: auto; color: var(--text-2); font-size: 11px; }
+.ctxmenu .sep { height: 1px; background: var(--border); margin: 4px 0; }
+
 /* 主界面的即时提示（发不出去 / 存不上 / 配置有毛病）—— 稿子里没有，但 app 必须说 */
 .notice {
     flex: none; padding: 5px 14px; font-size: 11.5px;
@@ -597,8 +633,10 @@ button.sync { font-family: inherit; cursor: default; }
                 <div class="divider"></div>
                 <div class="subcard" style="border-color:color-mix(in srgb, var(--warn) 40%, transparent)">
                     <div style="font-size:12px;line-height:1.6">
-                        ⚠️ <b>「收进剪贴板」默认是关的</b>：装完不该自动接管你的剪贴板 ——
-                        要用哪个房间，在左边栏给它点开 ↓。<br>
+                        ⚠️ <b>两个方向默认都是关的</b>：装完既不该动你的剪贴板，也不该把本机剪贴板发出去 ——
+                        要用哪个房间，在左边栏给它点开关。<br>
+                        ⚠️★ <b>开关只决定「有没有东西流过去」，不决定连不连</b> ——
+                        每个房间**一直**连着，所以两个都关时你照样看得到在线设备、延迟和历史。<br>
                         ⚠️ 连上时服务端会重放历史。<b>历史只进列表、不写剪贴板</b> ——
                         边界由握手时给的<b>水印</b>（<code>config.latestId</code>）确定，<b>不靠时间窗猜</b>。
                     </div>
@@ -615,6 +653,18 @@ button.sync { font-family: inherit; cursor: default; }
                         <input class="inp" id="sc-poll" type="number" min="1" />
                     </div>
                     <p class="sub" style="margin:7px 0 0">⚠️ 改完点「保存」才生效 —— 它会重启监听线程（改配置不影响一个已经在跑的线程）。</p>
+                </div>
+                <div class="subcard" style="margin-top:13px">
+                    <div class="st">这个开关停什么</div>
+                    <div style="font-size:12px;line-height:1.6">
+                        标题栏那个胶囊（点一下暂停）管的是<b>读本机剪贴板</b>这一件事。<br>
+                        ⚠️★ <b>它不停连接、不停接收、不停延迟测量</b> ——
+                        暂停之后你照样看得到在线设备和延迟，别人发来的内容也照样进列表
+                        （只是<b>不发你的剪贴板出去</b>）。<br>
+                        ⚠️ 这一条是 2026-09-26 改的：原来它是「上下行的总开关」，
+                        点一下暂停会连着下行一起停 —— 设备行、延迟、实时消息**全都消失**，
+                        看起来像「客户端坏了」。
+                    </div>
                 </div>
                 <div class="subcard" style="margin-top:13px">
                     <div class="st">去重</div>

@@ -68,8 +68,8 @@ pub use config::{Channel, ClientConfig};
 pub use debounce::{Debouncer, Fingerprints};
 pub use event::{ClipboardContent, ClipboardEvent, TextSubtype, UploadKind};
 pub use receiver::{
-    Boundary, Handshake, PeerDevice, ReceiverHandle, ReceiverStatus, ReceiverUpdate, Verdict,
-    parse_event, parse_handshake, spawn_receiver,
+    Boundary, Handshake, Latency, PeerDevice, ReceiverEvent, ReceiverHandle, ReceiverStatus,
+    ReceiverUpdate, Verdict, parse_event, parse_handshake, spawn_receiver,
 };
 pub use sink::ClipboardSink;
 pub use source::ClipboardSource;
