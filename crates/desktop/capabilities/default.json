@@ -1,7 +1,7 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "主窗口的权限。⚠️ 页面上**没有任何 Tauri 插件**（那是刻意的，见 desktop-client.md §2）：数据全走自带的命令与 IPC 事件，所以这里只放行 core 的默认那一份。",
+  "description": "主窗口的权限。⚠️ 页面上**没有任何 Tauri 插件**（那是刻意的，见 desktop-client.md §2）：数据全走自带的命令与 IPC 事件。这里只多放一条 `dialog:default` —— 它给的是**选文件**那个系统对话框，而弹它的代码在 Rust 侧的 `pick_files` 命令里（页面拿不到它的 JS API，也拿不到返回值之外的任何东西）。",
   "windows": ["main"],
-  "permissions": ["core:default"]
+  "permissions": ["core:default", "dialog:default"]
 }

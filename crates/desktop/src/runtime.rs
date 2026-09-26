@@ -246,6 +246,26 @@ impl Runtime {
         });
     }
 
+    /// 界面上「发文件」：📎 / 🖼 / 拖进来 / 粘贴进来的都走这条。
+    ///
+    /// ⚠️★ 也走 [`Self::schedule_upload`]（= 和剪贴板那条上行**同一条路**）：
+    /// 多文件、限额、凭据、跳过规则全在 `clip9-client` 里，这里一行都不重写。
+    ///
+    /// ⚠️ 空列表直接返回：`upload_event` 收到空列表会回一句「0 个文件」的提示，
+    /// 而用户只是按了「取消」（`pick_files` 那时给的就是空数组）——
+    /// 那种提示是噪音。
+    pub fn send_files(self: &Arc<Self>, paths: &[String]) {
+        let paths: Vec<std::path::PathBuf> = paths
+            .iter()
+            .filter(|path| !path.trim().is_empty())
+            .map(std::path::PathBuf::from)
+            .collect();
+        if paths.is_empty() {
+            return;
+        }
+        self.schedule_upload(ClipboardEvent::Files { paths });
+    }
+
     /// 按需取回**选中房间**的历史（`GET /content`，不碰剪贴板）。
     ///
     /// ⚠️ 为什么要单独一条：下行的历史只覆盖**下载通道那一个房间**，

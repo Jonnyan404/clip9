@@ -335,6 +335,66 @@ pub fn send_text(runtime: State<'_, Arc<Runtime>>, text: String) {
 pub fn refresh(runtime: State<'_, Arc<Runtime>>) {
     runtime.refresh_history();
 }
+
+/// 弹一个**系统文件选择框**，把选中的路径还给页面。
+///
+/// ⚠️★ 为什么这条命令在 Rust 侧而不在页面上：Tauri 2 的插件 JS API 是一个 npm 包
+///（`@tauri-apps/plugin-dialog`），而这份界面是**手写的、没有构建步骤**
+///（`tauri.conf.json` 的 `frontendDist` 直接指向 `ui/`）。
+/// 引一个打包器只为弹一个对话框不划算，而且会破坏「页面只跟 IPC 命令说话」这条纪律。
+///
+/// ⚠️★ `blocking_pick_files` **不能在主线程上调**（Tauri 会 panic）。这里用的是
+/// **回调式**的 `pick_files`（它自己不阻塞），再用一条 oneshot 把它等回来 ——
+/// 所以它必须是一个 `async` 命令（`async fn` 跑在 tokio 的线程池上，不在主线程）。
+///
+/// ⚠️ 取消（用户按了「取消」/ 直接关掉）**不是错误**：返回一个空数组，
+/// 页面什么都不做。报一句「取消失败」是这类界面里最烦人的一种假错误。
+#[tauri::command]
+pub async fn pick_files(app: tauri::AppHandle, images_only: bool) -> Vec<String> {
+    use tauri_plugin_dialog::DialogExt;
+
+    let (tx, rx) = tokio::sync::oneshot::channel();
+    let mut builder = app.dialog().file().set_title(if images_only {
+        "选图片"
+    } else {
+        "选文件"
+    });
+    if images_only {
+        // ⚠️ 过滤只是**方便**，不是保证：用户能把过滤器切到「所有文件」。
+        // 真正的判断在 `clip9-client` 那边（图片按文件那条路上行，见 `UploadKind`），
+        // 所以这里不必（也不该）再判一次。
+        builder = builder.add_filter(
+            "图片",
+            &["png", "jpg", "jpeg", "gif", "webp", "bmp", "heic"],
+        );
+    }
+    builder.pick_files(move |paths| {
+        // ⚠️ 接收端可能已经走了（窗口关了）—— `send` 失败就丢掉，不要 panic。
+        let _ = tx.send(paths.unwrap_or_default());
+    });
+
+    rx.await
+        .unwrap_or_default()
+        .into_iter()
+        // ⚠️ 只要**本地路径**：`FilePath` 也可能是 URL（移动端 / 云盘），
+        // 而上行只认本地文件（`ClipboardContent::Files` 的注释写着「绝对路径」）。
+        .filter_map(|path| path.into_path().ok())
+        .map(|path| path.display().to_string())
+        .collect()
+}
+
+/// 把一批**本地文件**发到房间（输入区的 📎 / 🖼、拖进来、粘贴进来的都走这条）。
+///
+/// ⚠️★ 走**和剪贴板完全一样**的那条上行（`Runtime::send_files` → `upload_event`）：
+/// 「限额从哪来」「凭据怎么带」「多文件怎么办」这些规则都已经写在 `clip9-client` 里，
+/// 这里再写一遍就是**第二套规则**。
+///
+/// ⚠️ 路径**不在这里校验**：不存在的文件由 `upload_event` 报出来（它会带着文件名说
+/// 「跳过」，见 `UploadReport::summary`）—— 在这里先判一次会让两处的说法不一致。
+#[tauri::command]
+pub fn send_files(runtime: State<'_, Arc<Runtime>>, paths: Vec<String>) {
+    runtime.send_files(&paths);
+}
 /// 「用**系统浏览器**打开网页版」（§3.5.1 那条硬要求：分享链接、密码管理器、书签、
 /// 五种模式都在浏览器里；塞进 webview 会让桌面端变成「带壳的浏览器」）。
 ///

@@ -183,6 +183,10 @@ fn main() {
             tauri_plugin_autostart::MacosLauncher::LaunchAgent,
             None,
         ))
+        // ⚠️ 选文件的系统对话框。⚠️ **页面上不直接用它的 JS API** ——
+        // 那要一个打包器（`@tauri-apps/plugin-dialog`），而这份界面是手写的、
+        // 没有构建步骤。所以走壳里那条 `pick_files` 命令，由 Rust 侧调它。
+        .plugin(tauri_plugin_dialog::init())
         .manage(Arc::clone(&store))
         .manage(Arc::clone(&runtime))
         // ⚠️ 服务端进程：`Option` 是因为二进制可能找不到（那时客户端照常能连别的服务端）。
@@ -205,6 +209,8 @@ fn main() {
             commands::set_download,
             commands::set_monitoring,
             commands::send_text,
+            commands::pick_files,
+            commands::send_files,
             commands::refresh,
             commands::open_web,
             commands::apply_settings,
