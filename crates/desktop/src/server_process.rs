@@ -51,26 +51,113 @@ const PROBE_TIMEOUT: Duration = Duration::from_millis(800);
 pub struct ServerProcess {
     /// ⚠️ `None` = **我们没起过**（不代表它没在跑 —— 见 [`ServerProcess::is_running`]）。
     child: Mutex<Option<Child>>,
+    /// **我们**起它的那个时刻 —— 界面上「运行时长」的唯一来源。
+    ///
+    /// ⚠️ 不是我们起的（端口上那个是别人跑的）时是 `None`：那时**不知道**它跑了多久。
+    /// 界面上显示 `—`，而不是从「第一次看到它在跑」算起（那是编的）。
+    started_at: Mutex<Option<Instant>>,
+    /// 服务端二进制自己的版本（`-v`）。⚠️ **懒探一次并缓存** ——
+    /// `server_status` 每次打开设置都会问，为一行版本号反复起进程不划算。
+    version: Mutex<Option<String>>,
     binary: PathBuf,
     data_dir: PathBuf,
-    port: u16,
+    /// 配置里读不到端口时用的兜底值（正常路径上就是 [`DEFAULT_PORT`]）。
+    fallback_port: u16,
 }
 
 impl ServerProcess {
     #[must_use]
-    pub fn new(binary: PathBuf, data_dir: PathBuf, port: u16) -> Self {
+    pub fn new(binary: PathBuf, data_dir: PathBuf, fallback_port: u16) -> Self {
         Self {
             child: Mutex::new(None),
+            started_at: Mutex::new(None),
+            version: Mutex::new(None),
             binary,
             data_dir,
-            port,
+            fallback_port,
         }
+    }
+
+    /// **这个二进制自己的**版本（问它 `-v`，不是猜）。
+    ///
+    /// ⚠️★ 为什么不去读 `env!("CARGO_PKG_VERSION")`：旁边那个二进制完全可能是**别的版本**
+    /// （用户手动换过 / 打包时错配 / 升级升了一半）—— 而「版本」这一行存在的意义
+    /// 正是让用户发现这件事。自己报自己的版本等于把这一行变成一句废话。
+    ///
+    /// ⚠️ 探不出来（二进制坏了 / 不认 `-v`）就返回 `None`，界面显示 `—`。
+    #[must_use]
+    pub fn version(&self) -> Option<String> {
+        if let Some(cached) = self
+            .version
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone()
+        {
+            return Some(cached);
+        }
+        let output = Command::new(&self.binary).arg("-v").output().ok()?;
+        // ⚠️ 只认**成功退出**的：失败时 stdout 可能是别的程序写的垃圾。
+        if !output.status.success() {
+            return None;
+        }
+        // 输出是 `clip9-server 0.1.0` —— 取最后一段（前面那段是程序名，用户不需要）。
+        let text = String::from_utf8_lossy(&output.stdout);
+        let version = text.split_whitespace().next_back()?.to_owned();
+        *self.version.lock().unwrap_or_else(|e| e.into_inner()) = Some(version.clone());
+        Some(version)
+    }
+
+    /// **我们起的那个**跑了多久。不是我们起的就是 `None`（见 `started_at`）。
+    #[must_use]
+    pub fn uptime(&self) -> Option<Duration> {
+        self.started_at
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .map(|started| started.elapsed())
     }
 
     /// 服务端现在答不答话（**唯一的真相来源**）。
     #[must_use]
     pub fn is_running(&self) -> bool {
-        probe(self.port)
+        probe(self.port())
+    }
+
+    /// **服务端会在哪个端口上** —— 从**它自己的配置**里读，读不到才用兜底那个。
+    ///
+    /// ⚠️★ 为什么不能只用构造时那个常量：用户在「服务端配置」里能改端口，
+    /// 而那个改动**必须**生效。原来这里写死 `DEFAULT_PORT` 并把它当 `-port` 传下去，
+    /// 而服务端那边**命令行覆盖配置**（`apply_flags`）→ **用户改哪个端口都白改**，
+    /// 报出来的永远是「无法监听 0.0.0.0:9502（端口被占用？）」。
+    /// Jonny 2026-09-26 的原话：「**怎么我改任何一个端口，都提示端口被占用？？？**」
+    ///
+    /// ⚠️ 每次现读文件（而不是缓存）：改完端口点「保存并重启」那一下就得换过去。
+    /// 这条路径只在「打开设置」「起停」时走，读一个小 JSON 不算成本。
+    #[must_use]
+    pub fn port(&self) -> u16 {
+        config_port(&config_path(&self.data_dir)).unwrap_or(self.fallback_port)
+    }
+
+    /// 配置文件不在就**先写一份**（端口用我们要起的那个）。
+    ///
+    /// ⚠️★ 为什么这件事得我们做：服务端自己也会写一份（`-config` 指向的文件不存在时），
+    /// 但它写的是**它自己的默认值** —— 端口 **9501**，而那是**用户自己那个实例**的端口。
+    /// 于是「文件说 9501、服务端实际跑在 9502」，而界面上「服务端配置」那个端口框
+    /// 显示的是**文件里的值** → 两处打架，而用户只会觉得「这个数字不对」。
+    ///
+    /// ⚠️ 只写**默认值 + 端口**，别的一个字不加：这份文件之后归用户（和「配置可视化」）改。
+    fn seed_config(&self, port: u16) -> Result<(), String> {
+        let path = config_path(&self.data_dir);
+        if path.exists() {
+            return Ok(());
+        }
+        std::fs::create_dir_all(&self.data_dir)
+            .map_err(|err| format!("建服务端数据目录失败（{}）：{err}", self.data_dir.display()))?;
+        let mut config = clip9_core::Config::default();
+        config.server.port = port;
+        let text = serde_json::to_string_pretty(&config)
+            .map_err(|err| format!("序列化默认配置失败：{err}"))?;
+        std::fs::write(&path, format!("{text}\n"))
+            .map_err(|err| format!("写默认配置失败（{}）：{err}", path.display()))
     }
 
     /// 起一个，然后**等它真的答话**才返回。
@@ -81,11 +168,15 @@ impl ServerProcess {
     /// ⚠️ 已经在跑（不管是谁起的）就**直接返回成功**，不重复起：
     /// 重复起的后果是第二个进程 bind 失败、静默退出，而界面上「看起来起了」。
     pub fn start(&self) -> Result<(), String> {
-        if self.is_running() {
+        // ⚠️★ 端口**每次现读配置**：用户在「服务端配置」里改完、点「保存并重启」，
+        // 那一下必须真的换到新端口上（原来写死常量 → 改哪个都白改）。
+        let port = self.port();
+        if probe(port) {
             return Ok(());
         }
-        std::fs::create_dir_all(&self.data_dir)
-            .map_err(|err| format!("建服务端数据目录失败（{}）：{err}", self.data_dir.display()))?;
+        // ⚠️ 起之前先把配置准备好（见 `seed_config`）：不写的话服务端自己会写一份
+        // 端口是 9501 的，而它实际跑在我们这个端口上 —— 两处打架。
+        self.seed_config(port)?;
         let log_path = log_path(&self.data_dir);
         let log = std::fs::File::create(&log_path)
             .map_err(|err| format!("建日志文件失败（{}）：{err}", log_path.display()))?;
@@ -94,8 +185,11 @@ impl ServerProcess {
             .map_err(|err| format!("复制日志句柄失败：{err}"))?;
 
         let child = Command::new(&self.binary)
+            // ⚠️ 显式给 `-port`：与刚写下的那份配置**同一个值**（`port` 是上面读出来的）。
+            // 给的是**配置里那个**，不是某个常量 —— 命令行覆盖配置（`apply_flags`），
+            // 所以这里写错就等于用户改的端口不生效。
             .arg("-port")
-            .arg(self.port.to_string())
+            .arg(port.to_string())
             .arg("-data")
             .arg(&self.data_dir)
             // ⚠️★ **必须显式给 `-config`**：不给的话服务端会在**当前工作目录**写一份
@@ -113,17 +207,16 @@ impl ServerProcess {
         let deadline = Instant::now() + START_TIMEOUT;
         while Instant::now() < deadline {
             if self.is_running() {
+                // ⚠️ 起来了才记时刻（「运行时长」那一行靠它）。记在 spawn 那一刻的话，
+                // 一个起不来的进程也会让界面显示「跑了 5 分钟」。
+                *self.started_at.lock().unwrap_or_else(|e| e.into_inner()) = Some(Instant::now());
                 return Ok(());
             }
             std::thread::sleep(Duration::from_millis(150));
         }
-        // ⚠️ 超时要把「怎么查」告诉用户：日志就在旁边，而「起了但没起来」是最难查的一种。
-        Err(format!(
-            "本地服务端 {} 秒内没有答话。日志：{}（端口 {} 可能被别的程序占了）",
-            START_TIMEOUT.as_secs(),
-            log_path.display(),
-            self.port
-        ))
+        // ⚠️ 端口报**这一个**（刚起时用的那个），别现读一次配置 ——
+        // 中间被人改过的话，报出来的会是一个根本没试过的端口。
+        Err(start_failure(&log_path, port))
     }
 
     /// 停掉**我们起的那个**。
@@ -134,6 +227,8 @@ impl ServerProcess {
     /// 为一个「用户点停止」的动作引入那套不划算。见 `ARCHITECTURE.md` 的崩溃安全那条。
     pub fn stop(&self) -> Result<(), String> {
         let taken = self.child.lock().unwrap_or_else(|e| e.into_inner()).take();
+        // ⚠️ 时刻要跟着一起清：不清的话「停了之后」界面还会显示「运行时长 2 小时」。
+        *self.started_at.lock().unwrap_or_else(|e| e.into_inner()) = None;
         let Some(mut child) = taken else {
             // 没起过 —— 但要**说清**是「我们没起过」，而不是「已经停好了」。
             return if self.is_running() {
@@ -218,6 +313,20 @@ pub fn config_path(data_dir: &Path) -> PathBuf {
     data_dir.join("config.json")
 }
 
+/// 服务端配置里写的端口（`None` = 文件不在 / 读不出来 / 值不合法）。
+///
+/// ⚠️ 用 `clip9_core::Config` 解析（**服务端自己那个类型**），不手搓 JSON ——
+/// 手搓一份就是「第二份定义」，而它一定会漂（这个项目为这个付过几次代价）。
+/// ⚠️ 顺带白拿一件事：`Config` 上挂着一堆 `#[serde(default)]`，所以
+/// 「用户手写了一份只写了端口的最小配置」也读得出来 —— 那正是 [`ServerProcess::seed_config`]
+/// 写下去的形状。
+fn config_port(path: &Path) -> Option<u16> {
+    let raw = std::fs::read_to_string(path).ok()?;
+    let parsed: clip9_core::Config = serde_json::from_str(&raw).ok()?;
+    // ⚠️ 端口 0 不合法（那是「让系统随便挑一个」的意思，而这里要一个确定的数）。
+    (parsed.server.port > 0).then_some(parsed.server.port)
+}
+
 /// 服务端日志在哪：`<服务端数据目录>/server.log`（`start()` 把子进程的 stdout/stderr 都倒进去）。
 ///
 /// ⚠️ 与 [`config_path`] 同一个理由：**起服务端和「查看日志」必须用同一个路径**。
@@ -225,6 +334,119 @@ pub fn config_path(data_dir: &Path) -> PathBuf {
 #[must_use]
 pub fn log_path(data_dir: &Path) -> PathBuf {
     data_dir.join("server.log")
+}
+
+/// 起不来时给用户的那句话 —— **带上日志里最后一行**。
+///
+/// ⚠️★ 原来这里写的是「（端口 {port} 可能被别的程序占了）」—— 那是**猜**，
+/// 而且猜错的方向很坏：库里那个 redb 被**另一个进程**占着时，服务端报的是
+/// `Database already open. Cannot acquire lock.`，与端口**一点关系都没有**。
+/// 用户拿着「端口被占用」这条假线索去换端口 —— 换到天亮也没用。
+/// Jonny 2026-09-26 就是这么撞上的：「**怎么我改任何一个端口，都提示端口被占用？？？**」
+///
+/// ⚠️ 日志是 `File::create` 打开的（每次起服务端都会**截断重写**），所以最后一行
+/// 就是**这一次**失败的原因 —— 不会串到上一次去。
+fn start_failure(log_path: &Path, port: u16) -> String {
+    let reason = std::fs::read_to_string(log_path).ok().and_then(|text| {
+        text.lines()
+            .rev()
+            .map(str::trim)
+            .find(|line| !line.is_empty())
+            .map(str::to_owned)
+    });
+    match reason {
+        Some(reason) => format!(
+            "本地服务端 {} 秒内没有答话（端口 {port}）。日志最后一行：{reason}\
+             \n完整日志：{}",
+            START_TIMEOUT.as_secs(),
+            log_path.display()
+        ),
+        // ⚠️ 日志是空的也要说清是**空的** —— 那说明它连一行都没写出来就死了
+        //（比如二进制根本起不来），与「写了日志但没起来」是两件事。
+        None => format!(
+            "本地服务端 {} 秒内没有答话（端口 {port}），而且它一行日志都没写。日志：{}",
+            START_TIMEOUT.as_secs(),
+            log_path.display()
+        ),
+    }
+}
+
+/// 本机那份服务端的房间 / 条目统计（`GET /rooms`）。
+///
+/// ⚠️★ **问不到就是 `None`，不编一个数**：服务端的「房间列表」**默认是关的**
+///（`server.roomList: false`）→ 那时它回 403；受保护的房间 / 服务端回 401；
+/// 它没在跑当然也问不到。界面显示 `—` —— 这一行是给用户看「这个服务端上有什么」的，
+/// 编一个数字比空着坏得多。
+#[must_use]
+pub fn room_summary(port: u16) -> Option<(usize, u64)> {
+    let body: serde_json::Value = serde_json::from_str(&get(port, "/rooms")?).ok()?;
+    let rooms = body.get("rooms")?.as_array()?;
+    let entries = rooms
+        .iter()
+        .filter_map(|room| room.get("messageCount").and_then(serde_json::Value::as_u64))
+        .sum();
+    Some((rooms.len(), entries))
+}
+
+/// 本机回环上发一条 GET，把 body 读回来（`None` = 没答 200 / 读不动）。
+///
+/// ⚠️ 与 [`probe`] 同一套理由（手写、同步、只认回环）：这是**本机的一次读**，
+/// 不需要 TLS / 重定向 / 连接池，而 `reqwest` 那边是异步的、这个模块是同步的。
+/// ⚠️ 靠 `Connection: close` + 读到底拿 body（这份服务端的 JSON 响应**都带
+/// `content-length`**，实测过），所以这里不处理分块编码。哪天它换成流式响应，
+/// 这里会拿到一个带块头的 body、解析失败 → 给 `None`（**不是静默给一个错的数**）。
+fn get(port: u16, path: &str) -> Option<String> {
+    let addr = SocketAddr::from((Ipv4Addr::LOCALHOST, port));
+    let mut stream = TcpStream::connect_timeout(&addr, PROBE_TIMEOUT).ok()?;
+    let _ = stream.set_read_timeout(Some(PROBE_TIMEOUT));
+    let request =
+        format!("GET {path} HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nConnection: close\r\n\r\n");
+    stream.write_all(request.as_bytes()).ok()?;
+    let mut raw = Vec::new();
+    stream.read_to_end(&mut raw).ok()?;
+    let text = String::from_utf8_lossy(&raw);
+    let (head, body) = text.split_once("\r\n\r\n")?;
+    if !head.starts_with("HTTP/1.1 200") && !head.starts_with("HTTP/1.0 200") {
+        return None;
+    }
+    Some(body.to_owned())
+}
+
+/// 拼一个**客户端能拿去填进房间的**地址：`http://127.0.0.1:9502`（带子路径前缀）。
+///
+/// ⚠️★ 两个坑，都是「看着对、其实连不上」那一类：
+///
+/// ① **`host` 是绑定地址，不是连接地址。** 配成 `0.0.0.0` / `::` / 空 = 「监听所有网卡」，
+///    照抄给用户会得到一个连不上的地址 —— 客户端要连的是**回环**。
+///    所以这三个值一律换成 `127.0.0.1`。
+/// ② **端口不是配置里那个** —— 见 [`ServerProcess::port`] 的文档。
+///
+/// ⚠️ `tls` 为真时给 `https://`：服务端配了证书就是 TLS，而地址写错协议
+/// 症状是「打开网页版一片空白」，与「服务端没起来」长得一样。
+#[must_use]
+pub fn client_url(host: &str, port: u16, prefix: &str, tls: bool) -> String {
+    let scheme = if tls { "https" } else { "http" };
+    let prefix = prefix.trim().trim_end_matches('/');
+    let path = if prefix.is_empty() {
+        String::new()
+    } else {
+        format!("/{}", prefix.trim_start_matches('/'))
+    };
+    format!("{scheme}://{}:{port}{path}", client_host(host))
+}
+
+/// 配置里的 `host` → **客户端能用的主机名**（[`client_url`] 与界面上的「监听」那一行都用它）。
+///
+/// ⚠️ 配置里 host 允许写逗号分隔的一串（`resolve_hosts` 收），取第一个就够。
+/// ⚠️ IPv6 的字面量要带方括号才是合法的 URL 主机（`[::1]`）。
+#[must_use]
+pub fn client_host(host: &str) -> &str {
+    match host.split(',').next().unwrap_or_default().trim() {
+        // 空 / 监听所有网卡 —— 那三个都是**绑定**地址，客户端要连的是回环。
+        "" | "0.0.0.0" | "::" | "[::]" => "127.0.0.1",
+        "::1" => "[::1]",
+        other => other,
+    }
 }
 
 /// 服务端数据目录：客户端数据目录下的 `server/`。
@@ -280,6 +502,110 @@ mod tests {
         assert!(!probe(free_port()));
     }
 
+    /// ⚠️★ 端口**以配置为准**（不是那个常量）—— 用户能在「服务端配置」里改它。
+    ///
+    /// 原来 `start()` 传的是 `DEFAULT_PORT`，而服务端那边**命令行覆盖配置**
+    ///（`apply_flags`）→ 用户改哪个端口都白改，日志里报的永远是
+    ///「无法监听 0.0.0.0:9502（端口被占用？）」。Jonny 2026-09-26 的原话：
+    ///「**怎么我改任何一个端口，都提示端口被占用？？？**」
+    #[test]
+    fn the_port_comes_from_the_config_not_from_a_constant() {
+        let dir = tempfile::tempdir().expect("建临时目录");
+        let data = dir.path().join("server");
+        std::fs::create_dir_all(&data).expect("建目录");
+        // ⚠️ 二进制故意指一个不存在的路径：这条测试**只碰文件**，不起进程。
+        let server = ServerProcess::new(PathBuf::from("/nonexistent"), data.clone(), DEFAULT_PORT);
+
+        assert_eq!(server.port(), DEFAULT_PORT, "配置不在就用兜底端口");
+
+        // 配置里写了端口 → 以它为准（这正是用户在界面上改的那个值）。
+        std::fs::write(config_path(&data), r#"{"server":{"port":9600}}"#).expect("写配置");
+        assert_eq!(server.port(), 9600, "配置说了算");
+
+        // ⚠️ 端口 0 不合法（那是「让系统随便挑一个」的意思）→ 退回兜底值，
+        // 而不是拿 0 去 bind（那会绑到一个随机端口，界面上的地址就成了假的）。
+        std::fs::write(config_path(&data), r#"{"server":{"port":0}}"#).expect("写配置");
+        assert_eq!(server.port(), DEFAULT_PORT, "0 不是合法端口，要用兜底那个");
+
+        // 文件坏了也一样：退回兜底值，而不是让整个起停流程崩掉。
+        std::fs::write(config_path(&data), "这不是 JSON").expect("写配置");
+        assert_eq!(server.port(), DEFAULT_PORT);
+    }
+
+    /// ⚠️ 起之前**先写一份配置**（端口与我们要起的一致）。
+    ///
+    /// 不写的话服务端自己会写一份 —— 而那份的端口是**它自己的默认值 9501**
+    ///（那是用户自己那个实例的端口）→「文件说 9501、服务端实际跑在别处」，
+    /// 而「服务端配置」那个端口框显示的是**文件里的值**：两处打架，用户只会觉得数字不对。
+    #[test]
+    fn starting_seeds_the_config_with_the_port_we_use() {
+        let binary = test_binary();
+        if !binary.is_file() {
+            eprintln!("跳过：{} 不在", binary.display());
+            return;
+        }
+        let dir = tempfile::tempdir().expect("建临时目录");
+        let data = dir.path().join("server");
+        let port = free_port();
+        let server = ServerProcess::new(binary, data.clone(), port);
+
+        assert!(
+            !config_path(&data).exists(),
+            "起之前不该有配置文件（这条测试要验的正是「起的时候补上」）"
+        );
+        server.start().expect("起服务端");
+
+        let text = std::fs::read_to_string(config_path(&data)).expect("配置该被写出来");
+        assert!(
+            text.contains(&port.to_string()),
+            "配置里该写着我们起的那个端口 {port}：{text}"
+        );
+        // ⚠️ 而且它得是**能读回来**的那一份（`config_port` 用它决定下一次起在哪个端口）。
+        assert_eq!(config_port(&config_path(&data)), Some(port));
+
+        server.stop().expect("停");
+    }
+
+    /// ⚠️★ 拼给用户看的连接地址：**绑定地址要换成回环、端口用进程那个、前缀要带上**。
+    ///
+    /// 这条错了的症状是「界面给了个地址，填进房间连不上」—— 而用户会以为是服务端的问题，
+    /// 跑去查一个没错的地方。`0.0.0.0` 是**绑定**地址（监听所有网卡），
+    /// 拿它当**连接**地址用是这类界面最常见的一个坑。
+    #[test]
+    fn the_client_url_swaps_the_bind_address_for_the_loopback() {
+        // 监听所有网卡 ≠ 客户端能拿它当地址用。
+        assert_eq!(
+            client_url("0.0.0.0", 9502, "", false),
+            "http://127.0.0.1:9502"
+        );
+        assert_eq!(client_url("::", 9502, "", false), "http://127.0.0.1:9502");
+        assert_eq!(client_url("", 9502, "", false), "http://127.0.0.1:9502");
+        // 明确写回环 / 局域网地址时原样用（局域网那种是给手机连的）。
+        assert_eq!(
+            client_url("127.0.0.1", 9502, "", false),
+            "http://127.0.0.1:9502"
+        );
+        assert_eq!(
+            client_url("192.168.1.9", 9502, "", false),
+            "http://192.168.1.9:9502"
+        );
+        // 逗号分隔取第一个；IPv6 字面量要带方括号（不然拼出来不是合法 URL）。
+        assert_eq!(
+            client_url("0.0.0.0,::1", 9502, "", false),
+            "http://127.0.0.1:9502"
+        );
+        assert_eq!(client_url("::1", 9502, "", false), "http://[::1]:9502");
+        // 子路径前缀（反代到 /clip）与 TLS。
+        assert_eq!(
+            client_url("0.0.0.0", 9502, "/clip/", false),
+            "http://127.0.0.1:9502/clip"
+        );
+        assert_eq!(
+            client_url("0.0.0.0", 9502, "clip", true),
+            "https://127.0.0.1:9502/clip"
+        );
+    }
+
     /// 起 → 探测到 → 停 → 探测不到。对着**真的 `clip9-server`** 跑。
     ///
     /// ⚠️ 用临时目录 + 动态端口：**绝不能碰 9501 / 9502**（9501 是 Jonny 的正式实例）。
@@ -304,15 +630,39 @@ mod tests {
         server.start().expect("起服务端");
 
         assert!(server.is_running(), "起来了就该探测到");
+        // ⚠️ 起来了才有「运行时长」—— 记在 spawn 那一刻的话，一个起不来的进程
+        // 也会让界面显示「跑了 5 分钟」。
+        assert!(server.uptime().is_some(), "起来了就该有运行时长");
         // ⚠️ `-config` 要落在**数据目录**里，不是 cwd —— 这一条钉的就是那个坑。
+        // ⚠️ 现在这份是**我们**先写下的（`seed_config`），服务端看到文件在就不再写 ——
+        // 所以它同时也是「配置里的端口与实际起的端口一致」那条的落点。
         assert!(
             data.join("config.json").is_file(),
-            "服务端该把配置写在数据目录下（{}）",
+            "配置该在数据目录下（{}）",
             data.display()
+        );
+
+        // ⚠️★ 「房间 / 条目」那一行：服务端的**房间列表默认是关的**（`roomList: false`）→
+        // `GET /rooms` 回 403 → 这里必须是 `None`，界面显示 `—`。
+        // 这一条钉的是「**问不到就说问不到，不编一个数**」—— 编了的话，
+        // 用户会拿它去判断「这个服务端上有什么」，而那是个假数字。
+        assert!(
+            room_summary(server.port()).is_none(),
+            "房间列表没开时问不到，该给 None 而不是编一个数"
+        );
+
+        // ⚠️ 「版本」要问**那个二进制自己**（不是 `env!("CARGO_PKG_VERSION")`）——
+        // 旁边那个二进制完全可能是别的版本，而这一行存在的意义就是让人发现这件事。
+        let version = server.version().expect("问得到版本");
+        assert!(
+            !version.is_empty() && version.contains('.'),
+            "版本：{version}"
         );
 
         server.stop().expect("停服务端");
         assert!(!server.is_running(), "停了就不该再探测到");
+        // ⚠️ 「运行时长」也要跟着清 —— 不清的话停了之后界面还显示「跑了 2 小时」。
+        assert!(server.uptime().is_none(), "停了就没有运行时长");
     }
 
     /// ⚠️ 重复 `start` 不该起第二个进程（第二个会 bind 失败、静默退出，

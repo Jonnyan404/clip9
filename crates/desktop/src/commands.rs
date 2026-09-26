@@ -9,6 +9,7 @@
 //! ⚠️ 这样分的收益是**能测**：页面点一下就走的那条路（开关 → 落盘 → 界面更新），
 //! 在 `store` 的测试里是**普通函数调用**，不用起窗口、不用手点。
 
+use std::path::Path;
 use std::sync::Arc;
 
 use tauri::State;
@@ -107,16 +108,11 @@ pub struct SettingsView {
     pub autostart: bool,
     pub data_dir: String,
     pub config_path: String,
-    pub server_running: bool,
 }
 
 /// 读「设置」窗口要的那一份。
 #[tauri::command]
-pub fn settings_view(
-    app: tauri::AppHandle,
-    store: State<'_, Arc<Store>>,
-    server: State<'_, Option<Arc<ServerProcess>>>,
-) -> SettingsView {
+pub fn settings_view(app: tauri::AppHandle, store: State<'_, Arc<Store>>) -> SettingsView {
     let config = store.config();
     let snapshot = store.snapshot();
     SettingsView {
@@ -130,7 +126,6 @@ pub fn settings_view(
         autostart: crate::autostart::initial_checked(&app),
         data_dir: snapshot.data_dir,
         config_path: snapshot.config_path,
-        server_running: server.as_ref().is_some_and(|server| server.is_running()),
     }
 }
 
@@ -227,10 +222,214 @@ pub fn server_log(path: State<'_, std::path::PathBuf>) -> ServerLogView {
     view(text)
 }
 
-/// 本地服务端在不在跑 —— **问出来的**（真的打一条 `GET /server`），不是记的。
+/// 「这个客户端没有自带服务端」—— ⚠️ 这句话**只写一遍**：四条命令各写一遍迟早会漂，
+/// 而漂了的表现是同一个状况在界面上有三句不同的说法。
+const NO_BUNDLED_SERVER: &str = "这个客户端没有自带服务端（找不到 clip9-server），没法替你起停它。";
+
+/// 「本地服务端」那一块要的**全部**信息 —— ⚠️★ **逐行对着界面稿 2 的 `.win.srv`**
+///（`docs/specs/desktop-client-settings-mockup.html` 的「本地服务端」那张卡）。
+///
+/// 五个值各有各的来源，**没有一个是编的**：
+///
+/// | 稿子里的行 | 从哪来 |
+/// |---|---|
+/// | 版本 | **问那个二进制自己**（`clip9-server -v`，见 [`ServerProcess::version`]） |
+/// | 监听 | 配置里的 host（`client_host` 把 `0.0.0.0` 换成回环）+ **进程句柄的端口** |
+/// | 数据目录 | 客户端数据目录下的 `server/` |
+/// | 房间 / 条目 | **问服务端**（`GET /rooms`）—— 它没开「房间列表」时是 `None` |
+/// | 运行时长 | **我们起它的那个时刻**（不是我们起的就是 `None`） |
+///
+/// ⚠️★ 为什么是**一条**命令、而不是让页面自己拼几处：分几条发的话，
+/// 页面会在中间某一刻画出**半对**的一行（比如「监听」有了、「房间」还是上一秒的）。
+/// 一张卡片的五行本来就该是同一瞬间的快照。
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ServerStatusView {
+    /// 有没有自带服务端（找不到那个二进制就是 `false`）。
+    pub bundled: bool,
+    /// 它现在答不答话（**问出来的**，真的打一条 `GET /server`，不是记的）。
+    pub running: bool,
+    /// `0.1.0`。⚠️ 探不出来就是 `None`（界面显示 `—`）。
+    pub version: Option<String>,
+    /// `127.0.0.1:9502`。⚠️ 稿子里就是 `host:port` 这个形状（**不带协议**）。
+    pub listen: Option<String>,
+    pub data_dir: String,
+    /// 服务端上的房间数。⚠️ `None` = **问不到**（房间列表没开 / 要密码 / 没在跑）。
+    pub rooms: Option<usize>,
+    /// 那些房间里的条目总数。⚠️ 与 `rooms` 同生同死（一起 `None`）。
+    pub entries: Option<u64>,
+    /// 它跑了多少秒。`None` = **不是这个客户端起的**（那时不知道，不猜）。
+    pub uptime_seconds: Option<u64>,
+    /// 「运行方式」：`true` = 随客户端启动，`false` = 连别人的服务端（本机不起）。
+    pub local_server: bool,
+}
+
+/// 本地服务端的形状：`(host, prefix, tls)` —— **拼地址与拼「监听」那一行共用**。
+///
+/// ⚠️ host / prefix / 证书**要**从配置读：客户端起服务端时只传了 `-port` / `-data` /
+/// `-config`，这几个没传，所以它们真的生效。
+/// 配置读不出来时（文件还没生成 / 坏了）用**默认值**兜底：服务端自己读不出来时用的
+/// 也是同一份默认值，所以那时「监听所有网卡 + 没前缀」正是它真实的形态。
+///
+/// ⚠️ 收**路径**而不是 `ServerConfigFile`：这几条命令现在跑在阻塞线程池上
+///（见 [`run_server_blocking`]），闭包要 `'static`，而 Tauri 的 `State` 借用不了那么久。
+fn local_server_shape(config_path: &Path) -> (String, String, bool) {
+    let parsed = std::fs::read_to_string(config_path)
+        .ok()
+        .and_then(|raw| serde_json::from_str::<clip9_core::Config>(&raw).ok())
+        .unwrap_or_default();
+    let server = &parsed.server;
+    // ⚠️ `host` 服务端两种写法都收（字符串 / 数组），拼地址只取第一个。
+    let host = match &server.host {
+        serde_json::Value::String(text) => text.clone(),
+        serde_json::Value::Array(items) => items
+            .first()
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or_default()
+            .to_owned(),
+        _ => String::new(),
+    };
+    // ⚠️ 两个都非空才是 TLS（只给证书不给私钥，服务端起不来 TLS，那时写 https 反而错）。
+    let tls = !server.cert.trim().is_empty() && !server.key.trim().is_empty();
+    (host, server.prefix.clone(), tls)
+}
+
+/// 本地服务端的**连接地址**（`http://127.0.0.1:9502`，给「打开网页版」用）。
+fn local_server_url(server: &ServerProcess, config_path: &Path) -> String {
+    let (host, prefix, tls) = local_server_shape(config_path);
+    crate::server_process::client_url(&host, server.port(), &prefix, tls)
+}
+
+/// 把一次**阻塞**的起 / 停丢进线程池，等它回来。
+///
+/// ⚠️★ 为什么必须这样：起服务端最多要等 `START_TIMEOUT`（**15 秒**）。
+/// 同步命令会把界面**整个卡住** —— Jonny 2026-09-26 报的
+/// 「**点保存并重启就卡死**」就是这个：窗口十几秒不响应。
+/// 丢进 `spawn_blocking` 之后，等待发生在别的线程上，界面照常能动。
+async fn run_server_blocking(
+    label: &str,
+    work: impl FnOnce() -> Result<(), String> + Send + 'static,
+) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(work)
+        .await
+        .map_err(|err| format!("{label}的任务没跑起来：{err}"))?
+}
+
+/// `server_status` 里**阻塞的那一半**：读文件、起一次进程问版本、连本机问 `/rooms`。
+///
+/// ⚠️ 抽出来是为了能整段丢进 [`run_server_blocking`] 那种线程池 ——
+/// 这几件事全是同步的，而 `server_status` 是 `async`。
+fn server_status_now(
+    local_server: bool,
+    data_dir: String,
+    process: Option<Arc<ServerProcess>>,
+    config_path: &Path,
+) -> ServerStatusView {
+    // ⚠️ 没有自带服务端（找不到二进制）：地址 / 版本 / 时长**一律 `None`** ——
+    // 我们连它会在哪个端口上都不知道，编一个比空着坏。
+    let Some(process) = process else {
+        return ServerStatusView {
+            bundled: false,
+            running: false,
+            version: None,
+            listen: None,
+            data_dir,
+            rooms: None,
+            entries: None,
+            uptime_seconds: None,
+            local_server,
+        };
+    };
+    let running = process.is_running();
+    let (host, _, _) = local_server_shape(config_path);
+    // ⚠️ 没在跑就别去问 `/rooms`（那会白等一个连接超时），直接 `None`。
+    let summary = if running {
+        crate::server_process::room_summary(process.port())
+    } else {
+        None
+    };
+    ServerStatusView {
+        bundled: true,
+        running,
+        version: process.version(),
+        listen: Some(format!(
+            "{}:{}",
+            crate::server_process::client_host(&host),
+            process.port()
+        )),
+        data_dir,
+        rooms: summary.map(|(rooms, _)| rooms),
+        entries: summary.map(|(_, entries)| entries),
+        uptime_seconds: process.uptime().map(|uptime| uptime.as_secs()),
+        local_server,
+    }
+}
+
+/// 本地服务端的状态（状态灯 / 五行数据 / 起停按钮都读它）。
+///
+/// ⚠️ `async` 的理由见 [`run_server_blocking`]：这一条要读文件、起一次进程问版本、
+/// 还要连本机问 `/rooms`（最多 800ms 超时）—— 全是阻塞的。
 #[tauri::command]
-pub fn server_running(server: State<'_, Option<Arc<ServerProcess>>>) -> bool {
-    server.as_ref().is_some_and(|server| server.is_running())
+pub async fn server_status(
+    store: State<'_, Arc<Store>>,
+    server: State<'_, Option<Arc<ServerProcess>>>,
+    config: State<'_, ServerConfigFile>,
+) -> Result<ServerStatusView, String> {
+    let local_server = store.config().enable_local_server;
+    let data_dir =
+        crate::server_process::data_dir_under(std::path::Path::new(&store.snapshot().data_dir))
+            .display()
+            .to_string();
+    let process = server.as_ref().cloned();
+    let config_path = config.path().to_path_buf();
+    tauri::async_runtime::spawn_blocking(move || {
+        server_status_now(local_server, data_dir, process, &config_path)
+    })
+    .await
+    .map_err(|err| format!("读本地服务端状态的任务没跑起来：{err}"))
+}
+
+/// 换「运行方式」（界面稿里那两选一）：`true` = 随客户端启动，`false` = 本机不起。
+///
+/// ⚠️★ **它不只是改一个配置**：选了「本机不起」就要**真的把它停掉**，
+/// 选了「随客户端启动」就要**真的把它起起来**。只改配置的话，用户点完看到的是
+/// 「模式换了、服务端照旧在跑」—— 那就是「配了不生效」。
+///
+/// ⚠️ 顺序有讲究：**先停（可能失败）再改配置** —— 反过来的话，停失败会留下
+/// 「配置说不起了、实际还在跑」这个更难解释的状态。
+#[tauri::command]
+pub async fn set_local_server(
+    store: State<'_, Arc<Store>>,
+    runtime: State<'_, Arc<Runtime>>,
+    server: State<'_, Option<Arc<ServerProcess>>>,
+    on: bool,
+) -> Result<(), String> {
+    let process = server.as_ref().cloned();
+    if !on && let Some(process) = process.clone() {
+        run_server_blocking("停服务端", move || process.stop()).await?;
+    }
+    store.set_local_server(on);
+    runtime.persist();
+    // ⚠️ 切回「随客户端启动」时**顺手把它起起来**：不起的话，用户点完看到的是
+    // 「模式选好了、服务端还是没在跑」，还得再去点一次别的地方 —— 而界面稿里
+    // 这一页**没有「启动」按钮**（只有重启 / 停止）。所以这一下就是那个「启动」。
+    if on && let Some(process) = process {
+        run_server_blocking("起服务端", move || process.start()).await?;
+    }
+    Ok(())
+}
+
+/// 停本地服务端。
+///
+/// ⚠️ 只停**这个客户端起的那个**：用户在别处自己跑的那个不动 ——
+/// [`ServerProcess::stop`] 会**拒绝并说清为什么**（那个可能正连着他的手机）。
+/// 那条拒绝原样给界面看，不在这里改写。
+#[tauri::command]
+pub async fn server_stop(server: State<'_, Option<Arc<ServerProcess>>>) -> Result<(), String> {
+    let Some(server) = server.as_ref().cloned() else {
+        return Err(NO_BUNDLED_SERVER.to_owned());
+    };
+    run_server_blocking("停服务端", move || server.stop()).await
 }
 
 /// 重启本地服务端（「保存并重启」那条路）。
@@ -238,12 +437,15 @@ pub fn server_running(server: State<'_, Option<Arc<ServerProcess>>>) -> bool {
 /// ⚠️ 只在**自带服务端**时做得到：找不到二进制就**报错**，
 /// 而不是画一个点了没反应的按钮（§3.5.2 ② 第 3 条）。
 #[tauri::command]
-pub fn server_restart(server: State<'_, Option<Arc<ServerProcess>>>) -> Result<(), String> {
-    let Some(server) = server.as_ref() else {
-        return Err("这个客户端没有自带服务端（找不到 clip9-server），没法替你重启。".to_owned());
+pub async fn server_restart(server: State<'_, Option<Arc<ServerProcess>>>) -> Result<(), String> {
+    let Some(server) = server.as_ref().cloned() else {
+        return Err(NO_BUNDLED_SERVER.to_owned());
     };
-    server.stop()?;
-    server.start()
+    run_server_blocking("重启服务端", move || {
+        server.stop()?;
+        server.start()
+    })
+    .await
 }
 
 /// 界面上要渲染的那一份状态。
@@ -407,21 +609,44 @@ pub fn send_files(runtime: State<'_, Arc<Runtime>>, paths: Vec<String>) {
 /// 插件不划算（它的 API 还会随版本变，而那是**最容易漂**的地方）。系统自带的
 /// `open` / `start` / `xdg-open` 二十年来没变过。
 #[tauri::command]
-pub fn open_web(store: State<'_, Arc<Store>>) -> Result<(), String> {
-    let Some(channel) = store.selected_channel() else {
-        return Err("配置里一个房间都没有".to_owned());
+pub async fn open_web(
+    server: State<'_, Option<Arc<ServerProcess>>>,
+    config: State<'_, ServerConfigFile>,
+) -> Result<(), String> {
+    let Some(server) = server.as_ref().cloned() else {
+        return Err(NO_BUNDLED_SERVER.to_owned());
     };
-    let url = web_ui_url(&channel.server)?;
-    open_in_system_browser(&url)
+    let config_path = config.path().to_path_buf();
+    // ⚠️ 也丢进线程池：探测（最多 800ms）+ 起 `open` 进程都是阻塞的，
+    // 而这是一次点击 —— 点了之后窗口不该僵住。
+    tauri::async_runtime::spawn_blocking(move || {
+        // ⚠️★ 打开的是**本机自带那个服务端**，不是「当前选中房间的服务端」。
+        // 这个按钮长在「本地服务端」那一页上（`ui/index.html` 里只有这一处），
+        // 所以它问的就是「这一份服务端的网页版」。原来用的是选中房间的地址 ——
+        // 房间里填着别人的服务端时，点它会打开**别人**的网页版，与按钮所在的位置对不上。
+        if !server.is_running() {
+            // ⚠️ 说清**怎么办**：这一页上没有「启动」按钮（界面稿里只有重启 / 停止），
+            // 所以回去的路是下面那两选一。
+            return Err(
+                "本地服务端没在跑 —— 在「运行方式」里选「随客户端启动」，或点「重启」。".to_owned(),
+            );
+        }
+        let url = openable_url(&local_server_url(&server, &config_path))?;
+        open_in_system_browser(&url)
+    })
+    .await
+    .map_err(|err| format!("打开网页版的任务没跑起来：{err}"))?
 }
 
-/// 服务端的**网页版地址**。
+/// 交给系统 opener 之前的**最后一道**校验：只放行 `http(s)`。
 ///
-/// ⚠️ 只放行 `http` / `https`：这个字符串最后要交给 `open`（macOS）/`start`（Windows），
-/// 而那两条都会把它交给 shell 解释 —— `file://`、`javascript:` 之类**绝对不能**进来。
-/// 校验在这里做一次，比在每个平台分支里各写一次靠得住。
-fn web_ui_url(server: &str) -> Result<String, String> {
-    let trimmed = server.trim();
+/// ⚠️ 地址现在是**我们自己拼的**（[`local_server_url`]，协议由证书决定），
+/// 所以这一步在正常路径上是恒真的。留着它，是因为**下一个改这里的人**不一定知道
+/// 那个不变量：这个字符串最后交给 `open`（macOS）/ `start`（Windows），
+/// 而它们会把它当 URL 解释 —— `file://` / `javascript:` 进来就是另一类事了。
+/// 一行校验，比一条「记得只拼 http」的口头约定靠得住。
+fn openable_url(url: &str) -> Result<String, String> {
+    let trimmed = url.trim();
     if trimmed.is_empty() {
         return Err("服务端地址是空的".to_owned());
     }
@@ -465,18 +690,18 @@ fn open_in_system_browser(url: &str) -> Result<(), String> {
 
 #[cfg(test)]
 mod tests {
-    use super::web_ui_url;
+    use super::openable_url;
 
     /// ⚠️ 只放行 `http(s)` —— 这个字符串最后要交给 shell 解释的 opener，
     /// `file://` / `javascript:` 进来就是另一类事了。
     #[test]
     fn only_http_urls_can_be_opened() {
         assert_eq!(
-            web_ui_url("http://127.0.0.1:9501/").unwrap(),
-            "http://127.0.0.1:9501"
+            openable_url("http://127.0.0.1:9502/").unwrap(),
+            "http://127.0.0.1:9502"
         );
         assert_eq!(
-            web_ui_url("  https://host/clip/  ").unwrap(),
+            openable_url("  https://host/clip/  ").unwrap(),
             "https://host/clip"
         );
         for bad in [
@@ -484,9 +709,9 @@ mod tests {
             "   ",
             "file:///etc/passwd",
             "javascript:alert(1)",
-            "127.0.0.1:9501",
+            "127.0.0.1:9502",
         ] {
-            assert!(web_ui_url(bad).is_err(), "{bad:?} 不该被放行");
+            assert!(openable_url(bad).is_err(), "{bad:?} 不该被放行");
         }
     }
 }

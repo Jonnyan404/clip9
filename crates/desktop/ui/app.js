@@ -725,40 +725,109 @@ function serverPatch() {
   };
 }
 
+/** 运行时长：稿子里是 `2 小时 14 分` 这个写法。`null` = 不是这个客户端起的 → `—`。 */
+function uptimeLabel(seconds) {
+  if (seconds === null || seconds === undefined) return '—';
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 1) return '不到 1 分钟';
+  if (minutes < 60) return `${minutes} 分钟`;
+  const hours = Math.floor(minutes / 60);
+  const rest = minutes % 60;
+  return rest ? `${hours} 小时 ${rest} 分` : `${hours} 小时`;
+}
+
+/** 本地服务端那一块（设置 → 本机，以及两处顺带显示它的地方）。
+ *
+ * ⚠️★ **一次读全**（`server_status` 一条命令给五行）：这张卡片上的五样本来就该是
+ * **同一瞬间**的快照 —— 分几次取的话，页面会在中间某一刻画出「监听有了、房间还是上一秒的」。
+ *
+ * ⚠️ 在不在跑是**问出来的**（壳真的去打了一条 `GET /server`），不是壳记着的 ——
+ * 记着的那个在「进程被杀」「用户手动起了一个」时就是错的。
+ * ⚠️ 拿不到的值**一律画 `—`，不编**：`—` 的意思在稿子里就是「这一格没有值」。
+ */
 async function refreshServerState() {
-  // ⚠️ 在不在跑是**问出来的**（壳真的去打了一条 `GET /server`），不是壳记着的。
-  // 记着的那个在「进程被杀」「用户手动起了一个」时就是错的。
-  const running = await invoke('server_running');
-  const line = running
-    ? '本地服务端：运行中'
-    : '本地服务端：没在跑（改完配置点「保存并重启」会把它起来）';
-  el('server-state').textContent = line;
-  // 设置窗口里那一页也刷 —— 同一个「问出来的」状态，两处显示同一件事。
-  if (el('srv-state')) {
-    el('srv-state').textContent = running ? '运行中' : '没在跑';
+  let status;
+  try {
+    status = await invoke('server_status');
+  } catch (error) {
+    el('srv-state').textContent = `读不到本地服务端的状态：${error}`;
+    return;
   }
+  const { bundled, running } = status;
+
+  // `.hd`：状态灯 + 一句话。⚠️ 「没有自带服务端」要说出来 —— 那时起停按钮点了也不会有反应。
+  el('srv-dot').className = running ? 'dot' : 'dot off';
+  el('srv-state').textContent = !bundled
+    ? '没有自带服务端（找不到 clip9-server）'
+    : running
+      ? '本地服务端运行中'
+      : '本地服务端没在跑';
+
+  // `.kv` 五行 —— **逐行对着稿子**。
+  el('srv-version').textContent = status.version || '—';
+  el('srv-listen').textContent = status.listen || '—';
+  el('srv-data').textContent = status.dataDir;
+  el('srv-rooms').textContent = status.rooms === null || status.rooms === undefined
+    ? '—'
+    : `${status.rooms} / ${status.entries}`;
+  el('srv-uptime').textContent = uptimeLabel(status.uptimeSeconds);
+
+  // ⚠️ 「运行方式」那两选一：**选中的那个**加 `.on`，两个方块画勾 ——
+  // 和稿子里 `.mode.on` 的写法一致。
+  sqSet('srv-sq-local', status.localServer);
+  sqSet('srv-sq-remote', !status.localServer);
+  el('srv-mode-local').classList.toggle('on', status.localServer);
+  el('srv-mode-remote').classList.toggle('on', !status.localServer);
+
+  // 顺带刷另外两处显示同一件事的地方。
+  el('server-state').textContent = !bundled
+    ? '本地服务端：这个客户端没有自带（找不到 clip9-server）'
+    : running
+      ? '本地服务端：运行中'
+      : '本地服务端：没在跑';
+  el('dg-server').textContent = !bundled ? '没有自带' : running ? '运行中' : '没在跑';
 }
 
 // ── 本地服务端那一页（设置 → 本机）───────────────────────────────
 //
-// ⚠️ 这里的动作和后端的能力是**一一对应**的：状态是问出来的、重启只碰自己起的那个
+// ⚠️ 这里的动作和后端的能力是**一一对应**的：状态是问出来的、起停只碰自己起的那个
 //（`server_process::stop` 的文档里写着为什么）。界面上不编任何「大概在跑」的话。
-el('srv-restart').addEventListener('click', async () => {
-  el('srv-state').textContent = '正在重启…';
+//
+// ⚠️ 三个动作**共用一个收尾**：先问一遍真状态，再决定灯与按钮 ——
+// 而不是「点了停止就自己把灯改成灰的」（那是在**猜**结果，失败时界面会撒谎）。
+// ⚠️ 失败时**先刷状态、再把那句话盖到 `.hd` 上**：这样灯是新的、话是刚发生的。
+// 稿子这一页没有第二处放错误信息的地方，而「失败要留在界面上」是硬要求。
+async function runServerAction(command, args, label) {
+  el('srv-state').textContent = `${label}…`;
   try {
-    await invoke('server_restart');
+    await invoke(command, args);
   } catch (error) {
-    // ⚠️ 失败要留在界面上：重启失败而界面写着「运行中」，用户会以为好了。
-    el('srv-state').textContent = `重启失败：${error}`;
+    await refreshServerState();
+    // ⚠️ 失败要**留在界面上**：重启失败而界面写着「运行中」，用户会以为好了。
+    // 最常见的失败是「端口上那个不是这个客户端起的，所以不替你停」—— 那句话原样显示。
+    el('srv-state').textContent = `${label}失败：${error}`;
     return;
   }
   await refreshServerState();
-});
+}
+
+el('srv-restart').addEventListener('click', () =>
+  runServerAction('server_restart', undefined, '重启'));
+el('srv-stop').addEventListener('click', () => runServerAction('server_stop', undefined, '停止'));
 el('srv-open').addEventListener('click', () => {
-  invoke('open_web').catch((error) => {
+  invoke('open_web').catch(async (error) => {
+    await refreshServerState();
     el('srv-state').textContent = `打不开网页版：${error}`;
   });
 });
+// 「运行方式」两选一。
+// ⚠️★ 点**已经选中的那个**也要发命令：`set_local_server(true)` 顺带把服务端起起来 ——
+// 而这一页**没有「启动」按钮**（稿子里只有重启 / 停止），所以那是「停了之后怎么回来」
+// 的唯一入口。少了它，那个「停止」就是个单向门。
+for (const [id, on] of [['srv-mode-local', true], ['srv-mode-remote', false]]) {
+  el(id).addEventListener('click', () =>
+    runServerAction('set_local_server', { on }, on ? '切到「随客户端启动」' : '切到「连别人的服务端」'));
+}
 
 async function openServerPanel() {
   el('server-msg').textContent = '';
@@ -992,12 +1061,13 @@ async function openSettings() {
     sqSet('sc-autostart', view.autostart);
     el('dg-data').textContent = view.dataDir;
     el('dg-config').textContent = view.configPath;
-    el('dg-server').textContent = view.serverRunning ? '运行中' : '没在跑';
-    if (el('srv-data')) el('srv-data').textContent = view.dataDir;
-    if (el('srv-state')) el('srv-state').textContent = view.serverRunning ? '运行中' : '没在跑';
   } catch (error) {
     el('settings-msg').textContent = `读不到设置：${error}`;
   }
+  // ⚠️ 本地服务端那一块（`#srv-*` / `#dg-server`）**不从这里填** ——
+  // 它有自己的来源（`server_status`：状态 + 连接地址 + 哪些房间指向它）。
+  // 两处各填一遍的话，`settings_view` 里就得再放一份「运行中」，而那两份会漂。
+  await refreshServerState();
 }
 
 el('btn-settings').addEventListener('click', openSettings);

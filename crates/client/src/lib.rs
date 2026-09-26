@@ -64,7 +64,7 @@ pub mod source;
 pub mod uploader;
 pub mod watcher;
 
-pub use config::{Channel, ClientConfig};
+pub use config::{Channel, ClientConfig, same_endpoint};
 pub use debounce::{Debouncer, Fingerprints};
 pub use event::{ClipboardContent, ClipboardEvent, TextSubtype, UploadKind};
 pub use receiver::{

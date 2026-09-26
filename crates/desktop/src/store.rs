@@ -510,6 +510,15 @@ impl Store {
         Ok(())
     }
 
+    /// 换「运行方式」：要不要随客户端启动本机那个自带服务端。
+    ///
+    /// ⚠️ 这里**只改配置里的意图**；真的起 / 停由 `commands::set_local_server` 做
+    ///（那要 `ServerProcess`，而 `Store` 不碰进程）。调用方**两个都要做** ——
+    /// 只改配置的话，用户点完看到的是「模式换了、服务端照旧在跑」，那是「配了不生效」。
+    pub fn set_local_server(&self, on: bool) {
+        self.lock().config.enable_local_server = on;
+    }
+
     /// 换「开机自启」（**只有桌面端会用**）。
     ///
     /// ⚠️ 这里只改**配置里的意图**；落到系统上由 `autostart::apply` 做

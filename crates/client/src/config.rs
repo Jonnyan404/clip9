@@ -66,6 +66,47 @@ fn default_poll_interval_ms() -> u64 {
     500
 }
 
+/// 两个服务端地址是不是**同一个端点**。
+///
+/// ⚠️★ 为什么不能直接比字符串：`http://localhost:9502` 与 `http://127.0.0.1:9502`
+/// 是**同一个服务端**，`http://127.0.0.1:9502/` 与不带斜杠的那个也是。
+/// 桌面端要用它回答「哪些已配的房间指向本机那个服务端」—— 直接比字符串会漏掉这两种写法，
+/// 而用户看到的是一句「还没有房间指向它」（明明有）。
+///
+/// ⚠️ 比的四样：**协议 + 主机（别名归一）+ 端口（按协议取默认值）+ 路径前缀**。
+/// 路径也要比：`http://h:9502/clip` 与 `http://h:9502` 是**两个不同的入口**。
+///
+/// ⚠️★ **解析不了的一律判不相等**（宁可漏报也不误报）：说「这个房间指向本机服务端」
+/// 而它其实指向别处，比不说更坏。
+#[must_use]
+pub fn same_endpoint(left: &str, right: &str) -> bool {
+    let (Ok(a), Ok(b)) = (Url::parse(left.trim()), Url::parse(right.trim())) else {
+        return false;
+    };
+    a.scheme() == b.scheme()
+        && host_key(&a) == host_key(&b)
+        && a.port_or_known_default() == b.port_or_known_default()
+        && path_key(&a) == path_key(&b)
+}
+
+/// 主机名的**别名归一**：`localhost` / `127.0.0.1` / `::1` 是同一台机器。
+///
+/// ⚠️ 只归一这几个**确定等价**的写法。别的（局域网 IP、域名）一律原样比 ——
+/// 猜「这个 IP 大概也是本机」会误报，而误报比漏报坏。
+fn host_key(url: &Url) -> String {
+    let host = url.host_str().unwrap_or_default().to_ascii_lowercase();
+    if matches!(host.as_str(), "localhost" | "127.0.0.1" | "::1" | "[::1]") {
+        return "loopback".to_owned();
+    }
+    host
+}
+
+/// 路径前缀归一（末尾的 `/` 不算差异）。
+fn path_key(url: &Url) -> &str {
+    let path = url.path();
+    path.strip_suffix('/').unwrap_or(path)
+}
+
 /// 一个「通道」= **一台服务端上的一个房间**，带自己的凭据与两个方向的开关。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Channel {
@@ -181,6 +222,21 @@ pub struct ClientConfig {
     #[serde(default)]
     pub enable_autostart: bool,
 
+    /// **要不要连本机那个自带的服务端**（= 起它、并把它当成一个可连的服务端）。
+    ///
+    /// ⚠️ **只有桌面端会用**（Android / OpenWrt 那边忽略它）—— 与 `enable_autostart` 同一个理由。
+    ///
+    /// 界面上是「运行方式」那两选一（`docs/specs/desktop-client-settings-mockup.html`）：
+    /// - `true`（默认）= **随客户端启动**：客户端起它、退出时停它；
+    /// - `false` = **连别人的服务端（本机不起）**：只做客户端，适合已有服务器 /
+    ///   Docker / OpenWrt 的场景。⚠️ 这时默认房间指向的本机地址是**死的** ——
+    ///   用户要自己把房间改成他那台服务器（界面稿的 `.d` 里写着这件事）。
+    ///
+    /// ⚠️ 默认 `true`：装完就该能用（§9.1 第 2 条「随包分发服务端」）。
+    /// 设成 `false` 是**用户明确不要**本机那一份，所以那不算「装完不能用」。
+    #[serde(default = "default_true")]
+    pub enable_local_server: bool,
+
     /// **相对路径的解析基准**（应用的数据/配置目录）。
     ///
     /// ⚠️ 它**不落盘**（`#[serde(skip)]`）——
@@ -217,6 +273,8 @@ impl Default for ClientConfig {
             device_name: String::new(),
             // ⚠️ 默认关（理由见字段注释）—— 显式写出来，别靠 `Default` 的隐式值。
             enable_autostart: false,
+            // ⚠️ 反过来：默认**开**（装完就该能用，见字段注释）。
+            enable_local_server: true,
             base_dir: None,
             channels: Vec::new(),
         }
@@ -354,6 +412,19 @@ impl ClientConfig {
         }
 
         out
+    }
+
+    /// 哪些已配的房间**指向这个端点**。
+    ///
+    /// ⚠️★ 桌面端用它回答一个具体的问题：「本机那个自带的服务端，我能连哪个地址」
+    /// （Jonny 2026-09-26：「我现在都不知道我能连哪个本地服务器」）。
+    /// 判据是 [`same_endpoint`]（不是字符串相等），理由在那个函数的文档里。
+    #[must_use]
+    pub fn channels_pointing_at(&self, endpoint: &str) -> Vec<&Channel> {
+        self.channels
+            .iter()
+            .filter(|channel| same_endpoint(&channel.server, endpoint))
+            .collect()
     }
 }
 
@@ -635,6 +706,96 @@ mod tests {
         assert!(
             !parsed.enable_autostart,
             "老配置里没有这个键，读出来必须是关的"
+        );
+    }
+
+    /// ⚠️★ **「随客户端启动」默认开着** —— 与 `enable_autostart` 正好相反，两边都别记反。
+    ///
+    /// 理由：桌面端**随包分发服务端**（§9.1 第 2 条），装完就该能用。
+    /// ⚠️ 顺带钉住「老配置读出来也不能变成关着」：文件里没有这个键时，
+    /// `#[serde(default)]` 必须落到 `true` —— 否则升级上来的人会发现
+    /// 「客户端不再起本机服务端了」，而默认房间指向的地址就成了死的。
+    #[test]
+    fn the_local_server_is_on_by_default_and_for_old_configs() {
+        assert!(
+            ClientConfig::default().enable_local_server,
+            "默认要开（理由见字段注释）"
+        );
+        let parsed: ClientConfig = serde_json::from_str("{}").expect("空对象也要能读出来");
+        assert!(
+            parsed.enable_local_server,
+            "老配置里没有这个键，读出来必须是开的"
+        );
+    }
+
+    /// ⚠️★ 「同一个端点」的判据：**别名要归一、路径前缀要算数、解析不了就不相等**。
+    ///
+    /// 桌面端用它回答一个具体的问题：「本机那个自带的服务端，我能连哪个地址」。
+    /// 判错的两种后果都很难看：**漏报** → 界面说「还没有房间指向它」（明明有）；
+    /// **误报** → 界面说「这几个房间指向本机服务端」，而它们其实连的是别人的。
+    #[test]
+    fn endpoint_equality_normalises_aliases_but_not_prefixes() {
+        // 别名：这三种写法是同一台机器。
+        assert!(same_endpoint(
+            "http://127.0.0.1:9502",
+            "http://localhost:9502"
+        ));
+        assert!(same_endpoint("http://localhost:9502", "http://[::1]:9502"));
+        // 末尾斜杠不算差异。
+        assert!(same_endpoint(
+            "http://127.0.0.1:9502/",
+            "http://127.0.0.1:9502"
+        ));
+        // 协议名大小写不敏感（配置里手写 `Https://` 也认）。
+        assert!(same_endpoint(
+            "Https://example.com",
+            "https://example.com/"
+        ));
+
+        // ⚠️ 路径前缀**是**差异：反代到子路径是两个不同的入口。
+        assert!(!same_endpoint("http://h:9502/clip", "http://h:9502"));
+        assert!(same_endpoint("http://h:9502/clip/", "http://h:9502/clip"));
+
+        // 端口、协议、主机都不是同一回事。
+        assert!(!same_endpoint(
+            "http://127.0.0.1:9501",
+            "http://127.0.0.1:9502"
+        ));
+        assert!(!same_endpoint(
+            "http://127.0.0.1:9502",
+            "https://127.0.0.1:9502"
+        ));
+        assert!(!same_endpoint(
+            "http://10.0.0.8:9502",
+            "http://127.0.0.1:9502"
+        ));
+
+        // ⚠️★ 解析不了的一律**不相等** —— 宁可漏报，也不误报。
+        assert!(!same_endpoint("", "http://127.0.0.1:9502"));
+        assert!(!same_endpoint("不是地址", "不是地址"));
+    }
+
+    /// 桌面端要的那一问：**哪些已配的房间指向本机那个服务端**。
+    #[test]
+    fn channels_pointing_at_finds_the_local_ones() {
+        let cfg = ClientConfig {
+            channels: vec![
+                Channel::new("默认", "http://127.0.0.1:9502"),
+                // ⚠️ 同一个服务端的另一种写法 —— 也要算上（否则界面会漏报）。
+                Channel::new("另一种写法", "http://localhost:9502/"),
+                Channel::new("别人的", "https://example.com"),
+            ],
+            ..ClientConfig::default()
+        };
+        let names: Vec<&str> = cfg
+            .channels_pointing_at("http://127.0.0.1:9502")
+            .iter()
+            .map(|channel| channel.name.as_str())
+            .collect();
+        assert_eq!(names, vec!["默认", "另一种写法"]);
+        assert!(
+            cfg.channels_pointing_at("http://127.0.0.1:9600").is_empty(),
+            "端口不对就不是同一台"
         );
     }
 }
