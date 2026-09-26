@@ -1038,6 +1038,123 @@ console.log('\n=== 文件过期：fileExpire 的三档 ===');
   }
 }
 
+// ── 历史分页（`GET /content`）与 WS 的 `history=0` / `latestId` ─────────
+//
+// `docs/specs/ws-live-only.md` 的 W0（Go）+ W1（Rust）。两边都实现了才比得了 ——
+// 这也是为什么这一段是在 W1 之后才加的。
+console.log('\n=== 历史分页 GET /content ===');
+{
+  const room = 'ws-paging';
+  for (let i = 1; i <= 3; i++) {
+    // 两边各发一条（同一个脚本对两边发同样的请求，所以 id 序列一致）
+    await Promise.all([
+      hit(GO_PORT, 'POST', `/text?room=${room}`, { body: `p-${i}` }),
+      hit(RS_PORT, 'POST', `/text?room=${room}`, { body: `p-${i}` }),
+    ]);
+  }
+
+  await compare('GET /content?limit=2（最新 2 条、正序）', 'GET', `/content?room=${room}&limit=2`);
+  await compare(
+    'GET /content?limit=999999（被 server.history 夹住）',
+    'GET',
+    `/content?room=${room}&limit=999999`
+  );
+  await compare('GET /content 空房间 → messages 是 []', 'GET', '/content?room=ws-nobody');
+  await compare(
+    'GET /content?before=999999（游标失效不报错，退化成最近 limit 条）',
+    'GET',
+    `/content?room=${room}&before=999999&limit=2`
+  );
+
+  // 翻页：拿**各自的** `messages[0].id` 当 before，两边结果必须一致且不重复。
+  const [g1, r1] = await Promise.all([
+    hit(GO_PORT, 'GET', `/content?room=${room}&limit=2`),
+    hit(RS_PORT, 'GET', `/content?room=${room}&limit=2`),
+  ]);
+  const gPage = await hit(
+    GO_PORT,
+    'GET',
+    `/content?room=${room}&before=${g1.parsed?.messages?.[0]?.id}`
+  );
+  const rPage = await hit(
+    RS_PORT,
+    'GET',
+    `/content?room=${room}&before=${r1.parsed?.messages?.[0]?.id}`
+  );
+  const gv = canonical(normalize(gPage.parsed, GO_PORT));
+  const rv = canonical(normalize(rPage.parsed, RS_PORT));
+  if (gPage.status === rPage.status && gv === rv && gPage.parsed?.messages?.length === 1) {
+    pass++;
+    console.log(
+      `  ok   用 messages[0].id 翻页（拿到更早那 ${gPage.parsed.messages.length} 条、不重复）`
+    );
+  } else {
+    fail++;
+    failures.push(`翻页\n  Go  : ${gPage.status} ${gv}\n  Rust: ${rPage.status} ${rv}`);
+    console.log('  FAIL 翻页');
+    console.log(`       Go  : ${gPage.status} ${gv}`);
+    console.log(`       Rust: ${rPage.status} ${rv}`);
+  }
+
+  console.log('\n=== WS：history=0 与 config.latestId ===');
+  {
+    const [g, r] = await Promise.all([
+      wsCollect(GO_PORT, `/push?room=${room}`, { ms: 900 }),
+      wsCollect(RS_PORT, `/push?room=${room}`, { ms: 900 }),
+    ]);
+    compareEvents('不带 history → **默认仍然推历史**（老客户端行为不变）', g, r);
+
+    const [g0, r0] = await Promise.all([
+      wsCollect(GO_PORT, `/push?room=${room}&history=0`, { ms: 900 }),
+      wsCollect(RS_PORT, `/push?room=${room}&history=0`, { ms: 900 }),
+    ]);
+    compareEvents('history=0 → 不推历史', g0, r0);
+
+    // ⚠️ 两边一致还不够 —— 两边都推了历史也会「一致」。这条钉住**真的没有 receive**。
+    const gRecv = g0.messages.filter((m) => m.event === 'receive').length;
+    const rRecv = r0.messages.filter((m) => m.event === 'receive').length;
+    if (gRecv === 0 && rRecv === 0) {
+      pass++;
+      console.log('  ok   history=0 时一条 receive 都没有');
+    } else {
+      fail++;
+      failures.push(`history=0 没生效\n  Go=${gRecv} 条 receive，Rust=${rRecv} 条`);
+      console.log(`  FAIL history=0 没生效（Go=${gRecv}，Rust=${rRecv}）`);
+    }
+
+    // `config.latestId`：两边都要有，且等于**该房间的最大 id**，而且**不在** `/server` 里。
+    //
+    // ⚠️ 期望值**从响应里推导**，不写死 —— 房间的最大 id 取决于前面所有用例发过多少条，
+    // 写死一个数字会在别的用例变动时莫名其妙地红（第一次就是这么错的）。
+    const gLatest = g0.messages.find((m) => m.event === 'config')?.data?.latestId;
+    const rLatest = r0.messages.find((m) => m.event === 'config')?.data?.latestId;
+    const all = await hit(RS_PORT, 'GET', `/content?room=${room}&limit=999999`);
+    const expectedLatest = Number(all.parsed?.messages?.at(-1)?.id);
+    const notInServer = await Promise.all([
+      hit(GO_PORT, 'GET', '/server'),
+      hit(RS_PORT, 'GET', '/server'),
+    ]);
+    if (
+      expectedLatest > 0 &&
+      gLatest === expectedLatest &&
+      rLatest === expectedLatest &&
+      !('latestId' in notInServer[0].parsed) &&
+      !('latestId' in notInServer[1].parsed)
+    ) {
+      pass++;
+      console.log(
+        `  ok   config.latestId = ${gLatest}（= 该房间最大 id），且**不在** /server 里`
+      );
+    } else {
+      fail++;
+      failures.push(
+        `config.latestId\n  期望=${expectedLatest}  Go=${gLatest}  Rust=${rLatest}`
+      );
+      console.log(`  FAIL config.latestId（期望 ${expectedLatest}，Go=${gLatest}，Rust=${rLatest}）`);
+    }
+  }
+}
+
 // ── 方法不对 ──────────────────────────────────────────────────────────
 
 console.log('\n=== 方法不对：405 也必须恒 JSON ===');
