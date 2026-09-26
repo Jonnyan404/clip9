@@ -420,6 +420,8 @@ table.rooms .tiny { width: 9.5%; text-align: center; }
                     <div class="it" data-pane="sync">↑↓ 方向与内容</div>
                     <div class="grp">桌面</div>
                     <div class="it" data-pane="desktop">🖥 启动与托盘</div>
+                    <div class="grp">本机</div>
+                    <div class="it" data-pane="server">🗄 本地服务端</div>
                     <div class="grp">其它</div>
                     <div class="it" data-pane="diag">ⓘ 诊断</div>
                 </div>
@@ -492,6 +494,27 @@ table.rooms .tiny { width: 9.5%; text-align: center; }
                     </div>
                 </div>
 
+                <div class="pane" id="pane-server" hidden>
+                    <h3>本地服务端</h3>
+                    <p class="sub">
+                        桌面端**自带**服务端（这是它装完就能用的原因）。这里能看它、能重启它。
+                    </p>
+                    <div class="subcard">
+                        <div class="kv">
+                            <span class="k">状态</span><span class="v" id="srv-state">—</span>
+                            <span class="k">数据目录</span><span class="v" id="srv-data">—</span>
+                        </div>
+                    </div>
+                    <div style="display:flex;gap:8px">
+                        <button class="btn" id="srv-restart">重启</button>
+                        <button class="btn" id="srv-open">🌐 打开网页版</button>
+                    </div>
+                    <p class="sub" style="margin:12px 0 0">
+                        ⚠️ 「重启」会先把服务端停掉再起来 —— 所以**正在连着它的手机/其它设备会断开一次**，
+                        它们会自己重连。⚠️ 它**只停这个客户端自己起的那个**：你自己另外跑的服务端，它不碰。
+                    </p>
+                </div>
+
                 <div class="pane" id="pane-diag" hidden>
                     <h3>诊断</h3>
                     <p class="sub">出问题时先看这里 —— 「配置在哪个文件」「连的是哪台服务端」是最常见的两个原因。</p>
@@ -530,44 +553,113 @@ table.rooms .tiny { width: 9.5%; text-align: center; }
                     <div class="st">网络</div>
                     <div class="grid2">
                         <div class="field">
+                            <label>监听地址（0.0.0.0 = 局域网可访问）</label>
+                            <input type="text" id="cfg-host" placeholder="0.0.0.0" />
+                        </div>
+                        <div class="field">
                             <label>端口</label>
                             <input type="number" id="cfg-port" min="1" max="65535" />
                         </div>
+                    </div>
+                    <div class="field">
+                        <label>子路径前缀（反代到 /clip 时填）</label>
+                        <input type="text" id="cfg-prefix" placeholder="（空）" />
+                    </div>
+                    <div class="grid2">
                         <div class="field">
-                            <label>子路径前缀（反代到 /clip 时填）</label>
-                            <input type="text" id="cfg-prefix" placeholder="（空）" />
+                            <label>证书（空 = 不用 HTTPS）</label>
+                            <input type="text" id="cfg-cert" placeholder="（空）" />
+                        </div>
+                        <div class="field">
+                            <label>私钥</label>
+                            <input type="text" id="cfg-key" placeholder="（空）" />
                         </div>
                     </div>
                 </div>
+
                 <div class="subcard">
                     <div class="st">访问控制</div>
-                    <div class="field" style="margin:0">
+                    <div class="field" style="margin:0 0 8px">
                         <label>全局密码（空 = 不设）</label>
                         <input type="text" id="cfg-auth" placeholder="（空 = 不设）" />
                     </div>
+                    <div class="sub" style="margin:0">
+                        ⚠️ 逐房间的凭据（<code>roomAuth</code>：密码 / 文件过期 / 定时任务档位）
+                        <b>还没做进这个表单</b> —— 它是一张嵌套表。要改先直接编辑上面那个文件。
+                    </div>
                 </div>
+
                 <div class="subcard">
-                    <div class="st">容量与内务</div>
+                    <div class="st">容量与限额</div>
                     <div class="grid2">
                         <div class="field">
                             <label>历史条数</label>
                             <input type="number" id="cfg-history" min="0" />
                         </div>
                         <div class="field">
-                            <label>房间清理间隔（秒，0 = 不清理）</label>
-                            <input type="number" id="cfg-cleanup" min="0" />
+                            <label>文本上限（字节）</label>
+                            <input type="number" id="cfg-textlimit" min="0" />
                         </div>
                     </div>
+                    <div class="grid2">
+                        <div class="field">
+                            <label>文件过期（秒）</label>
+                            <input type="number" id="cfg-fileexpire" min="0" />
+                        </div>
+                        <div class="field">
+                            <label>分片大小（字节）</label>
+                            <input type="number" id="cfg-filechunk" min="0" />
+                        </div>
+                    </div>
+                    <div class="field" style="margin:0">
+                        <label>单文件上限（字节）</label>
+                        <input type="number" id="cfg-filelimit" min="0" />
+                    </div>
+                </div>
+
+                <div class="subcard">
+                    <div class="st">数据</div>
+                    <div class="field">
+                        <label>库文件（相对 = 服务端数据目录下）</label>
+                        <input type="text" id="cfg-dbpath" />
+                    </div>
+                    <div class="field" style="margin:0">
+                        <label>上传文件目录</label>
+                        <input type="text" id="cfg-storage" />
+                    </div>
+                </div>
+
+                <div class="subcard">
+                    <div class="st">定时自动化</div>
+                    <div class="chk">
+                        <input type="checkbox" id="cfg-automation" />
+                        <label for="cfg-automation">启用定时自动化</label>
+                    </div>
+                    <div class="grid2" style="margin-top:8px">
+                        <div class="field">
+                            <label>调度间隔（秒）</label>
+                            <input type="number" id="cfg-tick" min="1" />
+                        </div>
+                        <div class="field">
+                            <label>补发窗口（秒）</label>
+                            <input type="number" id="cfg-grace" min="0" />
+                        </div>
+                    </div>
+                    <div class="field" style="margin:0">
+                        <label>默认时区</label>
+                        <input type="text" id="cfg-tz" placeholder="Asia/Shanghai" />
+                    </div>
+                </div>
+
+                <div class="subcard">
+                    <div class="st">房间与内务</div>
                     <div class="chk">
                         <input type="checkbox" id="cfg-roomlist" />
                         <label for="cfg-roomlist">启用房间列表</label>
                     </div>
-                </div>
-                <div class="subcard">
-                    <div class="st">定时自动化</div>
-                    <div class="chk" style="margin:0">
-                        <input type="checkbox" id="cfg-automation" />
-                        <label for="cfg-automation">启用定时自动化</label>
+                    <div class="field" style="margin:8px 0 0">
+                        <label>房间清理间隔（秒，0 = 不清理）</label>
+                        <input type="number" id="cfg-cleanup" min="0" />
                     </div>
                 </div>
                 <div id="server-state" style="font-size:11.5px;color:var(--text-2)"></div>

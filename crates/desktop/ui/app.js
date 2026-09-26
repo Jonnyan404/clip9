@@ -175,6 +175,15 @@ function renderRooms(state) {
     node.dataset.index = String(index);
     host.append(node);
   });
+  // ⚠️★ 末尾这行「＋ 添加房间」不是装饰：没有它，用户在这个界面里**找不到加房间的入口**
+  //（界面稿里就有这一行）。点了打开设置窗口的房间那一页。
+  const add = h('div', 'room add');
+  add.append(h('span', 'ico', '＋'), h('span', 'nm', '添加房间'));
+  add.addEventListener('click', () => {
+    openSettings();
+    showPane('rooms');
+  });
+  host.append(add);
 }
 
 /** 标题栏那个状态点。四种状态**都要画出来**。 */
@@ -361,21 +370,41 @@ function numField(id, fallback) {
 }
 
 /** 表单 → 补丁。
- *  ⚠️ 只放**认识的**那几个键；其余键由后端**原样保留**（它是打补丁，不是整体替换）。 */
+ *  ⚠️ 只放**认识的**那几个键；其余键由后端**原样保留**（它是打补丁，不是整体替换）。
+ *  ⚠️ `roomAuth` **不在这里**：它是一张嵌套表，还没做进表单（面板上写了这件事）。
+ *  漏掉它不会把它清掉 —— 补丁是深合并，没提到的键原样留着。 */
 function serverPatch() {
   const auth = el('cfg-auth').value.trim();
   return {
     server: {
+      // ⚠️ `host` 服务端那边收**字符串或数组**（`["0.0.0.0"]` 也合法）。
+      // 表单给字符串，服务端自己认 —— 别在这里替它拼数组。
+      host: el('cfg-host').value.trim() || '0.0.0.0',
       port: numField('cfg-port', 9501),
       prefix: el('cfg-prefix').value.trim(),
       // ⚠️ 空 = **不设密码**。服务端那边的 `auth` 是「false 或字符串」，
       // 给一个空串会被当成「设了一个空密码」—— 那是另一件事。
       auth: auth === '' ? false : auth,
+      cert: el('cfg-cert').value.trim(),
+      key: el('cfg-key').value.trim(),
       history: numField('cfg-history', 50),
       roomCleanup: numField('cfg-cleanup', 3600),
       roomList: el('cfg-roomlist').checked,
+      dbPath: el('cfg-dbpath').value.trim() || 'clip9.redb',
+      storageDir: el('cfg-storage').value.trim() || 'uploads',
     },
-    automation: { enabled: el('cfg-automation').checked },
+    text: { limit: numField('cfg-textlimit', 4096) },
+    file: {
+      expire: numField('cfg-fileexpire', 3600),
+      chunk: numField('cfg-filechunk', 1048576),
+      limit: numField('cfg-filelimit', 268435456),
+    },
+    automation: {
+      enabled: el('cfg-automation').checked,
+      tickSeconds: numField('cfg-tick', 30),
+      graceSeconds: numField('cfg-grace', 600),
+      defaultTZ: el('cfg-tz').value.trim() || 'Asia/Shanghai',
+    },
   };
 }
 
@@ -383,10 +412,36 @@ async function refreshServerState() {
   // ⚠️ 在不在跑是**问出来的**（壳真的去打了一条 `GET /server`），不是壳记着的。
   // 记着的那个在「进程被杀」「用户手动起了一个」时就是错的。
   const running = await invoke('server_running');
-  el('server-state').textContent = running
+  const line = running
     ? '本地服务端：运行中'
     : '本地服务端：没在跑（改完配置点「保存并重启」会把它起来）';
+  el('server-state').textContent = line;
+  // 设置窗口里那一页也刷 —— 同一个「问出来的」状态，两处显示同一件事。
+  if (el('srv-state')) {
+    el('srv-state').textContent = running ? '运行中' : '没在跑';
+  }
 }
+
+// ── 本地服务端那一页（设置 → 本机）───────────────────────────────
+//
+// ⚠️ 这里的动作和后端的能力是**一一对应**的：状态是问出来的、重启只碰自己起的那个
+//（`server_process::stop` 的文档里写着为什么）。界面上不编任何「大概在跑」的话。
+el('srv-restart').addEventListener('click', async () => {
+  el('srv-state').textContent = '正在重启…';
+  try {
+    await invoke('server_restart');
+  } catch (error) {
+    // ⚠️ 失败要留在界面上：重启失败而界面写着「运行中」，用户会以为好了。
+    el('srv-state').textContent = `重启失败：${error}`;
+    return;
+  }
+  await refreshServerState();
+});
+el('srv-open').addEventListener('click', () => {
+  invoke('open_web').catch((error) => {
+    el('srv-state').textContent = `打不开网页版：${error}`;
+  });
+});
 
 async function openServerPanel() {
   el('server-msg').textContent = '';
@@ -397,13 +452,31 @@ async function openServerPanel() {
     // 「这个界面改的是哪个文件」是他判断「改了没生效」的第一条线索。
     el('server-path').textContent = view.path;
     const server = view.value.server || {};
+    const text = view.value.text || {};
+    const file = view.value.file || {};
+    const automation = view.value.automation || {};
+    // ⚠️ `host` 服务端可能给数组（`["0.0.0.0"]`）—— 表单只显示一个字符串，
+    // 数组就取第一个（保存时给回字符串，服务端两种都收）。
+    const host = Array.isArray(server.host) ? (server.host[0] ?? '') : (server.host ?? '');
+    el('cfg-host').value = host;
     el('cfg-port').value = server.port ?? 9501;
     el('cfg-prefix').value = server.prefix ?? '';
     el('cfg-auth').value = typeof server.auth === 'string' ? server.auth : '';
+    el('cfg-cert').value = server.cert ?? '';
+    el('cfg-key').value = server.key ?? '';
     el('cfg-history').value = server.history ?? 50;
     el('cfg-cleanup').value = server.roomCleanup ?? 3600;
     el('cfg-roomlist').checked = server.roomList === true;
-    el('cfg-automation').checked = (view.value.automation || {}).enabled === true;
+    el('cfg-dbpath').value = server.dbPath ?? 'clip9.redb';
+    el('cfg-storage').value = server.storageDir ?? 'uploads';
+    el('cfg-textlimit').value = text.limit ?? 4096;
+    el('cfg-fileexpire').value = file.expire ?? 3600;
+    el('cfg-filechunk').value = file.chunk ?? 1048576;
+    el('cfg-filelimit').value = file.limit ?? 268435456;
+    el('cfg-automation').checked = automation.enabled === true;
+    el('cfg-tick').value = automation.tickSeconds ?? 30;
+    el('cfg-grace').value = automation.graceSeconds ?? 600;
+    el('cfg-tz').value = automation.defaultTZ ?? 'Asia/Shanghai';
   } catch (error) {
     el('server-msg').textContent = `读不到配置：${error}`;
   }
@@ -548,6 +621,8 @@ async function openSettings() {
     el('dg-data').textContent = view.dataDir;
     el('dg-config').textContent = view.configPath;
     el('dg-server').textContent = view.serverRunning ? '运行中' : '没在跑';
+    if (el('srv-data')) el('srv-data').textContent = view.dataDir;
+    if (el('srv-state')) el('srv-state').textContent = view.serverRunning ? '运行中' : '没在跑';
   } catch (error) {
     el('settings-msg').textContent = `读不到设置：${error}`;
   }
