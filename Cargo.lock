@@ -561,8 +561,15 @@ dependencies = [
 name = "clip9-desktop"
 version = "0.1.0"
 dependencies = [
+ "clip9-client",
+ "clip9-protocol",
+ "reqwest",
+ "serde",
+ "serde_json",
  "tauri",
  "tauri-build",
+ "tempfile",
+ "tokio",
 ]
 
 [[package]]

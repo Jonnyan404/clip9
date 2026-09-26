@@ -1,0 +1,249 @@
+//! 把 `clip9-client` 跑起来 —— **这里是唯一碰「线程 / 任务 / 句柄」的地方**。
+//!
+//! # 四件事（对应 `docs/specs/desktop-client.md` §0.5 的接缝表）
+//!
+//! 1. **起监听（上行）**：[`spawn_watcher`]，回调里**不做 IO** —— 只把事件丢给异步任务
+//!    再 [`upload_event`]（回调跑在**监控线程**上，阻塞它就等于漏掉后面的变化）；
+//! 2. **起下行**：[`spawn_receiver`]，读它的更新通道搬进 [`Store`]；
+//! 3. ⚠️★ 两者**共享同一个 [`Debouncer`]**（[`shared_debouncer`]）—— 这**不是优化，是功能前提**：
+//!    下行写剪贴板前要 `prime` 指纹来防回环，而「谁记得上一次是什么」只能有一处；
+//! 4. **配置变了要重启**（房间开关换了 → 下行得重连；监听开关换了 → 线程得起停）。
+//!
+//! # 为什么这个文件里没有 `tauri`
+//!
+//! 与 `store` 同一个理由：这些是**要测的接线**，而接线错的表现往往是
+//! 「连上了但不写剪贴板」这种**静默**的坏。tokio 的 `Handle` 由上层传进来
+//! （`main.rs` 从 Tauri 的运行时拿），所以这里既不依赖 Tauri、也不自己建运行时。
+
+use std::sync::{Arc, Mutex};
+
+use clip9_client::receiver::fetch_history;
+use clip9_client::uploader::{build_client, now};
+use clip9_client::{
+    ClipboardEvent, ClipboardSink, Debouncer, ReceiverHandle, SystemClipboard, WatchConfig,
+    WatchHandle, shared_debouncer, spawn_receiver, spawn_watcher, upload_event,
+};
+
+use crate::store::Store;
+
+/// 客户端运行时。
+pub struct Runtime {
+    store: Arc<Store>,
+    /// ⚠️ **watcher 与 receiver 共享**（见模块文档第 3 条）。
+    debouncer: Arc<Mutex<Debouncer>>,
+    watcher: Mutex<Option<WatchHandle>>,
+    receiver: Mutex<Option<ReceiverHandle>>,
+    /// 一个 HTTP 客户端**全程共用**（`clip9-client` 里的超时策略是它的常量，
+    /// 每次上传另建一个 = 又一份要漂的超时配置）。
+    http: reqwest::Client,
+    /// tokio 的句柄（监控线程要靠它把事件丢进异步任务）。
+    tokio: tokio::runtime::Handle,
+}
+
+impl Runtime {
+    /// 造一个运行时。`http` 建不出来就是**启动失败**（没有它连历史都取不到）。
+    pub fn new(store: Arc<Store>, tokio: tokio::runtime::Handle) -> Result<Arc<Self>, String> {
+        let http = build_client()?;
+        Ok(Arc::new(Self {
+            store,
+            debouncer: shared_debouncer(),
+            watcher: Mutex::new(None),
+            receiver: Mutex::new(None),
+            http,
+            tokio,
+        }))
+    }
+
+    /// 起监听 + 起下行（按当前配置）。已经是起着的就先停掉 —— 重复 `start` 是**配置变了**
+    /// 之后该做的事，所以这里做成幂等的。
+    pub fn start(self: &Arc<Self>) {
+        self.stop();
+        self.start_watcher();
+        self.start_receiver();
+    }
+
+    /// 只起/停剪贴板监听（标题栏那个开关）—— ⚠️ **不碰下行**：
+    /// 「暂停监听」和「暂停同步到剪贴板」是两件不同的事（§0.5 第 3 条那条规则的另一半）。
+    pub fn set_monitoring(self: &Arc<Self>, on: bool) {
+        self.store.set_monitoring(on);
+        if on {
+            self.start_watcher();
+        } else {
+            self.stop_watcher();
+        }
+    }
+
+    /// 配置变了（房间开关、下载房间）→ **下行必须重连**才生效。
+    pub fn restart_receiver(self: &Arc<Self>) {
+        self.stop_receiver();
+        self.start_receiver();
+    }
+
+    fn stop_watcher(&self) {
+        if let Some(handle) = self
+            .watcher
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .take()
+        {
+            // ⚠️ `stop()` 会 **join** 监控线程（最多等一个轮询间隔），
+            // 而 `Drop` 也做同一件事 —— 显式调一次是「我要现在停」，意图更清楚。
+            handle.stop();
+        }
+    }
+
+    fn start_watcher(self: &Arc<Self>) {
+        if self
+            .watcher
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .is_some()
+        {
+            return;
+        }
+        if !self.store.config().enable_monitoring {
+            return;
+        }
+        let this = Arc::clone(self);
+        let handle = spawn_watcher(
+            Box::new(SystemClipboard),
+            WatchConfig::default(),
+            Arc::clone(&self.debouncer),
+            move |event| this.schedule_upload(event),
+        );
+        *self.watcher.lock().unwrap_or_else(|e| e.into_inner()) = Some(handle);
+    }
+
+    fn stop_receiver(&self) {
+        if let Some(handle) = self
+            .receiver
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .take()
+        {
+            handle.stop();
+        }
+    }
+
+    fn start_receiver(self: &Arc<Self>) {
+        if self
+            .receiver
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .is_some()
+        {
+            return;
+        }
+        let (updates, mut stream) = tokio::sync::mpsc::unbounded_channel();
+        let sink: Box<dyn ClipboardSink> = Box::new(SystemClipboard);
+        // ⚠️⚠️ `spawn_receiver` 内部是 `tokio::spawn`，所以它**必须在 tokio 上下文里被调用**。
+        // 「手里有 Handle」与「身处上下文」是**两件事** —— 少了下面这个 `enter()`，
+        // 在 `app.run()` 之前（也就是主线程上）调它会当场 panic：
+        //
+        //     panicked at crates/client/src/receiver.rs:407: there is no reactor running
+        //
+        // 那是 2026-09-26 第一次真跑这个壳时抓到的。⚠️ `cargo test` 抓不到它：
+        // 测试本来就在运行时内，而这条路径只在**启动时**走一次。
+        let guard = self.tokio.enter();
+        // ⚠️ 没开下行的房间时 `spawn_receiver` 不会连接（它自己判 `download_channel`），
+        // 而 `updates` 会立刻被丢掉 → 下面那个搬运任务随即结束。这是**对的**：
+        // 「没开下行」本来就该是「一个连接都没有」。
+        let handle = spawn_receiver(
+            self.store.config(),
+            sink,
+            Arc::clone(&self.debouncer),
+            updates,
+        );
+        drop(guard);
+        *self.receiver.lock().unwrap_or_else(|e| e.into_inner()) = Some(handle);
+
+        let store = Arc::clone(&self.store);
+        self.tokio.spawn(async move {
+            while let Some(update) = stream.recv().await {
+                store.apply_update(update);
+            }
+        });
+    }
+
+    /// 全部停掉（退出 / 换配置时）。
+    pub fn stop(&self) {
+        self.stop_watcher();
+        self.stop_receiver();
+    }
+}
+
+impl Runtime {
+    /// 监听回调：**只把事件丢进异步任务**，然后立刻返回。
+    ///
+    /// ⚠️ 这个回调跑在**监控线程**上：在这里做 IO 会把轮询卡住、漏掉后面的变化
+    /// （`spawn_watcher` 的文档里点名了这条）。
+    fn schedule_upload(self: &Arc<Self>, event: ClipboardEvent) {
+        let this = Arc::clone(self);
+        self.tokio.spawn(async move {
+            this.upload(event).await;
+        });
+    }
+
+    /// 真的发一次上行。
+    async fn upload(&self, event: ClipboardEvent) {
+        // ⚠️ 限额是**握手时**那份（`/server` 里没有），拿不到就是「不知道」——
+        // 这时只有用户自己配的 `max_file_size_mb` 生效，而服务端会自己拒掉超限的那次
+        // 并带回一句带数字的话（`uploader` 的模块文档第 2 条）。
+        let limits = self.store.limits();
+        let report = upload_event(&self.store.config(), &event, limits, now(), &self.http).await;
+        // ⚠️ 上传结果**要能被界面看到**，包括「因为开关关着而跳过」——
+        // 「点了没反应」是这类客户端最难查的一类故障。
+        if !report.ok() {
+            self.store.notice("err", report.summary());
+        } else if report.skipped || report.delivered == 0 {
+            self.store.notice("skip", report.summary());
+        } else {
+            self.store.notice("ok", report.summary());
+        }
+    }
+
+    /// 界面上「发一条」：走**和剪贴板完全一样**的那条上行。
+    ///
+    /// ⚠️ 为什么不让界面自己 `fetch` 服务端：那样会有**第二条上行路径**，
+    /// 于是「限额从哪来」「凭据怎么带」「多文件怎么办」这些规则要各写一遍 ——
+    /// 而它们都已经写在 `clip9-client` 里了。
+    pub fn send_text(self: &Arc<Self>, text: &str) {
+        if text.is_empty() {
+            return;
+        }
+        self.schedule_upload(ClipboardEvent::Text {
+            content: text.to_owned(),
+            // ⚠️ `subtype` **只影响界面上的标签**（像不像网址/颜色），不改变上传方式
+            // （`event.rs` 的注释），所以这里不猜 —— 让服务端那边按正文判断。
+            subtype: None,
+        });
+    }
+
+    /// 按需取回**选中房间**的历史（`GET /content`，不碰剪贴板）。
+    ///
+    /// ⚠️ 为什么要单独一条：下行的历史只覆盖**下载通道那一个房间**，
+    /// 而界面可以选中任何一个房间。
+    pub fn refresh_history(self: &Arc<Self>) {
+        let Some(channel) = self.store.selected_channel() else {
+            self.store.notice("err", "配置里一个房间都没有");
+            return;
+        };
+        let this = Arc::clone(self);
+        self.tokio.spawn(async move {
+            // ⚠️ 一次要多少条 = 界面上留多少条（`MAX_ENTRIES_PER_ROOM`）——
+            // 多取的部分用户看不到，而每次序列化都要带着它。
+            match fetch_history(&this.http, &channel, crate::store::MAX_ENTRIES_PER_ROOM).await {
+                Ok(entries) => this.store.push_history(entries),
+                Err(reason) => this.store.notice("err", format!("取历史失败：{reason}")),
+            }
+        });
+    }
+
+    /// 让界面上的开关**落到磁盘**。失败要**说出来**（界面上还亮着、配置没存上 =
+    /// 下次启动又变回来，而用户会以为没生效）。
+    pub fn persist(&self) {
+        if let Err(reason) = self.store.save() {
+            self.store.notice("err", format!("配置没存上：{reason}"));
+        }
+    }
+}

@@ -2,10 +2,28 @@
 name = "clip9-desktop"
 version.workspace = true
 edition.workspace = true
-description = "clip9 桌面客户端（Tauri 壳）—— ⚠️ 骨架阶段：窗口 + 本地手写界面（`ui/`），业务逻辑按 docs/specs/desktop-client.md §0.1 的切片表逐步接上"
+description = "clip9 桌面客户端（Tauri 壳）—— ⚠️ 这里没有业务逻辑，剪贴板同步全在 clip9-client"
 
 [build-dependencies]
 tauri-build = { version = "2.0", features = [] }
 
 [dependencies]
 tauri = { version = "2.11", features = [] }
+# ⚠️ 业务逻辑全在这个 crate 里（去重 / 防抖 / 分类 / 边界水印 / 上下行）。
+# 壳只做「把事件转成它的调用」+ 窗口 —— 见 docs/specs/desktop-client.md §2 的硬边界。
+clip9-client = { path = "../client" }
+# 条目形状（`ReceiveHolder`）。⚠️ 单独引它是为了**读协议字段**，
+# 而不是重新定义一份：页面上的「文件条目没有正文」这类坑要对着它写。
+clip9-protocol = { workspace = true }
+# ⚠️ `reqwest` 只为了**命名** `build_client()` 返回的那个类型。
+# 它不是新的依赖（`clip9-client` 已经带着它），而「让上层自己再造一个 HTTP 客户端」
+# 意味着超时策略要复制一份 —— 那是最容易漂的地方（见 `uploader` 的两个超时常量）。
+reqwest = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+tokio = { version = "1", features = ["sync"] }
+
+[dev-dependencies]
+# 配置文件要落盘才能测（原子写、坏了不许覆盖）—— 所以测试要一个真的临时目录。
+# ⚠️ 与 `crates/server` / `crates/store` 用的是同一个版本（`Cargo.lock` 里只有一个）。
+tempfile = "3"

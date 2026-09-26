@@ -198,89 +198,98 @@ body {
     border-radius: 6px; padding: 4px 10px; font-size: 12px; font-family: inherit; cursor: default;
 }
 .btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+
+/* 「服务端太旧」：连接是通的，但**边界说不清** → 客户端一行剪贴板都不写
+   （fail-safe，specs/desktop-client.md §4.2 ①）。所以这个状态**不能**画成「已连接」——
+   画成已连接的话，用户只会觉得「怎么同步不过来」，而真正的原因没人说。 */
+:root, :root[data-theme='light'] { --warn: #b45309; }
+:root[data-theme='dark'] { --warn: #fbbf24; }
+.sync.warn { background: color-mix(in srgb, var(--warn) 14%, transparent); }
+.sync.warn .dot { background: var(--warn); }
+/* 「监听已暂停」：连接可能仍然是通的，但**本机剪贴板不再被读** ——
+   这是两件不同的事，所以只淡化、不改颜色（改颜色会让人以为「断了」）。 */
+.sync.paused { opacity: .55; }
+
+/* 一次性提示（上传结果 / 存盘失败）。三种颜色对应三件不同的事 ——
+   「成功」「失败」「因为开关关着而跳过」，混成一种颜色就等于没说话。 */
+.notice {
+    flex: none; padding: 5px 14px; font-size: 11.5px;
+    border-bottom: 1px solid var(--border); word-break: break-word;
+}
+.notice.ok { background: color-mix(in srgb, var(--ok) 12%, transparent); }
+.notice.err { background: color-mix(in srgb, var(--danger) 12%, transparent); }
+.notice.skip { background: var(--sidebar-hover); color: var(--text-2); }
+
+/* 空态 / 配置有毛病：两件都要**说清楚是哪一种**。
+   ⚠️ 「还没加载」与「这个房间确实是空的」长得一样，用户会以为坏了。 */
+.empty { color: var(--text-2); font-size: 12px; padding: 18px 4px; line-height: 1.6; }
+.problems {
+    margin: 0 10px 8px; padding: 6px 8px; border-radius: 6px; font-size: 11px;
+    line-height: 1.5; color: var(--warn);
+    background: color-mix(in srgb, var(--warn) 12%, transparent);
+}
+
+/* 文件预览：⚠️ `previewUrl` 是**壳本地拼**的（不信条目里那个 url），
+   而图片不需要 CORS 就能显示 —— 所以 CSP 的 `img-src` 才是这条路的关卡。 */
+.card .preview { max-width: 100%; max-height: 220px; border-radius: 7px; display: block; }
+
+/* 输入区用 textarea：多行文本是剪贴板里最常见的内容，
+   而 <input> 一行就断了（粘贴多行会丢）。 */
+.composer textarea {
+    width: 100%; min-height: 22px; max-height: 140px; resize: none;
+    border: 0; outline: 0; background: transparent; color: var(--text);
+    font: inherit; line-height: 1.55; display: block;
+}
+.composer .box:focus-within { border-color: var(--sidebar-active-border); }
 </style>
 </head>
 <body>
     <div class="titlebar">
         <span class="t">clip9</span>
         <div class="spacer"></div>
-        <!-- 同步开关：暂停 / 恢复剪贴板监听（桌面端独有）。
-             ⚠️ 状态点由 `app.js` 改（连接中 / 已连接 / 连不上）—— 它现在反映**真的连接状态**。 -->
-        <div class="sync wait" id="conn"><span class="dot"></span><span id="conn-text">连接中…</span></div>
+        <!-- 连接状态。⚠️ 四种（等 / 通 / 断 / 老服务端）都由 `app.js` 按**真的**状态画，
+             「连不上」和「服务端太旧」都必须看得见 —— 静默的「同步中」是这类客户端
+             最坏的一种假象。点击可**暂停/恢复剪贴板监听**（桌面端独有的动作）。 -->
+        <button class="sync wait" id="conn" title="点击暂停/恢复剪贴板监听">
+            <span class="dot"></span><span id="conn-text">连接中…</span>
+        </button>
     </div>
 
     <div class="body">
         <aside class="sidebar">
-            <div class="sidebar-head"><span>房间</span><span class="count">3</span></div>
-            <div class="rooms">
-                <div class="room on">
-                    <span class="ico">🏠</span><span class="nm">默认</span>
-                    <span class="dir up on">↑</span><span class="dir dn on">↓</span><span class="ct">12</span>
-                </div>
-                <div class="room">
-                    <span class="ico">💼</span><span class="nm">work</span>
-                    <span class="dir up on">↑</span><span class="dir dn">↓</span><span class="ct">4</span>
-                </div>
-                <div class="room">
-                    <span class="ico">🔒</span><span class="nm">家里</span>
-                    <span class="dir up on">↑</span><span class="dir dn">↓</span><span class="ct">31</span>
-                </div>
-            </div>
+            <div class="sidebar-head"><span>房间</span><span class="count" id="room-count">—</span></div>
+            <div class="rooms" id="rooms"></div>
             <div class="hint">↑ 上传（可多选）· ↓ 下载（<b>全局只能一个</b>）</div>
-            <div class="diag" id="diag">正在自检…</div>
+            <!-- 配置有毛病时出现。⚠️ 不在内部悄悄修正：配了不生效要**说出来**。 -->
+            <div class="problems" id="problems" hidden></div>
+            <div class="diag" id="diag">正在读配置…</div>
             <div class="sidebar-foot">
-                <button>⚙ 全局设置</button>
-                <button>🌐 网页版 ↗</button>
-                <button>≡ 查看日志</button>
+                <!-- ⚠️ 按钮只有「真能做事」的才放这儿：一个点了没反应的按钮
+                     比没有这个按钮更坏（它会让用户以为功能坏了）。 -->
+                <button id="btn-web">🌐 网页版 ↗</button>
             </div>
         </aside>
 
         <main class="main">
             <div class="main-head">
-                <span class="room-nm">默认</span>
-                <span class="meta">· 12 条</span>
+                <span class="room-nm" id="room-name">—</span>
+                <span class="meta" id="room-meta"></span>
                 <div class="spacer"></div>
-                <div class="devices"><span class="d me">💻</span><span class="d">📱</span><span class="d">🖥</span>3 台在线</div>
+                <button class="btn" id="btn-refresh">刷新</button>
             </div>
 
-            <div class="tl">
-                <div class="card">
-                    <div class="txt">部署脚本我放在 /opt/deploy 了，先跑一遍 dry-run</div>
-                    <div class="ft"><span>iPhone</span><span>·</span><span>20:41</span></div>
-                </div>
-                <div class="card me">
-                    <div class="txt">收到，我这边也拉一下</div>
-                    <div class="ft"><span class="spacer"></span><span>本机</span><span>·</span><span>20:42</span></div>
-                </div>
-                <div class="card">
-                    <div class="thumb">🖼</div>
-                    <div class="ft"><span>MacBook Pro</span><span>·</span><span>20:44</span><span class="spacer"></span><span class="tag">图片</span></div>
-                </div>
-                <div class="card">
-                    <div class="filerow">
-                        <div class="fi">📄</div>
-                        <div><div class="fn">deploy.sh</div><div class="fs">3.2 KB</div></div>
-                    </div>
-                    <div class="ft"><span>MacBook Pro</span><span>·</span><span>20:45</span><span class="spacer"></span><span class="tag">文件</span></div>
-                </div>
-                <!-- 定时任务发出来的消息：服务端带 source / scheduledAt，界面要标出来
-                     （那两个字段就是从 `GET /content` 的投影里来的 —— 见 specs/ws-live-only.md §0.6） -->
-                <div class="card">
-                    <div class="txt">今天是 2026-09-26，值班：阿岚</div>
-                    <div class="ft"><span>定时任务</span><span>·</span><span>21:00</span><span class="spacer"></span><span class="tag auto">自动</span></div>
-                </div>
-            </div>
+            <!-- 一次性提示（上传结果 / 存盘失败 / 取历史失败）。 -->
+            <div class="notice" id="notice" hidden></div>
+
+            <div class="tl" id="timeline"></div>
 
             <div class="composer">
                 <div class="box">
-                    <div class="ph">输入内容，或直接把文件拖进来…</div>
+                    <textarea id="input" rows="1" placeholder="输入内容，回车发送（Shift+回车换行）"></textarea>
                     <div class="row">
-                        <button class="btn">📎</button>
-                        <button class="btn">🖼</button>
-                        <span class="lim">粘贴即发送</span>
+                        <span class="lim" id="limits"></span>
                         <div class="spacer"></div>
-                        <span class="lim">0 / 4096</span>
-                        <button class="btn primary">发送</button>
+                        <button class="btn primary" id="btn-send">发送</button>
                     </div>
                 </div>
             </div>
