@@ -84,6 +84,24 @@ futures-util = "0.3"
 # 「监听 + 去重防抖 + 三类处理 + 异步上传」整条链路 —— 不是「没得选」，是「已经验证过」。
 clipboard-rs = "0.3"
 
+# ── 客户端的网络层（`crates/client`）─────────────────────────────────
+# ⚠️ 选型纪律见 `docs/CONTRIBUTING.md` §1：**先查它还活着吗，再比参数**。
+# 这两个都查过：reqwest 0.13（2026 年在发版）、tokio-tungstenite 0.29。
+#
+# · `reqwest` —— 上行（`POST /text`、`POST /upload` 的 multipart）与
+#   取历史（`GET /content`）。**multipart 内置**是选它的关键：自己拼 multipart
+#   边界字符串是另一处「能过但会漂」的地方，而 `docs/api.md` §5 对
+#   `Content-Type` 的形状是有要求的。
+#   ⚠️ 它的 `default-tls` 在 0.13 里**已经是 rustls**（不再是 openssl）——
+#   对 OpenWrt / Android 这两条目标平台很重要（没有系统 OpenSSL 可依赖）。
+# · `tokio-tungstenite` —— 下行（`/push` 的 WebSocket）。
+#   ⚠️ TLS 用 `rustls-tls-native-roots`（跟系统信任库），不是 webpki-roots：
+#   这个客户端连的是**用户自己的**服务端，很可能是自签 / 内网 CA ——
+#   自带的那套根证书认不了它。理由与 `crates/store` 那张「否决表」同一个规矩（§1 第 3 条）。
+reqwest = { version = "0.13", features = ["json", "multipart"] }
+tokio-tungstenite = { version = "0.29", features = ["connect", "url", "rustls-tls-native-roots"] }
+url = "2.5"
+
 [profile.release]
 # OpenWrt / Android 上体积是真约束，这里按「小」而不是「最快」调。
 opt-level = "z"

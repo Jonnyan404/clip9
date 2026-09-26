@@ -19,3 +19,14 @@ tracing = { workspace = true }
 # 剪贴板读写（`SystemClipboard`）+ 文本子类型识别（URL / 邮箱 / 颜色）
 clipboard-rs = { workspace = true }
 regex = { workspace = true }
+
+# 上行 / 下行（见 workspace `Cargo.toml` 里那一段选型说明）
+reqwest = { workspace = true }
+tokio-tungstenite = { workspace = true }
+url = { workspace = true }
+
+# 图片上传的文件名要带时间戳（`clipboard_20260926-134500.png`），
+# 而**时间必须从外面传进来** —— 见 `uploader::image_file_name` 的注释。
+time = { workspace = true }
+# 客户端自己的稳定 ID（`?client=`），首次启动生成一次就固定下来。
+uuid = { workspace = true }

@@ -1,8 +1,8 @@
 //! 把真剪贴板接到 [`ClipboardSource`]，并按固定间隔轮询。
 
 use std::path::PathBuf;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
@@ -131,7 +131,12 @@ impl Drop for WatchHandle {
 /// 起一个后台线程监控剪贴板：每读到一个**新**内容就调一次 `on_event`。
 ///
 /// ⚠️ `on_event` 在**监控线程**上跑 —— 它必须**立刻返回**（把活儿丢给别的任务），
-/// 否则会把轮询卡住、漏掉后面的变化。上行（W2）要用通道 / 异步任务，别在这里做 IO。
+/// 否则会把轮询卡住、漏掉后面的变化。上行要用通道 / 异步任务，别在这里做 IO。
+///
+/// ⚠️★ `debouncer` 是**外面传进来的**（不是这个函数自己造的），因为下行也要用它：
+/// 下行把收到的内容写进剪贴板之前必须 [`Debouncer::prime`] 一下（防回环，见那里的注释），
+/// 而「谁记得上一次是什么」**只能有一处**。两处各自记的话，预置等于没预置 ——
+/// 表现就是两个客户端之间来回弹。
 ///
 /// ⚠️ 为什么用自己的轮询循环、而不是 `clipboard-rs` 的 `ClipboardWatcher`：
 /// 三端一个形状、间隔可配、能干净地停 —— 而 `ClipboardWatcher` 在 macOS 上本来
@@ -141,6 +146,7 @@ impl Drop for WatchHandle {
 pub fn spawn_watcher<F>(
     source: Box<dyn ClipboardSource>,
     config: WatchConfig,
+    debouncer: Arc<Mutex<Debouncer>>,
     on_event: F,
 ) -> WatchHandle
 where
@@ -152,11 +158,17 @@ where
     let thread = thread::Builder::new()
         .name("clip9-clipboard-watch".to_owned())
         .spawn(move || {
-            let mut debouncer = Debouncer::new();
             while !stop_flag.load(Ordering::Relaxed) {
-                if let Some(content) = source.read()
-                    && let Some(event) = debouncer.accept(content)
-                {
+                let content = source.read();
+                // ⚠️ 锁的作用域**只有判重这一步** —— 不能把 `on_event` 也包进来：
+                // 那样下行想预置指纹时会一直等（它要锁同一把），而锁的持有者正在等外部 IO。
+                let event = content.and_then(|content| {
+                    debouncer
+                        .lock()
+                        .unwrap_or_else(|e| e.into_inner())
+                        .accept(content)
+                });
+                if let Some(event) = event {
                     on_event(event);
                 }
                 thread::sleep(config.poll_interval);
@@ -168,6 +180,12 @@ where
         stop,
         thread: Some(thread),
     }
+}
+
+/// 造一个可以给 [`spawn_watcher`] 与 [`crate::spawn_receiver`] 共用的判重器。
+#[must_use]
+pub fn shared_debouncer() -> Arc<Mutex<Debouncer>> {
+    Arc::new(Mutex::new(Debouncer::new()))
 }
 
 #[cfg(test)]
@@ -214,6 +232,7 @@ mod tests {
                 Some(ClipboardContent::Text("b".to_owned())),
             ]),
             fast(),
+            shared_debouncer(),
             move |event| {
                 let _ = tx.send(event);
             },
@@ -245,6 +264,7 @@ mod tests {
         let handle = spawn_watcher(
             scripted(vec![Some(ClipboardContent::Text("x".to_owned()))]),
             fast(),
+            shared_debouncer(),
             move |event| {
                 let _ = tx.send(event);
             },
@@ -253,5 +273,47 @@ mod tests {
         drop(handle);
         // 线程已经 join（drop 里做的），所以这里立刻能确认没有新事件。
         assert!(rx.recv_timeout(Duration::from_millis(40)).is_err());
+    }
+
+    /// ⚠️★ **预置过的内容不会被这条监控线程再发一遍** —— 这就是防回环在
+    /// 「真线程 + 共享判重器」这个组合下的样子。
+    ///
+    /// 下行的用法是：写剪贴板**之前**先 `prime`，然后监控线程读到的就是同一份内容。
+    /// 这条测试把那个顺序演了一遍。
+    #[test]
+    fn a_primed_content_is_not_emitted() {
+        let (tx, rx) = mpsc::channel();
+        let debouncer = shared_debouncer();
+
+        // 模拟下行：先预置，再让剪贴板里出现同样的内容（这里用脚本假扮）。
+        debouncer
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .prime(&ClipboardContent::Text("远端发来的".to_owned()));
+
+        let handle = spawn_watcher(
+            scripted(vec![
+                Some(ClipboardContent::Text("远端发来的".to_owned())),
+                Some(ClipboardContent::Text("用户自己复制的".to_owned())),
+            ]),
+            fast(),
+            Arc::clone(&debouncer),
+            move |event| {
+                let _ = tx.send(event);
+            },
+        );
+
+        let got = rx
+            .recv_timeout(Duration::from_secs(2))
+            .expect("应当只收到用户自己复制的那条");
+        assert!(
+            matches!(got, ClipboardEvent::Text { ref content, .. } if content == "用户自己复制的"),
+            "预置过的内容被当成新事件发出去了（防回环失效）"
+        );
+        assert!(
+            rx.recv_timeout(Duration::from_millis(80)).is_err(),
+            "不该还有第二条"
+        );
+        handle.stop();
     }
 }

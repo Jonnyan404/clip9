@@ -104,6 +104,48 @@ impl Debouncer {
             }
         }
     }
+
+    /// 预置指纹 —— 把「我刚写进剪贴板的这份内容」记下来，**不产生事件**。
+    ///
+    /// # 它唯一的用途是**防回环**
+    ///
+    /// 下行把收到的内容写进剪贴板时，先调它，下一轮监控读到的就是同一份内容 →
+    /// 被判成重复 → 不会又发回服务端。不预置的话：A 写剪贴板 → A 的上行把它发出去 →
+    /// B 收到又写自己的剪贴板 → B 的上行发回来 → …… 两个客户端之间**来回弹**。
+    ///
+    /// ⚠️★ 这也是 `watcher` 与 `receiver` **必须共享同一个 `Debouncer`** 的原因 ——
+    /// 各自持有一个的话，各自记得的「上一次」互不相干，预置等于没预置。
+    ///
+    /// ⚠️ 清的槽照抄行为基准（`clip-sync` 的 `receiver.rs`：写文本时把图片与文件的
+    /// 指纹一起清零、写图片时清文本）。别自己发明一套 —— 两边规则不一样会让
+    /// 「同一串操作」在两个客户端上表现不同。
+    ///
+    /// ⚠️ 空内容 = **什么都没写**，所以什么都不动（与 [`Debouncer::accept`] 的口径一致）。
+    pub fn prime(&mut self, content: &ClipboardContent) {
+        match content {
+            ClipboardContent::Text(text) => {
+                if text.is_empty() {
+                    return;
+                }
+                self.seen.text = hash_bytes(text.as_bytes());
+                self.seen.image = 0;
+                self.seen.files = 0;
+            }
+            ClipboardContent::Image(png) => {
+                if png.is_empty() {
+                    return;
+                }
+                self.seen.image = hash_bytes(png);
+                self.seen.text = 0;
+            }
+            ClipboardContent::Files(paths) => {
+                if paths.is_empty() {
+                    return;
+                }
+                self.seen.files = hash_paths(paths);
+            }
+        }
+    }
 }
 
 #[cfg(test)]
@@ -304,5 +346,71 @@ mod tests {
         assert_eq!(hash_bytes(b"a"), hash_bytes(b"a"));
         assert_ne!(hash_bytes(b"a"), hash_bytes(b"b"));
         let _ = is_text;
+    }
+
+    /// ⚠️★ **这条钉住防回环**（`prime` 存在的全部理由）。
+    ///
+    /// 下行把收到的文本写进剪贴板时会先 `prime` —— 于是监控线程下一轮读到同一份内容
+    /// 时，`accept` 必须**吞掉它**。吞不掉的话，两个客户端之间会来回弹。
+    #[test]
+    fn priming_makes_the_next_read_look_like_a_duplicate() {
+        let mut d = Debouncer::new();
+        d.prime(&text("远端发来的"));
+
+        assert!(
+            d.accept(text("远端发来的")).is_none(),
+            "刚写进剪贴板的文本又被当成新内容了 —— 防回环失效"
+        );
+        // 但用户**真的**复制了别的东西，还是照发。
+        assert!(d.accept(text("用户复制的")).is_some());
+    }
+
+    /// 文件那一侧同样要成立（下载落盘之后写剪贴板走的就是它）。
+    #[test]
+    fn priming_files_also_breaks_the_loop() {
+        let mut d = Debouncer::new();
+        d.prime(&files(&["/dl/a.txt"]));
+        assert!(
+            d.accept(files(&["/dl/a.txt"])).is_none(),
+            "刚落盘并写进剪贴板的文件不该再发回去"
+        );
+        assert!(d.accept(files(&["/dl/b.txt"])).is_some());
+    }
+
+    /// ⚠️ 清槽的规则照抄行为基准：写文本时把图片与文件指纹一起清零。
+    #[test]
+    fn priming_follows_the_baseline_slot_rules() {
+        let mut d = Debouncer::new();
+        // 先让三个槽都有值。
+        d.accept(text("t"));
+        d.accept(ClipboardContent::Image(vec![1]));
+        d.accept(files(&["/a"]));
+
+        // 写一段新文本 —— 图片与文件的指纹要一起清零。
+        d.prime(&text("新的"));
+        assert_eq!(d.fingerprints().text, hash_bytes("新的".as_bytes()));
+        assert_eq!(d.fingerprints().image, 0, "写文本要把图片槽清零");
+        assert_eq!(d.fingerprints().files, 0, "写文本要把文件槽清零");
+
+        // 写图片同理（清文本）。
+        d.accept(text("t2"));
+        d.prime(&ClipboardContent::Image(vec![9]));
+        assert_eq!(d.fingerprints().image, hash_bytes(&[9]));
+        assert_eq!(d.fingerprints().text, 0, "写图片要把文本槽清零");
+    }
+
+    /// 空内容 = 什么都没写，所以**不该动指纹** ——
+    /// 否则一次「写空」会把上一次的指纹擦掉，让同一份内容被重发一遍。
+    #[test]
+    fn priming_empty_content_changes_nothing() {
+        let mut d = Debouncer::new();
+        d.accept(text("keep"));
+        let before = d.fingerprints();
+
+        d.prime(&text(""));
+        d.prime(&ClipboardContent::Image(Vec::new()));
+        d.prime(&files(&[]));
+        assert_eq!(d.fingerprints(), before, "空内容不该动指纹");
+        assert!(d.accept(text("keep")).is_none(), "原来的判重也该还在");
     }
 }
