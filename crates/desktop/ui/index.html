@@ -367,11 +367,10 @@ table.rooms .tiny { width: 9.5%; text-align: center; }
             <!-- 配置有毛病时出现。⚠️ 不在内部悄悄修正：配了不生效要**说出来**。 -->
             <div class="problems" id="problems" hidden></div>
             <div class="sidebar-foot">
-                <!-- ⚠️ 按钮只有「真能做事」的才放这儿：一个点了没反应的按钮
-                     比没有这个按钮更坏（它会让用户以为功能坏了）。 -->
-                <button id="btn-settings">⚙ 设置</button>
-                <button id="btn-server">🗄 服务端配置</button>
-                <button id="btn-web">🌐 网页版 ↗</button>
+                <!-- ⚠️ 只放**一个**（界面稿里就是「⚙ 全局设置」）：
+                     左下角是「设置」的位置，把别的入口也堆在这儿会让它变成杂物抽屉。
+                     ⚠️ 服务端配置在设置窗口的「本机」组里；网页版在「本地服务端」那一页里。 -->
+                <button id="btn-settings">⚙ 全局设置</button>
             </div>
         </aside>
 
@@ -417,7 +416,11 @@ table.rooms .tiny { width: 9.5%; text-align: center; }
                     <div class="it" data-pane="desktop">🖥 启动与托盘</div>
                     <div class="grp">本机</div>
                     <div class="it" data-pane="server">🗄 本地服务端</div>
+                    <!-- ⚠️ 这一项**不是一页**（没有 data-pane）—— 它打开的是那个改 config.json
+                         的浮层。`data-open` 就是区分「切页」和「开浮层」的。 -->
+                    <div class="it" data-open="server">⚙ 服务端配置</div>
                     <div class="grp">其它</div>
+                    <div class="it" data-pane="log">≡ 日志</div>
                     <div class="it" data-pane="diag">ⓘ 诊断</div>
                 </div>
 
@@ -508,6 +511,25 @@ table.rooms .tiny { width: 9.5%; text-align: center; }
                         ⚠️ 「重启」会先把服务端停掉再起来 —— 所以**正在连着它的手机/其它设备会断开一次**，
                         它们会自己重连。⚠️ 它**只停这个客户端自己起的那个**：你自己另外跑的服务端，它不碰。
                     </p>
+                </div>
+
+                <div class="pane" id="pane-log" hidden>
+                    <h3>日志</h3>
+                    <p class="sub">
+                        内嵌服务端的日志（它的 stdout/stderr 都倒进这个文件）。
+                        ⚠️ 客户端自己那些「发不出去 / 存不上」的提示在**主界面顶部**闪一次，不在这儿。
+                    </p>
+                    <div class="subcard" style="padding:8px 10px">
+                        <div class="kv" style="grid-template-columns:56px 1fr">
+                            <span class="k">文件</span><span class="v" id="log-path">—</span>
+                        </div>
+                    </div>
+                    <div style="display:flex;gap:8px;margin-bottom:9px">
+                        <button class="btn" id="log-refresh">刷新</button>
+                        <span class="sub" style="margin:0;align-self:center" id="log-state"></span>
+                    </div>
+                    <!-- ⚠️ 用 <pre> 而不是 textarea：日志要能**选中复制**，但不该被误编辑。 -->
+                    <pre id="log-text" style="margin:0;padding:10px;border:1px solid var(--border);border-radius:8px;background:var(--bg);font-size:11px;line-height:1.5;max-height:250px;overflow:auto;white-space:pre-wrap;word-break:break-all"></pre>
                 </div>
 
                 <div class="pane" id="pane-diag" hidden>

@@ -173,6 +173,60 @@ pub fn server_config_save(
     config.patch(&patch)
 }
 
+/// 「查看日志」那一页要的：**文件在哪** + 最后一段。
+#[derive(serde::Serialize)]
+pub struct ServerLogView {
+    pub path: String,
+    pub text: String,
+}
+
+/// 服务端日志的最后一段。
+///
+/// ⚠️ 只读**尾部**（最多 256KB）：日志会一直长，整份读进来是白花内存，
+/// 而用户看的就是最后几行。⚠️ 从中间截断时把**第一行丢掉**（多半是半行）。
+///
+/// ⚠️ 文件不存在**不是错误**：服务端还没起过就是这样，界面上说「还没有日志」即可 ——
+/// 报一句「文件不存在」会让用户以为坏了。
+#[tauri::command]
+pub fn server_log(path: State<'_, std::path::PathBuf>) -> ServerLogView {
+    const TAIL_BYTES: u64 = 256 * 1024;
+    let view = |text: String| ServerLogView {
+        path: path.display().to_string(),
+        text,
+    };
+    let Ok(meta) = std::fs::metadata(path.inner()) else {
+        return view(String::new());
+    };
+    let mut file = match std::fs::File::open(path.inner()) {
+        Ok(file) => file,
+        Err(err) => return view(format!("打不开日志（{}）：{err}", path.display())),
+    };
+    let truncated = meta.len() > TAIL_BYTES;
+    if truncated {
+        use std::io::Seek;
+        if file
+            .seek(std::io::SeekFrom::End(-(TAIL_BYTES as i64)))
+            .is_err()
+        {
+            return view(format!("读日志失败（{}）", path.display()));
+        }
+    }
+    let mut raw = Vec::new();
+    if let Err(err) = std::io::Read::read_to_end(&mut file, &mut raw) {
+        return view(format!("读日志失败（{}）：{err}", path.display()));
+    }
+    let text = String::from_utf8_lossy(&raw).into_owned();
+    // ⚠️ 截断过的话第一行多半是半行 —— 丢掉，免得用户以为日志写坏了。
+    let text = if truncated {
+        text.split_once('\n')
+            .map(|(_, rest)| rest.to_owned())
+            .unwrap_or(text)
+    } else {
+        text
+    };
+    view(text)
+}
+
 /// 本地服务端在不在跑 —— **问出来的**（真的打一条 `GET /server`），不是记的。
 #[tauri::command]
 pub fn server_running(server: State<'_, Option<Arc<ServerProcess>>>) -> bool {

@@ -193,6 +193,10 @@ fn main() {
         .manage(server_config::ServerConfigFile::new(
             server_process::config_path(&server_process::data_dir_under(&args.data_dir)),
         ))
+        // ⚠️ 日志路径也走 `server_process` 那个函数 —— 起服务端和看日志**必须同一个路径**。
+        .manage(server_process::log_path(&server_process::data_dir_under(
+            &args.data_dir,
+        )))
         .invoke_handler(tauri::generate_handler![
             commands::snapshot,
             commands::clear_notice,
@@ -209,6 +213,7 @@ fn main() {
             commands::server_config,
             commands::server_config_save,
             commands::server_running,
+            commands::server_log,
             commands::server_restart,
         ])
         // ⚠️ 托盘在 `setup` 里建：那时 `app` 已经能建菜单了，而**晚于** `build` 就来不及

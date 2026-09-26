@@ -86,7 +86,7 @@ impl ServerProcess {
         }
         std::fs::create_dir_all(&self.data_dir)
             .map_err(|err| format!("建服务端数据目录失败（{}）：{err}", self.data_dir.display()))?;
-        let log_path = self.data_dir.join("server.log");
+        let log_path = log_path(&self.data_dir);
         let log = std::fs::File::create(&log_path)
             .map_err(|err| format!("建日志文件失败（{}）：{err}", log_path.display()))?;
         let log2 = log
@@ -216,6 +216,15 @@ pub fn default_binary() -> Result<PathBuf, String> {
 #[must_use]
 pub fn config_path(data_dir: &Path) -> PathBuf {
     data_dir.join("config.json")
+}
+
+/// 服务端日志在哪：`<服务端数据目录>/server.log`（`start()` 把子进程的 stdout/stderr 都倒进去）。
+///
+/// ⚠️ 与 [`config_path`] 同一个理由：**起服务端和「查看日志」必须用同一个路径**。
+/// 两处各写一遍 `join("server.log")`，写歪了就是「日志页永远说没有日志」。
+#[must_use]
+pub fn log_path(data_dir: &Path) -> PathBuf {
+    data_dir.join("server.log")
 }
 
 /// 服务端数据目录：客户端数据目录下的 `server/`。

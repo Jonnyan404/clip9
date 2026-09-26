@@ -320,13 +320,7 @@ function sendCurrentInput() {
 
 el('btn-send').addEventListener('click', sendCurrentInput);
 el('btn-refresh').addEventListener('click', () => invoke('refresh'));
-el('btn-web').addEventListener('click', () => {
-  invoke('open_web').catch((error) => {
-    el('notice').hidden = false;
-    el('notice').className = 'notice err';
-    el('notice').textContent = `打不开网页版：${error}`;
-  });
-});
+
 el('conn').addEventListener('click', () => {
   // ⚠️ 这里要的是「切换」而不是「按当前状态推断」—— 状态是 700ms 前的，
   // 拿旧状态去取反会来回横跳。
@@ -510,7 +504,6 @@ async function openServerPanel() {
   await refreshServerState();
 }
 
-el('btn-server').addEventListener('click', openServerPanel);
 el('cfg-close').addEventListener('click', () => {
   el('server-overlay').hidden = true;
 });
@@ -618,6 +611,18 @@ function renderRoomRows() {
   });
 }
 
+async function refreshLog() {
+  try {
+    const view = await invoke('server_log');
+    el('log-path').textContent = view.path;
+    const text = (view.text || '').trim();
+    el('log-text').textContent = text || '（还没有日志 —— 服务端起来之后才会有）';
+    el('log-state').textContent = text ? '' : '';
+  } catch (error) {
+    el('log-text').textContent = `读日志失败：${error}`;
+  }
+}
+
 function showPane(name) {
   for (const item of el('settings-nav').querySelectorAll('.it')) {
     item.classList.toggle('on', item.dataset.pane === name);
@@ -661,7 +666,17 @@ el('settings-close').addEventListener('click', () => {
 });
 el('settings-nav').addEventListener('click', (event) => {
   const item = event.target.closest('.it');
-  if (item) showPane(item.dataset.pane);
+  if (!item) return;
+  // ⚠️ 有的项是**动作**不是页（`data-open`）：它打开另一个浮层，而不是切页。
+  // 先关掉设置窗口 —— 两个浮层叠在一起，用户分不清在改哪个。
+  if (item.dataset.open) {
+    el('settings-overlay').hidden = true;
+    openServerPanel();
+    return;
+  }
+  showPane(item.dataset.pane);
+  // ⚠️ 日志只在**切到那一页**时读一次：它可能很大，打开设置就读是白读。
+  if (item.dataset.pane === 'log') refreshLog();
 });
 el('room-add').addEventListener('click', () => {
   // ⚠️ 服务端留空**不是**省事：空地址会被 `ClientConfig::problems()` 报出来，
@@ -781,3 +796,5 @@ function roomAuthPatch() {
   }
   return patch;
 }
+
+el('log-refresh').addEventListener('click', refreshLog);
