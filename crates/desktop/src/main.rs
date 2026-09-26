@@ -23,6 +23,7 @@ mod autostart;
 mod commands;
 mod model;
 mod runtime;
+mod server_process;
 mod store;
 mod tray;
 
@@ -43,7 +44,14 @@ struct Args {
     server: String,
 }
 
-const DEFAULT_SERVER: &str = "http://127.0.0.1:9501";
+/// 第一次运行时那个默认房间的服务端地址。
+///
+/// ⚠️★ **9502，不是 9501** —— 9501 是**用户自己那个实例**的默认端口。
+/// 桌面端自带的服务端起在 9502（[`server_process::DEFAULT_PORT`]），
+/// 所以默认房间指向它，装完就能用。
+/// ⚠️ 两者必须一致：`default_server_matches_the_bundled_port` 那条测试钉着这个关系，
+/// 改一个忘另一个会**直接红**（而不是让用户看到一个连不上的地址）。
+const DEFAULT_SERVER: &str = "http://127.0.0.1:9502";
 
 fn parse_args() -> Result<Option<Args>, String> {
     let mut data_dir: Option<PathBuf> = None;
@@ -116,7 +124,13 @@ fn main() {
         }
     };
 
-    let store = Arc::new(Store::new(config, config_path, args.data_dir));
+    let store = Arc::new(Store::new(
+        config,
+        config_path,
+        // ⚠️ clone：本地服务端的数据目录还要用这个值（在 `args` 里），
+        // 而 `Store` 拿的是所有权。
+        args.data_dir.clone(),
+    ));
     // ⚠️ tokio 的句柄从 **Tauri 的运行时**里取（它本来就是 tokio）——
     // 不自己建第二个运行时：两个运行时 = 两个线程池，而 `clip9-client` 的
     // 网络栈会被两个调度器轮流驱动，「难查的偶发」就从这里来。
@@ -133,6 +147,32 @@ fn main() {
         }
     };
     runtime.start();
+
+    // ── 本地服务端（随包分发 ✓，§9.1 第 2 条）────────────────────────────
+    //
+    // ⚠️★ 「找不到二进制」和「起不来」都**不阻止客户端启动**：客户端还能连配置里
+    // 那个地址（可能是用户自己的服务端）—— 那才是权威。但两件事都要**说出来**，
+    // 因为用户看到的是「装完了，但手机连不上」。
+    //
+    // ⚠️ 起不来的原因里最值得说的是「端口被占」：9502 撞上别的东西时，
+    // `start()` 会把日志路径和端口一起报出来（见 `server_process::start`）。
+    let server = match server_process::default_binary() {
+        Ok(binary) => {
+            let process = Arc::new(server_process::ServerProcess::new(
+                binary,
+                server_process::data_dir_under(&args.data_dir),
+                server_process::DEFAULT_PORT,
+            ));
+            if let Err(reason) = process.start() {
+                eprintln!("{reason}");
+            }
+            Some(process)
+        }
+        Err(reason) => {
+            eprintln!("{reason}");
+            None
+        }
+    };
 
     let app = tauri::Builder::default()
         // ⚠️ 开机自启走官方插件（跨平台那三套自己写会各漂各的）。
@@ -176,10 +216,41 @@ fn main() {
     // ⚠️ 闭包要 `'static`，所以这里**把 `Arc` clone 进闭包**（而不是借用外面的
     // `runtime`）—— 借用的话编译器会拒绝，而这个 `stop` 又必须在退出前真的发生。
     let on_exit = Arc::clone(&runtime);
+    let server_on_exit = server.clone();
     app.run(move |_handle, _event| {
         if let tauri::RunEvent::ExitRequested { .. } = _event {
             on_exit.stop();
+            // ⚠️★ 本地服务端是**子进程**，它**不会**跟着父进程一起死 ——
+            // 不显式停的话，用户关掉客户端之后它还占着端口、还在同步，
+            // 而且下次启动会看到「端口被占」。
+            // ⚠️ `stop()` 只停**我们自己起的那个**（见它的文档）：用户手动跑的服务端不动。
+            if let Some(server) = &server_on_exit {
+                let _ = server.stop();
+            }
         }
     });
     runtime.stop();
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// ⚠️★ 默认房间指向的端口**必须**是本地服务端起的那个端口。
+    ///
+    /// 改一个忘另一个的后果：装完默认房间指向一个**没有服务端**的端口 ——
+    /// 用户看到的是「装好了，但一条也同步不了」，而且没有任何报错。
+    /// 这条测试把两个常量钉在一起，改歪了直接红。
+    #[test]
+    fn default_server_matches_the_bundled_port() {
+        let expected = format!("http://127.0.0.1:{}", server_process::DEFAULT_PORT);
+        assert_eq!(DEFAULT_SERVER, expected);
+        // ⚠️ 顺带钉住「别用 9501」：那是**用户自己那个实例**的默认端口，
+        // 撞上去要么让用户的服务端起不来，要么让客户端连错地方。
+        assert_ne!(
+            server_process::DEFAULT_PORT,
+            9501,
+            "本地服务端不许用 9501（那是用户自己的实例）"
+        );
+    }
 }
