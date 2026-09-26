@@ -57,12 +57,15 @@ use crate::download;
 use crate::endpoint;
 use crate::event::{ClipboardContent, UploadKind};
 use crate::sink::ClipboardSink;
-use crate::uploader::{build_client, parse_api_error};
+use crate::uploader::{ServerLimits, build_client, parse_api_error};
 
-/// 握手 `config` 里这边要的两样东西。
+/// 握手 `config` 里这边要的三样东西。
 ///
-/// ⚠️ 只解析需要的字段（`config` 里还有 `version` / `text` / `file` / `automation` 等
-/// —— 那些是界面的事，下行不该关心）。
+/// ⚠️ 只解析需要的字段（`config` 里还有 `auth` / `automation` 等 —— 那些是界面的事）。
+///
+/// ⚠️★ `limits` 在这里是**刻意的**：`docs/api.md` §3 曾把握手载荷错标成 `/server` 的响应，
+/// 而限额**只在这条 `config` 事件里**（`text.limit` / `file.limit`；`version` 同理）。
+/// 详见 [`crate::uploader`] 的模块文档。
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct Handshake {
     /// 连接时刻该房间的**最大消息 id**（空房间是 `0`）。
@@ -71,6 +74,8 @@ pub struct Handshake {
     pub latest_id: Option<i32>,
     /// 服务端的历史长度上限（`server.history`）—— 取历史时用它当 `limit`。
     pub history: Option<usize>,
+    /// 服务端的内容限额（上行要用；拿不到就是「不知道」）。
+    pub limits: ServerLimits,
 }
 
 /// 从握手 `config` 的载荷里读。
@@ -88,6 +93,7 @@ pub fn parse_handshake(data: &Value) -> Handshake {
             .pointer("/server/history")
             .and_then(Value::as_u64)
             .map(|v| v as usize),
+        limits: ServerLimits::from_ws_config(data),
     }
 }
 
@@ -281,8 +287,11 @@ pub enum ReceiverUpdate {
 pub enum ReceiverStatus {
     /// 正在连（含重连）。
     Connecting { server: String, room: String },
-    /// 连上了，知道边界。
-    Connected { latest_id: i32 },
+    /// 连上了，知道边界了。`limits` 是服务端限额（**上行要用**，见 [`crate::uploader`]）。
+    Connected {
+        latest_id: i32,
+        limits: ServerLimits,
+    },
     /// ⚠️★ **老服务端**：握手不带 `latestId`，边界说不清 → **一行剪贴板都不写**。
     /// 界面要把这条显示出来（「服务端版本太旧，已暂停同步」），而不是静默不动。
     NoWatermark,
@@ -514,6 +523,7 @@ async fn connect_once(
                     Some(latest_id) => {
                         let _ = updates.send(ReceiverUpdate::Status(ReceiverStatus::Connected {
                             latest_id,
+                            limits: handshake.limits,
                         }));
                     }
                     None => {
@@ -702,6 +712,7 @@ mod tests {
         Handshake {
             latest_id: latest,
             history: Some(50),
+            limits: ServerLimits::default(),
         }
     }
 
@@ -718,6 +729,29 @@ mod tests {
         let h = parse_handshake(&json!({"latestId": 0}));
         assert_eq!(h.latest_id, Some(0));
         assert!(Boundary::new().latest_id().is_none());
+    }
+
+    /// ⚠️★ **限额也从握手来**（`/server` 里没有它们 —— 见 `uploader` 的模块文档）。
+    /// 这条钉住「这条接缝真的接上了」：上行要靠 `ReceiverStatus::Connected` 拿到它。
+    #[test]
+    fn handshake_carries_the_server_limits() {
+        let h = parse_handshake(&json!({
+            "latestId": 7,
+            "server": {"history": 50},
+            "text": {"limit": 4096},
+            "file": {"limit": 268435456}
+        }));
+        assert_eq!(
+            h.limits,
+            ServerLimits {
+                text_limit: 4096,
+                file_limit: 268435456
+            }
+        );
+
+        // 老服务端/字段缺失 → 「不知道」，而不是「限额 0」。
+        let h = parse_handshake(&json!({"latestId": 7}));
+        assert_eq!(h.limits, ServerLimits::default());
     }
 
     /// ⚠️★ 握手里**没有**这个字段 = 老服务端 → `None`（= 后面 fail-safe 的依据）。

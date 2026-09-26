@@ -11,6 +11,23 @@
 //!
 //! ⚠️ 图片走**文件**那条路（§4.1 末），不另开一条。
 //!
+//! # ⚠️★ 限额从哪来：**WS 握手的 `config` 事件**，不是 `/server`
+//!
+//! `docs/api.md` §3 原来把**握手 `config` 的载荷**当成 `/server` 的响应贴了出来，
+//! 于是 §11 那句「Call `/server` first for the limits」**在三个实现上都拿不到东西**。
+//! 2026-09-26 实测 + 读源码确认：Go 与 Rust 的 `/server` 都不含 `text` / `file`
+//! （也没有 `version`），它们返回的是
+//! `{server: "<ws://…/push>", auth, authorized, roomProtected, config:{server:{history,roomList}}, automation}`。
+//! `text.limit` / `file.limit` / `version` **只在握手 `config` 里**。
+//!
+//! 所以 [`ServerLimits`] 从握手来：[`crate::receiver::parse_handshake`] 读它，
+//! 随 `ReceiverStatus::Connected` 交给上层，上层再传回 [`upload_event`] 的 `limits`。
+//!
+//! ⚠️ **拿不到时（还没连过 WS）用 `ServerLimits::default()` = 两个 0 = 不知道** ——
+//! 于是只剩用户自己配的 `max_file_size_mb` 生效。这是 fail-open，但方向是对的：
+//! 服务端会自己拒掉超限请求，并把**带具体数字**的那句话交回来（§11 第 2 条）。
+//! 反过来做（拿不到就拒绝上传）会让「服务端设置页没打开过」变成「什么都传不上去」。
+//!
 //! # 三条不做的事（都踩过）
 //!
 //! 1. **不自己拼 URL** —— 一律走 [`crate::endpoint`]，那里有「`http://` 不会被吃成 `http:/`」
@@ -54,40 +71,19 @@ pub struct ServerLimits {
 }
 
 impl ServerLimits {
-    /// 从 `GET /server` 的响应里读。
+    /// 从**WS 握手 `config` 事件**的载荷里读（⚠️ **不是** `/server` 的响应，见模块文档）。
     #[must_use]
-    pub fn parse(value: &serde_json::Value) -> Self {
+    pub fn from_ws_config(data: &serde_json::Value) -> Self {
         Self {
-            text_limit: value
+            text_limit: data
                 .pointer("/text/limit")
                 .and_then(serde_json::Value::as_u64)
                 .unwrap_or(0) as usize,
-            file_limit: value
+            file_limit: data
                 .pointer("/file/limit")
                 .and_then(serde_json::Value::as_u64)
                 .unwrap_or(0),
         }
-    }
-
-    /// 拿一次服务端限额。**每个服务端只要拿一次**，别每次上传都问。
-    ///
-    /// ⚠️ `/server` 不需要凭据（`docs/api.md` §3）—— 它存在的意义就是「在还没输密码的时候
-    /// 也能知道限额、好让界面把提示画出来」。
-    pub async fn fetch(client: &Client, server: &str) -> Result<Self, String> {
-        let url = endpoint::api_url(server, "/server", &[])?;
-        let response = client
-            .get(url)
-            .send()
-            .await
-            .map_err(|e| format!("取服务端限额失败：{e}"))?;
-        let status = response.status().as_u16();
-        let body = response.text().await.unwrap_or_default();
-        if !(200..300).contains(&status) {
-            return Err(parse_api_error(status, &body));
-        }
-        let value: serde_json::Value =
-            serde_json::from_str(&body).map_err(|e| format!("服务端限额不是 JSON：{e}"))?;
-        Ok(Self::parse(&value))
     }
 }
 
@@ -499,25 +495,50 @@ mod tests {
         );
     }
 
-    /// 限额解析：`0` 表示「服务端没说」，**不是**「限额是 0」。
+    /// 限额从**握手 `config`** 读；`0` 表示「服务端没说」，**不是**「限额是 0」。
+    ///
+    /// ⚠️ 载荷用的是**真的**握手形状（`text.limit` / `file.limit` 在顶层下面）——
+    /// 这条同时钉住「读的是握手，不是 `/server`」。
     #[test]
-    fn limits_parse_and_absent_means_unknown() {
-        let v = serde_json::json!({"text":{"limit":4096},"file":{"limit":268435456}});
+    fn limits_come_from_the_ws_handshake_config() {
+        let ws_config = serde_json::json!({
+            "version": "0.1.0",
+            "server": { "history": 50, "prefix": "", "roomList": false },
+            "text": { "limit": 4096 },
+            "file": { "limit": 268435456, "expire": 3600, "chunk": 1048576 },
+            "auth": false,
+            "latestId": 7,
+            "automation": { "enabled": true }
+        });
         assert_eq!(
-            ServerLimits::parse(&v),
+            ServerLimits::from_ws_config(&ws_config),
             ServerLimits {
                 text_limit: 4096,
                 file_limit: 268435456
             }
         );
+
         // 字段缺失 → 0（不知道），而不是「限额 0」把一切都拦掉。
-        let empty = serde_json::json!({});
         assert_eq!(
-            ServerLimits::parse(&empty),
-            ServerLimits {
-                text_limit: 0,
-                file_limit: 0
-            }
+            ServerLimits::from_ws_config(&serde_json::json!({})),
+            ServerLimits::default()
+        );
+
+        // ⚠️★ **这条是防回归**：`/server` 的响应**没有**限额（`docs/api.md` §3 曾经
+        // 把握手载荷错标成 `/server` 的响应，客户端照着写就会永远拿到 0）。
+        // 真拿这份载荷去读，得到的必须是「不知道」，而不是某个看起来对的数。
+        let real_server_response = serde_json::json!({
+            "server": "ws://127.0.0.1:9501/push",
+            "auth": false,
+            "authorized": true,
+            "roomProtected": false,
+            "config": { "server": { "history": 50, "roomList": false } },
+            "automation": { "enabled": false }
+        });
+        assert_eq!(
+            ServerLimits::from_ws_config(&real_server_response),
+            ServerLimits::default(),
+            "`/server` 里没有限额 —— 别在那边找"
         );
     }
 
