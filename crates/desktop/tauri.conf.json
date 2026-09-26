@@ -4,10 +4,22 @@
   "version": "0.1.0",
   "identifier": "com.clip9.desktop",
   "build": {
-    "frontendDist": "../../../cloud-clip/lib/static"
+    "frontendDist": "ui"
   },
   "app": {
-    "windows": []
+    "windows": [
+      {
+        "title": "clip9",
+        "width": 760,
+        "height": 520,
+        "minWidth": 640,
+        "minHeight": 420,
+        "resizable": true
+      }
+    ],
+    "security": {
+      "csp": "default-src 'self'; connect-src 'self' ipc: http://ipc.localhost http://127.0.0.1:* ws://127.0.0.1:*; img-src 'self' data: blob: http://127.0.0.1:*; style-src 'self' 'unsafe-inline'; font-src 'self' data:"
+    }
   },
   "bundle": {
     "active": false,
