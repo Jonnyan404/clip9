@@ -757,8 +757,18 @@ function renderRoomAuthRows() {
     // ⚠️ 「留空 = 不改」：这个键在配置里可以缺省，而清空它会让服务端解析失败。
     tr.append(cellInput(entry.fileExpire, (v) => { entry.fileExpire = v; }, '（留空 = 不改）'));
     tr.append(cellInput(entry.automation, (v) => { entry.automation = v; }, '（留空 = 跟随）'));
+    // ⚠️ `open` 是**可编辑的**：原来画成一个只读胶囊，用户能看见「要密码 / 开放」
+    // 却改不了 —— 而它就在这张可编辑的表里，那是最别扭的一种「看得见摸不着」。
+    // ⚠️ 表格里的布尔，主流就是复选框（开关也行，但表格里复选框更省地方、也更准）。
     const state = h('td', 'tiny');
-    state.append(h('span', entry.open ? 'pill ok' : 'pill', entry.open ? '开放' : '要密码'));
+    const openBox = document.createElement('input');
+    openBox.type = 'checkbox';
+    openBox.checked = entry.open === true;
+    openBox.title = '这个房间是公开的（不需要密码）';
+    openBox.addEventListener('change', () => {
+      entry.open = openBox.checked;
+    });
+    state.append(openBox);
     tr.append(state);
     const del = h('td', 'tiny');
     const button = h('button', 'btn', '删');

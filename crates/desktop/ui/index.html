@@ -253,7 +253,7 @@ body {
    右边一排（凭据、↑↓、删除）全被切掉。
    实测：640 视口下量出 **24 处元素超出容器**。改成 `min(设计宽, 视口 - 32)`。 */
 .panel {
-    width: min(560px, calc(100vw - 32px));
+    width: min(660px, calc(100vw - 32px));
     max-height: calc(100vh - 40px); overflow-y: auto;
     background: var(--card-bg); border: 1px solid var(--border);
     border-radius: 11px; box-shadow: 0 18px 50px rgba(15, 23, 42, .35);
@@ -608,7 +608,7 @@ table.rooms .tiny { width: 9.5%; text-align: center; }
                                 <th class="c-token">密码</th>
                                 <th class="c-room">文件过期</th>
                                 <th class="c-room">定时任务</th>
-                                <th class="tiny">状态</th>
+                                <th class="tiny">开放</th>
                                 <th class="tiny"></th>
                             </tr>
                         </thead>
@@ -617,7 +617,7 @@ table.rooms .tiny { width: 9.5%; text-align: center; }
                     <button class="btn" id="roomauth-add" style="margin-top:7px">＋ 添加</button>
                     <div class="sub" style="margin:8px 0 0">
                         定时任务档位：留空 = 跟随房间鉴权；或 <code>none</code> / <code>single</code> / <code>room</code>。
-                        ⚠️ 「文件过期」留空 = **不改**（那个键在配置里可以是缺省的，清空它会让服务端读不了这份配置）。
+                        ⚠️ 「文件过期」留空 = <b>不改</b>（那个键在配置里可以是缺省的，清空它会让服务端读不了这份配置）。
                     </div>
                 </div>
 
