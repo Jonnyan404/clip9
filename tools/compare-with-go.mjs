@@ -578,20 +578,8 @@ console.log('\n=== /server ===');
 await compare('GET /server', 'GET', '/server');
 await compare('GET /server?room=work', 'GET', '/server?room=work');
 
-console.log('\n=== /myip ===');
-// ⚠️ 这不是边角端点：前端**聊天模式**用它显示「你现在的 IP」（`ChatWall.vue`）。
-// 三个来源的优先级要一致：`X-Forwarded-For` → `X-Real-IP` → 连接对端地址，
-// 且**都要取第一个逗号前那段**（代理链里第一个才是客户端）。
-await compare('GET /myip（直连，取对端地址）', 'GET', '/myip');
-await compare('GET /myip 认 X-Forwarded-For', 'GET', '/myip', {
-  headers: { 'x-forwarded-for': '1.2.3.4, 5.6.7.8' },
-});
-await compare('GET /myip 认 X-Real-IP', 'GET', '/myip', {
-  headers: { 'x-real-ip': '9.9.9.9' },
-});
-await compare('GET /myip 两个都有时以前者为准', 'GET', '/myip', {
-  headers: { 'x-forwarded-for': '1.2.3.4', 'x-real-ip': '9.9.9.9' },
-});
+// ⚠️ `/myip` 那一节已删（2026-09-26）：端点本身删了（它唯一的消费者是聊天模式，已退役），
+// 所以「三个来源的优先级」那几条断言也一起没了。
 
 console.log('\n=== 清空房间 ===');
 await compare('POST /revoke/all?room=work', 'POST', '/revoke/all?room=work');
@@ -1854,16 +1842,6 @@ async function expectOn(label, port, method, path, check, opts = {}) {
 // Go 的 `handleAutomationPage` 压根没看 `r.Method` —— POST 也会照渲染一份 200 的页面出来。
 // 按 `/revoke/*` 那次的口径（Jonny 2026-09-25：「不用考虑老客户端，按最佳实践来」），
 // 这里收紧成 GET-only，其余回 405 且恒 JSON。
-// ⚠️ 刻意偏离：`/myip` 也只认 GET。Go 的 `handle_myip` 没有方法检查，
-// 任何方法都会回一份 JSON。口径与 `/content/{id}` / `/automation` 相同。
-await expectOn(
-  'POST /myip → 405（Go 会照回一份 JSON）',
-  RS_PORT,
-  'POST',
-  '/myip',
-  (r) => r.status === 405 && r.parsed?.code === 'method_not_allowed'
-);
-
 await expectOn(
   'POST /automation → 405（Go 会照渲染一份页面）',
   RS_PORT,

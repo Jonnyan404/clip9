@@ -302,22 +302,6 @@ fn file_expired(f: &FileReceive) -> bool {
     f.expire > 0 && f.expire < now_secs()
 }
 
-// ── /myip ─────────────────────────────────────────────────────────────
-
-/// 回客户端自己的 IP。
-///
-/// ⚠️ 这不是边角端点：前端**聊天模式**用它显示「你现在的 IP」（`ChatWall.vue`），
-/// 所以双跑比对里有它自己的用例。
-///
-/// ⚠️ 只认 GET —— 同 `/content/{id}`：读接口不该被非读方法触发。
-/// Go 的 `handle_myip` 没有方法检查，任何方法都会回一份 JSON。
-pub async fn my_ip(
-    ConnectInfo(peer): ConnectInfo<SocketAddr>,
-    headers: HeaderMap,
-) -> Json<serde_json::Value> {
-    Json(serde_json::json!({ "ip": client_ip(&headers, Some(peer)) }))
-}
-
 // ── /server ───────────────────────────────────────────────────────────
 
 /// `GET /server` —— 服务端能力与配置声明。形状逐字对齐 Go `handler.go:120`。
