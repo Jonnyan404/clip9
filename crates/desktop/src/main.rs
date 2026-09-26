@@ -23,6 +23,7 @@ mod commands;
 mod model;
 mod runtime;
 mod store;
+mod tray;
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -146,6 +147,17 @@ fn main() {
             commands::refresh,
             commands::open_web,
         ])
+        // ⚠️ 托盘在 `setup` 里建：那时 `app` 已经能建菜单了，而**晚于** `build` 就来不及
+        // （窗口可能已经显示出来，用户会先看到「没有入口」）。见 `tray` 的模块文档。
+        .setup({
+            let store = Arc::clone(&store);
+            let runtime = Arc::clone(&runtime);
+            move |app| {
+                tray::install(app.handle(), &store, &runtime)
+                    .map_err(|err| Box::new(err) as Box<dyn std::error::Error>)?;
+                Ok(())
+            }
+        })
         .build(tauri::generate_context!())
         .expect("Tauri 启动失败");
 

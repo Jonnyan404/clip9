@@ -8,7 +8,9 @@ description = "clip9 桌面客户端（Tauri 壳）—— ⚠️ 这里没有业
 tauri-build = { version = "2.0", features = [] }
 
 [dependencies]
-tauri = { version = "2.11", features = [] }
+# ⚠️ `tray-icon` + `image-png` 是**托盘菜单**要的（§7 第 5 条）：
+# 前者的图标在 macOS 上要从 PNG 解出来，所以两者得一起开。
+tauri = { version = "2.11", features = ["tray-icon", "image-png"] }
 # ⚠️ 业务逻辑全在这个 crate 里（去重 / 防抖 / 分类 / 边界水印 / 上下行）。
 # 壳只做「把事件转成它的调用」+ 窗口 —— 见 docs/specs/desktop-client.md §2 的硬边界。
 clip9-client = { path = "../client" }
