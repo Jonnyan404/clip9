@@ -142,16 +142,6 @@ body {
     color: var(--sidebar-fg); font-size: 12px; font-family: inherit;
 }
 .sidebar-foot button:hover { background: var(--sidebar-hover); }
-/* 连接诊断（服务端地址 + 上一次自检的结果）。
-   ⚠️ 这是**产品界面**，不是脚手架：桌面端连的是哪台服务端、通没通，用户必须看得见
-   —— 一屏「同步中」背后到底有没有在同步，是这类工具最容易骗人的地方。 */
-.diag {
-    padding: 0 10px 8px; color: var(--sidebar-sub); font-size: 10.5px;
-    line-height: 1.45; word-break: break-all;
-    /* 两行：第一行服务端地址，第二行「HTTP … · WS …」—— 两个结果**分别**显示，
-       不是一个字符串谁后到谁留下（那样「看到哪一行」是随机的）。 */
-    white-space: pre-line;
-}
 
 /* ── 主区 ─────────────────────────────────────────────────── */
 .main { flex: 1; display: flex; flex-direction: column; min-width: 0; min-height: 0; }
@@ -187,7 +177,13 @@ body {
 .tag.auto { color: var(--accent); border-color: var(--sidebar-active-border); }
 
 .composer { flex: none; padding: 10px 14px 12px; border-top: 1px solid var(--border); }
-.composer .box { border: 1px solid var(--border); border-radius: 9px; padding: 8px 10px; }
+/* ⚠️ 输入区要有**看得见的框**（界面稿里就是一个圆角框 + 浅底）：
+   只靠一条顶边分隔的话，输入框和下面那行按钮看起来是散的，
+   而「往哪儿打字」是这块唯一要回答的问题。 */
+.composer .box {
+    border: 1px solid var(--sidebar-chip-border); border-radius: 9px;
+    background: var(--bg); padding: 8px 10px;
+}
 .composer .ph { color: var(--text-2); min-height: 22px; }
 .composer .row { display: flex; align-items: center; gap: 8px; margin-top: 6px; }
 .composer .spacer { flex: 1; }
@@ -370,7 +366,6 @@ table.rooms .tiny { width: 9.5%; text-align: center; }
             <div class="hint">↑ 发到房间（可多选）· ↓ 收进剪贴板（<b>全局只能一个</b>）<br><span id="max-entries"></span></div>
             <!-- 配置有毛病时出现。⚠️ 不在内部悄悄修正：配了不生效要**说出来**。 -->
             <div class="problems" id="problems" hidden></div>
-            <div class="diag" id="diag">正在读配置…</div>
             <div class="sidebar-foot">
                 <!-- ⚠️ 按钮只有「真能做事」的才放这儿：一个点了没反应的按钮
                      比没有这个按钮更坏（它会让用户以为功能坏了）。 -->

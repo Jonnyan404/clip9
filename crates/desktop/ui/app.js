@@ -242,17 +242,15 @@ function render(state) {
 
   const room = state.rooms[state.selected];
   el('room-name').textContent = room ? room.name : '—';
-  el('room-meta').textContent = room
-    ? `· ${room.count} 条 · ${room.room} @ ${room.server}`
-    : '';
+  // ⚠️ 只留「几条」：房间 id 和服务端地址塞进标题是**噪音**，
+  // 而它们都能在「设置」里查到（诊断那一页专门放这些）。
+  el('room-meta').textContent = room ? `· ${room.count} 条` : '';
 
   // ⚠️ 限额是**握手**里下发的（不在 `/server`）。没连上就是「不知道」，
   // 这里要写「还不知道」而不是「0」—— 那会让用户以为「一个字都发不了」。
   el('limits').textContent = state.limits.textLimit
     ? `上限 ${state.limits.textLimit} 字`
     : '上限还不知道（还没连上）';
-
-  el('diag').textContent = `${state.dataDir}\n配置：${state.configPath}`;
 
   // ⚠️★ 本机窗口里**留多少条**要照实说：不说的话，用户看到列表停在 200 条
   // 会以为「前面的丢了」（`store.rs` 的 `MAX_ENTRIES_PER_ROOM` 注释里点名了这条要求）。
@@ -292,7 +290,10 @@ async function tick() {
     }
   } catch (error) {
     // ⚠️ 取不到状态要把「为什么」说出来：最常见的是窗口比壳活得久（壳崩了/正在退出）。
-    el('diag').textContent = `取不到状态：${error}`;
+    // 主界面上没有地方放它（侧栏那块调试信息已删），所以进一次性提示。
+    el('notice').hidden = false;
+    el('notice').className = 'notice err';
+    el('notice').textContent = `取不到状态：${error}`;
   } finally {
     setTimeout(tick, POLL_MS);
   }
