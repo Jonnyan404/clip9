@@ -13,7 +13,8 @@
   但**渲染规则要照抄 SPA 的约定**（规格 §3.6 末 + §8 审计清单那条硬要求）：
   markdown / 图片 / 文件 / 结构化内容 / 分类条 —— 那是手写 UI 唯一真实的漂移风险。
 
-  现状：**静态骨架**（结构 + 样式），数据是占位、交互待 W3 接上。
+  现状：**交互已接上**（W3，`app.js` 走 IPC 拿快照 + 发命令）。数据全部来自壳，
+  页面自己不碰服务端、不碰剪贴板。
 */
 :root, :root[data-theme='light'] {
     --sidebar-bg: #eef1f6;
@@ -155,9 +156,6 @@ body {
 .main-head .room-nm { font-weight: 600; }
 .main-head .meta { color: var(--text-2); font-size: 12px; }
 .main-head .spacer { flex: 1; }
-.devices { display: flex; align-items: center; gap: 3px; color: var(--text-2); font-size: 11.5px; }
-.devices .d { font-size: 13px; opacity: .75; }
-.devices .d.me { opacity: 1; }
 
 .tl { flex: 1; overflow-y: auto; padding: 12px 14px; display: flex; flex-direction: column; gap: 8px; }
 .card {
@@ -172,11 +170,6 @@ body {
     margin-top: 5px; color: var(--text-2); font-size: 10.5px;
 }
 .card .ft .spacer { flex: 1; }
-.card .thumb {
-    width: 132px; height: 88px; border-radius: 6px;
-    background: color-mix(in srgb, var(--accent) 14%, transparent);
-    display: flex; align-items: center; justify-content: center; font-size: 26px;
-}
 .card .filerow { display: flex; align-items: center; gap: 9px; }
 .card .fi { font-size: 20px; }
 .card .fn { font-weight: 500; }
@@ -259,7 +252,7 @@ body {
         <aside class="sidebar">
             <div class="sidebar-head"><span>房间</span><span class="count" id="room-count">—</span></div>
             <div class="rooms" id="rooms"></div>
-            <div class="hint">↑ 上传（可多选）· ↓ 下载（<b>全局只能一个</b>）</div>
+            <div class="hint">↑ 上传（可多选）· ↓ 下载（<b>全局只能一个</b>）<br><span id="max-entries"></span></div>
             <!-- 配置有毛病时出现。⚠️ 不在内部悄悄修正：配了不生效要**说出来**。 -->
             <div class="problems" id="problems" hidden></div>
             <div class="diag" id="diag">正在读配置…</div>

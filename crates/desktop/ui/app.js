@@ -56,6 +56,16 @@ function shapeOf(state) {
   return JSON.stringify([
     state.rooms, state.selected, state.entries, state.status,
     state.limits, state.problems, state.monitoring, state.dataDir,
+    // ⚠️★ `notice` **必须**在里面。漏掉它的话，「上传失败」「因为开关关着而跳过」
+    // 这两类提示**永远不会画出来** —— 因为它们**不改动上面任何一个字段**：
+    // 上传失败什么都没变；而上传成功时，消息要靠下行回传才会进 `entries`，
+    // 可**下载通道默认是关的**（§4.1 第 3 条），于是也没变化。
+    // 结果是 `runtime.rs` 里「上传结果要能被界面看到」那句话**在界面上不成立**，
+    // 而用户看到的只是「点了发送，没反应」。
+    state.notice,
+    // 这两个是常量，放进来只是为了让「形状」覆盖整份快照 ——
+    // 少一个字段就多一处「变了也不重画」的隐患。
+    state.configPath, state.maxEntries,
   ]);
 }
 
@@ -186,6 +196,12 @@ function renderStatus(state) {
 
 function renderTimeline(state) {
   const host = el('timeline');
+  // ⚠️★ 先记「刚才是不是贴在底部」，**再**清空 —— 清空之后 `scrollHeight` 已经是 0，
+  // 那时候判会永远算出「贴底」，等于没判。
+  //
+  // ⚠️ 只有贴底时才自动滚：无条件滚的话，用户往上翻着读历史时，
+  // 来一条新消息就把他**拽回底部**。那比「不自动滚」烦得多（「我在看旧的，它一直弹走」）。
+  const wasPinned = host.scrollHeight - host.scrollTop - host.clientHeight < 24;
   host.textContent = '';
   const room = state.rooms[state.selected];
   if (!room) {
@@ -201,8 +217,8 @@ function renderTimeline(state) {
     return;
   }
   state.entries.forEach((entry) => host.append(renderEntry(entry)));
-  // 新的内容在末尾 → 自动滚到底（用户刚复制的东西要立刻看见）。
-  host.scrollTop = host.scrollHeight;
+  // 新的内容在末尾 → 贴底时跟到底（用户刚复制的东西要立刻看见）。
+  if (wasPinned) host.scrollTop = host.scrollHeight;
 }
 
 /** 整个界面。⚠️ 「有没有房间」也要画出来 —— 半个状态是骗人的。 */
@@ -226,6 +242,13 @@ function render(state) {
     : '上限还不知道（还没连上）';
 
   el('diag').textContent = `${state.dataDir}\n配置：${state.configPath}`;
+
+  // ⚠️★ 本机窗口里**留多少条**要照实说：不说的话，用户看到列表停在 200 条
+  // 会以为「前面的丢了」（`store.rs` 的 `MAX_ENTRIES_PER_ROOM` 注释里点名了这条要求）。
+  // 这不是历史长度 —— 历史长度是服务端的 `server.history`，两件事别混。
+  el('max-entries').textContent = state.maxEntries
+    ? `本机最多留最近 ${state.maxEntries} 条`
+    : '';
 
   const problems = el('problems');
   if (state.problems.length) {
