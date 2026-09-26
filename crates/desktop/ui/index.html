@@ -252,8 +252,13 @@ body {
     display: flex; align-items: center; justify-content: center;
 }
 .overlay[hidden] { display: none; }
+/* ⚠️★ 面板宽度必须**自适应**：Tauri 窗口的 `minWidth` 是 640（`tauri.conf.json`），
+   而设置窗口设计成 720 —— 写死宽度的话，用户把窗口拖到最窄时**面板比窗口还宽**，
+   右边一排（凭据、↑↓、删除）全被切掉。
+   实测：640 视口下量出 **24 处元素超出容器**。改成 `min(设计宽, 视口 - 32)`。 */
 .panel {
-    width: 560px; max-height: 84vh; overflow-y: auto;
+    width: min(560px, calc(100vw - 32px));
+    max-height: calc(100vh - 40px); overflow-y: auto;
     background: var(--card-bg); border: 1px solid var(--border);
     border-radius: 11px; box-shadow: 0 18px 50px rgba(15, 23, 42, .35);
 }
@@ -286,7 +291,7 @@ body {
    左边一组导航、右边一块内容，分组标题比正文小一号、颜色淡一档。
    ⚠️ 用「分组导航」而不是一长条表单：设置项会越加越多，而一长条表单到十几项
    就没人找得到了（找不到 = 以为没有这个设置）。 */
-.setwin { width: 660px; height: 470px; display: flex; flex-direction: column; }
+.setwin { width: min(720px, calc(100vw - 32px)); height: min(470px, calc(100vh - 40px)); display: flex; flex-direction: column; }
 .setwin .body { flex: 1; display: flex; min-height: 0; }
 .nav { width: 158px; flex: none; background: var(--sidebar-bg); border-right: 1px solid var(--border); padding: 8px 6px; }
 .nav .grp { padding: 10px 9px 4px; font-size: 10.5px; color: var(--sidebar-sub); letter-spacing: .04em; }
@@ -296,7 +301,7 @@ body {
 }
 .nav .it:hover { background: var(--sidebar-hover); }
 .nav .it.on { background: var(--sidebar-active); border: 1px solid var(--sidebar-active-border); }
-.pane { flex: 1; overflow-y: auto; padding: 14px 16px; }
+.pane { flex: 1; overflow-y: auto; overflow-x: auto; padding: 14px 16px; }
 .pane[hidden] { display: none; }
 .pane h3 { margin: 0 0 3px; font-size: 13px; }
 .pane .sub { color: var(--text-2); font-size: 11.5px; margin: 0 0 13px; line-height: 1.55; }
@@ -313,15 +318,32 @@ body {
 .kv .k { color: var(--text-2); }
 .kv .v { word-break: break-all; }
 /* 房间表格：⚠️ 用表格而不是一堆卡片 —— 这是**逐行对齐**的数据
-   （名字/地址/房间/凭据四列），卡片排版下用户没法竖着扫。 */
-table.rooms { width: 100%; border-collapse: collapse; font-size: 12px; }
+   （名字/地址/房间/凭据四列），卡片排版下用户没法竖着扫。
+   ⚠️★ `table-layout: fixed` + 显式列宽**必须**有：默认的自动布局下，
+   四个输入框会各自撑开，整张表**溢出面板** —— 表现是凭据列、↑↓ 和删除按钮
+   被切掉（截图上就是这个样子），而用户找不到「删」按钮只会以为没有这个功能。 */
+table.rooms { width: 100%; border-collapse: collapse; font-size: 12px; table-layout: fixed; }
 table.rooms th {
     text-align: left; font-weight: 500; color: var(--text-2);
-    font-size: 10.5px; padding: 4px 5px; border-bottom: 1px solid var(--border);
+    font-size: 10.5px; padding: 4px 4px; border-bottom: 1px solid var(--border);
 }
-table.rooms td { padding: 4px 5px; border-bottom: 1px solid color-mix(in srgb, var(--border) 55%, transparent); }
-table.rooms input { padding: 3px 6px; font-size: 11.5px; }
-table.rooms .tiny { width: 1%; white-space: nowrap; }
+table.rooms td { padding: 4px 4px; border-bottom: 1px solid color-mix(in srgb, var(--border) 55%, transparent); }
+/* ⚠️★ 输入框**必须** `width: 100%`：`<input>` 自带一个约 20 字符的固有宽度，
+   而 `table-layout: fixed` 只固定**格子**、不管内容 —— 于是输入框撑出格子、
+   把右边那几列（↑↓、删）盖住。实测：截图里 ↑ 整列不见了、↓ 跑到凭据列的位置上。
+   ⚠️ 这种「盖住邻居」**不会**超出面板，所以只查右边缘的检测器看不见，得看图。 */
+table.rooms input { width: 100%; box-sizing: border-box; padding: 3px 6px; font-size: 11.5px; }
+/* 列宽用**百分比**：写死像素的话，窗口一窄就放不下（左侧导航占掉 158px，
+   留给表格的宽度会从 562 掉到 450）。
+   ⚠️★ 三个开关列**必须留够**（各 9.5% ≈ 43px @450）：窄到 7.6% 时方块会被自己的
+   格子裁掉一半 —— 而那两列正是「一眼看清方向」的东西，裁掉等于白做。
+   ⚠️ 这类「被格子裁掉」**不会**超出面板，所以只查右边缘的检测器看不见它，
+   得靠截图看。 */
+table.rooms .c-name { width: 15%; }
+table.rooms .c-server { width: 26%; }
+table.rooms .c-room { width: 13%; }
+table.rooms .c-token { width: 17%; }
+table.rooms .tiny { width: 9.5%; text-align: center; }
 .pill {
     display: inline-block; font-size: 10.5px; line-height: 16px; padding: 0 7px;
     border-radius: 999px; border: 1px solid var(--sidebar-chip-border); color: var(--text-2);
@@ -411,8 +433,13 @@ table.rooms .tiny { width: 1%; white-space: nowrap; }
                     <table class="rooms">
                         <thead>
                             <tr>
-                                <th>名字</th><th>服务端</th><th>房间</th><th>凭据</th>
-                                <th class="tiny">↑</th><th class="tiny">↓</th><th class="tiny"></th>
+                                <th class="c-name">名字</th>
+                                <th class="c-server">服务端</th>
+                                <th class="c-room">房间</th>
+                                <th class="c-token">凭据</th>
+                                <th class="tiny">↑</th>
+                                <th class="tiny">↓</th>
+                                <th class="tiny"></th>
                             </tr>
                         </thead>
                         <tbody id="rooms-body"></tbody>
