@@ -298,6 +298,11 @@ function normalize(value, port) {
       // 单独断言（连同「入参收得下 null」那一半）。
       // ⚠️ 非空时照常比 —— 归一的是空值形态，不是整个字段。
       else if ((k === 'byWeekday' || k === 'chain') && v === null) out[k] = [];
+      // ⚠️ UA 解析是**已知的刻意偏离**：Go 用 uap-core 的正则库、Rust 用关键词匹配，
+      // 而且 Rust 那边还把 `"Other "` 的尾随空格 trim 掉了（`docs/HANDOVER.md` §6 有记）。
+      // ⚠️ 不抹平的话，`/content` 那一族（条目里带整个 `senderDevice`）会把那条**已经记在案**的
+      // 偏离重复报成失败 —— 而失败清单一旦有常驻的假红，整个工具就没人看了。
+      else if (k === 'os' || k === 'browser' || k === 'device') out[k] = '<ua>';
       else out[k] = normalize(v, port);
     }
     return out;

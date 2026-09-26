@@ -714,7 +714,9 @@ pub fn content_entry(entry: &ReceiveHolder) -> serde_json::Value {
             "name": f.name,
             "size": f.size,
             "uuid": f.cache,
-            // ⚠️★ **拼上文件名**，与 `/content/latest` 逐字一致（2026-09-26 与 Go 同一天统一的）。
+            "cache": f.cache,
+            "thumbnail": f.thumbnail,
+            // ⚠️★ **拼上文件名**，与 `/content/latest` 逐字一致（2026-09-26 统一的）。
             //
             // 为什么统一到**这个**形式而不是裸的 `/file/<uuid>`：
             //   ① 它与 `docs/api.md` 记的路由形状（`GET /file/:uuid/:name`）一致；
@@ -727,6 +729,16 @@ pub fn content_entry(entry: &ReceiveHolder) -> serde_json::Value {
             "id": entry.id().to_string(),
             "timestamp": f.base.timestamp,
             "expire": f.expire,
+            // ⚠️★ 下面这几个是 2026-09-26 补的。**目标形状 = WS `receive` 事件的载荷本身**
+            // （SPA 就是按那个形状渲染历史的，逐字段相等 → 它换数据来源时渲染一行都不用改）。
+            // 补之前这里是最小投影，而 SPA **每个**渲染模式都在读 `senderDevice` / `senderIP`
+            // → 换来源会让气泡上的「谁发的」标签和 IP 行**静默消失**（`v-if` 判空，不报错）。
+            // 而且 Worker 一直是富的、`docs/api.md` 的例子里也有这两个字段 ——
+            // **少数派是这里，不是 Worker**。见 `docs/specs/ws-live-only.md` §0.5。
+            "room": f.base.room,
+            "senderIP": f.base.sender_ip,
+            "senderClientID": f.base.sender_client_id,
+            "senderDevice": f.base.sender_device,
             // 空串 = 待办（看板列，见 content_column）
             "column": f.base.column,
         }),
@@ -735,6 +747,11 @@ pub fn content_entry(entry: &ReceiveHolder) -> serde_json::Value {
             "content": t.content,
             "id": entry.id().to_string(),
             "timestamp": t.base.timestamp,
+            // 与文件分支同一批补的字段 —— 见那边的注释（目标形状 = WS 载荷）。
+            "room": t.base.room,
+            "senderIP": t.base.sender_ip,
+            "senderClientID": t.base.sender_client_id,
+            "senderDevice": t.base.sender_device,
             "column": t.base.column,
         }),
     }
