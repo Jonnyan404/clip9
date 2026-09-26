@@ -26,6 +26,7 @@ pub mod auth_gate;
 pub mod auth_token;
 pub mod automation;
 pub mod automation_page;
+pub mod cors;
 pub mod error;
 pub mod files;
 pub mod handlers;
@@ -44,7 +45,6 @@ use std::sync::Arc;
 
 use axum::Router;
 use axum::routing::{get, post};
-use tower_http::cors::CorsLayer;
 
 pub use state::AppState;
 
@@ -222,9 +222,13 @@ pub fn router(state: Arc<AppState>) -> Router {
         // ⚠️ 它**不做任何鉴权** —— 能不能建/改任务全由 `/tasks` 决定（页面里也是这么写的）。
         .route("/automation", get(automation_page::page).fallback(only_get))
         // Go 的 CORS 是逐个端点手写的（`corsMiddleware` / `authMiddleware`），
-        // 效果等价于「任意来源 + 常见方法/头」。这里用一层统一的代替 ——
-        // 差别只是几个 Go 没挂 CORS 的端点上多几个头，没有客户端依赖「少了那些头」。
-        .layer(CorsLayer::permissive())
+        // 这里用一层统一的代替 —— 差别只是几个 Go 没挂 CORS 的端点上多几个头，
+        // 没有客户端依赖「少了那些头」。
+        //
+        // ⚠️★ **原来是 `CorsLayer::permissive()`（= `Allow-Origin: *`），2026-09-26 收窄了**：
+        // `*` 在本机服务端上是**一个真的洞**（用户访问的任意网站都能把开放房间的内容读走）。
+        // 放行谁、为什么是那三个，以及 `file://` 的 `null` 为什么也不行，全在 `cors` 模块的文档里。
+        .layer(cors::cors())
         .with_state(state);
 
     // ── 前端静态资源 ────────────────────────────────────────────────────
