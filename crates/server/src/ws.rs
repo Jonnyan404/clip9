@@ -111,11 +111,6 @@ pub async fn push(
         None => ws,
     };
 
-    // ⚠️ `?history=0` → 握手时不推历史（见 handle_socket 里那一段的注释）。
-    // **只认字面量 `0`**：`?history=1`、`?history=`、不传，一律按「推」处理 ——
-    // 默认行为不能变，那是向后兼容的全部内容。
-    let skip_history = query.get("history").map(String::as_str) == Some("0");
-
     upgrade.on_upgrade(move |socket| {
         handle_socket(
             state,
@@ -128,7 +123,6 @@ pub async fn push(
                 device_name,
             },
             auth_needed,
-            skip_history,
         )
     })
 }
@@ -195,7 +189,6 @@ async fn handle_socket(
     room: String,
     client: ClientInfo,
     auth_needed: bool,
-    skip_history: bool,
 ) {
     let conn_id = state.next_conn_id();
     let device_id = state.device_id_for(&client.remote, &client.user_agent);
@@ -219,46 +212,38 @@ async fn handle_socket(
     // ② 告诉房间里**其他人**「我来了」（跳过自己 —— 自己的信息前端已经知道了）
     state.broadcast_except("connect", &meta, &room, Some(conn_id));
 
-    // ③ 历史消息，**旧的在前**（客户端是一条条 append 的）
+    // ③ config —— ⚠️★ 前端的 app.config 只认这一条，见文件头注释
     //
-    // ⚠️★ **握手顺序是契约，不是碰巧**（`docs/specs/ws-live-only.md` §2.2）：
-    //   ① connect × N → ② connect 广播 → ③ receive × N（历史）→ ④ config → 之后才是实时。
-    // ⚠️ **`config` 必须排在历史之后、实时之前** —— 新客户端在收到 `config` 之前
-    // **一条都不该写剪贴板**，这是它的第二道保险（万一 `?history=0` 没生效）。
-    // 别为了首屏快一点把 `config` 提前发。
+    // ⚠️★ **握手不再推历史了**（Jonny 2026-09-26：「没有老客户端，不用考虑老客户端」）。
+    // 所以顺序是：① connect × N → ② connect 广播 → ③ config → 之后才是实时。
+    // 历史改由客户端自己去 `GET /content` 拿；原来那个 `?history=0` 开关也一并删掉
+    // （默认就是不推，它与默认同义，留着只会是一处会漂的冗余）。
     //
-    // ⚠️ `?history=0` → **这一段整段跳过**。默认仍然推 —— 那是向后兼容的关键
-    // （已发布的 PWA / 老桌面端行为一个字都不变）。**别顺手把默认值改成「不推」**：
-    // 那会让所有已发布客户端**静默地只看得到空房间**。
-    let limit = if state.config.server.history > 0 {
-        state.config.server.history as usize
-    } else {
-        usize::MAX
-    };
-    let recent = state.store.recent_asc(&room, limit).unwrap_or_default();
-
+    // ⚠️ **`config` 必须排在实时之前** —— 客户端在拿到 `config.latestId` 之前
+    // **一条都不该写剪贴板**（它要用那个 id 对齐「HTTP 取回的历史」与「WS 推来的实时」）。
+    // 别为了首屏快一点把 `config` 挪到后面去。
+    //
     // `latestId`：连接时刻该房间的**最大消息 id**（没有消息时 `0`）。
     //
-    // ⚠️ 为什么 `history=0` 之后**还要**它：`history=0` 只对**新客户端**生效，
-    // 而 `latestId` 让客户端**无论服务端推不推历史都能精确判断**
-    // （`id <= latestId` → 历史，只认领；`id > latestId` → 实时，可应用）。
+    // ⚠️★ **它现在的职责**：客户端是**自己去 `GET /content` 拿历史**的，而「HTTP 取历史」
+    // 与「WS 收实时」之间有个**时序窗口** —— 请求返回之前可能已经推来几条实时消息。
+    // 有了 `latestId`，客户端才能对齐那条边界：`id <= latestId` 只当历史认领（**不写剪贴板**），
+    // `id > latestId` 才是实时。少了它，边界上的消息会被处理两次（或把历史灌进剪贴板）。
+    // 它**兼作能力探测信号**：老后端（没有 `/content`、也就没这个字段）不下发它，
+    // 新客户端据此退回「靠 WS 推历史」的老路（`docs/specs/ws-live-only.md` §0.4）。
     //
     // ⚠️★ **别用 `store.latest()`**：那个按 `(timestamp DESC, id DESC)` 取最新，
     // 而 `POST /text?id=` **原地改正文**会把 timestamp 往前刷、id 不变 ——
     // 于是它可能给出一个**偏小**的值，而偏小是**不安全**的方向
     // （历史消息会被当成实时、写进剪贴板）。房间本来就按 `server.history` 裁剪过，
     // 所以扫一遍是百来行，便宜，那就扫。
+    let limit = if state.config.server.history > 0 {
+        state.config.server.history as usize
+    } else {
+        usize::MAX
+    };
+    let recent = state.store.recent_asc(&room, limit).unwrap_or_default();
     let latest_id = recent.iter().map(ReceiveHolder::id).max().unwrap_or(0);
-
-    if !skip_history {
-        for entry in &recent {
-            if send_json(&mut sink, "receive", entry).await.is_err() {
-                return cleanup(&state, &room, conn_id);
-            }
-        }
-    }
-
-    // ④ config —— ⚠️★ 前端的 app.config 只认这一条，见文件头注释
     let config_payload = json!({
         "version": env!("CARGO_PKG_VERSION"),
         "server": {
@@ -273,7 +258,8 @@ async fn handle_socket(
             "limit": state.config.file.limit,
         },
         "auth": auth_needed,
-        // 连接时刻该房间的**最大消息 id**（没有消息时 0）—— 客户端拿它区分历史与实时。
+        // 连接时刻该房间的**最大消息 id**（没有消息时 0）—— 客户端拿它对齐
+        // 「HTTP 取回的历史」与「WS 推来的实时」的边界（理由见上面那一段注释）。
         //
         // ⚠️★ 它**必须在 WebSocket 握手载荷里**，**不是** `/server` 的 HTTP 响应 ——
         // `config` 是前端 `app.config` 的**唯一来源**。加错地方会得到一个永远

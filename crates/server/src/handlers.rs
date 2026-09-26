@@ -763,7 +763,7 @@ pub fn content_entry(entry: &ReceiveHolder) -> serde_json::Value {
 /// `GET /content?room=&before=&limit=` —— **历史分页**。
 ///
 /// 为什么要有它：历史以前只能从 WS 握手推来，于是「往回翻」做不到、而且每次连接都要把
-/// 整个房间的历史推一遍。有了它，WS 可以只推实时（`?history=0`），历史走这个正经的查询接口。
+/// 整个房间的历史推一遍。现在 WS 只推实时（握手不再推历史），历史走这个正经的查询接口。
 /// 完整规格见 `docs/specs/ws-live-only.md`。
 ///
 /// 契约要点（每条都有理由，改之前先读那份 spec）：

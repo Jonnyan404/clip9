@@ -1033,7 +1033,7 @@ console.log('\n=== 文件过期：fileExpire 的三档 ===');
   }
 }
 
-// ── 历史分页（`GET /content`）与 WS 的 `history=0` / `latestId` ─────────
+// ── 历史分页（`GET /content`）与 WS 握手（不推历史）/ `latestId` ───────
 //
 // `docs/specs/ws-live-only.md` 的 W0（Go）+ W1（Rust）。两边都实现了才比得了 ——
 // 这也是为什么这一段是在 W1 之后才加的。
@@ -1100,38 +1100,35 @@ console.log('\n=== 历史分页 GET /content ===');
     console.log(`       Rust: ${rPage.status} ${rv}`);
   }
 
-  console.log('\n=== WS：history=0 与 config.latestId ===');
+  console.log('\n=== WS：握手不推历史，与 config.latestId ===');
   {
+    // ⚠️★ 握手**不再推历史**（Jonny 2026-09-26：「没有老客户端，不用考虑老客户端」）——
+    // 所以**不带任何参数**连上也一条 `receive` 都不该有。原来那个 `?history=0` 开关已经删掉，
+    // 这里不再测「开关生效」，而是直接钉住「默认就是不推」。
     const [g, r] = await Promise.all([
       wsCollect(GO_PORT, `/push?room=${room}`, { ms: 900 }),
       wsCollect(RS_PORT, `/push?room=${room}`, { ms: 900 }),
     ]);
-    compareEvents('不带 history → **默认仍然推历史**（老客户端行为不变）', g, r);
-
-    const [g0, r0] = await Promise.all([
-      wsCollect(GO_PORT, `/push?room=${room}&history=0`, { ms: 900 }),
-      wsCollect(RS_PORT, `/push?room=${room}&history=0`, { ms: 900 }),
-    ]);
-    compareEvents('history=0 → 不推历史', g0, r0);
+    compareEvents('握手（不带参数）→ 只推实时', g, r);
 
     // ⚠️ 两边一致还不够 —— 两边都推了历史也会「一致」。这条钉住**真的没有 receive**。
-    const gRecv = g0.messages.filter((m) => m.event === 'receive').length;
-    const rRecv = r0.messages.filter((m) => m.event === 'receive').length;
+    const gRecv = g.messages.filter((m) => m.event === 'receive').length;
+    const rRecv = r.messages.filter((m) => m.event === 'receive').length;
     if (gRecv === 0 && rRecv === 0) {
       pass++;
-      console.log('  ok   history=0 时一条 receive 都没有');
+      console.log('  ok   握手一条 receive 都没有（历史走 HTTP）');
     } else {
       fail++;
-      failures.push(`history=0 没生效\n  Go=${gRecv} 条 receive，Rust=${rRecv} 条`);
-      console.log(`  FAIL history=0 没生效（Go=${gRecv}，Rust=${rRecv}）`);
+      failures.push(`握手还在推历史\n  Go=${gRecv} 条 receive，Rust=${rRecv} 条`);
+      console.log(`  FAIL 握手还在推历史（Go=${gRecv}，Rust=${rRecv}）`);
     }
 
     // `config.latestId`：两边都要有，且等于**该房间的最大 id**，而且**不在** `/server` 里。
     //
     // ⚠️ 期望值**从响应里推导**，不写死 —— 房间的最大 id 取决于前面所有用例发过多少条，
     // 写死一个数字会在别的用例变动时莫名其妙地红（第一次就是这么错的）。
-    const gLatest = g0.messages.find((m) => m.event === 'config')?.data?.latestId;
-    const rLatest = r0.messages.find((m) => m.event === 'config')?.data?.latestId;
+    const gLatest = g.messages.find((m) => m.event === 'config')?.data?.latestId;
+    const rLatest = r.messages.find((m) => m.event === 'config')?.data?.latestId;
     const all = await hit(RS_PORT, 'GET', `/content?room=${room}&limit=999999`);
     const expectedLatest = Number(all.parsed?.messages?.at(-1)?.id);
     const notInServer = await Promise.all([
