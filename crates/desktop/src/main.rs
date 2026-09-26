@@ -125,6 +125,8 @@ fn main() {
         }
     };
 
+    // ⚠️ 在 `config` 被 `Store` 拿走之前读出来：「运行方式」决定下面要不要起自带服务端。
+    let local_server = config.enable_local_server;
     let store = Arc::new(Store::new(
         config,
         config_path,
@@ -161,7 +163,10 @@ fn main() {
                 server_process::data_dir_under(&args.data_dir),
                 server_process::DEFAULT_PORT,
             ));
-            if let Err(reason) = process.start() {
+            // ⚠️★ 「运行方式」是**用户选的**（界面稿那一页的两选一）：选了
+            // 「连别人的服务端（本机不起）」就别起它。⚠️ 句柄照样留着 ——
+            // 那一档随时可以切回来（`commands::set_local_server`）。
+            if local_server && let Err(reason) = process.start() {
                 eprintln!("{reason}");
             }
             Some(process)
@@ -218,8 +223,10 @@ fn main() {
             commands::settings_view,
             commands::server_config,
             commands::server_config_save,
-            commands::server_running,
+            commands::server_status,
             commands::server_log,
+            commands::set_local_server,
+            commands::server_stop,
             commands::server_restart,
         ])
         // ⚠️ 托盘在 `setup` 里建：那时 `app` 已经能建菜单了，而**晚于** `build` 就来不及

@@ -501,8 +501,33 @@ body {
 /* ⚠️ 稿 2 的 .cfg .bd 写死 max-height:470px；窗口变矮（小屏）时它会顶出去。
    改成「跟着窗口伸缩」，并让它在窗口内滚动。 */
 .overlay .win.cfg .bd { flex: 1; min-height: 0; max-height: 470px; overflow-y: auto; }
-/* 设置页里的本地服务端卡片：稿 2 给它 470px 宽，而那一页只有 ~450px 可用 → 会溢出。 */
-.pane .srv { width: auto; }
+/* 设置页里的本地服务端卡片。
+   ⚠️ 稿 2 给它 470px 宽，而那一页只有 ~450px 可用 → 会溢出，所以宽度跟着容器走。
+   ⚠️ 稿子里那张卡是 `class="win srv"`（`.win` 负责边框），app 里只挂 `.srv` ——
+   所以边框/圆角/底色要在这里补上（原来补在标记的 `style=` 里，挪进来更好改）。 */
+.pane .srv {
+    width: auto;
+    border: 1px solid var(--border); border-radius: 9px; background: var(--bg);
+}
+/* ⚠️ 这几格会装**很长的路径**（数据目录）。不给它们换行权的话，
+   `.kv` 那个 `84px 1fr` 的网格会被撑宽、整个面板跟着溢出去 ——
+   而症状是「设置窗口里那一页右边被切了」，不报错。 */
+.srv .kv .v { overflow-wrap: anywhere; }
+
+/* ⚠️★ 这一页比设置窗口**高 125px**，所以要压一点行距。
+   为什么是「压」而不是「把设置窗口加高」：稿 2 把设置窗口画成 640×470，
+   而那张「本地服务端」卡片是**单独摆出来的**（`.win.srv`，不在这扇窗里）——
+   两者放一起就是装不下。这和 `.nav` 那次是**同一类**：稿子的窗口装不下自己的内容。
+   那次的做法是加滚动条（`shell.css` 里那条注释），这次两样都做：
+   加滚动（`.pane` 本来就有）+ **把间距压到刚好让两张「运行方式」卡片都露出来**。
+   ⚠️ 压的每一处都只动**间距**，不动字号、不动结构 —— 稿子的样子还是那个样子。
+   ⚠️ 全部限定在 `.srv` 里：`.divider` / `.kv` 在别的页上也在用。 */
+.srv .hd { padding: 10px 14px; }
+.srv .bd { padding: 11px 14px; }
+.srv .kv { gap: 4px 10px; margin-bottom: 10px; }
+.srv .divider { margin: 10px 0; }
+.srv .mode { padding: 8px 12px; margin-bottom: 6px; }
+.srv .mode .d { margin-top: 2px; }
 /* ⚠️★ 稿 2 的 .nav **没有滚动条，而它自己装不下**：4 个分组标题 + 10 个条目
    在 470px 高的窗口里会多出约一行 —— 截稿时最下面那两项（日志 / 关于）**被切掉了**
    （在稿子自己的渲染里就能看到）。这是稿子的一处疏漏，抄它就会丢两个入口，
@@ -841,22 +866,49 @@ table.ra td input[type='checkbox'] { margin: 0; }
                 </div>
             </div>
 
+            <!-- ⚠️★ 这一页**逐行对着界面稿 2 的 `.win.srv`**（那张「本地服务端」卡片）：
+                 `.hd`（状态灯 + 一句话）/ `.kv` 五行（版本 / 监听 / 数据目录 / 房间 / 条目 /
+                 运行时长）/ 按钮行（重启 · 停止 · 打开网页版）/ `.divider` / 「运行方式」两选一。
+                 ⚠️ 五行**都有真实来源**，没有一行是编的（见 `commands::ServerStatusView` 那张表）。
+                 ⚠️ 稿子里 `.mode` 那句「端口与数据目录在「服务端配置」里改」现在是**真的**了 ——
+                 2026-09-26 之前不是：客户端起自带服务端时传的是写死的 `-port`，
+                 而服务端那边**命令行覆盖配置** → 用户改哪个端口都白改
+                 （Jonny：「怎么我改任何一个端口，都提示端口被占用？？？」）。
+                 现在端口**从这份配置读**（`server_process::port`），改完点「保存并重启」就生效。 -->
             <div class="pane" id="pane-server" hidden>
                 <h3>本地服务端</h3>
-                <p class="sub">桌面端<b>自带</b>服务端（这是它装完就能用的原因）。这里能看它、能重启它。</p>
-                <div class="srv" style="border:1px solid var(--border);border-radius:9px;background:var(--bg)">
+                <!-- ⚠️ 别的页在 `<h3>` 下面都有一句 `.sub`，这一页**故意没有**：
+                     稿子那张卡本身没有它（`.hd` + 两处 `.d` 已经说完了），
+                     而这一页比窗口高 —— 少两行正好让第二张「运行方式」卡片露出来。
+                     ⚠️ 「对齐稿子」在这里同时是「删掉一句我自己加的说明」。 -->
+                <div class="srv">
                     <div class="hd"><span class="dot" id="srv-dot"></span> <span id="srv-state">—</span></div>
                     <div class="bd">
                         <div class="kv">
+                            <span class="k">版本</span><span class="v" id="srv-version">—</span>
+                            <span class="k">监听</span><span class="v" id="srv-listen">—</span>
                             <span class="k">数据目录</span><span class="v" id="srv-data">—</span>
+                            <span class="k">房间 / 条目</span><span class="v" id="srv-rooms">—</span>
+                            <span class="k">运行时长</span><span class="v" id="srv-uptime">—</span>
                         </div>
-                        <div style="display:flex;gap:8px">
+                        <div style="display:flex;gap:8px;margin-bottom:14px;">
                             <button class="btn" id="srv-restart">重启</button>
+                            <button class="btn danger" id="srv-stop">停止</button>
+                            <div style="flex:1"></div>
                             <button class="btn" id="srv-open">🌐 打开网页版</button>
+                        </div>
+                        <div class="divider"></div>
+                        <div style="font-size:11.5px;color:var(--text-2);margin-bottom:8px;">运行方式</div>
+                        <div class="mode" id="srv-mode-local">
+                            <div class="t"><span class="sq" style="width:14px;height:14px;" id="srv-sq-local"></span>随客户端启动（推荐）</div>
+                            <div class="d">客户端退出时一并停止。数据目录在「服务端配置」里改。</div>
+                        </div>
+                        <div class="mode" id="srv-mode-remote">
+                            <div class="t"><span class="sq" style="width:14px;height:14px;" id="srv-sq-remote"></span>连别人的服务端（本机不起）</div>
+                            <div class="d">只做客户端。适合已有服务器 / Docker / OpenWrt 的场景。</div>
                         </div>
                     </div>
                 </div>
-                <p class="sub" style="margin:11px 0 0">⚠️ 「重启」会先停再起 —— 正连着它的设备会断开一次，它们会自己重连。⚠️ 它<b>只停这个客户端自己起的那个</b>。</p>
             </div>
 
             <div class="pane" id="pane-log" hidden>

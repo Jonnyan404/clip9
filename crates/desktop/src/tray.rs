@@ -28,6 +28,7 @@ use tauri::tray::TrayIconBuilder;
 use tauri::{AppHandle, Manager, Wry};
 
 use crate::runtime::Runtime;
+use crate::server_process::ServerProcess;
 use crate::store::Store;
 
 /// 一个菜单项对应的动作。
@@ -137,7 +138,10 @@ pub fn install(
             };
             match action {
                 Action::Open => show_main_window(app),
-                Action::Quit => app.exit(0),
+                Action::Quit => {
+                    stop_bundled_server(app);
+                    app.exit(0);
+                }
                 Action::SelectRoom(index) => {
                     if let Err(reason) = store_for_menu.select(index) {
                         eprintln!("托盘：切房间失败：{reason}");
@@ -163,6 +167,30 @@ pub fn install(
         .build(app)?;
 
     Ok(())
+}
+
+/// 退出前把**自带的服务端**停掉。
+///
+/// ⚠️★ 它是个**子进程**，不会跟着我们死。原来只靠 `main.rs` 的
+/// `RunEvent::ExitRequested` 那一条路径 —— 而托盘这个「退出」走的是 `app.exit(0)`，
+/// 那是「立刻退出」，**不一定**会派发那个事件。漏掉的话会留下一个**孤儿进程**：
+/// 它占着端口，而它「不是这个客户端起的」（句柄里的 `child` 是 `None`），
+/// 于是**下次启动也停不掉** —— 用户看到的是「**改任何端口都报端口被占用**」
+///（Jonny 2026-09-26 撞上的就是它，见 `server_process::port` 的文档）。
+///
+/// ⚠️ `stop()` 只停**我们自己起的那个**：用户手动跑的服务端不动。
+fn stop_bundled_server(app: &AppHandle<Wry>) {
+    let Some(server) = app.try_state::<Option<Arc<ServerProcess>>>() else {
+        return;
+    };
+    let Some(server) = server.as_ref() else {
+        return;
+    };
+    if let Err(reason) = server.stop() {
+        // ⚠️ 失败要**出声**：留下的会是一个占着端口的孤儿，而用户只会在
+        // 下次「起不来」时才发现 —— 那时已经离这里很远了。
+        eprintln!("托盘：退出时停本地服务端失败：{reason}");
+    }
 }
 
 /// 把主窗口叫出来并聚焦。
