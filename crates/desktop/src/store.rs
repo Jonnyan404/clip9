@@ -625,8 +625,16 @@ pub fn load_config(
         None => {
             // ⚠️ 用结构体更新语法而不是「先 default 再逐字段赋值」—— 后者会触发
             // `clippy::field_reassign_with_default`，而门禁是 `-D warnings`。
+            // ⚠️★ **默认房间要开「收进剪贴板」**（`enable_download`）。
+            // 不开的话客户端**一个下行连接都不会建**（`download_channel()` 返回 None）——
+            // 用户看到的就是「默认房间一直没连上」，而实际上它压根没去连。
+            // ⚠️ 「装完不该自动接管剪贴板」那个顾虑由**水印**兜着：历史只认领、不写剪贴板，
+            // 所以开着它也不会把房间里的旧内容灌进来（只有实时来的才会写）。
             let config = ClientConfig {
-                channels: vec![clip9_client::Channel::new("默认", default_server)],
+                channels: vec![clip9_client::Channel {
+                    enable_download: true,
+                    ..clip9_client::Channel::new("默认", default_server)
+                }],
                 ..ClientConfig::default()
             };
             save_config(config_path, &config)?;
@@ -1003,6 +1011,12 @@ mod tests {
         assert!(path.exists(), "第一次运行就要落盘");
         assert_eq!(first.channels.len(), 1);
         assert_eq!(first.channels[0].room, "default");
+        // ⚠️★ 首次运行的默认房间**必须开「收进剪贴板」**：不开的话客户端
+        // **一个下行连接都不会建**，用户看到的就是「默认房间一直没连上」。
+        assert!(
+            first.channels[0].enable_download,
+            "默认房间要能收，否则装完就是「一直没连上」"
+        );
         assert!(!first.client_id.is_empty());
 
         let second = load_config(&path, dir.path(), "http://127.0.0.1:9501").unwrap();
