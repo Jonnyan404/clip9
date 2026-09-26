@@ -11,6 +11,9 @@ members = [
     "crates/store",
     "crates/server",
     "crates/client",
+    # ⚠️ 桌面端（Tauri 壳）—— **现在只是 W0 的最小实验**，不是成品。
+    # 见 `docs/specs/desktop-client.md` §0.1。第一次编译要几分钟（几百个 crate）。
+    "crates/desktop",
 ]
 
 [workspace.package]

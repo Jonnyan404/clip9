@@ -1,0 +1,11 @@
+[package]
+name = "clip9-desktop"
+version.workspace = true
+edition.workspace = true
+description = "clip9 桌面客户端（Tauri 壳）—— ⚠️ 现在只是 W0 的最小实验，不是成品"
+
+[build-dependencies]
+tauri-build = { version = "2.0", features = [] }
+
+[dependencies]
+tauri = { version = "2.11", features = [] }
