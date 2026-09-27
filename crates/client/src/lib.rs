@@ -74,6 +74,9 @@ pub use receiver::{
 pub use sink::ClipboardSink;
 pub use source::ClipboardSource;
 pub use uploader::{
-    ServerLimits, UploadOutcome, UploadPayload, UploadReport, upload_event, upload_explicit,
+    ServerLimits, SkipReason, UploadOutcome, UploadPayload, UploadReport, upload_event,
+    upload_explicit,
 };
-pub use watcher::{SystemClipboard, WatchConfig, WatchHandle, shared_debouncer, spawn_watcher};
+pub use watcher::{
+    SystemClipboard, WatchConfig, WatchHandle, prime_from_current, shared_debouncer, spawn_watcher,
+};

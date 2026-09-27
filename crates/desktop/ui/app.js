@@ -137,8 +137,13 @@ for (const id of ['settings-overlay', 'server-overlay']) {
  * ⚠️★ **自己设的提示要自己收**：`render` 里那条清理走的是「壳里有没有 notice」
  *（`invoke('clear_notice')`），而这里设的那些**壳里没有** —— 于是它们只会在
  * 「下一次形状变化」时才被抹掉，而那可能是几分钟后。
- * 15 秒：够看清、够去点一下，又不至于一直挂着（「它到底还有效吗」用户判断不了，
- * 这与 `render` 里那条注释是同一个理由）。
+ *
+ * ⚠️★ **3 秒**（Jonny 2026-09-27：「提示停留时间过长了，3s 就挺好的」）。
+ * 原来写的是 15 秒，理由写的是「够看清、够去点一下」—— 那是**替用户做的取舍，而做错了**：
+ * 一条只说了「刚才发生了什么」的提示挂十几秒，用户会开始怀疑它是不是当前状态
+ *（「它到底还有效吗」），而且切个房间它还杵在那儿 —— 看起来就像**别的房间**的提示
+ *（Jonny 同时报的「提示串房间了」有一半是这么来的：不是内容串了，是**它活得比
+ * 你看那个房间的时间还长**）。真要留住的信息该进时间线 / 状态栏，不是靠一条提示挂久一点。
  *
  * ⚠️★★ 而且**壳里那条也归这里管**（2026-09-27 修）。原来 `render` 自己把壳里那条
  * 写进 DOM，然后 `clear_notice` —— 清掉会**前进版本号**，于是**下一拍**（≤700ms）
@@ -156,13 +161,20 @@ let noticeTimer = null;
  */
 let noticeVisible = false;
 
-const NOTICE_MS = 15000;
+const NOTICE_MS = 3000;
 
-function showNotice(kind, text) {
+/** 显示一条提示。`room` = 这件事**是关于哪个房间**的（没有就是与房间无关的）。
+ *
+ * ⚠️★ 房间名要**显示出来**（`默认：已发到 1 个房间`）：提示是全局一格、却长在
+ * 「当前选中房间」的标题下面（`#notice` 在 `.main` 里）—— 不写房间名的话，
+ * 一条为别的房间产生的提示会被读成「这个房间出的事」（Jonny 报的「提示串房间了」）。
+ * ⚠️ 房间名是**用户配置里的自由文本**，所以整句仍然只走 `textContent`（绝不进 innerHTML）。
+ */
+function showNotice(kind, text, room) {
   const notice = el('notice');
   notice.hidden = false;
   notice.className = `notice ${kind}`;
-  notice.textContent = text;
+  notice.textContent = room ? `${room}：${text}` : text;
   noticeVisible = true;
   clearTimeout(noticeTimer);
   noticeTimer = setTimeout(() => {
@@ -573,7 +585,9 @@ function render(state) {
   // 原来这里直接写进 DOM，而 `clear_notice` 会让**下一拍**的重绘把它抹掉，
   // 于是「已发送 3 个文件」只闪一下（2026-09-27 修的）。
   if (state.notice) {
-    showNotice(state.notice.kind, state.notice.text);
+    // ⚠️ `state.notice.room` 是**可选**的（壳里那些与房间无关的提示没有它）。
+    // 有就显示成 `房间名：文字` —— 见 `showNotice` 的注释。
+    showNotice(state.notice.kind, state.notice.text, state.notice.room);
     // ⚠️ 顺手把壳里那条清掉：否则一条三分钟前的错误会一直重播。
     // 清掉会前进版本号 → 下一拍还会重绘一次，而那一拍会走到下面的 `else` ——
     // 那时提示**正在显示**，所以用 `noticeVisible` 挡住，别把它抹掉。
