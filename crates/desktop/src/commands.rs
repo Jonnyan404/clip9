@@ -557,11 +557,16 @@ pub fn copy_to_clipboard(runtime: State<'_, Arc<Runtime>>, text: String) {
 ///
 /// ⚠️★ 存在的理由：快照里只有**截断预览**（2026-09-27 拍板「快照只带截断预览、正文按需取」），
 /// 所以「展开一条长文」必须回来取一次。⚠️ 只认**当前选中**那个房间（id 跨房间不唯一）。
+///
+/// ⚠️ 报错文案要提**最可能的那两个原因**：换了房间、或者它被本机那道**字节界**挤出去了
+/// （`store::MAX_BYTES_PER_ROOM`，2026-09-27 加的）—— 后者是**长文自己最容易被挤掉**，
+/// 而「长文被挤掉之后点展开」正是这条命令最容易遇到的场景。只说「不在列表里」，
+/// 用户会以为是我们坏了。
 #[tauri::command]
 pub fn entry_text(store: State<'_, Arc<Store>>, id: i32) -> Result<String, String> {
-    store
-        .entry_text(id)
-        .ok_or_else(|| "这条已经不在列表里了。".to_owned())
+    store.entry_text(id).ok_or_else(|| {
+        "这条已经不在本机列表里了（换过房间，或者它被本机保留上限挤掉了）。".to_owned()
+    })
 }
 
 /// 「复制内容」（时间线右键菜单）—— ⚠️ 走壳，**不让页面把自己那份传回来**。

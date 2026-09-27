@@ -517,10 +517,24 @@ function render(state) {
   // 而它们都能在「设置」里查到（诊断那一页专门放这些）。
   el('room-meta').textContent = room ? `· ${room.count} 条` : '';
 
-  // ⚠️★ 本机窗口里**留多少条**要照实说：不说的话，用户看到列表停在 200 条
-  // 会以为「前面的丢了」（`store.rs` 的 `MAX_ENTRIES_PER_ROOM` 注释里点名了这条要求）。
+  // ⚠️★ 本机窗口里**留多少**要照实说，而且是**两道界**：
+  // ① 条数（`MAX_ENTRIES_PER_ROOM`）；② 正文总字节（`MAX_BYTES_PER_ROOM`，2026-09-27 加的）。
+  // 只说条数的话，用户看到列表停在 37 条只会以为「消息丢了」—— 而真凶是字节那道界
+  // （服务端的 `text.limit` 被调大之后，200 条那一格永远填不满）。
   // 这不是历史长度 —— 历史长度是服务端的 `server.history`，两件事别混。
-  el('dg-max').textContent = state.maxEntries ? `最多留最近 ${state.maxEntries} 条` : '—';
+  // ⚠️ 它原来在**侧栏底部**（`#max-entries`，跟着那行 ↑↓ 说明一起），2026-09-26 那行说明
+  // 被 Jonny 要求删掉，于是这一句搬到了「设置 → 关于」那一页（`#dg-max`）——
+  // 搬而不是删：这一句是「列表为什么停在这儿」的唯一解释。
+  // ⚠️ 在 `render` 里写它（而不是 `openSettings` 里）是有意的：这两个上限在
+  // **快照**里、不在 `settings_view` 里，而这一页随时可能开着 —— 在 `render` 里写，
+  // 它就不会是一个「打开设置那一刻的旧值」。
+  // ⚠️ 值里**不重复**「本机」：左边那一格的标签已经写着「本机保留」了。
+  if (state.maxEntries) {
+    const bytes = state.maxBytes ? ` / 正文 ${sizeLabel(state.maxBytes)}` : '';
+    el('dg-max').textContent = `最多留最近 ${state.maxEntries} 条${bytes}`;
+  } else {
+    el('dg-max').textContent = '—';
+  }
 
   // ⚠️★ 长文的**代价要看得见**：`dg-max` 说的是**条数**那道界，而真正的内存是
   // 「条数 × 每条多大」，后者由服务端的 `text.limit` 决定。不显示的话，
