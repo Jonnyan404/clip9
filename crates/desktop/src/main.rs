@@ -183,6 +183,21 @@ fn main() {
     runtime.start();
 
     let app = tauri::Builder::default()
+        // ⚠️★ **单实例必须是第一个注册的插件**（官方文档明写：它要在别的插件有机会插手之前
+        // 处理掉「已经有一个实例在跑」）。
+        //
+        // ⚠️ 没有它的后果**不是**「多开一个窗口」那么轻：`Debouncer` 是**进程内**的
+        //（`watcher.rs` 那条「谁记得上一次只能有一处」说的是同一个进程里的 watcher 与 receiver），
+        // 所以两个实例会**互相把对方写进剪贴板的内容当成一次新复制**、再传回房间 —— 来回弹。
+        // 而「开机自启 + 用户手点图标」就是造出两个实例的常见路径。
+        // 完整推导：`docs/specs/desktop-client.md` §1.1 缺口 A。
+        //
+        // ⚠️ 第二个实例被挡掉时，**把已经在跑的那个窗口叫到前面来** —— 复用 `tray::show_main_window`
+        // （那条路本来就是「把主窗口叫出来并聚焦」，多写一份就是第二份定义）。
+        // 不做这一步的话，用户点图标「什么都没发生」，会以为程序没起来（然后再点一次）。
+        .plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
+            tray::show_main_window(app);
+        }))
         // ⚠️ 开机自启走官方插件（跨平台那三套自己写会各漂各的）。
         .plugin(tauri_plugin_autostart::init(
             tauri_plugin_autostart::MacosLauncher::LaunchAgent,

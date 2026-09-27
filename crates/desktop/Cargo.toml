@@ -11,6 +11,14 @@ tauri-build = { version = "2.0", features = [] }
 # ⚠️ `tray-icon` + `image-png` 是**托盘菜单**要的（§7 第 5 条）：
 # 前者的图标在 macOS 上要从 PNG 解出来，所以两者得一起开。
 tauri = { version = "2.11", features = ["tray-icon", "image-png"] }
+# ⚠️★ 单实例。**必须在 `main.rs` 里第一个注册**（官方文档明写）—— 它要在别的插件
+# 有机会插手之前处理掉「已经有一个实例在跑」。
+# ⚠️ 没有它的后果**不是**「多开一个窗口」那么轻：`Debouncer` 是**进程内**的，
+# 于是两个实例会互相把对方写进剪贴板的内容当成一次新复制、再传回房间（来回弹）。
+# 完整推导见 `docs/specs/desktop-client.md` §1.1 缺口 A。
+# ⚠️ 它**不需要** capabilities 里加权限：我们只在 Rust 侧用它，页面碰不到它的 JS API
+#（与 `autostart` 同理 —— 那里也只注册、不在页面上调用）。
+tauri-plugin-single-instance = "2"
 # ⚠️ 开机自启**跨平台**（macOS LaunchAgent / Linux `~/.config/autostart` / Windows 注册表）。
 # 自己写要三套，而这三套的细节都会变 —— 这里用一个官方插件是划算的
 # （对比：`open_web` 那条**没有**引插件，因为系统自带的 `open`/`start`/`xdg-open`

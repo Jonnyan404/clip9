@@ -197,9 +197,14 @@ fn stop_bundled_server(app: &AppHandle<Wry>) {
 ///
 /// ⚠️ 关掉窗口之后，托盘是**唯一**的回头路 —— 所以这里失败要出声，
 /// 否则用户看到的是「点了没反应，而应用好像还在跑」。
-fn show_main_window(app: &AppHandle<Wry>) {
+///
+/// ⚠️★ `pub(crate)` 是因为**第二个调用方**：单实例插件挡掉第二个实例时也要把主窗口叫出来
+///（`main.rs` 的 `.plugin(tauri_plugin_single_instance::init(...))`）。
+/// 那一步**不能**各写一份 —— 「找哪个 label、show 还是 unminimize」只能有一处定义，
+/// 漏掉 `unminimize` 的表现就是「窗口最小化时点了图标仍然什么都没发生」。
+pub(crate) fn show_main_window(app: &AppHandle<Wry>) {
     let Some(window) = app.get_webview_window("main") else {
-        eprintln!("托盘：找不到主窗口（label=main）");
+        eprintln!("找不到主窗口（label=main）");
         return;
     };
     let _ = window.show();
