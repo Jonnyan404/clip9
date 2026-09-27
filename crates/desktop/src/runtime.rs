@@ -366,11 +366,14 @@ impl Runtime {
         self.tokio.spawn(async move {
             // ⚠️ 一次要多少条 = 界面上留多少条（`MAX_ENTRIES_PER_ROOM`）——
             // 多取的部分用户看不到，而每次序列化都要带着它。
-            // ⚠️ 房间名**在请求之前**取下来：空响应时 `store` 那边没有别的办法知道
+            // ⚠️ 房间**在请求之前**取下来：空响应时 `store` 那边没有别的办法知道
             // 这一页是给哪个房间取的（见 `Store::push_history` 的注释）。
+            // ⚠️★ 而且身份是 **(服务端, 房间)** 两样 —— 两个服务端上可以有同名房间，
+            // 只给房间名会把取回的历史写进**另一个**同名房间（见 `ReceiverUpdate::server`）。
+            let server = channel.server.clone();
             let room = channel.room.clone();
             match fetch_history(&this.http, &channel, crate::store::MAX_ENTRIES_PER_ROOM).await {
-                Ok(entries) => this.store.push_history(&room, entries),
+                Ok(entries) => this.store.push_history(&server, &room, entries),
                 Err(reason) => this.store.notice("err", format!("取历史失败：{reason}")),
             }
         });
