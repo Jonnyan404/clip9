@@ -657,6 +657,67 @@ table.ra td input[type='checkbox'] { margin: 0; }
     padding: 3px 4px; border-radius: 5px; cursor: default;
 }
 .sidebar-head .tool:hover { background: var(--sidebar-hover); color: var(--sidebar-head); }
+
+/* ══ 侧栏收起（`<html data-sidebar="narrow">`）════════════════════════════
+ *
+ * Jonny 2026-09-28：「**侧栏允许收紧**」。收成**一条窄栏**（56px）而不是「窄一点」——
+ * ⚠️ 量过：房间名那一格现在只剩 117px，把宽度压到 148px 名字就只剩 53px、
+ * 两行都塞不下 —— 也就是说「收窄」**必然要藏点东西**，那不如藏干净、把主区让出来
+ * （一屏消息卡片正需要那 150px）。⚠️ 这一条能成立，靠的是**每个房间有不同的 emoji**
+ * （同一天做的 item 7）—— 图标一样的话，一列房间认不出谁是谁。
+ *
+ * ⚠️★ 属性写在 `<html>` 上、不写在这个 `.sidebar` 元素上：
+ * 它要在**第一次绘制之前**就贴好（`ui/boot.js`，那时 `<body>` 还不在），
+ * 而且这样 `boot.js` 与 `app.js` 就只共享一个属性名（判据 10 钉着两份常量）。
+ * ⚠️★ 这里是**唯一**读这个属性的地方（判据 13 钉着「写了没人读」那半边）。
+ *
+ * ⚠️★ **这一行（`.sidebar-head`）在窄栏里必须还在**：那个「展开」按钮是收回来**唯一**
+ * 的入口 —— 收起之后连它都点不到，就只能去删 localStorage 了。
+ * 所以下面只让它竖排、改内边距，**绝不 `display: none`**。 */
+:root[data-sidebar='narrow'] .sidebar { width: 56px; }
+:root[data-sidebar='narrow'] .sidebar-head { justify-content: center; padding: 10px 0 6px; }
+/* 「房间 3」那一格收起来：窄栏里放不下，而且那个数在展开状态一眼就有。 */
+:root[data-sidebar='narrow'] .sidebar-head .ttl { display: none; }
+/* ⚠️ 竖排（两个 20px 的按钮在 56px 里并排放不下）。 */
+:root[data-sidebar='narrow'] .sidebar-head .tools { flex-direction: column; gap: 4px; }
+
+/* 房间行：只剩 emoji 与 ↑/↓。名字 / 条数 / 延迟都不画 ——
+   ⚠️ 它们没有被丢掉：`renderRooms` 把三样**一起**挂到那一行的 `title` 上
+   （「默认 · 12 条 · 延迟 34ms」），悬停就看得见。 */
+:root[data-sidebar='narrow'] .rooms { padding: 2px 4px 8px; }
+:root[data-sidebar='narrow'] .room { justify-content: center; padding: 6px 3px; }
+:root[data-sidebar='narrow'] .room .ico { font-size: 15px; }
+:root[data-sidebar='narrow'] .room .nm,
+:root[data-sidebar='narrow'] .room .ct,
+:root[data-sidebar='narrow'] .room .ms { display: none; }
+:root[data-sidebar='narrow'] .room .dirs {
+    width: auto; gap: 3px; justify-content: center; margin-top: 4px;
+}
+
+/* 底部两个按钮：只留符号（＋ / ⚙），文字收起来。
+   ⚠️ 那两个 `span` 不是多余的包一层：`display: none` 没法只藏一半的文字。 */
+:root[data-sidebar='narrow'] .sidebar-foot { padding: 4px; }
+:root[data-sidebar='narrow'] .sidebar-foot button {
+    justify-content: center; padding: 7px 0; gap: 0;
+}
+:root[data-sidebar='narrow'] .sidebar-foot button .lbl { display: none; }
+
+/* ⚠️★ 「配置有毛病」那一块**只留一个 ⚠**，不整块藏掉：
+   那是**错误**，藏起来就是静默失败（用户完全不知道配置有问题）。
+   全文在它的 `title` 上（`render` 里设的），悬停读得到。
+   ⚠️ 那个 `⚠` 宽的时候不画（下面 `.gl` 的默认值是 `none`）：宽栏里那句话本来就是完整的。 */
+.problems .gl { display: none; }
+:root[data-sidebar='narrow'] .problems {
+    margin: 0 6px 8px; padding: 5px 0; text-align: center;
+}
+:root[data-sidebar='narrow'] .problems .txt { display: none; }
+:root[data-sidebar='narrow'] .problems .gl { display: block; }
+
+/* ⚠️ 「配置里一个房间都没有。去配置里加一个（数据目录下的 client.json）。」在 56px 里
+   放不下 —— 收起时不画。⚠️ 这一处与上面那个 `⚠` **故意不一样**：空列表是**正常状态**
+   （不是错误），而且它的出路就在下面那一行（「＋」永远在）。
+   ⚠️ 展开就能读到那句「数据目录下的 client.json」—— 它是给「想知道去哪儿加」的人看的。 */
+:root[data-sidebar='narrow'] .rooms .empty { display: none; }
 /* 「来源房间」那一格里的说明 —— ⚠️ 同样不能复用 .hint：稿 2 里它**紧跟在房间名后面**
    （不是右对齐），而 .hint 是 `margin-left:auto` 的右对齐短提示。 */
 .inp .src-note { color: var(--text-2); font-size: 11px; margin-left: 8px; }
@@ -730,23 +791,33 @@ table.ra td input[type='checkbox'] { margin: 0; }
             <!-- ⚠️★ 侧栏顶部这一行是**这一栏唯一永远在的地方**：房间列表会滚、
                  底部两个按钮跟着栏走，而它钉在最上面。所以「界面偏好」那几件
                  （主题、语言、收起）都放这儿（Jonny 2026-09-28：「图标放在侧栏顶部」）——
-                 收起之后也要点得到，那正是它长在这一行的理由。 -->
+                 **收起之后也要点得到**，那正是它长在这一行的理由。
+                 ⚠️ 顺序就是它们出现的顺序：主题、语言、收起 ——
+                 收起那个**排最后**（它是唯一会改变这一行自己的那个，放最后最不容易误点）。 -->
             <div class="sidebar-head">
                 <span class="ttl">房间 <span class="count" id="room-count">—</span></span>
                 <div class="tools">
                     <button class="tool" id="btn-theme" title="切到深色模式">🌙</button>
+                    <button class="tool" id="btn-sidebar" title="收起侧栏">◀</button>
                 </div>
             </div>
             <div class="rooms" id="rooms"></div>
-            <div class="problems" id="problems" hidden></div>
+            <!-- ⚠️★ 收起侧栏时这一块只画一个 `⚠`（56px 放不下那句话），全文挂在它的
+                 `title` 上（`render` 里同时设的）—— **不能整块藏掉**：
+                 那是「配置有毛病」，藏起来就成静默失败了。 -->
+            <div class="problems" id="problems" hidden><span class="gl">⚠</span><span class="txt" id="problems-text"></span></div>
             <!-- ⚠️★ 底部这两个按钮是**动作**，不是房间行（所以给了虚线框，见 shell.css）。
                  「＋ 添加房间」原来在房间列表的**末尾**（`.room.add`，随列表滚动），
                  Jonny 2026-09-26：「侧栏添加房间移到全局设置上方」——
                  挪进这一栏之后它和「全局设置」一样**永远可见**，不再被长列表挤走。
-                 ⚠️ 顺序有讲究：添加在上、设置在下（添加是日常动作，设置是偶尔进去一次）。 -->
+                 ⚠️ 顺序有讲究：添加在上、设置在下（添加是日常动作，设置是偶尔进去一次）。
+                 ⚠️ 2026-09-28：符号与文字拆成两个 `span`（`.gl` / `.lbl`）——
+                 收起侧栏时只留符号（56px 里放不下「添加房间」这四个字），
+                 而**拆得开**才收得掉（`display: none` 没法只藏一半的文字）。
+                 两个 span 之间的间距由 `.sidebar-foot button` 的 `gap: 8px` 给。 -->
             <div class="sidebar-foot">
-                <button id="btn-room-add">＋ 添加房间</button>
-                <button id="btn-settings">⚙ 全局设置</button>
+                <button id="btn-room-add"><span class="gl">＋</span><span class="lbl">添加房间</span></button>
+                <button id="btn-settings"><span class="gl">⚙</span><span class="lbl">全局设置</span></button>
             </div>
         </div>
 
