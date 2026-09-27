@@ -163,6 +163,25 @@ pub struct Snapshot {
     pub data_dir: String,
     /// 每个房间最多留多少条（界面要照实说）。
     pub max_entries: usize,
+    /// 快照内容的**单调版本号** —— 界面**只用它**判断「要不要重画」。
+    ///
+    /// ⚠️★ 它把「哪些字段参与判定」从**页面**搬到了**这里**。原先的做法是页面拿
+    /// 整份快照的 JSON 与上一份比，两个问题：
+    /// ① 那趟 `JSON.stringify` 每 700ms **无条件**跑一遍，代价与内容长度成正比
+    ///   （业内共识：不要拿 `JSON.stringify` 做变更判据）；
+    /// ② 「字段清单」会有**两份** —— 页面一份、这个结构体一份，而两份一定会漂。
+    ///   漏掉的那个字段变了界面就不刷新，**而且完全静默**
+    ///   （§8.1 第 2 条就是 `notice` 被漏掉那次）。
+    ///
+    /// ⚠️★ **但风险是搬家，不是消失**：现在「漏一处」变成「某条写入忘了让版本号前进」，
+    /// 表现**一模一样**（字段变了、界面不动、没有报错）。**换来的好处是它变得可测**
+    /// —— 页面那一侧没有测试运行器，而这一侧有：`store` 的测试里**逐条列出了每一条
+    /// 会改动快照的写入**，各有一条用例。所以**加新写入时必须同时加一条用例**，
+    /// 否则就少了一层保护（这一条写在 `version` 旁边，就是为了让人先看到它）。
+    ///
+    /// ⚠️ 前进规则（[`Inner::touch`] 的注释里有完整版）：**低频**的用户动作直接前进，
+    /// **高频**的（延迟 / 状态 / 设备表 / 可能重复的条目）**先比再写**。
+    pub version: u64,
 }
 
 /// 延迟给界面看的那一份。
@@ -304,6 +323,27 @@ struct Inner {
     selected: usize,
     limits: ServerLimits,
     notice: Option<Notice>,
+    /// 快照内容的版本号 —— 见 [`Snapshot::version`] 与 [`Inner::touch`]。
+    /// ⚠️ **只有 `touch` 改它**，别在别处直接写（那样就绕过了「前进规则」）。
+    version: u64,
+}
+
+impl Inner {
+    /// 记住「快照内容变了」（见 [`Snapshot::version`]）。
+    ///
+    /// ⚠️★ **前进规则**（两条，别混）：
+    ///
+    /// - **低频的**（用户点一下：切房间、改开关、改设置、换房间清单、传提示）→
+    ///   **直接前进**。判断「值真变了没有」的代码比一次多余重绘更贵，而且方向是安全的：
+    ///   多走一格只是**多一次重绘**（慢一点，看得见），漏走一格是**界面不动**（静默）。
+    /// - **高频的**（每轮都可能来：`Latency` / `DevicesChanged` / `Status`，以及
+    ///   `upsert`）→ **先比再写**。不判的话，版本号会跟着每轮 ping 一起涨，
+    ///   于是「每 1.4 秒整屏重绘一次」—— 那正好是 S3 要消灭的代价。
+    fn touch(&mut self) {
+        // ⚠️ `wrapping_add` 而不是 `+= 1`：`u64` 溢出在 debug 构建里会 panic，
+        // 而这个计数器**不该**能把客户端弄崩（真到那一刻也早就有别的问题了）。
+        self.version = self.version.wrapping_add(1);
+    }
 }
 
 /// 桌面端状态。
@@ -328,6 +368,9 @@ impl Store {
                 selected: 0,
                 limits: ServerLimits::default(),
                 notice: None,
+                // ⚠️ 从 0 起。页面那边「上一份」的初值是 `null`，所以**第一拍一定重绘**
+                //（`'0' !== null`）—— 这正是想要的：界面必须至少画一次。
+                version: 0,
             }),
             config_path,
             data_dir,
@@ -392,20 +435,35 @@ impl Store {
             config_path: self.config_path.display().to_string(),
             data_dir: self.data_dir.display().to_string(),
             max_entries: MAX_ENTRIES_PER_ROOM,
+            version: inner.version,
         }
     }
 
     /// 界面上的一次性提示。
+    ///
+    /// ⚠️ 同样要 `touch` —— §8.1 第 2 条就是「`shapeOf` 漏了 `notice` → 三类提示永远画不出来」。
+    /// 换判据**不改变**「哪些字段要参与判定」这件事（版本号不是免死金牌）。
     pub fn notice(&self, kind: &'static str, text: impl Into<String>) {
-        self.lock().notice = Some(Notice {
+        let mut inner = self.lock();
+        // ⚠️ 值一样就不动：`render` 里那一串上传结果提示可能重复出现
+        //（「已上传」连点两次），而重画一次是白花的。
+        let next = Some(Notice {
             kind,
             text: text.into(),
         });
+        if inner.notice != next {
+            inner.notice = next;
+            inner.touch();
+        }
     }
 
     /// 提示已经被看过了（页面取过之后清掉，免得一直挂着）。
     pub fn clear_notice(&self) {
-        self.lock().notice = None;
+        let mut inner = self.lock();
+        if inner.notice.is_some() {
+            inner.notice = None;
+            inner.touch();
+        }
     }
 
     /// 切房间。越界**报错**而不是静默夹住 —— 页面传错下标时要说清是哪里错了。
@@ -415,7 +473,9 @@ impl Store {
         if index >= count {
             return Err(format!("没有第 {index} 个房间（共 {count} 个）"));
         }
+        // ⚠️ 低频繁的用户动作 → **直接前进**（前进规则见 [`Inner::touch`]）。
         inner.selected = index;
+        inner.touch();
         Ok(())
     }
 }
@@ -442,37 +502,80 @@ impl Store {
                 let server = inner.config.channels[index].server.clone();
                 let client_id = inner.config.client_id.clone();
                 let view = EntryView::from_holder(&entry, &client_id, &server);
-                inner.rooms[index].upsert(view);
+                // ⚠️ `upsert` 自己答「列表真变了没有」（同一条**原样重传**会答 `false`，
+                // 那不该触发一次整屏重绘）—— 它里面同时收两道界（条数 + 字节）。
+                if inner.rooms[index].upsert(view) {
+                    inner.touch();
+                }
             }
             // ⚠️ 空历史也要标成「取过了」—— 否则界面分不出
             // 「这个房间确实是空的」与「还没取过」。这两种都画成空列表，用户会以为坏了。
             ReceiverEvent::History(entries) => {
                 let server = inner.config.channels[index].server.clone();
                 let client_id = inner.config.client_id.clone();
+                let mut changed = false;
                 for entry in &entries {
                     let view = EntryView::from_holder(entry, &client_id, &server);
-                    inner.rooms[index].upsert(view);
+                    changed |= inner.rooms[index].upsert(view);
                 }
-                inner.rooms[index].history_loaded = true;
+                if !inner.rooms[index].history_loaded {
+                    inner.rooms[index].history_loaded = true;
+                    changed = true;
+                }
+                if changed {
+                    inner.touch();
+                }
             }
             ReceiverEvent::Revoked { id } => {
+                // ⚠️ 先比再写（不是「写了就 touch」）：**这个 id 可能根本不在列表里** ——
+                // 房间里没这条、或者（有了字节界之后）**它已经被挤出去了**。
+                // 那种情况下什么都没变，不该重绘。
+                let before = inner.rooms[index].entries.len();
                 inner.rooms[index].entries.retain(|entry| entry.id != id);
+                if inner.rooms[index].entries.len() != before {
+                    inner.touch();
+                }
             }
             ReceiverEvent::Cleared => {
-                inner.rooms[index].entries.clear();
+                if !inner.rooms[index].entries.is_empty() {
+                    inner.rooms[index].entries.clear();
+                    inner.touch();
+                }
             }
             // ⚠️★ 整份替换，不是「增量更新」：客户端那边已经按 id 去好重了
             //（同一台设备开两个标签页只算一台，见 `PeerDevice`），
             // 这边再维护一份集合就是**第二份会漂的状态**。
-            ReceiverEvent::DevicesChanged(peers) => inner.rooms[index].connection.peers = peers,
-            ReceiverEvent::Latency(latency) => inner.rooms[index].connection.latency = latency,
+            //
+            // ⚠️ 下面这三条是**高频**事件（每轮 / 每次 ping 都可能来）→ 一律**先比再写**。
+            // 「写了就 touch」会让版本号跟着每轮 ping 涨，退化成「每 1.4 秒整屏重绘一次」。
+            ReceiverEvent::DevicesChanged(peers) => {
+                if inner.rooms[index].connection.peers != peers {
+                    inner.rooms[index].connection.peers = peers;
+                    inner.touch();
+                }
+            }
+            ReceiverEvent::Latency(latency) => {
+                if inner.rooms[index].connection.latency != latency {
+                    inner.rooms[index].connection.latency = latency;
+                    inner.touch();
+                }
+            }
             ReceiverEvent::Status(status) => {
+                let mut changed = false;
                 // ⚠️ 限额也在这里存一份：它**只在握手里下发**（`uploader` 的模块文档），
                 // 上行要用。⚠️ 一份就够 —— 同一个服务端的每个房间给的是同一套值。
-                if let ReceiverStatus::Connected { limits, .. } = &status {
+                if let ReceiverStatus::Connected { limits, .. } = &status
+                    && inner.limits != *limits
+                {
                     inner.limits = *limits;
+                    changed = true;
                 }
-                inner.apply_status(index, status);
+                // `apply_status` 自己也会答「这条连接的样子变了没有」（它要清设备与延迟，
+                // 而那两处也在快照里 → 不能只看传进来的 `status`）。
+                changed |= inner.apply_status(index, status);
+                if changed {
+                    inner.touch();
+                }
             }
         }
     }
@@ -493,9 +596,12 @@ impl Store {
             let client_id = inner.config.client_id.clone();
             for entry in &entries {
                 let view = EntryView::from_holder(entry, &client_id, &server);
+                // ⚠️ 返回的「变了没有」这里**故意丢掉**：这是一次**用户点的刷新**
+                //（低频），直接前进更省事，方向也是安全的（多一次重绘只是慢一点）。
                 inner.rooms[index].upsert(view);
             }
             inner.rooms[index].history_loaded = true;
+            inner.touch();
         }
     }
 }
@@ -504,12 +610,14 @@ impl Store {
     /// 换上行开关（**可以多个房间同时开**，§4.1 第 1 条）。
     pub fn set_upload(&self, index: usize, on: bool) -> Result<(), String> {
         let mut inner = self.lock();
-        let channel = inner
-            .config
-            .channels
-            .get_mut(index)
-            .ok_or_else(|| format!("没有第 {index} 个房间"))?;
-        channel.enable_upload = on;
+        // ⚠️ 先把「有没有这个房间」判掉**再**改 —— 原来用的是 `get_mut(..).ok_or_else(..)`，
+        // 但那样借出去的 `&mut channel` 会活到语句结束，后面就没法 `inner.touch()` 了。
+        if inner.config.channels.get(index).is_none() {
+            return Err(format!("没有第 {index} 个房间"));
+        }
+        // ⚠️ 低频繁的用户动作 → 直接前进（前进规则见 `Inner::touch`）。
+        inner.config.channels[index].enable_upload = on;
+        inner.touch();
         Ok(())
     }
 
@@ -535,6 +643,8 @@ impl Store {
         for (position, channel) in inner.config.channels.iter_mut().enumerate() {
             channel.enable_download = index == Some(position);
         }
+        // ⚠️ 循环里那段借用到这儿已经结束，可以 `touch` 了。
+        inner.touch();
         Ok(())
     }
 
@@ -544,6 +654,10 @@ impl Store {
     ///（那要 `ServerProcess`，而 `Store` 不碰进程）。调用方**两个都要做** ——
     /// 只改配置的话，用户点完看到的是「模式换了、服务端照旧在跑」，那是「配了不生效」。
     pub fn set_local_server(&self, on: bool) {
+        // ⚠️ **不 `touch`**：它**不在快照里**（「运行方式」那一段由 `settings_view` /
+        // `server_status` 刷新，页面别处也不画它）—— 快照里没有它，前进一格就是白重绘。
+        // ⚠️ 这条是**唯一**一处「改配置却不前进」的地方，所以写在这儿解释清楚；
+        // 哪天把它加进快照，这里必须加 `touch`（`Snapshot::version` 的注释里说了这件事）。
         self.lock().config.enable_local_server = on;
     }
 
@@ -553,7 +667,10 @@ impl Store {
     /// （那要 `AppHandle`，而这里不许有 `tauri`）。调用方**两个都要做** ——
     /// 只改配置的话，用户勾了、界面上勾着、系统里没写，就是「配了不生效」。
     pub fn set_autostart(&self, on: bool) {
-        self.lock().config.enable_autostart = on;
+        let mut inner = self.lock();
+        inner.config.enable_autostart = on;
+        // ⚠️ 它在快照里（`Snapshot::autostart`）→ 必须前进，否则勾了界面不变。
+        inner.touch();
     }
 
     /// 换整份房间清单（界面上加 / 删 / 改房间）。
@@ -588,6 +705,9 @@ impl Store {
         if inner.selected >= inner.rooms.len() {
             inner.selected = inner.rooms.len().saturating_sub(1);
         }
+        // ⚠️ 无条件前进：换清单是用户动作（低频），而它改动的东西**横跨整个快照**
+        //（房间名、上下行开关、`problems` 都可能变）—— 逐字段比对的代码比一次重绘贵。
+        inner.touch();
         Ok(())
     }
 
@@ -618,6 +738,13 @@ impl Store {
         if let Some(value) = &patch.download_dir {
             config.download_dir = value.clone();
         }
+        // ⚠️ **无条件前进**，而且要留意这条判断的来历：严格说这几个字段**不在快照里**
+        //（页面是从 `settings_view` 那条命令读它们的）。但这里仍然前进，因为：
+        // ① 它是**用户动作**（低频），多走一格只是多一次重绘；
+        // ② 反方向（漏一格）在这个文件里是**静默失效**——哪天有人把 `pollIntervalMs`
+        //    加进快照却忘了加 `touch`，界面就会「配了不生效」。
+        // 两条路里只有一条会咬人，所以选安全的那条（前进规则见 [`Inner::touch`]）。
+        inner.touch();
     }
 
     /// 界面上要用的配置副本（喂给 `clip9-client` 的那几个函数）。
@@ -691,10 +818,21 @@ impl Inner {
     ///
     /// ⚠️ 房间**由调用方给下标**（`apply_update` 里已经从更新的 `room` 算出来了）——
     /// 状态里那个 `room` 只用来显示，不该再拿它找一次（找错了就是挂到别的房间上）。
-    fn apply_status(&mut self, index: usize, status: ReceiverStatus) {
+    ///
+    /// ⚠️ 返回值是「这条连接给界面看的样子**真的变了**没有」（调用方拿它决定要不要
+    /// `touch`）。⚠️ **不能只看传进来的 `status`**：这个函数在掉线 / 重连时还会
+    /// **清掉设备与延迟**，而那两处也在快照里 —— 只看 `status` 就会漏掉那两次变化。
+    fn apply_status(&mut self, index: usize, status: ReceiverStatus) -> bool {
         let Some(room) = self.rooms.get_mut(index) else {
-            return;
+            return false;
         };
+        // ⚠️ 三份都留个底（`Clone` 一份设备表是小开销，而这件事**低频**：
+        // 只有连接状态变化才走到这儿，不是每轮 ping）。
+        let before = (
+            room.connection.status.clone(),
+            room.connection.peers.clone(),
+            room.connection.latency,
+        );
         // ⚠️★ 掉线 / 重连时**必须清掉设备与延迟**：服务端是在连接**建立之后**
         // 才逐台发 `connect` 的（`ws.rs`），所以旧的那份在「正在连」这一刻已经作废。
         // 不清的话，症状是「刚连上时显示的是上一轮的那几台 / 那个数字」——
@@ -732,6 +870,10 @@ impl Inner {
                 room: None,
             },
         });
+        // 「这条连接给界面看的样子变了没有」——三处任一变了都算（见函数头的注释）。
+        before.0 != room.connection.status
+            || before.1 != room.connection.peers
+            || before.2 != room.connection.latency
     }
 }
 
@@ -741,18 +883,33 @@ impl Room {
     /// ⚠️ 为什么不能无脑 `push`：房间之间 id 各自单调（`CONTRIBUTING.md` §6），
     /// 而界面可以**来回切房间**、按需取回的历史里的 id **可能比已经在列表里的小** ——
     /// 无脑 push 会让时间线乱序，而乱序的时间线用户是看不出错的（只会觉得"不对劲"）。
-    fn upsert(&mut self, view: EntryView) {
-        match self
+    ///
+    /// ⚠️ 返回值是「**列表真的变了**没有」——调用方拿它决定要不要 `touch`
+    /// （见 [`Snapshot::version`]）。⚠️ 同一条**原样重传**时它是 `false`：
+    /// 内容一个字节没变，不该触发一次整屏重绘。
+    fn upsert(&mut self, view: EntryView) -> bool {
+        let mut changed = match self
             .entries
             .binary_search_by_key(&view.id, |entry| entry.id)
         {
-            Ok(position) => self.entries[position] = view,
-            Err(position) => self.entries.insert(position, view),
-        }
+            Ok(position) => {
+                let same = self.entries[position] == view;
+                self.entries[position] = view;
+                !same
+            }
+            Err(position) => {
+                self.entries.insert(position, view);
+                true
+            }
+        };
+        // 条数界：超了就从最旧的丢。
         if self.entries.len() > MAX_ENTRIES_PER_ROOM {
             self.entries
                 .drain(..self.entries.len() - MAX_ENTRIES_PER_ROOM);
+            // ⚠️ 丢东西**也是**「列表变了」—— 所以不能只把 `changed` 原样返回。
+            changed = true;
         }
+        changed
     }
 }
 
@@ -1390,6 +1547,294 @@ mod tests {
         // 清空 → 归零
         store.apply_update(from_work(ReceiverEvent::Cleared));
         assert_eq!(store.snapshot().rooms[1].text_bytes, 0, "清空之后归零");
+    }
+
+    // ── 版本号（`Snapshot::version`）：**每一条会改动快照的写入各一条用例** ──
+    //
+    // ⚠️★ 这一组必须跟着写入点一起长大。`Snapshot::version` 那一段注释里说了：
+    // 「漏一处」= 「那个字段变了界面不刷新」，而且**完全静默**。
+    // 而「加了新写入却忘了加用例」是**同一种漏法的第二层** —— 所以宁可这几条看着啰嗦。
+    // ⚠️ 换掉原来的「页面比整份 JSON」之后，这份逐条清单就是**唯一的**保护 ——
+    // 好处是它终于在一个**有测试运行器**的地方（页面那一侧没有）。
+
+    /// 断言这次写入让版本号**前进**（`seed` 先铺状态；铺的时候前进的不算）。
+    fn assert_bumps(name: &str, seed: impl Fn(&Store), action: impl Fn(&Store)) {
+        let (_dir, store) = temp_store();
+        seed(&store);
+        let before = store.snapshot().version;
+        action(&store);
+        assert!(
+            store.snapshot().version > before,
+            "「{name}」没有让版本号前进 —— 那个字段变了，界面却不会刷新"
+        );
+    }
+
+    /// 断言这次写入**不**让版本号前进：值一模一样时不该触发一次整屏重绘。
+    ///
+    /// ⚠️ 这一侧同样要钉：`Latency` 这类**每轮 ping 都可能来**的事件，不判就前进的话
+    /// 会退化成「每 1.4 秒重绘一次」—— 那正是换版本号要消灭的代价。
+    fn assert_quiet(name: &str, seed: impl Fn(&Store), action: impl Fn(&Store)) {
+        let (_dir, store) = temp_store();
+        seed(&store);
+        let before = store.snapshot().version;
+        action(&store);
+        assert_eq!(
+            store.snapshot().version,
+            before,
+            "「{name}」在**值没变**的情况下也让版本号前进了 —— 白重绘一次"
+        );
+    }
+
+    /// ⚠️★ 提示**必须**算在版本号里：§8.1 第 2 条就是「`shapeOf` 漏了 `notice` →
+    /// 三类提示永远画不出来」（上传失败、因为开关关着而跳过…）——
+    /// 那几条**不改动别的任何字段**，所以漏掉就是彻底看不见。
+    #[test]
+    fn a_notice_bumps_the_version() {
+        assert_bumps("notice", |_| {}, |store| store.notice("err", "上传失败"));
+        assert_quiet(
+            "notice（同一条再来一次）",
+            |store| store.notice("err", "上传失败"),
+            |store| store.notice("err", "上传失败"),
+        );
+    }
+
+    #[test]
+    fn clearing_a_notice_bumps_the_version() {
+        assert_bumps(
+            "clear_notice",
+            |store| store.notice("err", "x"),
+            |store| store.clear_notice(),
+        );
+        assert_quiet(
+            "clear_notice（本来就没有）",
+            |_| {},
+            |store| {
+                store.clear_notice();
+            },
+        );
+    }
+
+    #[test]
+    fn selecting_a_room_bumps_the_version() {
+        assert_bumps(
+            "select",
+            |_| {},
+            |store| {
+                store.select(1).expect("切到第二个房间");
+            },
+        );
+    }
+
+    #[test]
+    fn an_incoming_entry_bumps_the_version() {
+        assert_bumps(
+            "receive",
+            |_| {},
+            |store| {
+                store.apply_update(from_work(ReceiverEvent::Entry(Box::new(text(
+                    1, "work", "a",
+                )))));
+            },
+        );
+    }
+
+    #[test]
+    fn an_incoming_history_bumps_the_version() {
+        assert_bumps(
+            "history",
+            |_| {},
+            |store| {
+                store.apply_update(from_work(ReceiverEvent::History(vec![text(
+                    1, "work", "a",
+                )])));
+            },
+        );
+    }
+
+    /// ⚠️ 撤销一条**本来就不在列表里**的（房间里没这条，或者**它已经被字节界挤掉了**）
+    /// → 什么都没变，不该重绘。⚠️ 有了 `MAX_BYTES_PER_ROOM` 之后这不是罕见情况：
+    /// 「长文被挤掉」与「它同时被撤销」是同一类用户会做的事。
+    #[test]
+    fn revoking_bumps_only_when_something_was_actually_removed() {
+        assert_bumps(
+            "revoke",
+            |store| {
+                store.apply_update(from_work(ReceiverEvent::Entry(Box::new(text(
+                    1, "work", "a",
+                )))));
+            },
+            |store| store.apply_update(from_work(ReceiverEvent::Revoked { id: 1 })),
+        );
+        assert_quiet(
+            "revoke（不存在的 id）",
+            |_| {},
+            |store| {
+                store.apply_update(from_work(ReceiverEvent::Revoked { id: 99 }));
+            },
+        );
+    }
+
+    #[test]
+    fn clearing_bumps_only_when_the_room_was_not_already_empty() {
+        assert_bumps(
+            "clear",
+            |store| {
+                store.apply_update(from_work(ReceiverEvent::Entry(Box::new(text(
+                    1, "work", "a",
+                )))));
+            },
+            |store| store.apply_update(from_work(ReceiverEvent::Cleared)),
+        );
+        assert_quiet(
+            "clear（本来就是空的）",
+            |_| {},
+            |store| {
+                store.apply_update(from_work(ReceiverEvent::Cleared));
+            },
+        );
+    }
+
+    /// ⚠️★ 设备表 / 延迟是**每轮都可能来**的高频事件 → 「值没变」**必须不**前进。
+    #[test]
+    fn devices_and_latency_bump_only_when_the_value_changes() {
+        assert_bumps(
+            "devices",
+            |_| {},
+            |store| {
+                store.apply_update(from_work(ReceiverEvent::DevicesChanged(vec![peer(
+                    "p1",
+                    "手机",
+                    "smartphone",
+                )])));
+            },
+        );
+        assert_quiet(
+            "devices（同一份再来一次）",
+            |store| {
+                store.apply_update(from_work(ReceiverEvent::DevicesChanged(vec![peer(
+                    "p1",
+                    "手机",
+                    "smartphone",
+                )])));
+            },
+            |store| {
+                store.apply_update(from_work(ReceiverEvent::DevicesChanged(vec![peer(
+                    "p1",
+                    "手机",
+                    "smartphone",
+                )])));
+            },
+        );
+
+        assert_bumps(
+            "latency",
+            |_| {},
+            |store| {
+                store.apply_update(from_work(ReceiverEvent::Latency(Latency::Rtt(7))));
+            },
+        );
+        assert_quiet(
+            "latency（同一个数再来一次）",
+            |store| store.apply_update(from_work(ReceiverEvent::Latency(Latency::Rtt(7)))),
+            |store| store.apply_update(from_work(ReceiverEvent::Latency(Latency::Rtt(7)))),
+        );
+    }
+
+    /// ⚠️★ 连接状态里有个坑：**掉线 / 重连时 `apply_status` 会顺带清掉设备与延迟**，
+    /// 而那两处也在快照里 —— 只看传进来的 `status` 就会漏掉那一次变化。
+    /// （表现：断了之后设备行还挂着上一轮的几台，直到下一个事件才消失。）
+    #[test]
+    fn a_status_bumps_on_change_and_not_on_a_repeat() {
+        let connected = || {
+            ReceiverEvent::Status(ReceiverStatus::Connected {
+                latest_id: 3,
+                limits: ServerLimits::default(),
+            })
+        };
+        let disconnected = || {
+            ReceiverEvent::Status(ReceiverStatus::Disconnected {
+                reason: "测试".to_owned(),
+            })
+        };
+        assert_bumps(
+            "status",
+            |_| {},
+            |store| {
+                store.apply_update(from_work(connected()));
+            },
+        );
+        assert_quiet(
+            "status（同一个状态再来一次）",
+            |store| store.apply_update(from_work(connected())),
+            |store| store.apply_update(from_work(connected())),
+        );
+
+        // ⚠️★ 这一条的形状很讲究：铺成「已断开 + 有一台设备」，再喂**同一个**断线事件 ——
+        // 那样 `status` 一个字都不变，**只有设备被清掉**。把「清设备」算进那次变化里
+        // 才测得到本函数头说的那个坑。
+        // ⚠️ 第一版写的是「先连上、再掉线」——那样 `status` 自己也变了，
+        // 「只比 status」的错误写法**照样能过**（跑变异验证时才发现用例形状不对）。
+        assert_bumps(
+            "status（同一个断线事件，只在顺带清设备那次算数）",
+            |store| {
+                store.apply_update(from_work(disconnected()));
+                store.apply_update(from_work(ReceiverEvent::DevicesChanged(vec![peer(
+                    "p1",
+                    "手机",
+                    "smartphone",
+                )])));
+            },
+            |store| store.apply_update(from_work(disconnected())),
+        );
+    }
+
+    #[test]
+    fn refreshing_history_bumps_the_version() {
+        assert_bumps(
+            "push_history",
+            |_| {},
+            |store| {
+                store.push_history("work", vec![text(1, "work", "a")]);
+            },
+        );
+    }
+
+    /// 本地设置（用户动作，低频）—— 一律**直接前进**（前进规则见 `Inner::touch`）。
+    #[test]
+    fn local_settings_bump_the_version() {
+        assert_bumps(
+            "set_upload",
+            |_| {},
+            |store| {
+                store.set_upload(0, false).expect("关掉第一个房间的上行");
+            },
+        );
+        assert_bumps(
+            "set_download",
+            |_| {},
+            |store| {
+                store.set_download(Some(0)).expect("换下行房间");
+            },
+        );
+        assert_bumps("set_autostart", |_| {}, |store| store.set_autostart(true));
+        assert_bumps(
+            "set_sync_scope",
+            |_| {},
+            |store| {
+                store.set_sync_scope(&SyncScopePatch {
+                    enable_text: Some(false),
+                    ..SyncScopePatch::default()
+                });
+            },
+        );
+        assert_bumps(
+            "set_rooms",
+            |_| {},
+            |store| {
+                let channels = store.config().channels;
+                store.set_rooms(channels).expect("换同一份清单");
+            },
+        );
     }
 
     /// ⚠️★ **下载全局只能一个**：给第二个房间开下载，第一个**自动关掉**。
