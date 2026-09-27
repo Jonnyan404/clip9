@@ -38,6 +38,20 @@
   它跑在 `<body>` 解析之前，`getElementById` 在这时候一定拿不到东西。
   所以「侧栏收起」在这里也只是 `data-sidebar` 那个属性，样式由 CSS 读
   （那个属性**只有** `index.html` 里那段读，判据 13 钉着「写了没人读」那半边）。
+
+  # ⚠️★ 语种：`data-locale`，以及**只在非源语言上**贴的那块遮布
+
+  语种也归这里 —— 理由和上面两条不同，但更硬：文案是 `i18n.js`（也是 `defer`）刷的，
+  而**刷之前的那一屏是中文**（源语言）。也就是说英文用户会先看到一屏中文再跳成英文。
+  做法是给 `.win` 挂一层 `visibility: hidden`（`index.html` 里那段
+  `:root[data-i18n='pending']`），刷完由 `I18N.ready()` 摘掉。
+
+  ⚠️★ **只在非源语言上贴。** 中文用户看到的本来就是成品，没有可闪的东西；
+  这一条同时是**失败安全**：要是 `i18n.js` 没跑起来，中文用户照常用，
+  英文用户看到的是中文（难看，但看得见）—— **而不是一扇永远空白的窗口**。
+  ⚠️ 兜底计时器：遮布是**真会挡住界面**的东西，所以除了 `i18n.js` 会摘它，
+  这里再挂一个 1.5 秒的兜底（页面是本地小文件，正常情况下 `defer` 早跑完了）。
+  ⚠️ 这两条判断都写在**同一个地方**（下面那一个 `if`）—— 别在别处再判一次「要不要藏」。
 */
 
 /* ⚠️★ 里面的常量**必须写在 IIFE 里**，不能摆在文件顶层。
@@ -52,6 +66,9 @@
 (() => {
   const THEME_KEY = 'theme';
   const SIDEBAR_KEY = 'sidebar';
+  // ⚠️ 存语种的键在 `i18n.js` 里还有一份（那边是正主，这里是**先读一步**的那一份）——
+  // 判据 10 会把两边的值拿来对。⚠️ 名字与 SPA 那边一致，但**不是**契约：两者不同 origin。
+  const LOCALE_KEY = 'locale';
   const root = document.documentElement;
   try {
     const theme = localStorage.getItem(THEME_KEY);
@@ -61,7 +78,22 @@
     // ⚠️ 侧栏只认 `'narrow'` 这一个值：**读不到、值不认得、存的是 `'wide'`** 一律当宽的。
     // 所以这里**不需要**写 `'wide'`（`app.js` 那边会显式写，是为了让「点了一下」在 DOM 上看得见）。
     if (localStorage.getItem(SIDEBAR_KEY) === 'narrow') root.dataset.sidebar = 'narrow';
+
+    // ⚠️★ 语种：这里只认 `'en'`（源语言 `'zh'` 不贴，其余一律当源语言）。
+    // 判据 14 会把这个字面量拿去 `i18n.js` 的 `LOCALES` 里找，并且要求它**不是**源语言。
+    if (localStorage.getItem(LOCALE_KEY) === 'en') {
+      root.dataset.locale = 'en';
+      root.lang = 'en';
+      // ⚠️ 遮布：只贴在**非源语言**上（见文件头上那条注释），带兜底计时器。
+      // 摘它的有两条路：`I18N.ready()`（正常）、下面这个计时器（`i18n.js` 没跑起来时）。
+      root.dataset.i18n = 'pending';
+      setTimeout(() => {
+        delete root.dataset.i18n;
+      }, 1500);
+    }
   } catch (error) {
     // 读不到就用 `index.html` 里写死的默认值 —— 这不是错误，不值得打断启动。
+    // ⚠️ 连 `localStorage` 抛异常的情况也要保证**不留下遮布**（否则窗口永远空白）。
+    delete root.dataset.i18n;
   }
 })();

@@ -3,7 +3,7 @@
 //
 // 用法：
 //   node tools/desktop-ui-smoke.mjs                       # 在 clip9/ 下跑
-//   node tools/desktop-ui-smoke.mjs <app.js> <index.html> [commands.rs] [capabilities.json] [boot.js] [client-config.rs]
+//   node tools/desktop-ui-smoke.mjs <app.js> <index.html> [commands.rs] [capabilities.json] [boot.js] [client-config.rs] [i18n.js]
 //                                                         # 用别的夹具跑（变异验证 / 临时排查）
 //
 // # ⚠️ 为什么要有它
@@ -18,10 +18,10 @@
 // `cloud-clip/tools/page-smoke.mjs`，**只有手写 UI 这一侧是裸奔的**
 //（见 `docs/specs/desktop-client.md` §1.1 缺口 C）。
 //
-// # 判据（**第 1、2、4、5、6、7、8、9、10、11、12、13 条算失败**）
+// # 判据（**第 1、2、4、5、6、7、8、9、10、11、12、13、14、15 条算失败**）
 //
 // 1. `app.js` 引用到的每一个 id，`index.html` 里必须存在 —— 不通过 = 退出码 1；
-// 2. `index.html` 真的加载了**每一个**该加载的脚本（`boot.js` / `app.js`）；
+// 2. `index.html` 真的加载了**每一个**该加载的脚本（`boot.js` / `i18n.js` / `app.js`）；
 //    ⚠️ 少一个的症状**各不相同**，所以每一条都写清了「少了会怎样」（见下面那张表）——
 //    「改名只改一侧」这句话对 `boot.js` 是不准的：少了它页面照常能用，
 //    只有深色用户会发现启动时闪一下白屏（那是**最容易被当成「本来就那样」**的一类）；
@@ -38,12 +38,14 @@
 //    `SettingsPatch` 的每个字段，保存时都要发回去 —— 不通过 = 退出码 1。理由见下。
 // 9. **页面不许拿到系统通知的权限**（`capabilities/default.json` 里不许出现 `notification*`）
 //    —— 不通过 = 退出码 1。理由见下。
-// 10. **界面偏好的存储键，`boot.js` 与 `app.js` 必须一致**（`const X_KEY = '…'` 那一族）
+// 10. **界面偏好的存储键，`boot.js` 与「拥有它的那份脚本」必须一致**（`const X_KEY = '…'` 那一族）
 //    —— 不通过 = 退出码 1。理由见下。
-// 11. **两份脚本合起来要能过一遍解析** —— 不通过 = 退出码 1。理由见下。
+// 11. **三份脚本合起来要能过一遍解析** —— 不通过 = 退出码 1。理由见下。
 // 12. **房间清单里每个 `Channel` 字段，界面都得发得回去**（`addRoomRow` 与保存那两处）
 //    —— 不通过 = 退出码 1。理由见下。
 // 13. **脚本往 `<html>` 上写的属性，样式表要真的读它** —— 不通过 = 退出码 1。理由见下。
+// 14. **文案字典要盖住界面用到的每一个键，两种键各有各的规矩** —— 不通过 = 退出码 1。理由见下。
+// 15. **`index.html` 里不许留下没挂 key 的中文 / 脚本里不许留中文串** —— 不通过 = 退出码 1。理由见下。
 //
 // # ⚠️ 第 4 条为什么算失败，而不是「提一句」
 //
@@ -235,6 +237,7 @@ const [
   capabilitiesPath = join(root, 'crates/desktop/capabilities/default.json'),
   bootPath = join(root, 'crates/desktop/ui/boot.js'),
   clientPath = join(root, 'crates/client/src/config.rs'),
+  i18nPath = join(root, 'crates/desktop/ui/i18n.js'),
 ] = process.argv.slice(2);
 
 const js = readFileSync(jsPath, 'utf8');
@@ -251,10 +254,22 @@ try {
   bootReadError = error;
 }
 
+/** ⚠️ 判据 10 / 11 / 14 / 15 都要读它。
+ * ⚠️★ 读不到是**真的失败**（不是「跳过」）：那正是「`i18n.js` 被改名 / 删掉」的样子，
+ * 而症状是**英文界面整片回到中文**（`app.js` 一上来就 `I18N.apply`，`I18N` 是 undefined
+ * → 当场抛异常 → 整页不动）。⚠️ 判据 2 也管加载的那一侧。 */
+let i18nSource = null;
+
 /** ⚠️ 判据 12 要读它（房间清单里 `Channel` 有哪些字段）。读不到 = 一条**真的失败**：
  * 那正是「`Channel` 被改名 / 搬家」的样子，而它的症状是这条检查**悄悄失效**。 */
 let client = null;
 let clientReadError = null;
+let i18nReadError = null;
+try {
+  i18nSource = readFileSync(i18nPath, 'utf8');
+} catch (error) {
+  i18nReadError = error;
+}
 try {
   client = readFileSync(clientPath, 'utf8');
 } catch (error) {
@@ -318,6 +333,7 @@ let failed = false;
  */
 const REQUIRED_SCRIPTS = [
   ['boot.js', '主题与语言不会在第一次绘制之前贴上 —— 深色用户每次启动都先闪一下白屏'],
+  ['i18n.js', '`app.js` 第一行 `I18N.apply` 就抛异常 —— 整页不动（比「没翻译」严重得多）'],
   ['app.js', '整页都是死的（一个字节的数据都画不出来）'],
 ];
 for (const [script, symptom] of REQUIRED_SCRIPTS) {
@@ -515,6 +531,13 @@ if (capabilities) {
   }
 }
 
+if (i18nReadError) {
+  failed = true;
+  console.error(`✗ 读不出 ${i18nPath}：${i18nReadError.message}`);
+  console.error('  ⚠️ 它是那两份字典和 `I18N` 的家；少了它 `app.js` 第一行就抛异常（整页不动），');
+  console.error('    判据 14 / 15 也无从谈起 —— 所以这里必须算失败，不能「跳过」。');
+}
+
 // ── 判据 10：界面偏好的存储键，两份脚本必须一致（理由见文件头）──────────────
 /**
  * 取一份源码里 `const NAME = '值';` 的那个值。
@@ -543,22 +566,34 @@ if (bootReadError) {
   // 两种都不报错，而且都只在**重启之后**才看得出来（用户早就忘了自己点过什么）。
   //
   // ⚠️ 清单是**从 `boot.js` 里数出来的**（不手写）：写死一份清单的话，
-  // 下次谁在 `boot.js` 里多读一个键、忘了在 `app.js` 里对上，这一条**照样绿**。
-  // 方向只有一个（boot → app）：`app.js` 里可以有自己的键（那个不需要 `boot.js` 认识）。
+  // 下次谁在 `boot.js` 里多读一个键、忘了在对面那份里对上，这一条**照样绿**。
+  // 方向只有一个（boot → 对面）：对面脚本里可以有自己的键（那些不需要 `boot.js` 认识）。
   // ⚠️ 锚在行首（同 `constString` 的理由）：`boot.js` 的注释里也写着 `const X_KEY = '…'`。
+  //
+  // ⚠️★ 对面**不止一份**：主题 / 侧栏两个键在 `app.js`，语种那个键在 `i18n.js`
+  //（`app.js` 不读存储，它只看 `<html data-locale>`）。所以要**挨个找过去**，
+  // 只查 `app.js` 的话「`LOCALE_KEY` 搬去了 i18n.js」会被误报成「只在 boot.js 里有」。
   const bootKeys = [...boot.matchAll(/^\s*const (\w+_KEY) = '([^']*)'/gm)];
   if (!bootKeys.length) {
     failed = true;
     console.error(`✗ 判据 10 在 ${bootPath} 里一个 \`const X_KEY = '值';\` 都没找到 —— 这条自检要跟着代码改。`);
   }
+  const peers = [
+    ['app.js', js, jsPath],
+    ['i18n.js', i18nSource ?? '', i18nPath],
+  ];
   for (const [, name, value] of bootKeys) {
-    const inApp = constString(js, name);
-    if (inApp === null) {
+    const homes = peers
+      .map(([label, source]) => [label, constString(source, name)])
+      .filter(([, found]) => found !== null);
+    if (!homes.length) {
       failed = true;
-      console.error(`✗ ${name} 只在 boot.js 里有（'${value}'），app.js 里没有同名常量 —— 这条自检要跟着代码改。`);
-    } else if (inApp !== value) {
+      console.error(`✗ ${name} 只在 boot.js 里有（'${value}'），另外两份脚本里都没有同名常量`
+        + ' —— 这条自检要跟着代码改。');
+    } else if (homes.some(([, found]) => found !== value)) {
       failed = true;
-      console.error(`✗ ${name} 在两份脚本里不一样：boot.js 是 '${value}'、app.js 是 '${inApp}'`);
+      const where = homes.map(([label, found]) => `${label} 是 '${found}'`).join('、');
+      console.error(`✗ ${name} 的值对不上：boot.js 是 '${value}'，${where}`);
       console.error('  ⚠️ 症状是「点一下能换、重启就变回去」（或反过来），**不报错**，只有重启后才看得出来。');
     }
   }
@@ -569,14 +604,16 @@ if (boot !== null) {
   try {
     // ⚠️ **只编译、不执行**：`new Function(…)` 只把源码过一遍解析器，
     // 函数体一行都不会跑（否则 `app.js` 开头那个 `throw` 会立刻把我们打停）。
-    new Function(`${boot}\n${js}`);
+    // ⚠️★ **三份都要拼进来**（`boot.js` / `i18n.js` / `app.js`）：共用一个全局词法作用域的
+    // 是**所有普通脚本**，漏掉一份就等于漏掉一半的撞名。（2026-09-28 加 `i18n.js` 时补的。）
+    new Function(`${boot}\n${i18nSource ?? ''}\n${js}`);
   } catch (error) {
     failed = true;
-    console.error(`✗ 两份脚本合起来解析不过：${error.message}`);
-    console.error('  ⚠️★ 最常见的一种是「两份脚本各自都好、合起来却死了」：它们都是**普通脚本**');
+    console.error(`✗ 这几份脚本合起来解析不过：${error.message}`);
+    console.error('  ⚠️★ 最常见的一种是「各自都好、合起来却死了」：它们都是**普通脚本**');
     console.error('    （不是 module），顶层的 `const` / `let` 进的是**同一个**全局词法作用域 ——');
     console.error('    同名变量会让**后解析的那一份整个不执行** = 整页不动。');
-    console.error('    修法：`boot.js` 里的常量放进它的 IIFE（见那个文件的注释）。');
+    console.error('    修法：常量放进各自的 IIFE（见 `boot.js` / `i18n.js` 的注释）。');
     console.error('  ⚠️ 顺带的收益：普通的语法错也会在这里被拦下 —— 这一侧没有构建步骤，别处没人拦。');
   }
 }
@@ -672,6 +709,293 @@ if (!writtenAttrs.size) {
     console.warn(`⚠ 样式表读了 ${neverWritten.length} 个**没有脚本会写**的属性：${neverWritten.join('、')}`);
     console.warn('  ⚠️ 只是提醒，不算失败 —— 它可能是写死在 HTML 标记上的（那种不走 `dataset`），');
     console.warn('    也可能是某条已经删掉的功能留下的死样式（§8.1 第 6 条那一类）。');
+  }
+}
+
+// ── 判据 14 / 15：文案的字典与抽键（理由见文件头）──────────────────────────
+//
+// ⚠️★ 这两条管的是**同一件事的两端**：界面里每一句要翻的话都得有 key（15），
+// 而每一个 key 都得有译文（14）。**只做一半的后果完全不同**：
+//   · 只做 14：漏抽的那句中文在英文界面里**永远不会变** —— 看着像「翻译漏了一句」，
+//     而它其实是「这句压根不在字典的覆盖范围里」，两种病的修法不一样；
+//   · 只做 15：抽了 key 但没译文 → 英文界面里印着那句**中文原文**（三级回落里
+//     第一级没命中、第二级命中），看起来也像「没翻译」，而真相是「译文没写」。
+// 所以两条都要，而且**分开报**。
+
+/** 剥掉 JS 的注释，把字符串字面量换成 `\0内容\0` 这样的包装。
+ *
+ * ⚠️★ 用途是判据 15：要找「字符串字面量里的中文」，就必须先能分清「这是字符串」
+ * 和「这是注释」。⚠️ 注释里当然有中文（这个仓库的注释全中文），不能算。
+ * ⚠️ 三段式扫描：注释 / 引号 / 正则。⚠️ 正则那一支只在「上一个有意义字符暗示这里
+ * 能出现正则」时才切进去（`= ( , : [ ! & | ? { ;` 这些之后）—— 否则 `a / b` 这种除法
+ * 会被当成正则的开头，把后面一大段代码吞掉（吞掉的后果是**漏报**，不报错）。
+ */
+function stripJs(source) {
+  let out = '';
+  let i = 0;
+  let lastMeaningful = '';
+  const n = source.length;
+  while (i < n) {
+    const c = source[i];
+    const next = source[i + 1];
+    if (c === '/' && next === '/') {
+      while (i < n && source[i] !== '\n') i++;
+      continue;
+    }
+    if (c === '/' && next === '*') {
+      i += 2;
+      while (i < n && !(source[i] === '*' && source[i + 1] === '/')) i++;
+      i += 2;
+      continue;
+    }
+    if (c === '"' || c === "'" || c === '`') {
+      const quote = c;
+      let body = '';
+      i++;
+      while (i < n && source[i] !== quote) {
+        if (source[i] === '\\') {
+          body += source[i] + (source[i + 1] ?? '');
+          i += 2;
+          continue;
+        }
+        body += source[i];
+        i++;
+      }
+      i++;
+      out += '\u0000' + body + '\u0000';
+      lastMeaningful = 'x';
+      continue;
+    }
+    if (c === '/' && /[=(,:;[!&|?{;]/.test(lastMeaningful)) {
+      i++;
+      while (i < n && source[i] !== '/' && source[i] !== '\n') {
+        if (source[i] === '\\') i++;
+        i++;
+      }
+      i++;
+      lastMeaningful = 'x';
+      continue;
+    }
+    out += c;
+    if (!/\s/.test(c)) lastMeaningful = c;
+    i++;
+  }
+  return out;
+}
+
+/** ⚠️★ **汉字** —— 「这个键是不是中文原文」按这个判（判据 14 的两条分类）。
+ *  ⚠️ 它**故意只认汉字、不认标点**：`'{label}…'` 这种「没有中文词、只有标点」的键
+ *  得当**符号键**看（两份字典都要有一条）—— 拿「有标点」当「有中文」的话，
+ *  它会被当成源语言键、`zh` 那边就没有那一条了，而它的中文其实是拼出来的。 */
+const IDEOGRAPH = /[\u4e00-\u9fff]/;
+
+/** ⚠️★ **汉字 + 中文标点** —— 「这段文字该不该抽键」按这个判（判据 15）。
+ *
+ * 后面那一串是中文标点：`、。` / `〈〉《》「」『』【】` / `〔〕〖〗〘〙〚〛` / `！（）` /
+ * `，：；？` / `…`。
+ *
+ * ⚠️★ 标点这一半是 2026-09-28 补的，起因是「一句话拆成几片 + 中间夹 `<b>`」那种写法：
+ * 写完 `…<b>不改</b>。` 时那个句号留在了**键外面** —— 中文看不出来（拼起来还是那句话），
+ * 而英文界面里会凭空多出一个中文句号。**7 处**都是这么来的。
+ * 修法是「标点留在键里」（`<b data-i18n="不改。">`），这条判据负责不让它回来。
+ *
+ * ⚠️ 全角符号（`＋` `⚙` 那种图标）**不算** —— 它们是符号、不该翻
+ * （`＋` 就是 `#btn-room-add` 里那个 `.gl`，窄栏收起后只剩它）。所以这里是**点名的集合**，
+ * 不是「整段全角区」。⚠️ 破折号 `—` 也**不算**：中英都用它。
+ */
+const CN_TEXT = /[\u4e00-\u9fff\u3001\u3002\u3008-\u3011\u3014-\u301b\uff01\uff08\uff09\uff0c\uff1a\uff1b\uff1f\u2026]/;
+
+/** 键里有中文 ⇒ 「原文即键」，`zh` 那份不用自己再有一条（见 `ui/i18n.js` 文件头那张表）。 */
+const isSourceKey = (key) => IDEOGRAPH.test(key);
+
+/** 从 `index.html` 里数出所有挂过 key 的地方。 */
+function htmlKeys(source) {
+  const found = new Map(); // key -> 属性名（报告里要说清是哪一处）
+  // ⚠️ 先剥注释 / `<style>` / `<script>`：CSS 注释里就写着 `data-i18n="pending"`
+  //（那段在解释遮布），不剥的话它会变成一个「界面用到的键」—— 实测就是这么误报的。
+  const bare = source
+    .replace(/<!--[\s\S]*?-->/g, '')
+    .replace(/<style\b[\s\S]*?<\/style>/gi, '')
+    .replace(/<script\b[\s\S]*?<\/script>/gi, '');
+  for (const attr of ['data-i18n', 'data-i18n-title', 'data-i18n-placeholder', 'data-i18n-html']) {
+    const pattern = new RegExp(attr + '\\s*=\\s*"([^"]*)"', 'g');
+    for (const match of bare.matchAll(pattern)) {
+      if (!found.has(match[1])) found.set(match[1], attr);
+    }
+  }
+  return found;
+}
+
+/** 从脚本里数出所有 `t('…')` / `I18N.html('…')` 的字面量首参。
+ *
+ * ⚠️★ 取出来的是**转义之后**的样子，所以要把 `\'` 和 `\n` **还原成运行时的值** ——
+ * 字典里那两条键是按运行时的值写的（`'…都没有。\n去配置里加一个…'` 里是一个真换行）。
+ * 不还原的话：`.empty` 那条多行提示**永远找不到译文**，而报出来的错是
+ * 「`en` 里没有译文」—— 看着像漏译，其实是比对的两个字符串根本不是一个东西。
+ */
+function jsKeys(source) {
+  const found = new Set();
+  for (const fn of ['t', 'I18N\\.t', 'I18N\\.html']) {
+    const pattern = new RegExp('\\b' + fn + '\\(\\s*\'((?:[^\'\\\\]|\\\\.)*)\'', 'g');
+    for (const match of source.matchAll(pattern)) {
+      found.add(match[1].replace(/\\'/g, "'").replace(/\\n/g, '\n').replace(/\\t/g, '\t'));
+    }
+  }
+  return found;
+}
+
+if (i18nSource) {
+  // ⚠️ 字典是**跑一遍** `i18n.js` 拿到的，不是正则抠的：正则抠不出
+  // 「少一个引号 / 两个语种键集合不一致」这些事，而它们都会让译文悄悄失效。
+  // ⚠️ 只给一个假 `window`：这份文件在**加载时**不碰 `document` / `localStorage`
+  //（它俩只在函数体里用）—— 所以这里不需要 DOM。
+  let dicts = null;
+  let loadError = null;
+  try {
+    const win = {};
+    new Function('window', i18nSource)(win);
+    dicts = (win.I18N && win.I18N.DICTS) || null;
+  } catch (error) {
+    loadError = error;
+  }
+
+  if (!dicts) {
+    failed = true;
+    const why = loadError ? '（' + loadError.message + '）' : '';
+    console.error('✗ 判据 14 跑不了：`i18n.js` 没能给出 `DICTS`' + why + ' —— 这条自检要跟着代码改。');
+  } else {
+    const locales = Object.keys(dicts);
+    const srcLang = locales.includes('zh') ? 'zh' : locales[0];
+    const sourceTable = dicts[srcLang] || {};
+    const others = locales.filter((l) => l !== srcLang);
+
+    // ① 每个语种的键集合必须和源语言**对得上**（缺一条 = 那一句永远显示源语言）
+    for (const locale of others) {
+      const missing = Object.keys(sourceTable).filter((key) => !(key in dicts[locale]));
+      if (missing.length) {
+        failed = true;
+        console.error('✗ 判据 14：`' + locale + '` 里少了 ' + missing.length + ' 条译文（那些句子会回落成源语言）：');
+        for (const key of missing.slice(0, 12)) console.error('    ' + JSON.stringify(key));
+        if (missing.length > 12) console.error('    …还有 ' + (missing.length - 12) + ' 条');
+      }
+    }
+
+    // ② 界面用到的每个**符号键**都得有句子（缺了就会把键原样印在界面上）
+    const used = new Map([...htmlKeys(html)].map(([k, attr]) => [k, 'index.html 的 ' + attr]));
+    for (const key of jsKeys(js)) used.set(key, 'app.js 里的 t(…)');
+
+    const symbolOnly = [...used].filter(([key]) => !isSourceKey(key));
+    const unresolved = symbolOnly.filter(([key]) => !(key in sourceTable));
+    if (unresolved.length) {
+      failed = true;
+      console.error('✗ 判据 14：' + unresolved.length + ' 个**符号键**在字典里没有对应句子（会原样印在界面上）：');
+      for (const [key, where] of unresolved) console.error('    ' + key + '   （' + where + '）');
+      console.error('  ⚠️ 症状：屏幕上直接印着 `desktop.problem.icon` 这样的键 —— 难看，但正是要它难看。');
+    }
+
+    // ③ 每个语种都要有译文
+    //    · 符号键：必须两处都有（源语言那份也是「译文」，因为 Rust 不许拼中文）；
+    //    · 静态文案的键（中文原文）：源语言那份走「回落到键本身」，**只要求别的语种有**。
+    for (const locale of others) {
+      const untranslated = symbolOnly
+        .filter(([key]) => !(key in dicts[locale]))
+        .map(([key]) => key);
+      if (untranslated.length) {
+        failed = true;
+        console.error('✗ 判据 14：' + untranslated.length + ' 个符号键在 `' + locale + '` 里没有译文：');
+        for (const key of untranslated) console.error('    ' + key);
+      }
+      const untranslatedSource = [...used]
+        .filter(([key]) => isSourceKey(key) && !(key in dicts[locale]))
+        .map(([key, where]) => JSON.stringify(key) + '（' + where + '）');
+      if (untranslatedSource.length) {
+        failed = true;
+        console.error('✗ 判据 14：' + untranslatedSource.length + ' 处界面文案在 `' + locale + '` 里没有译文：');
+        for (const line of untranslatedSource.slice(0, 15)) console.error('    ' + line);
+        if (untranslatedSource.length > 15) {
+          console.error('    …还有 ' + (untranslatedSource.length - 15) + ' 处');
+        }
+        console.error('  ⚠️★ 最常见的成因：改了中文原文（键跟着变了）而没补译文 —— 旧译文的键对不上，**不报错的**。');
+      }
+    }
+
+    // ④ 同一句话在两处用时，`{参数}` 必须一致（少一个 = 参数原样印出来）
+    const paramsOf = (template) => [...template.matchAll(/\{(\w+)\}/g)].map((m) => m[1]).sort().join(',');
+    for (const [locale, table] of Object.entries(dicts)) {
+      for (const [name, template] of Object.entries(table)) {
+        const mine = paramsOf(template);
+        const theirs = paramsOf(sourceTable[name] ?? name);
+        if (mine !== theirs) {
+          failed = true;
+          console.error('✗ 判据 14：`' + locale + '` 的 `' + name + '` 参数与源语言对不上：'
+            + '`' + mine + '` vs `' + theirs + '`');
+        }
+      }
+    }
+  }
+
+  // ── 判据 15：抽键完整性 ────────────────────────────────────────────────
+  // ⚠️★ 判据 14 只证明「**用到的**键都有译文」，证明不了「**该抽的都抽了**」——
+  //    漏抽一句中文，它压根不进 `used`，14 照样全绿。所以要有这一条。
+  const stolen = [];
+  // ① 文本节点：**含汉字或中文标点**、而所在元素**没有**挂 `data-i18n` 的
+  //
+  // ⚠️ 字符类从 `CN_TEXT.source` 拼出来，不再抄第二遍 —— 抄一遍就会出现
+  //   「上面加了标点、下面还是只查汉字」这种**只有一半生效**的判据。
+  // ⚠️ 找出「这段文字属于哪个元素」用的是「往回找最近一个 `<`」。这对**现在的**标记是准的
+  //   （每段文字所在的元素自己就挂着 key，不存在「父元素挂 key、子元素没挂」）。
+  //   ⚠️★ 将来要是用上 `data-i18n-html`（父元素一句、里面夹 `<b>`），这条就会开始**误报** ——
+  //   那时得换成「顺着标签走一遍、记住祖先链上有没有 key」的写法。
+  const textNode = new RegExp('>([^<>]*' + CN_TEXT.source + '[^<>]*)<', 'g');
+  for (const match of markup.matchAll(textNode)) {
+    const text = match[1].trim();
+    if (!text) continue;
+    const before = markup.slice(0, match.index);
+    const lastOpen = before.lastIndexOf('<');
+    const tag = lastOpen >= 0 ? markup.slice(lastOpen, match.index) : '';
+    if (/data-i18n\b/.test(tag)) continue;
+    stolen.push('文本「' + text.slice(0, 30) + '」');
+  }
+  // ② 属性：`title=` / `placeholder=` 里还留着中文（说明没搬成 `data-i18n-title`）
+  // ⚠️ `(?<![\w-])`：不加的话 `data-i18n-title="…"` 也会被 `\btitle` 命中
+  //（`-` 是非词字符，`\b` 在它后面成立）—— 实测一上来就是 5 个假红。
+  for (const match of markup.matchAll(/(?<![\w-])(title|placeholder)\s*=\s*"([^"]*[\u4e00-\u9fff][^"]*)"/g)) {
+    stolen.push('属性 ' + match[1] + '="' + match[2].slice(0, 30) + '"');
+  }
+  if (stolen.length) {
+    failed = true;
+    console.error('✗ 判据 15：index.html 里有 ' + stolen.length + ' 处中文**没挂 data-i18n**（切到别的语种时它们不会变）：');
+    for (const line of stolen.slice(0, 15)) console.error('    ' + line);
+    if (stolen.length > 15) console.error('    …还有 ' + (stolen.length - 15) + ' 处');
+  }
+  // ③ 脚本里**含中文的字符串字面量，必须是 `t(…)` / `html(…)` 的实参**
+  //
+  // ⚠️★ 判据不是「不许出现中文串」：抽完键之后中文**还在**（它是 `t()` 的实参）。
+  //     真正要拦的是「**漏了一处**」—— 那就得看它**长在什么位置**。
+  // ⚠️ `stripJs` 的输出里字符串已经换成 `\0内容\0`，所以「前面是不是 `t(`」
+  //    直接看剥完之后的文本就够了（注释已经被扔掉，不会误判）。
+  for (const [label, source] of [['app.js', js], ['boot.js', boot ?? '']]) {
+    const stripped = stripJs(source);
+    const bare = [];
+    for (const match of stripped.matchAll(/\u0000([^\u0000]*)\u0000/g)) {
+      // ⚠️ 这里用 `CN_TEXT`（含标点）：`'…'` `'。'` 这种**只有标点**的字面量同样得走 `t()`
+      //（实测就是它抓到的：`` `${label}…` `` 那个模板串 —— 中文侧看着没问题，英文侧是个中文省略号）。
+      if (!CN_TEXT.test(match[1])) continue;
+      const before = stripped.slice(0, match.index).replace(/\s+$/, '');
+      // `t(` / `I18N.t(` / `I18N.html(` 都算（`showNotice(kind, t(…))` 这种也在里面）
+      if (/(?:I18N\.)?(?:t|html)\($/.test(before)) continue;
+      bare.push(match[1]);
+    }
+    if (bare.length) {
+      failed = true;
+      console.error('✗ 判据 15：' + label + ' 里有 ' + bare.length + ' 处中文**没走 `t(…)`**'
+        + '（切到别的语种时它们不会变）：');
+      for (const line of bare.slice(0, 15)) console.error('    ' + JSON.stringify(line.slice(0, 60)));
+      if (bare.length > 15) console.error('    …还有 ' + (bare.length - 15) + ' 处');
+      console.error('  ⚠️ 注释里的中文**不算**（这个仓库的注释就是中文）—— 这里剥过注释了。');
+      console.error('  ⚠️ 但**壳（Rust）下发的**句子不归这里管：它们的 key 在 `i18n.js` 里，');
+      console.error('    由判据 14 的「符号键两边都要有译文」兜着。');
+    }
   }
 }
 

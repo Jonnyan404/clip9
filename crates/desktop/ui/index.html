@@ -658,6 +658,15 @@ table.ra td input[type='checkbox'] { margin: 0; }
 }
 .sidebar-head .tool:hover { background: var(--sidebar-hover); color: var(--sidebar-head); }
 
+/* ⚠️★ 语言那颗按钮上的两个字：**按 `data-locale` 二选一**，不由 JS 动 DOM。
+   默认（没有 `data-locale`、或值不认得）= 源语言中文 → 画「EN」（点下去会切成英文）。
+   ⚠️ 这么写是因为「当前是哪个语种」**已经有了一处定义**（`<html data-locale>`，
+   `boot.js` 与 `I18N.setLocale` 都往那上面贴）；要是这里再存一个布尔值，
+   就会多出一份「按哪个按钮切换」的判断，而它一定会和属性漂开。 */
+#btn-lang .to-zh { display: none; }
+:root[data-locale='en'] #btn-lang .to-en { display: none; }
+:root[data-locale='en'] #btn-lang .to-zh { display: inline; }
+
 /* ══ 侧栏收起（`<html data-sidebar="narrow">`）════════════════════════════
  *
  * Jonny 2026-09-28：「**侧栏允许收紧**」。收成**一条窄栏**（56px）而不是「窄一点」——
@@ -718,6 +727,21 @@ table.ra td input[type='checkbox'] { margin: 0; }
    （不是错误），而且它的出路就在下面那一行（「＋」永远在）。
    ⚠️ 展开就能读到那句「数据目录下的 client.json」—— 它是给「想知道去哪儿加」的人看的。 */
 :root[data-sidebar='narrow'] .rooms .empty { display: none; }
+
+/* ⚠️★ 「文案还没刷完」那块遮布 ─────────────────────────────────────────────
+ *
+ * `boot.js` **只在非源语言上**贴 `data-i18n="pending"`（理由见它的模块注释）。
+ * 界面文案是 `i18n.js`（`defer`）刷的，而刷之前那一屏是**中文**（源语言）——
+ * 英文用户会先看到一屏中文再跳成英文。
+ *
+ * ⚠️ 只藏 `.win` 的**可见性**，不是 `display:none`：布局照算，
+ * 摘掉遮布的那一刻**不会引起第二次回流**（也就不会又跳一下）。
+ * ⚠️ 说清这条路**不是**无障碍兜底：`visibility: hidden` 的东西读屏也读不到。
+ * 真正的兜底是另外两条 —— ①**只对非源语言贴**（中文用户根本没有遮布）；
+ * ②`boot.js` 里那个 1.5 秒计时器（`i18n.js` 没跑起来时会自己摘掉）。
+ * ⚠️ 与「没有 tauri 桥」那条分支不冲突：那条把 `document.body.textContent` 整个换掉，
+ * `.win` 都不存在了，这条规则自然也就不匹配。 */
+:root[data-i18n='pending'] .win { visibility: hidden; }
 /* 「来源房间」那一格里的说明 —— ⚠️ 同样不能复用 .hint：稿 2 里它**紧跟在房间名后面**
    （不是右对齐），而 .hint 是 `margin-left:auto` 的右对齐短提示。 */
 .inp .src-note { color: var(--text-2); font-size: 11px; margin-left: 8px; }
@@ -793,12 +817,19 @@ table.ra td input[type='checkbox'] { margin: 0; }
                  （主题、语言、收起）都放这儿（Jonny 2026-09-28：「图标放在侧栏顶部」）——
                  **收起之后也要点得到**，那正是它长在这一行的理由。
                  ⚠️ 顺序就是它们出现的顺序：主题、语言、收起 ——
-                 收起那个**排最后**（它是唯一会改变这一行自己的那个，放最后最不容易误点）。 -->
+                 收起那个**排最后**（它是唯一会改变这一行自己的那个，放最后最不容易误点）。
+                 ⚠️ 语言那颗按「点下去会变成哪个语种」画（和主题那颗同一个规矩），
+                 两个字由 CSS 按 `data-locale` 二选一 —— 这样切语种时
+                 **不需要 JS 动它**（`data-locale` 是 `boot.js` / `I18N.setLocale` 贴的）。
+                 ⚠️ 主题那颗与收起那颗**故意没有** `data-i18n-title`：它们的提示是
+                 **有状态的话**（「切到浅色」还是「切到深色」、「收起」还是「展开」），
+                 一句固定的译文表达不了 → 由 `app.js` 用 `t()` 设（换语种时会再设一次）。 -->
             <div class="sidebar-head">
-                <span class="ttl">房间 <span class="count" id="room-count">—</span></span>
+                <span class="ttl"><span data-i18n="房间">房间</span> <span class="count" id="room-count">—</span></span>
                 <div class="tools">
-                    <button class="tool" id="btn-theme" title="切到深色模式">🌙</button>
-                    <button class="tool" id="btn-sidebar" title="收起侧栏">◀</button>
+                    <button class="tool" id="btn-theme">🌙</button>
+                    <button class="tool" id="btn-lang" data-i18n-title="side.lang.tip"><span class="to-en" data-i18n="EN">EN</span><span class="to-zh" data-i18n="中">中</span></button>
+                    <button class="tool" id="btn-sidebar">◀</button>
                 </div>
             </div>
             <div class="rooms" id="rooms"></div>
@@ -816,8 +847,8 @@ table.ra td input[type='checkbox'] { margin: 0; }
                  而**拆得开**才收得掉（`display: none` 没法只藏一半的文字）。
                  两个 span 之间的间距由 `.sidebar-foot button` 的 `gap: 8px` 给。 -->
             <div class="sidebar-foot">
-                <button id="btn-room-add"><span class="gl">＋</span><span class="lbl">添加房间</span></button>
-                <button id="btn-settings"><span class="gl">⚙</span><span class="lbl">全局设置</span></button>
+                <button id="btn-room-add"><span class="gl">＋</span><span class="lbl" data-i18n="添加房间">添加房间</span></button>
+                <button id="btn-settings"><span class="gl">⚙</span><span class="lbl" data-i18n="全局设置">全局设置</span></button>
             </div>
         </div>
 
@@ -838,14 +869,14 @@ table.ra td input[type='checkbox'] { margin: 0; }
                          而用户发的常常是命令、路径、代码片段 —— 一个大写字母就让它变成另一回事。
                          ⚠️ 该页**所有**输入框都要有它（地址格少一个字母就变成 `Https://…`）；
                          漏了的由 `tools/desktop-ui-smoke.mjs` 那条静态自检拦下。 -->
-                    <textarea id="input" rows="1" autocapitalize="off" placeholder="输入内容，或直接把文件拖进来…"></textarea>
+                    <textarea id="input" rows="1" autocapitalize="off" data-i18n-placeholder="输入内容，或直接把文件拖进来…"></textarea>
                     <div class="row">
-                        <button class="btn icon" id="btn-attach" title="选文件发到房间">📎</button>
-                        <button class="btn icon" id="btn-image" title="选图片发到房间">🖼</button>
+                        <button class="btn icon" id="btn-attach" data-i18n-title="选文件发到房间">📎</button>
+                        <button class="btn icon" id="btn-image" data-i18n-title="选图片发到房间">🖼</button>
                         <span class="lim" id="composer-hint"></span>
                         <div class="spacer"></div>
                         <span class="lim" id="limits"></span>
-                        <button class="btn primary" id="btn-send">发送</button>
+                        <button class="btn primary" id="btn-send" data-i18n="发送">发送</button>
                     </div>
                 </div>
             </div>
@@ -857,63 +888,63 @@ table.ra td input[type='checkbox'] { margin: 0; }
       <div class="win settings">
         <!-- ⚠️ 浮层的标题栏**没有**那三个红黄绿圆点 —— 它们是假的 macOS 交通灯，
              而这几个窗口本来就有系统标题栏（Jonny 2026-09-26：「mac 样式都删了」）。 -->
-        <div class="titlebar"><span class="t">设置</span></div>
+        <div class="titlebar"><span class="t" data-i18n="设置">设置</span></div>
         <div class="body">
             <div class="nav" id="settings-nav">
-                <div class="grp">连接</div>
-                <div class="it on" data-pane="rooms">🖧 服务端与房间</div>
-                <div class="grp">同步</div>
-                <div class="it" data-pane="sync">↑↓ 方向与内容</div>
-                <div class="it" data-pane="watch">⏱ 监听与去重</div>
-                <div class="grp">桌面</div>
-                <div class="it" data-pane="desktop">🖥 窗口与托盘</div>
-                <div class="it" data-pane="hotkeys">⌨ 快捷键</div>
-                <div class="it" data-pane="notify">🔔 通知与主题</div>
-                <div class="grp">本机</div>
-                <div class="it" data-pane="server">🗄 本地服务端</div>
-                <div class="it" data-open="server">⚙ 服务端配置</div>
-                <div class="grp">其它</div>
-                <div class="it" data-pane="log">≡ 日志</div>
-                <div class="it" data-pane="diag">ⓘ 关于</div>
+                <div class="grp" data-i18n="连接">连接</div>
+                <div class="it on" data-pane="rooms" data-i18n="🖧 服务端与房间">🖧 服务端与房间</div>
+                <div class="grp" data-i18n="同步">同步</div>
+                <div class="it" data-pane="sync" data-i18n="↑↓ 方向与内容">↑↓ 方向与内容</div>
+                <div class="it" data-pane="watch" data-i18n="⏱ 监听与去重">⏱ 监听与去重</div>
+                <div class="grp" data-i18n="桌面">桌面</div>
+                <div class="it" data-pane="desktop" data-i18n="🖥 窗口与托盘">🖥 窗口与托盘</div>
+                <div class="it" data-pane="hotkeys" data-i18n="⌨ 快捷键">⌨ 快捷键</div>
+                <div class="it" data-pane="notify" data-i18n="🔔 通知与主题">🔔 通知与主题</div>
+                <div class="grp" data-i18n="本机">本机</div>
+                <div class="it" data-pane="server" data-i18n="🗄 本地服务端">🗄 本地服务端</div>
+                <div class="it" data-open="server" data-i18n="⚙ 服务端配置">⚙ 服务端配置</div>
+                <div class="grp" data-i18n="其它">其它</div>
+                <div class="it" data-pane="log" data-i18n="≡ 日志">≡ 日志</div>
+                <div class="it" data-pane="diag" data-i18n="ⓘ 关于">ⓘ 关于</div>
             </div>
 
             <div class="pane" id="pane-rooms">
-                <h3>服务端与房间</h3>
-                <p class="sub">↑ 把本机剪贴板发到这个房间，↓ 把这个房间的内容收进本机剪贴板（<b>全局只能一个</b>）。</p>
+                <h3 data-i18n="服务端与房间">服务端与房间</h3>
+                <p class="sub"><span data-i18n="↑ 把本机剪贴板发到这个房间，↓ 把这个房间的内容收进本机剪贴板（">↑ 把本机剪贴板发到这个房间，↓ 把这个房间的内容收进本机剪贴板（</span><b data-i18n="全局只能一个）。">全局只能一个）。</b></p>
                 <table class="ra" id="rooms-table">
                     <thead><tr>
-                        <th class="tiny" title="留空 = 自动挑一个不重样的">图标</th>
-                        <th class="c-name">名字</th><th class="c-server">服务端</th><th class="c-room">房间</th>
-                        <th class="c-token">凭据</th><th class="tiny">↑</th><th class="tiny">↓</th><th class="tiny"></th>
+                        <th class="tiny" data-i18n-title="留空 = 自动挑一个不重样的" data-i18n="图标">图标</th>
+                        <th class="c-name" data-i18n="名字">名字</th><th class="c-server" data-i18n="服务端">服务端</th><th class="c-room" data-i18n="房间">房间</th>
+                        <th class="c-token" data-i18n="凭据">凭据</th><th class="tiny">↑</th><th class="tiny">↓</th><th class="tiny"></th>
                     </tr></thead>
                     <tbody id="rooms-body"></tbody>
                 </table>
-                <button class="btn" id="room-add" style="margin-top:9px">＋ 添加房间</button>
+                <button class="btn" id="room-add" style="margin-top:9px" data-i18n="＋ 添加房间">＋ 添加房间</button>
             </div>
 
             <div class="pane" id="pane-sync" hidden>
-                <h3>方向与内容</h3>
+                <h3 data-i18n="方向与内容">方向与内容</h3>
                 <!-- ⚠️ 这一页**故意没有 `.sub`**（2026-09-28 精简）：下面两张卡片的 `.st`
                      已经把「谁发给谁」写全了，再来一句就是**同一句话的第二个说法**。 -->
                 <div class="subcard" style="margin-bottom:13px">
-                    <div class="st">↑ 发到房间（可多房间同时开）</div>
-                    <div class="chk"><span class="sq on" id="sc-text">✓</span>文本<span class="hint">默认开</span></div>
-                    <div class="chk"><span class="sq on" id="sc-file">✓</span>文件（图片走这条）<span class="hint" id="sc-file-hint">上限还不知道</span></div>
+                    <div class="st" data-i18n="↑ 发到房间（可多房间同时开）">↑ 发到房间（可多房间同时开）</div>
+                    <div class="chk"><span class="sq on" id="sc-text">✓</span><span data-i18n="文本">文本</span><span class="hint" data-i18n="默认开">默认开</span></div>
+                    <div class="chk"><span class="sq on" id="sc-file">✓</span><span data-i18n="文件（图片走这条）">文件（图片走这条）</span><span class="hint" id="sc-file-hint" data-i18n="上限还不知道">上限还不知道</span></div>
                     <!-- ⚠️ 这一行**故意没有 id**：本版不做富文本（设计稿 §6），
                          所以它不能被点（点了一下什么都不发生 = 最坏的一种）。 -->
-                    <div class="chk" title="本版不做富文本：服务端的存储（api.md 的 ReceiveBase）和渲染都没有这条路径（设计稿 §6）"><span class="sq"></span>富文本 / HTML<span class="hint">本版按文本处理</span></div>
+                    <div class="chk" data-i18n-title="本版不做富文本：服务端的存储（api.md 的 ReceiveBase）和渲染都没有这条路径（设计稿 §6）"><span class="sq"></span><span data-i18n="富文本 / HTML">富文本 / HTML</span><span class="hint" data-i18n="本版按文本处理">本版按文本处理</span></div>
                 </div>
 
                 <div class="subcard">
-                    <div class="st">↓ 收进剪贴板（全局只能一个房间）</div>
-                    <div class="chk"><span class="sq on g" id="sc-text-dl">✓</span>文本</div>
-                    <div class="chk"><span class="sq on g" id="sc-file-dl">✓</span>文件（含图片）</div>
+                    <div class="st" data-i18n="↓ 收进剪贴板（全局只能一个房间）">↓ 收进剪贴板（全局只能一个房间）</div>
+                    <div class="chk"><span class="sq on g" id="sc-text-dl">✓</span><span data-i18n="文本">文本</span></div>
+                    <div class="chk"><span class="sq on g" id="sc-file-dl">✓</span><span data-i18n="文件（含图片）">文件（含图片）</span></div>
                     <div class="field" style="margin:9px 0 0">
-                        <label>来源房间</label>
-                        <div class="inp" id="sc-source">—<span class="hint">在左侧栏用 ↓ 选</span></div>
+                        <label data-i18n="来源房间">来源房间</label>
+                        <div class="inp" id="sc-source">—<span class="hint" data-i18n="在左侧栏用 ↓ 选">在左侧栏用 ↓ 选</span></div>
                     </div>
                     <div class="field" style="margin:9px 0 0">
-                        <label>收到的文件存哪（相对 = 数据目录下）</label>
+                        <label data-i18n="收到的文件存哪（相对 = 数据目录下）">收到的文件存哪（相对 = 数据目录下）</label>
                         <input class="inp" id="sc-dir" type="text" autocapitalize="off" />
                     </div>
                 </div>
@@ -925,18 +956,18 @@ table.ra td input[type='checkbox'] { margin: 0; }
                      ②「水印 / 不靠时间窗猜」是**实现细节**，用户不需要拿它来判断什么。
                      留着的一句是**用户真的会搞错**的那件：历史重放**不写剪贴板**。 -->
                 <div class="divider"></div>
-                <p class="sub" style="margin:0">装完两个方向都关着。连上时服务端会重放历史 —— <b>历史只进列表，不写剪贴板</b>。</p>
+                <p class="sub" style="margin:0"><span data-i18n="装完两个方向都关着。连上时服务端会重放历史 ——">装完两个方向都关着。连上时服务端会重放历史 ——</span><b data-i18n="历史只进列表，不写剪贴板。">历史只进列表，不写剪贴板。</b></p>
             </div>
 
             <div class="pane" id="pane-watch" hidden>
-                <h3>监听与去重</h3>
-                <p class="sub">剪贴板是<b>轮询</b>读的（系统没有「剪贴板变了」这个通知）。间隔 = 多快同步过去 / 空转多少。</p>
+                <h3 data-i18n="监听与去重">监听与去重</h3>
+                <p class="sub"><span data-i18n="剪贴板是">剪贴板是</span><b data-i18n="轮询">轮询</b><span data-i18n="读的（系统没有「剪贴板变了」这个通知）。间隔 = 多快同步过去 / 空转多少。">读的（系统没有「剪贴板变了」这个通知）。间隔 = 多快同步过去 / 空转多少。</span></p>
                 <div class="subcard">
                     <div class="field" style="margin:0">
-                        <label>监听间隔（毫秒）</label>
+                        <label data-i18n="监听间隔（毫秒）">监听间隔（毫秒）</label>
                         <input class="inp" id="sc-poll" type="number" min="1" />
                     </div>
-                    <p class="sub" style="margin:7px 0 0">改完点「保存」才生效 —— 它会重启监听线程。</p>
+                    <p class="sub" style="margin:7px 0 0" data-i18n="改完点「保存」才生效 —— 它会重启监听线程。">改完点「保存」才生效 —— 它会重启监听线程。</p>
                 </div>
                 <!-- ⚠️★ 原来这张卡片是一整段 11 行的说明（2026-09-28 精简到两行）。留下的两句是
                      **用户会搞错、而且错了看得出来**的：①「全关就不读了」——它决定了「读不读我的
@@ -946,47 +977,45 @@ table.ra td input[type='checkbox'] { margin: 0; }
                      用户不需要知道 —— 需要知道这件事的是**改这一段的人**，而它写在设计稿与
                      `config.rs` 的模块文档里，不在这儿。 -->
                 <div class="subcard" style="margin-top:13px">
-                    <div class="st">什么时候在读你的剪贴板</div>
-                    <p class="sub" style="margin:0">有房间开着 <b>↑</b> 才读；一个都没开就把轮询线程<b>停掉</b>。<br>
-                       ↓ 与此无关，<b>连接照常</b> —— 设备、延迟、别人发来的内容都不受影响。</p>
+                    <div class="st" data-i18n="什么时候在读你的剪贴板">什么时候在读你的剪贴板</div>
+                    <p class="sub" style="margin:0"><span data-i18n="有房间开着">有房间开着</span><b>↑</b><span data-i18n="才读；一个都没开就把轮询线程">才读；一个都没开就把轮询线程</span><b data-i18n="停掉。">停掉。</b><br><span data-i18n="↓ 与此无关，">↓ 与此无关，</span><b data-i18n="连接照常">连接照常</b><span data-i18n="—— 设备、延迟、别人发来的内容都不受影响。">—— 设备、延迟、别人发来的内容都不受影响。</span></p>
                 </div>
                 <div class="subcard" style="margin-top:13px">
-                    <div class="st">去重</div>
-                    <p class="sub" style="margin:0">同一份内容连着出现不会发两遍（按类型记指纹）。<b>没有开关</b>。</p>
+                    <div class="st" data-i18n="去重">去重</div>
+                    <p class="sub" style="margin:0"><span data-i18n="同一份内容连着出现不会发两遍（按类型记指纹）。">同一份内容连着出现不会发两遍（按类型记指纹）。</span><b data-i18n="没有开关。">没有开关。</b></p>
                 </div>
             </div>
 
             <div class="pane" id="pane-desktop" hidden>
-                <h3>窗口与托盘</h3>
+                <h3 data-i18n="窗口与托盘">窗口与托盘</h3>
                 <div class="subcard">
-                    <div class="chk"><span class="sq" id="sc-autostart"></span>开机自动启动</div>
-                    <p class="sub" style="margin:7px 0 0">勾的是<b>系统里的真相</b>（启动项在不在），不是我们「想要」的值。装完默认不开。</p>
+                    <div class="chk"><span class="sq" id="sc-autostart"></span><span data-i18n="开机自动启动">开机自动启动</span></div>
+                    <p class="sub" style="margin:7px 0 0"><span data-i18n="勾的是">勾的是</span><b data-i18n="系统里的真相">系统里的真相</b><span data-i18n="（启动项在不在），不是我们「想要」的值。装完默认不开。">（启动项在不在），不是我们「想要」的值。装完默认不开。</span></p>
                 </div>
                 <div class="subcard" style="margin-top:13px">
-                    <div class="st">托盘</div>
-                    <p class="sub" style="margin:0">菜单：打开主窗口 / 开机自动启动 / 切换房间 / 退出。<br>
-                       关掉窗口只是<b>藏起来</b> —— 同步照常跑，要退出得走托盘。</p>
+                    <div class="st" data-i18n="托盘">托盘</div>
+                    <p class="sub" style="margin:0"><span data-i18n="菜单：打开主窗口 / 开机自动启动 / 切换房间 / 退出。">菜单：打开主窗口 / 开机自动启动 / 切换房间 / 退出。</span><br><span data-i18n="关掉窗口只是">关掉窗口只是</span><b data-i18n="藏起来">藏起来</b><span data-i18n="—— 同步照常跑，要退出得走托盘。">—— 同步照常跑，要退出得走托盘。</span></p>
                 </div>
             </div>
 
             <div class="pane" id="pane-hotkeys" hidden>
-                <h3>快捷键</h3>
-                <p class="sub">还没做。</p>
+                <h3 data-i18n="快捷键">快捷键</h3>
+                <p class="sub" data-i18n="还没做。">还没做。</p>
             </div>
 
             <div class="pane" id="pane-notify" hidden>
-                <h3>通知与主题</h3>
-                <p class="sub">剪贴板上那两件事发生时你多半不在这个窗口里，所以走<b>系统通知</b>。</p>
+                <h3 data-i18n="通知与主题">通知与主题</h3>
+                <p class="sub"><span data-i18n="剪贴板上那两件事发生时你多半不在这个窗口里，所以走">剪贴板上那两件事发生时你多半不在这个窗口里，所以走</span><b data-i18n="系统通知。">系统通知。</b></p>
                 <div class="subcard">
-                    <div class="st">剪贴板的系统通知</div>
-                    <div class="chk"><span class="sq on" id="sc-notify-up">✓</span>本机剪贴板<b>没发出去</b>时通知我<span class="hint">成功不通知</span></div>
-                    <div class="chk"><span class="sq on" id="sc-notify-dl">✓</span>房间的内容<b>写进本机剪贴板</b>时通知我</div>
-                    <p class="sub" style="margin:7px 0 0">第一条<b>只在没发出去时</b>响（「已发送」是噪音）；第二条<b>每次写成都</b>响（剪贴板被改你看不见）。</p>
+                    <div class="st" data-i18n="剪贴板的系统通知">剪贴板的系统通知</div>
+                    <div class="chk"><span class="sq on" id="sc-notify-up">✓</span><span data-i18n="本机剪贴板">本机剪贴板</span><b data-i18n="没发出去">没发出去</b><span data-i18n="时通知我">时通知我</span><span class="hint" data-i18n="成功不通知">成功不通知</span></div>
+                    <div class="chk"><span class="sq on" id="sc-notify-dl">✓</span><span data-i18n="房间的内容">房间的内容</span><b data-i18n="写进本机剪贴板">写进本机剪贴板</b><span data-i18n="时通知我">时通知我</span></div>
+                    <p class="sub" style="margin:7px 0 0"><span data-i18n="第一条">第一条</span><b data-i18n="只在没发出去时">只在没发出去时</b><span data-i18n="响（「已发送」是噪音）；第二条">响（「已发送」是噪音）；第二条</span><b data-i18n="每次写成都">每次写成都</b><span data-i18n="响（剪贴板被改你看不见）。">响（剪贴板被改你看不见）。</span></p>
                 </div>
                 <div class="subcard" style="margin-top:13px">
-                    <div class="st">主题</div>
+                    <div class="st" data-i18n="主题">主题</div>
                     <div style="font-size:12px;line-height:1.6">
-                        ⚠️ <b>还没做</b>：界面稿里明暗两套令牌都画好了，但<b>没有地方切</b>。
+                        ⚠️ <b data-i18n="还没做">还没做</b><span data-i18n="：界面稿里明暗两套令牌都画好了，但">：界面稿里明暗两套令牌都画好了，但</span><b data-i18n="没有地方切。">没有地方切。</b>
                     </div>
                 </div>
             </div>
@@ -1001,7 +1030,7 @@ table.ra td input[type='checkbox'] { margin: 0; }
                  （Jonny：「怎么我改任何一个端口，都提示端口被占用？？？」）。
                  现在端口**从这份配置读**（`server_process::port`），改完点「保存并重启」就生效。 -->
             <div class="pane" id="pane-server" hidden>
-                <h3>本地服务端</h3>
+                <h3 data-i18n="本地服务端">本地服务端</h3>
                 <!-- ⚠️ 别的页在 `<h3>` 下面都有一句 `.sub`，这一页**故意没有**：
                      稿子那张卡本身没有它（`.hd` + 两处 `.d` 已经说完了），
                      而这一页比窗口高 —— 少两行正好让第二张「运行方式」卡片露出来。
@@ -1010,11 +1039,11 @@ table.ra td input[type='checkbox'] { margin: 0; }
                     <div class="hd"><span class="dot" id="srv-dot"></span> <span id="srv-state">—</span></div>
                     <div class="bd">
                         <div class="kv">
-                            <span class="k">版本</span><span class="v" id="srv-version">—</span>
-                            <span class="k">监听</span><span class="v" id="srv-listen">—</span>
-                            <span class="k">数据目录</span><span class="v" id="srv-data">—</span>
-                            <span class="k">房间 / 条目</span><span class="v" id="srv-rooms">—</span>
-                            <span class="k">运行时长</span><span class="v" id="srv-uptime">—</span>
+                            <span class="k" data-i18n="版本">版本</span><span class="v" id="srv-version">—</span>
+                            <span class="k" data-i18n="监听">监听</span><span class="v" id="srv-listen">—</span>
+                            <span class="k" data-i18n="数据目录">数据目录</span><span class="v" id="srv-data">—</span>
+                            <span class="k" data-i18n="房间 / 条目">房间 / 条目</span><span class="v" id="srv-rooms">—</span>
+                            <span class="k" data-i18n="运行时长">运行时长</span><span class="v" id="srv-uptime">—</span>
                         </div>
                         <!-- ⚠️★ Jonny 2026-09-28：「打开网页版」挨着「重启 / 停止」放（原来中间
                              夹一个 `flex:1`，把它推到整行的最右边 —— 看着像**另一组**按钮，
@@ -1022,55 +1051,55 @@ table.ra td input[type='checkbox'] { margin: 0; }
                              ⚠️ 顺序也有讲究：重启 / 停止在前（改完配置之后最常点的两个），
                              打开网页版在后（它是「去看一眼」，不是「改一下」）。 -->
                         <div style="display:flex;gap:8px;margin-bottom:14px;">
-                            <button class="btn" id="srv-restart">重启</button>
-                            <button class="btn danger" id="srv-stop">停止</button>
-                            <button class="btn" id="srv-open">🌐 打开网页版</button>
+                            <button class="btn" id="srv-restart" data-i18n="重启">重启</button>
+                            <button class="btn danger" id="srv-stop" data-i18n="停止">停止</button>
+                            <button class="btn" id="srv-open" data-i18n="🌐 打开网页版">🌐 打开网页版</button>
                         </div>
                         <div class="divider"></div>
-                        <div style="font-size:11.5px;color:var(--text-2);margin-bottom:8px;">运行方式</div>
+                        <div style="font-size:11.5px;color:var(--text-2);margin-bottom:8px;" data-i18n="运行方式">运行方式</div>
                         <div class="mode" id="srv-mode-local">
-                            <div class="t"><span class="sq" style="width:14px;height:14px;" id="srv-sq-local"></span>随客户端启动（推荐）</div>
-                            <div class="d">客户端退出时一并停止。数据目录在「服务端配置」里改。</div>
+                            <div class="t"><span class="sq" style="width:14px;height:14px;" id="srv-sq-local"></span><span data-i18n="随客户端启动（推荐）">随客户端启动（推荐）</span></div>
+                            <div class="d" data-i18n="客户端退出时一并停止。数据目录在「服务端配置」里改。">客户端退出时一并停止。数据目录在「服务端配置」里改。</div>
                         </div>
                         <div class="mode" id="srv-mode-remote">
-                            <div class="t"><span class="sq" style="width:14px;height:14px;" id="srv-sq-remote"></span>连别人的服务端（本机不起）</div>
-                            <div class="d">只做客户端。适合已有服务器 / Docker / OpenWrt 的场景。</div>
+                            <div class="t"><span class="sq" style="width:14px;height:14px;" id="srv-sq-remote"></span><span data-i18n="连别人的服务端（本机不起）">连别人的服务端（本机不起）</span></div>
+                            <div class="d" data-i18n="只做客户端。适合已有服务器 / Docker / OpenWrt 的场景。">只做客户端。适合已有服务器 / Docker / OpenWrt 的场景。</div>
                         </div>
                     </div>
                 </div>
             </div>
 
             <div class="pane" id="pane-log" hidden>
-                <h3>日志</h3>
-                <p class="sub">内嵌服务端的日志。客户端自己的提示在<b>主界面顶部</b>闪一次，不在这儿。</p>
-                <div class="subcard"><div class="kv"><span class="k">文件</span><span class="v" id="log-path">—</span></div></div>
+                <h3 data-i18n="日志">日志</h3>
+                <p class="sub"><span data-i18n="内嵌服务端的日志。客户端自己的提示在">内嵌服务端的日志。客户端自己的提示在</span><b data-i18n="主界面顶部">主界面顶部</b><span data-i18n="闪一次，不在这儿。">闪一次，不在这儿。</span></p>
+                <div class="subcard"><div class="kv"><span class="k" data-i18n="文件">文件</span><span class="v" id="log-path">—</span></div></div>
                 <div style="display:flex;gap:8px;margin-bottom:9px">
-                    <button class="btn" id="log-refresh">刷新</button>
+                    <button class="btn" id="log-refresh" data-i18n="刷新">刷新</button>
                     <span class="sub" style="margin:0;align-self:center" id="log-state"></span>
                 </div>
                 <pre id="log-text" style="margin:0;padding:10px;border:1px solid var(--border);border-radius:8px;background:var(--bg);font-size:11px;line-height:1.5;max-height:250px;overflow:auto;white-space:pre-wrap;word-break:break-all"></pre>
             </div>
 
             <div class="pane" id="pane-diag" hidden>
-                <h3>关于</h3>
-                <p class="sub">出问题时先看这里。</p>
+                <h3 data-i18n="关于">关于</h3>
+                <p class="sub" data-i18n="出问题时先看这里。">出问题时先看这里。</p>
                 <div class="subcard">
                     <div class="kv">
-                        <span class="k">数据目录</span><span class="v" id="dg-data">—</span>
-                        <span class="k">客户端配置</span><span class="v" id="dg-config">—</span>
-                        <span class="k">本地服务端</span><span class="v" id="dg-server">—</span>
+                        <span class="k" data-i18n="数据目录">数据目录</span><span class="v" id="dg-data">—</span>
+                        <span class="k" data-i18n="客户端配置">客户端配置</span><span class="v" id="dg-config">—</span>
+                        <span class="k" data-i18n="本地服务端">本地服务端</span><span class="v" id="dg-server">—</span>
                         <!-- ⚠️★ 这一行是从**侧栏底部**搬过来的（Jonny 2026-09-26：「移除全局设置上方的
                              提示文案」—— 那一块整个删掉了）。搬而不是删，因为「列表停在 200 条」
                              必须有个地方说明白，否则用户会以为**前面的消息丢了**
                              （`store.rs` 的 `MAX_ENTRIES_PER_ROOM` 注释里点名了这条要求）。
                              ⚠️ 它和「服务端留多少条历史」是**两件事**，别混（后者在服务端配置里）。 -->
-                        <span class="k">本机保留</span><span class="v" id="dg-max">—</span>
+                        <span class="k" data-i18n="本机保留">本机保留</span><span class="v" id="dg-max">—</span>
                         <!-- ⚠️★ 这一行是「上限调大之后本机到底多占了多少」的**量具**。
                              `本机保留` 说的是**条数**那道界，而真正的内存是「条数 × 每条多大」
                              —— 后者由服务端的 `text.limit` 决定（可配）。
                              长文的代价必须看得见：看不见的话，「把上限调大」看起来是免费的。
                              ⚠️ 数的是**选中那个房间**的条目正文（不是盘上文件的字节）。 -->
-                        <span class="k">本房间正文</span><span class="v" id="dg-roombytes">—</span>
+                        <span class="k" data-i18n="本房间正文">本房间正文</span><span class="v" id="dg-roombytes">—</span>
                     </div>
                 </div>
             </div>
@@ -1078,8 +1107,8 @@ table.ra td input[type='checkbox'] { margin: 0; }
         <div class="foot">
             <span id="settings-msg" style="font-size:11.5px;color:var(--text-2)"></span>
             <div class="spacer"></div>
-            <button class="btn" id="settings-close">关闭</button>
-            <button class="btn primary" id="settings-save">保存</button>
+            <button class="btn" id="settings-close" data-i18n="关闭">关闭</button>
+            <button class="btn primary" id="settings-save" data-i18n="保存">保存</button>
         </div>
       </div>
     </div>
@@ -1087,45 +1116,45 @@ table.ra td input[type='checkbox'] { margin: 0; }
     <!-- ══ 服务端配置（标记照界面稿 2 的 .win.cfg）══ -->
     <div class="overlay" id="server-overlay" hidden>
       <div class="win cfg">
-        <div class="titlebar"><span class="t">服务端配置</span></div>
+        <div class="titlebar"><span class="t" data-i18n="服务端配置">服务端配置</span></div>
         <div class="hd">
             <span class="t">config.json</span>
             <span class="path" id="server-path"></span>
             <div class="spacer"></div>
-            <span class="pill">只读原始 JSON</span>
+            <span class="pill" data-i18n="只读原始 JSON">只读原始 JSON</span>
         </div>
         <div class="bd">
             <div class="sec">
-                <div class="st">网络</div>
+                <div class="st" data-i18n="网络">网络</div>
                 <div class="row2">
-                    <div class="field"><label>监听地址（0.0.0.0 = 局域网可访问）</label><input class="inp" id="cfg-host" type="text" autocapitalize="off" /></div>
-                    <div class="field"><label>端口</label><input class="inp" id="cfg-port" type="number" min="1" max="65535" /></div>
+                    <div class="field"><label data-i18n="监听地址（0.0.0.0 = 局域网可访问）">监听地址（0.0.0.0 = 局域网可访问）</label><input class="inp" id="cfg-host" type="text" autocapitalize="off" /></div>
+                    <div class="field"><label data-i18n="端口">端口</label><input class="inp" id="cfg-port" type="number" min="1" max="65535" /></div>
                 </div>
-                <div class="field"><label>子路径前缀（反代到 /clip 时填）</label><input class="inp" id="cfg-prefix" type="text" autocapitalize="off" /></div>
+                <div class="field"><label data-i18n="子路径前缀（反代到 /clip 时填）">子路径前缀（反代到 /clip 时填）</label><input class="inp" id="cfg-prefix" type="text" autocapitalize="off" /></div>
                 <div class="row2">
-                    <div class="field"><label>证书（空 = 不用 HTTPS）</label><input class="inp" id="cfg-cert" type="text" autocapitalize="off" /></div>
-                    <div class="field"><label>私钥</label><input class="inp" id="cfg-key" type="text" autocapitalize="off" /></div>
+                    <div class="field"><label data-i18n="证书（空 = 不用 HTTPS）">证书（空 = 不用 HTTPS）</label><input class="inp" id="cfg-cert" type="text" autocapitalize="off" /></div>
+                    <div class="field"><label data-i18n="私钥">私钥</label><input class="inp" id="cfg-key" type="text" autocapitalize="off" /></div>
                 </div>
             </div>
             <div class="sec">
-                <div class="st">访问控制</div>
-                <div class="field"><label>全局密码（空 = 不设）</label><input class="inp" id="cfg-auth" type="text" autocapitalize="off" /></div>
-                <label style="font-size:11.5px;color:var(--text-2)">逐房间凭据（roomAuth）</label>
+                <div class="st" data-i18n="访问控制">访问控制</div>
+                <div class="field"><label data-i18n="全局密码（空 = 不设）">全局密码（空 = 不设）</label><input class="inp" id="cfg-auth" type="text" autocapitalize="off" /></div>
+                <label style="font-size:11.5px;color:var(--text-2)" data-i18n="逐房间凭据（roomAuth）">逐房间凭据（roomAuth）</label>
                 <table class="ra" id="roomauth-table">
                     <thead><tr>
-                        <th class="c-name">房间</th><th class="c-token">密码</th><th class="c-room">文件过期</th>
-                        <th class="c-room">定时任务</th><th class="tiny">开放</th><th class="tiny"></th>
+                        <th class="c-name" data-i18n="房间">房间</th><th class="c-token" data-i18n="密码">密码</th><th class="c-room" data-i18n="文件过期">文件过期</th>
+                        <th class="c-room" data-i18n="定时任务">定时任务</th><th class="tiny" data-i18n="开放">开放</th><th class="tiny"></th>
                     </tr></thead>
                     <tbody id="roomauth-body"></tbody>
                 </table>
-                <button class="btn" id="roomauth-add" style="margin-top:7px">＋ 添加</button>
-                <p class="sub" style="margin:8px 0 0">定时任务档位：留空 = 跟随房间鉴权；或 <code>none</code> / <code>single</code> / <code>room</code>。⚠️ 「文件过期」留空 = <b>不改</b>。</p>
+                <button class="btn" id="roomauth-add" style="margin-top:7px" data-i18n="＋ 添加">＋ 添加</button>
+                <p class="sub" style="margin:8px 0 0"><span data-i18n="定时任务档位：留空 = 跟随房间鉴权；或">定时任务档位：留空 = 跟随房间鉴权；或</span><code>none</code> / <code>single</code> / <code>room</code><span data-i18n="。⚠️ 「文件过期」留空 =">。⚠️ 「文件过期」留空 =</span><b data-i18n="不改。">不改。</b></p>
             </div>
             <div class="sec">
-                <div class="st">容量与限额</div>
+                <div class="st" data-i18n="容量与限额">容量与限额</div>
                 <div class="row2">
-                    <div class="field"><label>历史条数</label><input class="inp" id="cfg-history" type="number" min="0" /></div>
-                    <div class="field"><label>文本上限（字节）</label><input class="inp" id="cfg-textlimit" type="number" min="0" /></div>
+                    <div class="field"><label data-i18n="历史条数">历史条数</label><input class="inp" id="cfg-history" type="number" min="0" /></div>
+                    <div class="field"><label data-i18n="文本上限（字节）">文本上限（字节）</label><input class="inp" id="cfg-textlimit" type="number" min="0" /></div>
                 </div>
                 <!-- ⚠️ 这条说明是**必须的**：上限判的是**字节**，而用户心里的单位是「字」——
                      一个汉字 3 字节，所以 4096 时中文大约只能发 1365 个字。
@@ -1137,45 +1166,50 @@ table.ra td input[type='checkbox'] { margin: 0; }
                      ⚠️ `input` 上的 `max` **拦不住手输的值**（这个表单没有 form 校验），
                      真正拦住它的是保存时那条 Rust 侧校验（`server_config.rs::patch`）。
                      所以这两处都要有：`max` 是提示，校验才是闸。 -->
-                <p class="sub" style="margin:6px 0 0">⚠️ 按<b>字节</b>判：一个汉字 3 字节，所以填 4096 时中文大约只能发 1365 个字。填 <b>0</b> = <b>不限</b>（服务端就不判了）。能生效的最大值：<b id="cfg-textlimit-max">—</b>，比它大的正文在服务端<b>收不到</b>（超出的部分不是「被拒」，而是<b>根本到不了</b>那条判定）。</p>
+                <p class="sub" style="margin:6px 0 0"><span data-i18n="⚠️ 按">⚠️ 按</span><b data-i18n="字节">字节</b><span data-i18n="判：一个汉字 3 字节，所以填 4096 时中文大约只能发 1365 个字。填">判：一个汉字 3 字节，所以填 4096 时中文大约只能发 1365 个字。填</span><b>0</b> = <b data-i18n="不限">不限</b><span data-i18n="（服务端就不判了）。能生效的最大值：">（服务端就不判了）。能生效的最大值：</span><b id="cfg-textlimit-max">—</b><span data-i18n="，比它大的正文在服务端">，比它大的正文在服务端</span><b data-i18n="收不到">收不到</b><span data-i18n="（超出的部分不是「被拒」，而是">（超出的部分不是「被拒」，而是</span><b data-i18n="根本到不了">根本到不了</b><span data-i18n="那条判定）。">那条判定）。</span></p>
                 <div class="row2">
-                    <div class="field"><label>文件过期（秒）</label><input class="inp" id="cfg-fileexpire" type="number" min="0" /></div>
-                    <div class="field"><label>分片大小（字节）</label><input class="inp" id="cfg-filechunk" type="number" min="0" /></div>
+                    <div class="field"><label data-i18n="文件过期（秒）">文件过期（秒）</label><input class="inp" id="cfg-fileexpire" type="number" min="0" /></div>
+                    <div class="field"><label data-i18n="分片大小（字节）">分片大小（字节）</label><input class="inp" id="cfg-filechunk" type="number" min="0" /></div>
                 </div>
-                <div class="field"><label>单文件上限（字节）</label><input class="inp" id="cfg-filelimit" type="number" min="0" /></div>
+                <div class="field"><label data-i18n="单文件上限（字节）">单文件上限（字节）</label><input class="inp" id="cfg-filelimit" type="number" min="0" /></div>
             </div>
             <div class="sec">
-                <div class="st">数据</div>
-                <div class="field"><label>库文件（相对 = 服务端数据目录下）</label><input class="inp" id="cfg-dbpath" type="text" autocapitalize="off" /></div>
-                <div class="field"><label>上传文件目录</label><input class="inp" id="cfg-storage" type="text" autocapitalize="off" /></div>
+                <div class="st" data-i18n="数据">数据</div>
+                <div class="field"><label data-i18n="库文件（相对 = 服务端数据目录下）">库文件（相对 = 服务端数据目录下）</label><input class="inp" id="cfg-dbpath" type="text" autocapitalize="off" /></div>
+                <div class="field"><label data-i18n="上传文件目录">上传文件目录</label><input class="inp" id="cfg-storage" type="text" autocapitalize="off" /></div>
             </div>
             <div class="sec">
-                <div class="st">定时自动化</div>
-                <div class="chk"><span class="sq" id="cfg-automation"></span>启用定时自动化</div>
+                <div class="st" data-i18n="定时自动化">定时自动化</div>
+                <div class="chk"><span class="sq" id="cfg-automation"></span><span data-i18n="启用定时自动化">启用定时自动化</span></div>
                 <div class="row2" style="margin-top:8px">
-                    <div class="field"><label>调度间隔（秒）</label><input class="inp" id="cfg-tick" type="number" min="1" /></div>
-                    <div class="field"><label>补发窗口（秒）</label><input class="inp" id="cfg-grace" type="number" min="0" /></div>
+                    <div class="field"><label data-i18n="调度间隔（秒）">调度间隔（秒）</label><input class="inp" id="cfg-tick" type="number" min="1" /></div>
+                    <div class="field"><label data-i18n="补发窗口（秒）">补发窗口（秒）</label><input class="inp" id="cfg-grace" type="number" min="0" /></div>
                 </div>
-                <div class="field"><label>默认时区</label><input class="inp" id="cfg-tz" type="text" autocapitalize="off" /></div>
+                <div class="field"><label data-i18n="默认时区">默认时区</label><input class="inp" id="cfg-tz" type="text" autocapitalize="off" /></div>
             </div>
             <div class="sec">
-                <div class="st">房间与内务</div>
-                <div class="chk"><span class="sq" id="cfg-roomlist"></span>启用房间列表</div>
-                <div class="field" style="margin:8px 0 0"><label>房间清理间隔（秒，0 = 不清理）</label><input class="inp" id="cfg-cleanup" type="number" min="0" /></div>
+                <div class="st" data-i18n="房间与内务">房间与内务</div>
+                <div class="chk"><span class="sq" id="cfg-roomlist"></span><span data-i18n="启用房间列表">启用房间列表</span></div>
+                <div class="field" style="margin:8px 0 0"><label data-i18n="房间清理间隔（秒，0 = 不清理）">房间清理间隔（秒，0 = 不清理）</label><input class="inp" id="cfg-cleanup" type="number" min="0" /></div>
             </div>
             <div id="server-state" style="font-size:11.5px;color:var(--text-2)"></div>
         </div>
         <div class="foot">
-            <span class="warnmsg">⚠️ 保存后<b>需要重启服务端才生效</b>（配置只在启动时读一次）</span>
+            <span class="warnmsg"><span data-i18n="⚠️ 保存后">⚠️ 保存后</span><b data-i18n="需要重启服务端才生效">需要重启服务端才生效</b><span data-i18n="（配置只在启动时读一次）">（配置只在启动时读一次）</span></span>
             <span id="server-msg" style="font-size:11.5px;color:var(--text-2)"></span>
             <div class="spacer"></div>
-            <button class="btn" id="cfg-close">关闭</button>
-            <button class="btn" id="cfg-save">保存</button>
-            <button class="btn primary" id="cfg-save-restart">保存并重启</button>
+            <button class="btn" id="cfg-close" data-i18n="关闭">关闭</button>
+            <button class="btn" id="cfg-save" data-i18n="保存">保存</button>
+            <button class="btn primary" id="cfg-save-restart" data-i18n="保存并重启">保存并重启</button>
         </div>
       </div>
     </div>
 
+<!-- ⚠️★ 顺序有讲究：`i18n.js` 必须在 `app.js` **前面**。两份都是 `defer`，按文档顺序执行，
+     而 `app.js` 一上来就 `I18N.apply(document)`（否则 `I18N` 还是 undefined）。
+     ⚠️ 也可以理解成「`boot.js` 定下来的语种，`i18n.js` 负责把界面刷成它」：
+     boot 只贴属性（那时还没有元素），i18n 才刷文案。 -->
+<script src="./i18n.js" defer></script>
 <script src="./app.js" defer></script>
 </body>
 </html>

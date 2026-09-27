@@ -17,16 +17,39 @@
   而不是「构建过了就算验过」。凡是「看着对、其实骗人」的地方都在下面标出来了。
 */
 
+/** 取一句界面文案。**这是唯一入口** —— 别在别处再写死一句中文或英文。
+ *
+ * ⚠️ 包一层而不是到处写 `I18N.t`：将来要换实现（比如加缓存、加复数）只改这一行。
+ *
+ * ⚠️★ 它必须**排在下面那个守卫之前**。原来它在守卫后面（`const`），于是「没有壳」那条路上
+ * 守卫里那两句 `t(…)` 会先抛 `ReferenceError: Cannot access 't' before initialization` ——
+ * 结果**那句提示一个字母都没显示出来**（页面停在一副空壳上），而控制台里说的是变量初始化，
+ * 跟「没有 `__TAURI__`」一点关系都看不出来。2026-09-28 实测踩到（用浏览器直接打开这个页面）。
+ * ⚠️ 这里是安全的：`i18n.js` 在 `index.html` 里排在 `app.js` **前面**（都是 `defer`），
+ * 而 `I18N.t` 只读 `<html>` 上的属性、不碰 DOM。
+ */
+const t = (key, params) => I18N.t(key, params);
+
 // ⚠️ 用普通浏览器打开时（开发时双击 index.html）没有 `__TAURI__`。
 // 那时要说清「怎么才对」，而不是抛一句 undefined 的错。
 if (!window.__TAURI__ || !window.__TAURI__.core) {
+  // ⚠️ 遮布也要摘掉：不摘的话（英文用户）`<html data-i18n="pending">` 会一直留着 ——
+  // 这一趟 `.win` 整块被换成了这句话，遮布其实挡不住它，但留一个「还没刷完」的属性是脏状态，
+  // 而 `/server` 那种地方将来顺手读它就会读到假的。
+  I18N.ready();
   document.body.textContent =
-    '这个页面要在桌面壳里打开（cargo run -p clip9-desktop）。' +
-    '直接用浏览器打开它拿不到剪贴板，也连不上服务端。';
+    t('这个页面要在桌面壳里打开（cargo run -p clip9-desktop）。') +
+    t('直接用浏览器打开它拿不到剪贴板，也连不上服务端。');
   throw new Error('no tauri bridge');
 }
 
 const { invoke } = window.__TAURI__.core;
+
+// ⚠️★ 上来第一件事：把静态文案刷成 `boot.js` 定下来的语种，然后**摘掉那块遮布**。
+// ⚠️ 顺序不能反：先 `ready` 的话，摘布那一拍界面还是中文（源语言），遮布白贴了。
+// ⚠️ 这一步**必须在 `tick()` 之前** —— 首次绘制里就有 `data-i18n` 的节点。
+I18N.apply(document);
+I18N.ready();
 
 /** 多久取一次快照。
  *
@@ -59,6 +82,16 @@ let lastVersion = null;
  * 去遍历整屏条目，浪费得没道理（而且 `lastShape` 现在只剩一个版本号了，更读不出来）。
  */
 let lastRooms = [];
+
+/** 上一次拿到的**整份快照**。
+ *
+ * ⚠️★ 它只有一个用处：**换语种之后把界面重画一遍**（`applyLocale`）。
+ * 换语种**不改变**版本号（壳那边的数据一个字节都没动），所以不能指望下一拍 `tick()`
+ * 会重画 —— 快照得自己留一份。
+ * ⚠️ 代价明说：多留一份整屏条目（与 `lastEntries` 那份重叠）。等到哪天真的嫌大了，
+ * 正确的做法是**删掉 `lastEntries`** 让它从这份里取，而不是反过来再存第三份。
+ */
+let lastState = null;
 
 /** 上一次渲染时**选中的是哪个房间**（下标）。
  *
@@ -167,7 +200,10 @@ function setTheme(theme) {
   // 画「现在」的话，那颗月亮看起来像在说「你已经在深色里了」——
   // 而按钮上的图标，用户默认当**动作**读。
   button.textContent = theme === 'dark' ? '☀️' : '🌙';
-  button.title = theme === 'dark' ? '切到浅色模式' : '切到深色模式';
+  // ⚠️ 提示是**有状态的话**（「切到浅色」还是「切到深色」），所以它走 `t()` 而不是
+  // `data-i18n-title` —— 后者只能给一句固定的。⚠️ 换语种时这里**要再调一次**
+  //（`applyLocale` 里做了），否则那句话会留在上一个语种里。
+  button.title = theme === 'dark' ? t('side.theme.tip.light') : t('side.theme.tip.dark');
 }
 
 // 启动时先对一次：`boot.js` 贴的是存储里的值，而按钮的图标 / 悬停提示得跟它一致
@@ -202,12 +238,40 @@ function setSidebar(narrow) {
   // ⚠️ 与主题那颗图标同一条规矩：画的是**点下去会变成什么**（宽的时候画「收起」）。
   // ⚠️ 而它的 `title` 是收回来的**唯一**线索之一 —— 收起之后这一行还在，全靠它把人劝回来。
   button.textContent = narrow ? '▶' : '◀';
-  button.title = narrow ? '展开侧栏' : '收起侧栏';
+  button.title = narrow ? t('side.expand.tip') : t('side.collapse.tip');
 }
 
 setSidebar(sidebarNarrow());
 el('btn-sidebar').addEventListener('click', () => {
   setSidebar(!sidebarNarrow());
+});
+
+/** 换语种：交给 `I18N` 贴属性 + 存，然后把界面**整份重画一遍**。
+ *
+ * ⚠️★ 语种这件东西**没有自己的状态**：当前是哪个语种只有一个地方知道
+ *（`<html data-locale>`，`boot.js` 与 `I18N.setLocale` 都往那上面贴）。
+ * 这里只负责「换完之后怎么让它生效」。
+ *
+ * ⚠️★ 三件事**一件都不能少**：
+ *   1. `I18N.apply` —— 把静态文案（`data-i18n*`）刷一遍；
+ *   2. 把两颗**有状态**的按钮重画一遍 —— 它们的提示是动态的（`data-i18n-title`
+ *      表达不了「切到浅色 / 切到深色」这种二选一），**`apply` 管不到它们**；
+ *   3. `render(lastState)` —— 把**壳画的那部分**（房间名、条数、延迟、提示…）重画。
+ *      ⚠️ 缺这一条的症状最难发现：静态那句变了、动态那句还是旧语种，
+ *      看上去像「翻译漏了一半」。
+ */
+function applyLocale() {
+  I18N.apply(document);
+  setTheme(currentTheme());
+  setSidebar(sidebarNarrow());
+  renderComposerHint();
+  if (lastState) render(lastState);
+}
+
+el('btn-lang').addEventListener('click', () => {
+  // ⚠️ 只认「另一个」：现在两个语种，`=== 'en' ? 'zh' : 'en'` 就够 ——
+  // 加到第三种时这里要改成「按 `I18N.LOCALES` 轮转」，别在这儿再抄一份语种清单。
+  if (I18N.setLocale(I18N.locale() === 'en' ? 'zh' : 'en')) applyLocale();
 });
 
 /** 主界面顶部那条**一次性**提示（发不出去 / 存不上 / 配置有毛病）。
@@ -330,7 +394,7 @@ function renderEntry(entry, index) {
       const row = h('div', 'filerow');
       row.append(h('div', 'fi', '📄'));
       const meta = h('div');
-      meta.append(h('div', 'fn', entry.fileName || '(没有文件名)'));
+      meta.append(h('div', 'fn', entry.fileName || t('(没有文件名)')));
       const size = sizeLabel(entry.fileSize);
       if (size) meta.append(h('div', 'fs', size));
       row.append(meta);
@@ -347,22 +411,22 @@ function renderEntry(entry, index) {
   const foot = h('div', 'ft');
   // ⚠️ 发送端没给设备信息时（老条目 / 定时消息）**不编一个名字** ——
   // 服务端专门为无 UA 的定时消息塞了 `type: "Automation"`，这里照它给的显示。
-  foot.append(h('span', null, entry.mine ? '本机' : entry.device || '未知设备'));
+  foot.append(h('span', null, entry.mine ? t('本机') : entry.device || t('未知设备')));
   foot.append(h('span', null, '·'));
   foot.append(h('span', null, timeLabel(entry.timestamp)));
   if (entry.mine) {
     foot.append(h('span', 'spacer'));
-    foot.append(h('span', 'tag', '我发的'));
+    foot.append(h('span', 'tag', t('我发的')));
   }
   // ⚠️ 定时 / 补发**必须**标出来：`source` / `late` / `scheduledAt` 三个字段是
   // 2026-09-26 才补进 `/content` 投影的，漏掉它们的症状是「看不出这条是自动发的」。
   if (entry.automation) {
     foot.append(h('span', 'spacer'));
-    foot.append(h('span', 'tag auto', entry.late ? '自动·补发' : '自动'));
+    foot.append(h('span', 'tag auto', entry.late ? t('自动·补发') : t('自动')));
   }
   if (entry.kind === 'file') {
     foot.append(h('span', 'spacer'));
-    foot.append(h('span', 'tag', '文件'));
+    foot.append(h('span', 'tag', t('文件')));
   }
   // ⚠️★ 长文默认**截断**（CSS clamp 12 行），这里给一个「展开 / 收起」。
   // ⚠️ 判据用**字节数**而不是「量一下高度」：量高度要为每张卡片强制排版一次
@@ -380,9 +444,11 @@ function renderEntry(entry, index) {
 
 /** 「展开」那颗按钮上的字（⚠️ 两处渲染点都要用它，别各写一份）。 */
 function expandLabel(entry) {
-  if (openedIds.has(entry.id)) return '收起';
+  if (openedIds.has(entry.id)) return t('收起');
   // ⚠️ 被截断的说清「一共多大」—— 否则用户以为这就是全文（只是有点长）。
-  return entry.truncated ? `展开全文（共 ${sizeLabel(entry.textBytes)}）` : '展开';
+  return entry.truncated
+      ? t('展开全文（共 {size}）', { size: sizeLabel(entry.textBytes) })
+      : t('展开');
 }
 
 /** 展开 / 收起一条。
@@ -403,14 +469,14 @@ async function toggleEntry(card, entry, button) {
   }
   if (entry.truncated && !openedBodies.has(entry.id)) {
     button.disabled = true;
-    button.textContent = '取全文中…';
+    button.textContent = t('取全文中…');
     try {
       openedBodies.set(entry.id, await invoke('entry_text', { id: entry.id }));
     } catch (error) {
       // ⚠️ 取不到要**说出来**：最常见的原因是这条已经被挤出去了（或换了房间）。
       button.disabled = false;
       button.textContent = expandLabel(entry);
-      showNotice('skip', `取不到全文：${error}`);
+      showNotice('skip', t('取不到全文：{error}', { error }));
       return;
     }
     button.disabled = false;
@@ -426,20 +492,20 @@ function renderLatency(latency) {
   const kind = latency?.kind ?? 'unknown';
   if (kind === 'rtt') {
     const node = h('span', 'ms', `${latency.ms}ms`);
-    node.title = '这条连接的往返延迟（最近几次的中位数）。⚠️ 只量得到正在收的那个房间。';
+    node.title = t('这条连接的往返延迟（最近几次的中位数）。⚠️ 只量得到正在收的那个房间。');
     return node;
   }
   // ⚠️★ 超时**必须说出来**（§4.3 第 4 条）：画一个 `9999ms` 看起来只是「慢」，
   // 而真相是这条连接其实已经坏了、客户端正在重连。不说的话用户只会觉得界面坏了。
   if (kind === 'timeout') {
-    const node = h('span', 'ms warn', '超时');
-    node.title = 'ping 没有回来：这条连接其实已经坏了，客户端会自己重连。';
+    const node = h('span', 'ms warn', t('超时'));
+    node.title = t('ping 没有回来：这条连接其实已经坏了，客户端会自己重连。');
     return node;
   }
   // ⚠️ 刚连上还没测到 —— 画 `—` 而不是不画：这个房间**是**在量的，
   // 「正在量但还没有数字」和「这个房间量不到」是两件事。
   const node = h('span', 'ms', '—');
-  node.title = '还没测到延迟（刚连上，第一次 ping 还没回来）。';
+  node.title = t('还没测到延迟（刚连上，第一次 ping 还没回来）。');
   return node;
 }
 
@@ -448,7 +514,7 @@ function renderRooms(state) {
   const host = el('rooms');
   host.textContent = '';
   if (!state.rooms.length) {
-    host.append(h('div', 'empty', '配置里一个房间都没有。\n去配置里加一个（数据目录下的 client.json）。'));
+    host.append(h('div', 'empty', t('配置里一个房间都没有。\n去配置里加一个（数据目录下的 client.json）。')));
     return;
   }
   state.rooms.forEach((room, index) => {
@@ -480,11 +546,11 @@ function renderRooms(state) {
     const up = h('span', room.upload ? 'dir up on' : 'dir up', '↑');
     // ⚠️ 悬停提示只写「这个图标是干什么的」，不写「点击开/关」：
     // 开关的形状（按下去会变色）本身就在说这件事，而 Jonny 给的文案就这两句。
-    up.title = '发送本地剪贴板到远程房间';
+    up.title = t('发送本地剪贴板到远程房间');
     up.dataset.action = 'upload';
     up.dataset.index = String(index);
     const down = h('span', room.download ? 'dir dn on' : 'dir dn', '↓');
-    down.title = '获取远程房间最新消息写入本地剪贴板';
+    down.title = t('获取远程房间最新消息写入本地剪贴板');
     down.dataset.action = 'download';
     down.dataset.index = String(index);
     // ⚠️ 延迟那个胶囊**留住引用**：下面那句 `title` 要读它的文字（见那段注释）。
@@ -501,7 +567,11 @@ function renderRooms(state) {
     // 而它一定会在某次改动里漂（`超时` 那条最容易被漏掉）。
     // ⚠️ 宽栏里这个 `title` 也在（同一个属性、不分模式）：要「只在收起时设」就得让
     // `renderRooms` 去读 DOM 状态，而**多一个会漂的状态**比多一个冗余的悬停提示更贵。
-    node.title = `${room.name} · ${room.count} 条 · 延迟 ${latency.textContent}`;
+    node.title = t('{name} · {count} 条 · 延迟 {latency}', {
+      name: room.name,
+      count: room.count,
+      latency: latency.textContent,
+    });
 
     node.dataset.index = String(index);
     host.append(node);
@@ -535,7 +605,7 @@ function renderTimeline(state) {
   host.textContent = '';
   const room = state.rooms[state.selected];
   if (!room) {
-    host.append(h('div', 'empty', '没有房间。'));
+    host.append(h('div', 'empty', t('没有房间。')));
     return;
   }
   if (!state.entries.length) {
@@ -544,8 +614,8 @@ function renderTimeline(state) {
     // ⚠️ 「还没加载」那句**不能**再说「点右上角刷新」：那个按钮按界面稿删掉了
     //（历史是自动取的，见 `ensureHistory`），留着就是指向一个不存在的东西。
     host.append(h('div', 'empty', room.historyLoaded
-      ? '这个房间还没有内容。'
-      : '正在取这个房间的历史…（取不到会每 5 秒重试一次）'));
+      ? t('这个房间还没有内容。')
+      : t('正在取这个房间的历史…（取不到会每 5 秒重试一次）')));
     return;
   }
   state.entries.forEach((entry, index) => host.append(renderEntry(entry, index)));
@@ -576,9 +646,9 @@ function updateCounter() {
   if (lastLimits.textLimit > 0) {
     el('limits').textContent = `${bytes} / ${lastLimits.textLimit}`;
   } else if (kind === 'on' || kind === 'warn') {
-    el('limits').textContent = `${bytes} / 不限`;
+    el('limits').textContent = t('{bytes} / 不限', { bytes });
   } else {
-    el('limits').textContent = '上限还不知道（还没连上）';
+    el('limits').textContent = t('上限还不知道（还没连上）');
   }
 }
 
@@ -606,7 +676,7 @@ function renderDevices(state) {
   if (!devices.length) {
     // ⚠️ 用连接状态自己的那句话（「还没开始连」/「已断开：连接被拒绝」…），
     // **不在这里另编一句** —— 那句话是壳给的，两处说法不一致就是第二份定义。
-    host.append(h('span', null, room ? (room.connection?.text || '还没连上') : '没有房间'));
+    host.append(h('span', null, room ? (room.connection?.text || t('还没连上')) : t('没有房间')));
     return;
   }
   for (const device of devices) {
@@ -618,11 +688,11 @@ function renderDevices(state) {
     // ⚠️ 名字可能是**空的**（客户端没声明过设备名）—— 那时要说「本机」/「未知设备」，
     // 而不是留一个空 title（鼠标停上去什么都没有 = 看着像坏了）。
     dot.title = device.me
-      ? (device.name ? `${device.name}（本机）` : '本机')
-      : (device.name || '未知设备');
+      ? (device.name ? t('{name}（本机）', { name: device.name }) : t('本机'))
+      : (device.name || t('未知设备'));
     host.append(dot);
   }
-  host.append(h('span', null, `${devices.length} 台在线`));
+  host.append(h('span', null, t('{n} 台在线', { n: devices.length })));
 }
 
 /** 整个界面。⚠️ 「有没有房间」也要画出来 —— 半个状态是骗人的。 */
@@ -647,7 +717,7 @@ function render(state) {
   el('room-name').textContent = room ? room.name : '—';
   // ⚠️ 只留「几条」：房间 id 和服务端地址塞进标题是**噪音**，
   // 而它们都能在「设置」里查到（诊断那一页专门放这些）。
-  el('room-meta').textContent = room ? `· ${room.count} 条` : '';
+  el('room-meta').textContent = room ? t('· {n} 条', { n: room.count }) : '';
 
   // ⚠️★ 本机窗口里**留多少**要照实说，而且是**两道界**：
   // ① 条数（`MAX_ENTRIES_PER_ROOM`）；② 正文总字节（`MAX_BYTES_PER_ROOM`，2026-09-27 加的）。
@@ -662,8 +732,8 @@ function render(state) {
   // 它就不会是一个「打开设置那一刻的旧值」。
   // ⚠️ 值里**不重复**「本机」：左边那一格的标签已经写着「本机保留」了。
   if (state.maxEntries) {
-    const bytes = state.maxBytes ? ` / 正文 ${sizeLabel(state.maxBytes)}` : '';
-    el('dg-max').textContent = `最多留最近 ${state.maxEntries} 条${bytes}`;
+    const bytes = state.maxBytes ? t(' / 正文 {size}', { size: sizeLabel(state.maxBytes) }) : '';
+    el('dg-max').textContent = t('最多留最近 {n} 条{bytes}', { n: state.maxEntries, bytes });
   } else {
     el('dg-max').textContent = '—';
   }
@@ -681,7 +751,7 @@ function render(state) {
   // ⚠️ 这里两个出口写的是**同一个字符串**（不是两句同义的话）：一处是画出来的正文，
   // 一处是它的悬停提示。所以「有毛病 / 没毛病」也只需要判一次。
   const problemText = state.problems.length
-    ? `配置有毛病：${state.problems.join('；')}`
+    ? t('配置有毛病：{list}', { list: state.problems.join(t('problem.sep')) })
     : '';
   problems.hidden = problemText === '';
   problems.title = problemText;
@@ -707,6 +777,10 @@ function render(state) {
 async function tick() {
   try {
     const state = await invoke('snapshot');
+    // ⚠️★ 留下来是给**换语种**用的（见 `lastState` 的注释）：换语种不动版本号，
+    // 所以不能指望下一拍会重画。⚠️ 在判「要不要重画」**之前**存：形状没变的那几拍
+    // 也照样更新它（否则换语种会重画一份过期的房子）。
+    lastState = state;
     // ⚠️ 取历史是**每一轮**都要判的，不能放在 `render` 里 ——
     // `render` 只在「形状变了」时跑，而「取不到历史」恰恰**什么都不改**
     //（这正是这个文件开头那段注释说的那类坑）。放这里，失败才追得下去。
@@ -719,7 +793,7 @@ async function tick() {
   } catch (error) {
     // ⚠️ 取不到状态要把「为什么」说出来：最常见的是窗口比壳活得久（壳崩了/正在退出）。
     // 主界面上没有地方放它（侧栏那块调试信息已删），所以进一次性提示。
-    showNotice('err', `取不到状态：${error}`);
+    showNotice('err', t('取不到状态：{error}', { error }));
   } finally {
     setTimeout(tick, POLL_MS);
   }
@@ -729,7 +803,7 @@ function sendCurrentInput() {
   const input = el('input');
   const text = input.value;
   if (!text.trim()) return;
-  invoke('send_text', { text }).catch((error) => showNotice('err', `发不出去：${error}`));
+  invoke('send_text', { text }).catch((error) => showNotice('err', t('发不出去：{error}', { error })));
   input.value = '';
 }
 
@@ -753,7 +827,7 @@ function sendCurrentInput() {
 function sendFiles(paths) {
   const list = (paths || []).filter((path) => typeof path === 'string' && path.trim() !== '');
   if (!list.length) return;
-  invoke('send_files', { paths: list }).catch((error) => showNotice('err', `发不出去：${error}`));
+  invoke('send_files', { paths: list }).catch((error) => showNotice('err', t('发不出去：{error}', { error })));
 }
 
 /** 📎 / 🖼：让**壳**弹系统文件选择框（页面自己没有这个能力，见 `commands::pick_files`）。 */
@@ -761,7 +835,7 @@ async function pickAndSend(imagesOnly) {
   try {
     sendFiles(await invoke('pick_files', { imagesOnly }));
   } catch (error) {
-    showNotice('err', `打不开文件选择框：${error}`);
+    showNotice('err', t('打不开文件选择框：{error}', { error }));
   }
 }
 
@@ -771,7 +845,13 @@ el('btn-image').addEventListener('click', () => pickAndSend(true));
 el('input').addEventListener('input', updateCounter);
 // ⚠️ 这一行是按界面稿写的（稿 1 的输入区左边那个 `.lim`）。
 // 说的是**本界面的**动作，不是稿子里的「粘贴即发送」—— 那个为什么不做，见上面那段。
-el('composer-hint').textContent = '回车发送 · Shift+回车换行';
+// ⚠️★ 包一层再调用，而不是直接写一句：这句**只在这里写一次**（`render()` 不碰它），
+// 换语种时 `applyLocale()` 得能再刷一遍 —— 直接写的话英文界面里它就停在中文
+//（不报错，而且中文界面永远是对的，所以只有真的切过去才看得见；探针抓到过）。
+function renderComposerHint() {
+  el('composer-hint').textContent = t('回车发送 · Shift+回车换行');
+}
+renderComposerHint();
 
 // 把文件**拖进窗口**。
 // ⚠️★ 用 Tauri 的 webview 拖放事件，**不是** HTML5 的 `dragover` / `drop`：
@@ -824,7 +904,7 @@ function openEntryMenu(entry, x, y) {
   const menu = h('div', 'ctxmenu');
 
   const copyText = h('div', 'mi');
-  copyText.append(h('span', null, '📋'), h('span', null, '复制内容'));
+  copyText.append(h('span', null, '📋'), h('span', null, t('复制内容')));
   copyText.addEventListener('click', () => {
     closeMenu();
     // ⚠️★ 文本条目**不在页面里取正文**：页面手里的 `entry.text` 是**截断预览**
@@ -833,18 +913,18 @@ function openEntryMenu(entry, x, y) {
     // 全文在壳里取、在壳里写剪贴板，一个字节都不进 webview。
     if (entry.kind === 'text') {
       invoke('copy_entry', { id: entry.id }).catch((error) =>
-        showNotice('err', `复制失败：${error}`),
+        showNotice('err', t('复制失败：{error}', { error })),
       );
       return;
     }
     // ⚠️ 文件条目**没有正文**，能复制的是**文件名**（§4.4 表格里写着这一条）——
     // 那是元数据，页面手里本来就有。
     if (!entry.fileName) {
-      showNotice('skip', '这条没有可复制的内容。');
+      showNotice('skip', t('这条没有可复制的内容。'));
       return;
     }
     invoke('copy_to_clipboard', { text: entry.fileName }).catch((error) =>
-      showNotice('err', `复制失败：${error}`),
+      showNotice('err', t('复制失败：{error}', { error })),
     );
   });
   menu.append(copyText);
@@ -853,14 +933,14 @@ function openEntryMenu(entry, x, y) {
   // 比没有这一项更坏（§4.4 的原则）。
   if (entry.kind === 'file' && entry.previewUrl) {
     const copyLink = h('div', 'mi');
-    copyLink.append(h('span', null, '🔗'), h('span', null, '复制链接'));
+    copyLink.append(h('span', null, '🔗'), h('span', null, t('复制链接')));
     // ⚠️★ 这条地址**不带凭据**（凭据只走请求头，见 `endpoint.rs` 那段）——
     // 有密码的房间拿这条链接是**打不开**的。照实说，别让用户以为能用。
-    copyLink.title = '这条文件的下载地址。⚠️ 房间要密码的话，这条链接打不开（凭据只在请求头里）。';
+    copyLink.title = t('这条文件的下载地址。⚠️ 房间要密码的话，这条链接打不开（凭据只在请求头里）。');
     copyLink.addEventListener('click', () => {
       closeMenu();
       invoke('copy_to_clipboard', { text: entry.previewUrl }).catch((error) =>
-        showNotice('err', `复制失败：${error}`),
+        showNotice('err', t('复制失败：{error}', { error })),
       );
     });
     menu.append(copyLink);
@@ -1006,11 +1086,13 @@ function serverPatch() {
 function uptimeLabel(seconds) {
   if (seconds === null || seconds === undefined) return '—';
   const minutes = Math.floor(seconds / 60);
-  if (minutes < 1) return '不到 1 分钟';
-  if (minutes < 60) return `${minutes} 分钟`;
+  if (minutes < 1) return t('不到 1 分钟');
+  if (minutes < 60) return t('{n} 分钟', { n: minutes });
   const hours = Math.floor(minutes / 60);
   const rest = minutes % 60;
-  return rest ? `${hours} 小时 ${rest} 分` : `${hours} 小时`;
+  return rest
+    ? t('{hours} 小时 {rest} 分', { hours, rest })
+    : t('{hours} 小时', { hours });
 }
 
 /** 本地服务端那一块（设置 → 本机，以及两处顺带显示它的地方）。
@@ -1027,7 +1109,7 @@ async function refreshServerState() {
   try {
     status = await invoke('server_status');
   } catch (error) {
-    el('srv-state').textContent = `读不到本地服务端的状态：${error}`;
+    el('srv-state').textContent = t('读不到本地服务端的状态：{error}', { error });
     return;
   }
   const { bundled, running } = status;
@@ -1035,10 +1117,10 @@ async function refreshServerState() {
   // `.hd`：状态灯 + 一句话。⚠️ 「没有自带服务端」要说出来 —— 那时起停按钮点了也不会有反应。
   el('srv-dot').className = running ? 'dot' : 'dot off';
   el('srv-state').textContent = !bundled
-    ? '没有自带服务端（找不到 clip9-server）'
+    ? t('没有自带服务端（找不到 clip9-server）')
     : running
-      ? '本地服务端运行中'
-      : '本地服务端没在跑';
+      ? t('本地服务端运行中')
+      : t('本地服务端没在跑');
 
   // `.kv` 五行 —— **逐行对着稿子**。
   el('srv-version').textContent = status.version || '—';
@@ -1058,11 +1140,11 @@ async function refreshServerState() {
 
   // 顺带刷另外两处显示同一件事的地方。
   el('server-state').textContent = !bundled
-    ? '本地服务端：这个客户端没有自带（找不到 clip9-server）'
+    ? t('本地服务端：这个客户端没有自带（找不到 clip9-server）')
     : running
-      ? '本地服务端：运行中'
-      : '本地服务端：没在跑';
-  el('dg-server').textContent = !bundled ? '没有自带' : running ? '运行中' : '没在跑';
+      ? t('本地服务端：运行中')
+      : t('本地服务端：没在跑');
+  el('dg-server').textContent = !bundled ? t('没有自带') : running ? t('运行中') : t('没在跑');
 }
 
 // ── 本地服务端那一页（设置 → 本机）───────────────────────────────
@@ -1075,26 +1157,29 @@ async function refreshServerState() {
 // ⚠️ 失败时**先刷状态、再把那句话盖到 `.hd` 上**：这样灯是新的、话是刚发生的。
 // 稿子这一页没有第二处放错误信息的地方，而「失败要留在界面上」是硬要求。
 async function runServerAction(command, args, label) {
-  el('srv-state').textContent = `${label}…`;
+  // ⚠️ 这句也是**拼出来**的（`label` 是上一行的 `t('重启')` / `t('停止')`），所以它是一个
+  // **符号键** —— 键里没有中文词、只有那个省略号。⚠️ 别写成模板串：那会让这个省略号
+  // 永远停在中文那个字形上（判据 15 抓到过它）。
+  el('srv-state').textContent = t('{label}…', { label });
   try {
     await invoke(command, args);
   } catch (error) {
     await refreshServerState();
     // ⚠️ 失败要**留在界面上**：重启失败而界面写着「运行中」，用户会以为好了。
     // 最常见的失败是「端口上那个不是这个客户端起的，所以不替你停」—— 那句话原样显示。
-    el('srv-state').textContent = `${label}失败：${error}`;
+    el('srv-state').textContent = t('{label}失败：{error}', { label, error });
     return;
   }
   await refreshServerState();
 }
 
 el('srv-restart').addEventListener('click', () =>
-  runServerAction('server_restart', undefined, '重启'));
-el('srv-stop').addEventListener('click', () => runServerAction('server_stop', undefined, '停止'));
+  runServerAction('server_restart', undefined, t('重启')));
+el('srv-stop').addEventListener('click', () => runServerAction('server_stop', undefined, t('停止')));
 el('srv-open').addEventListener('click', () => {
   invoke('open_web').catch(async (error) => {
     await refreshServerState();
-    el('srv-state').textContent = `打不开网页版：${error}`;
+    el('srv-state').textContent = t('打不开网页版：{error}', { error });
   });
 });
 // 「运行方式」两选一。
@@ -1103,7 +1188,7 @@ el('srv-open').addEventListener('click', () => {
 // 的唯一入口。少了它，那个「停止」就是个单向门。
 for (const [id, on] of [['srv-mode-local', true], ['srv-mode-remote', false]]) {
   el(id).addEventListener('click', () =>
-    runServerAction('set_local_server', { on }, on ? '切到「随客户端启动」' : '切到「连别人的服务端」'));
+    runServerAction('set_local_server', { on }, on ? t('切到「随客户端启动」') : t('切到「连别人的服务端」')));
 }
 
 /** 「服务端配置」这一层是从「设置」里点进来的吗 —— 关掉它时要**回到设置**。
@@ -1165,7 +1250,8 @@ async function openServerPanel() {
     // ⚠️ `max` 只挡**微调箭头**，手输的值它拦不住（这个表单没有 form 校验）——
     // 真正的闸是 `server_config.rs::patch` 里那条校验，这里只是「别让用户白填」。
     el('cfg-textlimit').max = String(view.textLimitMax);
-    el('cfg-textlimit-max').textContent = `${sizeLabel(view.textLimitMax)}（${view.textLimitMax} 字节）`;
+    el('cfg-textlimit-max').textContent =
+    t('{size}（{n} 字节）', { size: sizeLabel(view.textLimitMax), n: view.textLimitMax });
     el('cfg-fileexpire').value = file.expire ?? 3600;
     el('cfg-filechunk').value = file.chunk ?? 1048576;
     el('cfg-filelimit').value = file.limit ?? 268435456;
@@ -1174,7 +1260,7 @@ async function openServerPanel() {
     el('cfg-grace').value = automation.graceSeconds ?? 600;
     el('cfg-tz').value = automation.defaultTZ ?? 'Asia/Shanghai';
   } catch (error) {
-    el('server-msg').textContent = `读不到配置：${error}`;
+    el('server-msg').textContent = t('读不到配置：{error}', { error });
   }
   await refreshServerState();
 }
@@ -1193,9 +1279,9 @@ el('cfg-close').addEventListener('click', () => {
 el('cfg-save').addEventListener('click', async () => {
   try {
     await invoke('server_config_save', { patch: serverPatch() });
-    el('server-msg').textContent = '已保存 —— 重启服务端后生效';
+    el('server-msg').textContent = t('已保存 —— 重启服务端后生效');
   } catch (error) {
-    el('server-msg').textContent = `没保存：${error}`;
+    el('server-msg').textContent = t('没保存：{error}', { error });
   }
 });
 
@@ -1204,16 +1290,16 @@ el('cfg-save-restart').addEventListener('click', async () => {
     await invoke('server_config_save', { patch: serverPatch() });
   } catch (error) {
     // ⚠️ 没保存成功就**别重启** —— 拿一份没生效的配置去重启，只会让用户更糊涂。
-    el('server-msg').textContent = `没保存：${error}`;
+    el('server-msg').textContent = t('没保存：{error}', { error });
     return;
   }
-  el('server-msg').textContent = '正在重启…';
+  el('server-msg').textContent = t('正在重启…');
   try {
     await invoke('server_restart');
-    el('server-msg').textContent = '已保存并重启';
+    el('server-msg').textContent = t('已保存并重启');
   } catch (error) {
     // ⚠️ 说清是「保存成功了、重启失败」—— 这两种的下一步完全不同。
-    el('server-msg').textContent = `保存了，但重启失败：${error}`;
+    el('server-msg').textContent = t('保存了，但重启失败：{error}', { error });
   }
   await refreshServerState();
 });
@@ -1283,9 +1369,9 @@ function cellDir(on, kind, title, onToggle) {
  *（它收的是要粘进来的 emoji，界面不许替用户改字面）。
  */
 function cellEmoji(value, onChange) {
-  const td = cellInput(value, onChange, '自动');
+  const td = cellInput(value, onChange, t('自动'));
   td.className = 'tiny';
-  td.firstElementChild.title = '房间图标：填一个 emoji；留空 = 自动挑一个不重样的（侧栏那个就是）';
+  td.firstElementChild.title = t('房间图标：填一个 emoji；留空 = 自动挑一个不重样的（侧栏那个就是）');
   return td;
 }
 
@@ -1297,7 +1383,7 @@ function renderRoomRows() {
   body.textContent = '';
   if (!roomDraft.length) {
     const tr = h('tr');
-    const td = h('td', 'sub', '还没有房间。点下面的「添加房间」—— 服务端留空就是本机那个。');
+    const td = h('td', 'sub', t('还没有房间。点下面的「添加房间」—— 服务端留空就是本机那个。'));
     td.colSpan = 8;
     tr.append(td);
     body.append(tr);
@@ -1310,23 +1396,23 @@ function renderRoomRows() {
     tr.append(cellInput(room.name, (v) => { roomDraft[index].name = v; }));
     tr.append(cellInput(room.server, (v) => { roomDraft[index].server = v; }, 'http://127.0.0.1:9502'));
     tr.append(cellInput(room.room, (v) => { roomDraft[index].room = v; }, 'default'));
-    tr.append(cellInput(room.auth_token, (v) => { roomDraft[index].auth_token = v; }, '（空 = 无密码）'));
+    tr.append(cellInput(room.auth_token, (v) => { roomDraft[index].auth_token = v; }, t('（空 = 无密码）')));
     // ⚠️ ↓ 是**全局单选**：点开一个，别的自动关掉。做成多选再靠后端「取第一个」
     // 的话，用户点第二个会**没反应** —— 那正是「配了不生效」。
     // ⚠️★ 悬停提示与侧栏那两个开关**逐字一致**（Jonny 2026-09-26 给的文案）——
     // 同一个图标在同一个 app 里说两句不同的话，就是第二份定义。
     // ⚠️「可多选」「全局只能一个」不再写进 title：这一页的说明文字
     //（上面那段 `.sub`）已经写着「收进剪贴板全局只能一个」了。
-    tr.append(cellDir(uploadOn(room), 'up', '发送本地剪贴板到远程房间', (on) => {
+    tr.append(cellDir(uploadOn(room), 'up', t('发送本地剪贴板到远程房间'), (on) => {
       roomDraft[index].enable_upload = on;
       renderRoomRows();
     }));
-    tr.append(cellDir(room.enable_download === true, 'dn', '获取远程房间最新消息写入本地剪贴板', (on) => {
+    tr.append(cellDir(room.enable_download === true, 'dn', t('获取远程房间最新消息写入本地剪贴板'), (on) => {
       roomDraft.forEach((other, position) => { other.enable_download = on && position === index; });
       renderRoomRows();
     }));
     const del = h('td', 'tiny');
-    const button = h('button', 'btn', '删');
+    const button = h('button', 'btn', t('删'));
     button.style.padding = '2px 7px';
     button.addEventListener('click', () => {
       roomDraft.splice(index, 1);
@@ -1347,10 +1433,10 @@ function renderRoomRows() {
 function renderDownloadSource() {
   const host = el('sc-source');
   const index = roomDraft.findIndex((room) => room.enable_download === true);
-  const name = index >= 0 ? roomDraft[index].name || roomDraft[index].room || '房间' : '没有';
+  const name = index >= 0 ? roomDraft[index].name || roomDraft[index].room || t('房间') : t('没有');
   host.textContent = '';
   host.append(name);
-  host.append(h('span', 'src-note', index >= 0 ? '在左侧栏用 ↓ 选' : '没开：哪个房间的内容都收不到'));
+  host.append(h('span', 'src-note', index >= 0 ? t('在左侧栏用 ↓ 选') : t('没开：哪个房间的内容都收不到')));
 }
 
 async function refreshLog() {
@@ -1358,10 +1444,10 @@ async function refreshLog() {
     const view = await invoke('server_log');
     el('log-path').textContent = view.path;
     const text = (view.text || '').trim();
-    el('log-text').textContent = text || '（还没有日志 —— 服务端起来之后才会有）';
+    el('log-text').textContent = text || t('（还没有日志 —— 服务端起来之后才会有）');
     el('log-state').textContent = text ? '' : '';
   } catch (error) {
-    el('log-text').textContent = `读日志失败：${error}`;
+    el('log-text').textContent = t('读日志失败：{error}', { error });
   }
 }
 
@@ -1392,8 +1478,8 @@ async function openSettings() {
     // 所以这里照实显示服务端给的那个数 —— 界面稿里写死的「大于 50 MB 跳过」
     // 在代码里**根本不成立**，抄它就是抄一句假话。
     el('sc-file-hint').textContent = lastLimits.fileLimit
-      ? `上限 ${sizeLabel(lastLimits.fileLimit)}`
-      : '上限还不知道（还没连上）';
+      ? t('上限 {size}', { size: sizeLabel(lastLimits.fileLimit) })
+      : t('上限还不知道（还没连上）');
     el('sc-poll').value = view.pollIntervalMs;
     el('sc-dir').value = view.downloadDir;
     // ⚠️ 自启那个勾画的是**系统里的真相**（壳去问的系统），不是配置里的意图。
@@ -1405,7 +1491,7 @@ async function openSettings() {
     el('dg-data').textContent = view.dataDir;
     el('dg-config').textContent = view.configPath;
   } catch (error) {
-    el('settings-msg').textContent = `读不到设置：${error}`;
+    el('settings-msg').textContent = t('读不到设置：{error}', { error });
   }
   // ⚠️ 本地服务端那一块（`#srv-*` / `#dg-server`）**不从这里填** ——
   // 它有自己的来源（`server_status`：状态 + 连接地址 + 哪些房间指向它）。
@@ -1487,7 +1573,7 @@ el('settings-save').addEventListener('click', async () => {
     // 少写一个 `emoji` 的症状是「保存一次，所有房间的图标全变回自动的」。
     // ⚠️ 静态自检第 12 条就是数这里的（它去 `client/src/config.rs` 读字段名）。
     rooms: roomDraft.map((room) => ({
-      name: room.name || room.room || '房间',
+      name: room.name || room.room || t('房间'),
       server: room.server.trim(),
       room: (room.room || 'default').trim(),
       // ⚠️ 发回去的是**用户填的那个**（可能为空 = 自动）——
@@ -1513,10 +1599,10 @@ el('settings-save').addEventListener('click', async () => {
   };
   try {
     await invoke('apply_settings', { patch });
-    el('settings-msg').textContent = '已保存';
+    el('settings-msg').textContent = t('已保存');
   } catch (error) {
     // ⚠️ 失败要**留在界面上**：设置没存上而界面看着像存了，用户下次启动会发现白改。
-    el('settings-msg').textContent = `没保存：${error}`;
+    el('settings-msg').textContent = t('没保存：{error}', { error });
   }
 });
 
@@ -1543,7 +1629,7 @@ function renderRoomAuthRows() {
   const rooms = Object.keys(roomAuthDraft);
   if (!rooms.length) {
     const tr = h('tr');
-    const td = h('td', 'sub', '没有逐房间的凭据 —— 所有房间都用上面的全局密码（或都不需要密码）。');
+    const td = h('td', 'sub', t('没有逐房间的凭据 —— 所有房间都用上面的全局密码（或都不需要密码）。'));
     td.colSpan = 6;
     tr.append(td);
     body.append(tr);
@@ -1559,10 +1645,10 @@ function renderRoomAuthRows() {
       delete roomAuthDraft[room];
       renderRoomAuthRows();
     }, 'work'));
-    tr.append(cellInput(entry.password, (v) => { entry.password = v; }, '（空 = 无密码）'));
+    tr.append(cellInput(entry.password, (v) => { entry.password = v; }, t('（空 = 无密码）')));
     // ⚠️ 「留空 = 不改」：这个键在配置里可以缺省，而清空它会让服务端解析失败。
-    tr.append(cellInput(entry.fileExpire, (v) => { entry.fileExpire = v; }, '（留空 = 不改）'));
-    tr.append(cellInput(entry.automation, (v) => { entry.automation = v; }, '（留空 = 跟随）'));
+    tr.append(cellInput(entry.fileExpire, (v) => { entry.fileExpire = v; }, t('（留空 = 不改）')));
+    tr.append(cellInput(entry.automation, (v) => { entry.automation = v; }, t('（留空 = 跟随）')));
     // ⚠️ `open` 是**可编辑的**：原来画成一个只读胶囊，用户能看见「要密码 / 开放」
     // 却改不了 —— 而它就在这张可编辑的表里，那是最别扭的一种「看得见摸不着」。
     // ⚠️ 表格里的布尔，主流就是复选框（开关也行，但表格里复选框更省地方、也更准）。
@@ -1570,14 +1656,14 @@ function renderRoomAuthRows() {
     const openBox = document.createElement('input');
     openBox.type = 'checkbox';
     openBox.checked = entry.open === true;
-    openBox.title = '这个房间是公开的（不需要密码）';
+    openBox.title = t('这个房间是公开的（不需要密码）');
     openBox.addEventListener('change', () => {
       entry.open = openBox.checked;
     });
     state.append(openBox);
     tr.append(state);
     const del = h('td', 'tiny');
-    const button = h('button', 'btn', '删');
+    const button = h('button', 'btn', t('删'));
     button.style.padding = '2px 7px';
     button.addEventListener('click', () => {
       delete roomAuthDraft[room];
@@ -1591,9 +1677,9 @@ function renderRoomAuthRows() {
 
 el('roomauth-add').addEventListener('click', () => {
   // 用一个不会撞上已有键的名字（空名字会被服务端归一化成 default，更糟）。
-  let name = '新房间';
+  let name = t('新房间');
   let n = 2;
-  while (name in roomAuthDraft) name = `新房间${n++}`;
+  while (name in roomAuthDraft) name = t('新房间{n}', { n: n++ });
   roomAuthDraft[name] = { password: '', fileExpire: '', automation: '', open: false };
   renderRoomAuthRows();
 });
