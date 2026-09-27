@@ -59,6 +59,26 @@ fn room_key(channel: &clip9_client::Channel) -> String {
 /// ⚠️ 界面**必须**把这件事说出来（「只显示最近 200 条」），否则用户会以为前面的没了。
 pub(crate) const MAX_ENTRIES_PER_ROOM: usize = 200;
 
+/// 每个房间在本机**最多留多少字节正文**。
+///
+/// ⚠️★ 为什么「条数」那道界不够：**一条多大**由**服务端**的 `text.limit` 决定，
+/// 而它可以被调大（`desktop-client.md` §8.2 整节就在算这件事）。200 条 × 10 万字符
+/// = 20 MB（ASCII）/ 60 MB（中文），而这份列表**整个都在内存里**、每轮快照还要过一遍。
+/// 于是「条数」与「字节」是两道**各自独立**的界，少一道另一边就漏 ——
+/// 与 `handlers.rs` 里 `CONTENT_LIST_HARD_CAP` + `CONTENT_PAGE_BYTES` 是同一条道理。
+///
+/// 取 2 MiB 的依据：**缺省部署一个字都不变** —— 缺省一房间最多 200 条 × 4 KiB ≈ 800 KiB，
+/// 2 MiB 是它的 2.5 倍，所以只有把 `text.limit` 调大之后它才开始起作用。
+/// （这个关系由 `the_byte_bound_leaves_the_default_deployment_alone` 钉着。）
+///
+/// ⚠️ 代价是**用户可见的**：真有人连发长文时，列表会明显**短于 200 条**。
+/// 所以①界面必须照实说（`Snapshot::max_bytes`，用户才不会以为消息丢了），
+/// ②要更大的内容请走**文件**（`/upload` + 分片），不是把消息上限调大。
+///
+/// ⚠️ 它只数**条目正文**（`EntryView::text_bytes`），不数盘上文件的字节
+/// —— 文件在服务端（`/file/...`），本地这份列表里只有文件名那点长度。
+pub(crate) const MAX_BYTES_PER_ROOM: usize = 2 * 1024 * 1024;
+
 /// 配置文件名（在数据目录下面）。
 pub(crate) const CONFIG_FILE: &str = "client.json";
 
@@ -161,8 +181,13 @@ pub struct Snapshot {
     /// 配置与数据目录（用户要知道自己的配置在哪）。
     pub config_path: String,
     pub data_dir: String,
-    /// 每个房间最多留多少条（界面要照实说）。
+    /// 每个房间最多留多少条 / 多少**字节正文**（界面要照实说）。
+    ///
+    /// ⚠️ 两个都要给：`max_entries` 说过的话会让人以为「最多 200 条」，
+    /// 而字节那道界会让它**更短** —— 不说的话，用户看到列表停在 37 条
+    /// 只会以为「消息丢了」（`MAX_BYTES_PER_ROOM` 的注释里点名了这条要求）。
     pub max_entries: usize,
+    pub max_bytes: usize,
     /// 快照内容的**单调版本号** —— 界面**只用它**判断「要不要重画」。
     ///
     /// ⚠️★ 它把「哪些字段参与判定」从**页面**搬到了**这里**。原先的做法是页面拿
@@ -435,6 +460,7 @@ impl Store {
             config_path: self.config_path.display().to_string(),
             data_dir: self.data_dir.display().to_string(),
             max_entries: MAX_ENTRIES_PER_ROOM,
+            max_bytes: MAX_BYTES_PER_ROOM,
             version: inner.version,
         }
     }
@@ -888,7 +914,7 @@ impl Room {
     /// （见 [`Snapshot::version`]）。⚠️ 同一条**原样重传**时它是 `false`：
     /// 内容一个字节没变，不该触发一次整屏重绘。
     fn upsert(&mut self, view: EntryView) -> bool {
-        let mut changed = match self
+        let changed = match self
             .entries
             .binary_search_by_key(&view.id, |entry| entry.id)
         {
@@ -902,14 +928,44 @@ impl Room {
                 true
             }
         };
-        // 条数界：超了就从最旧的丢。
-        if self.entries.len() > MAX_ENTRIES_PER_ROOM {
-            self.entries
-                .drain(..self.entries.len() - MAX_ENTRIES_PER_ROOM);
-            // ⚠️ 丢东西**也是**「列表变了」—— 所以不能只把 `changed` 原样返回。
-            changed = true;
+        // ⚠️ `trim()` **不能**因为 `changed` 已经是 `true` 就跳过：它做的判断
+        //（超没超界）与 `changed` 无关。所以先算、再用 `||` 合并 ——
+        // 写成 `if changed { … }` 那种短路就会漏掉「插了一条新的、同时挤掉了最旧的」里的后半句。
+        let trimmed = self.trim();
+        changed || trimmed
+    }
+
+    /// 把这道房间的两道界都收回来：**条数** + **字节**，都从**最旧**的那端丢。
+    ///
+    /// 返回「真的丢了东西没有」。
+    ///
+    /// ⚠️★ 字节量是**现算**的（`entries.iter().map(..).sum()`），**不维护计数器** ——
+    /// 见 [`RoomView::text_bytes`] 的注释：没有第二份状态就没有漂移。
+    /// 200 条的求和对「插一条」这个操作来说可以忽略（`snapshot()` 本来就要遍历整列表）。
+    ///
+    /// ⚠️★ **至少留一条**：单独一条就超字节预算时**不能**把它也丢掉 ——
+    /// 那会让「刚收到的那条消息」**在自己客户端上都不显示**，而且**没有任何报错**。
+    /// （与 `handlers.rs` 的 `page_bytes_to_drop` 是同一条规矩，那边叫「空数组 = 到头了」，
+    /// 这边更直接：列表空掉 = 消息看不见了。而且这里**更该**留 —— 那边丢的是历史分页，
+    /// 这边丢的是**已经在本机**的那条。）
+    fn trim(&mut self) -> bool {
+        let before = self.entries.len();
+        // 条数界（**旧行为，没变**）：超了就丢最旧的。
+        if before > MAX_ENTRIES_PER_ROOM {
+            self.entries.drain(..before - MAX_ENTRIES_PER_ROOM);
         }
-        changed
+        // 字节界（2026-09-27 加，见 `MAX_BYTES_PER_ROOM`）。
+        // ⚠️ 从第 0 条（最旧）往后丢，而 `drop_count + 1 < len` 保证**至少剩一条**。
+        let mut total: usize = self.entries.iter().map(|entry| entry.text_bytes).sum();
+        let mut drop_count = 0;
+        while total > MAX_BYTES_PER_ROOM && drop_count + 1 < self.entries.len() {
+            total -= self.entries[drop_count].text_bytes;
+            drop_count += 1;
+        }
+        if drop_count > 0 {
+            self.entries.drain(..drop_count);
+        }
+        self.entries.len() != before
     }
 }
 
@@ -1048,7 +1104,7 @@ fn xdg_config_home() -> Option<PathBuf> {
 mod tests {
     use super::*;
     use clip9_client::Channel;
-    use clip9_protocol::{ReceiveBase, TextReceive};
+    use clip9_protocol::{FileReceive, ReceiveBase, TextReceive};
 
     fn text(id: i32, room: &str, content: &str) -> ReceiveHolder {
         ReceiveHolder::Text(TextReceive {
@@ -1547,6 +1603,134 @@ mod tests {
         // 清空 → 归零
         store.apply_update(from_work(ReceiverEvent::Cleared));
         assert_eq!(store.snapshot().rooms[1].text_bytes, 0, "清空之后归零");
+    }
+
+    // ── 每房间的**字节界**（`MAX_BYTES_PER_ROOM`）────────────────────────
+
+    /// ⚠️★ 超了字节界就从**最旧**那端丢 —— 而**条数界（200）在这里根本够不着**，
+    /// 这正是加第二道界的意义（一条多大由服务端的 `text.limit` 决定）。
+    ///
+    /// 用「6 条 × 500 KB」：4 条 = 2.0 MB 装得下，5 条 = 2.5 MB 装不下 →
+    /// 每插一条就裁一次，最后留下的是**最近的 4 条**。
+    #[test]
+    fn the_byte_bound_drops_the_oldest_entries() {
+        let (_dir, store) = temp_store();
+        let big = "x".repeat(500_000);
+        for id in 1..=6 {
+            store.apply_update(from_work(ReceiverEvent::Entry(Box::new(text(
+                id, "work", &big,
+            )))));
+        }
+        store.select(1).unwrap();
+        let snapshot = store.snapshot();
+
+        assert_eq!(
+            snapshot.rooms[1].count, 4,
+            "2.5 MB 装进 2 MiB 的界 → 只留 4 条（条数界 200 在这里够不着）"
+        );
+        assert_eq!(
+            snapshot.entries[0].id, 3,
+            "丢的是**最旧**的：1、2 被挤掉，留下的最旧一条是 3"
+        );
+        assert_eq!(snapshot.entries.last().unwrap().id, 6, "最新那条永远在里面");
+        assert!(
+            snapshot.rooms[1].text_bytes <= MAX_BYTES_PER_ROOM,
+            "裁完之后总量必须真的在界内（现在 {} 字节）",
+            snapshot.rooms[1].text_bytes
+        );
+        assert_eq!(snapshot.max_bytes, MAX_BYTES_PER_ROOM, "上限也要给界面");
+    }
+
+    /// ⚠️★ **单独一条**就超预算时**照样留着它** —— 列表空掉 = 「刚收到的那条消息
+    /// 在自己客户端上都不显示」，而且**不报错**。
+    ///
+    /// 与 `handlers.rs` 的 `page_bytes_to_drop` 是同一条规矩（那边叫「空数组 = 到头了」），
+    /// 但这边**更该**留：那边丢的是「还没拉到的历史」，这边丢的是**已经在本机**的那条。
+    #[test]
+    fn a_single_body_over_the_byte_bound_is_still_kept() {
+        let (_dir, store) = temp_store();
+        let huge = "x".repeat(MAX_BYTES_PER_ROOM + 1000);
+        store.apply_update(from_work(ReceiverEvent::Entry(Box::new(text(
+            1, "work", &huge,
+        )))));
+        store.select(1).unwrap();
+        let snapshot = store.snapshot();
+
+        assert_eq!(
+            snapshot.rooms[1].count, 1,
+            "只有一条且它超预算 → 一条都不许丢"
+        );
+        // ⚠️ 它自己确实比界大 —— 这是**有意的**：这道界是「尽量收住」，不是「硬拒」。
+        // 硬拒的代价是「消息看不见」，那比多占那几 MB 严重得多。
+        assert!(snapshot.rooms[1].text_bytes > MAX_BYTES_PER_ROOM);
+    }
+
+    /// ⚠️ 反过来说：超预算的那条**如果后面来了别的**，它就会（也应该）被挤掉 ——
+    /// 丢掉它正好让总量回到界内，而留下的是**最新**那条。
+    #[test]
+    fn an_oversized_body_is_evicted_once_something_newer_arrives() {
+        let (_dir, store) = temp_store();
+        let huge = "x".repeat(MAX_BYTES_PER_ROOM + 1000);
+        store.apply_update(from_work(ReceiverEvent::Entry(Box::new(text(
+            1, "work", &huge,
+        )))));
+        store.apply_update(from_work(ReceiverEvent::Entry(Box::new(text(
+            2, "work", "新的",
+        )))));
+        store.select(1).unwrap();
+        let snapshot = store.snapshot();
+
+        assert_eq!(snapshot.rooms[1].count, 1);
+        assert_eq!(snapshot.entries[0].id, 2, "留下的是**最新**那条");
+        assert!(snapshot.rooms[1].text_bytes <= MAX_BYTES_PER_ROOM);
+    }
+
+    /// ⚠️★ 字节界只数**条目正文**：文件条目**没有正文**（它的字节在服务端，
+    /// 取要另发 `GET /file/...`）。
+    ///
+    /// 这条钉的是一个**灾难性**的写法：拿 `FileReceive::size`（盘上那个大小）当「占了多少」。
+    /// 那样一个 100 MB 的文件就会把整个房间挤空 —— 而界面上只会看到「消息没了」。
+    #[test]
+    fn file_entries_do_not_count_toward_the_byte_bound() {
+        let (_dir, store) = temp_store();
+        for id in 1..=10 {
+            let entry = ReceiveHolder::File(FileReceive {
+                base: ReceiveBase {
+                    id,
+                    kind: "file".to_owned(),
+                    room: "work".to_owned(),
+                    timestamp: 1,
+                    ..ReceiveBase::default()
+                },
+                name: "一个很大的文件.bin".to_owned(),
+                size: 100 * 1024 * 1024,
+                ..FileReceive::default()
+            });
+            store.apply_update(from_work(ReceiverEvent::Entry(Box::new(entry))));
+        }
+        store.select(1).unwrap();
+        let snapshot = store.snapshot();
+
+        assert_eq!(
+            snapshot.rooms[1].count, 10,
+            "10 个「100 MB」的文件不该被字节界挤掉（它们的字节不在本机这份列表里）"
+        );
+        assert_eq!(snapshot.rooms[1].text_bytes, 0, "文件条目的正文字节数是 0");
+    }
+
+    /// ⚠️★ 字节界必须**真的**装得下缺省部署的一房间 —— 否则「防长文」会变成
+    /// 「默认部署开始丢消息」。与 `handlers.rs` 的
+    /// `hard_cap_leaves_the_default_deployment_alone` 是同一条纪律：
+    /// **缺省部署的行为一个字都不许变**。
+    #[test]
+    fn the_byte_bound_leaves_the_default_deployment_alone() {
+        let per_entry = clip9_core::config::TextConfig::default().limit as usize;
+        let worst = MAX_ENTRIES_PER_ROOM * per_entry;
+        assert!(
+            worst <= MAX_BYTES_PER_ROOM,
+            "缺省配置下最坏的一房间是 {worst} 字节 > 字节界 {MAX_BYTES_PER_ROOM} \
+             —— 默认部署会开始丢消息"
+        );
     }
 
     // ── 版本号（`Snapshot::version`）：**每一条会改动快照的写入各一条用例** ──
