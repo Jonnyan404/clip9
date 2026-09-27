@@ -64,7 +64,7 @@ pub mod source;
 pub mod uploader;
 pub mod watcher;
 
-pub use config::{Channel, ClientConfig, same_endpoint};
+pub use config::{Channel, ClientConfig, EMOJI_POOL, clean_emoji, resolve_emojis, same_endpoint};
 pub use debounce::{Debouncer, Fingerprints};
 pub use event::{ClipboardContent, ClipboardEvent, TextSubtype, UploadKind};
 pub use receiver::{

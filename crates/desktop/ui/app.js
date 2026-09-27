@@ -421,11 +421,15 @@ function renderRooms(state) {
   state.rooms.forEach((room, index) => {
     const node = h('div', index === state.selected ? 'room on' : 'room');
     // ⚠️ 房间名是**用户配置**里的自由文本 → 只能走 textContent。
-    // ⚠️ 图标只分「选中的那个」和「别的」两种：稿 1 里每个房间的图标都不同
-    //（🏠 / 💼 / 🔒），但那是**照着演示用的房间名画的** —— 真实房间名是自由文本，
-    // 按名字猜图标只会猜错。🔒 那条尤其不能猜：客户端这边**拿不到**
-    //「这个房间要不要密码」（凭据在 `Channel::auth_token` 里，界面不读它）。
-    node.append(h('span', 'ico', index === state.selected ? '🏠' : '💬'));
+    // ⚠️★ 图标**只从壳里拿**（`resolve_emojis` 算好的；`emoji` 字段本身可能为空 = 自动）。
+    // 原来的做法是「选中的画 🏠、别的画 💬」—— 那是**按位置猜**的（真实房间名是自由文本，
+    // 按名字猜图标只会猜错）。2026-09-28 Jonny：「添加房间允许用户自定义 emoji，
+    // 否则随机一个不重样的 emoji」→ 于是图标成了**用户能选的东西**，不用再猜。
+    // ⚠️ 代价明说：**「选中」不再有自己那个图标了**，只剩 `.room.on` 那层底色与描边
+    //（它本来就一直在）。别再顺手加一个 🏠 回来 —— 那会盖掉用户挑的图标。
+    // ⚠️ 这里**不兜底**（不写 `room.emoji || '💬'`）：壳那边保证非空且有测试，
+    // 兜底就是第二份「自动挑哪一个」的定义。
+    node.append(h('span', 'ico', room.emoji));
     node.append(h('span', 'nm', room.name));
     node.append(h('span', 'ct', String(room.count)));
 
@@ -1216,6 +1220,25 @@ function cellDir(on, kind, title, onToggle) {
   return td;
 }
 
+/** 房间图标那一格（表格里唯一一个**故意很窄**的文本框）。
+ *
+ * ⚠️★ 它画的**只是用户填的那个**（`Channel::emoji`）；留空 = 自动。
+ * ⚠️ 留空时**不显示**壳自动挑的那个图标，占位符就是两个字「自动」——
+ * 显示出来会变成第二份定义：那一格看起来像「他选的」，而保存时又真的会被当成
+ * 「他选的」发回去（于是**打开过一次设置页**就把「自动」钉死了）。
+ * 「现在用的是哪一个」在侧栏那一格上（`RoomView::emoji`，壳算好的那一份）。
+ * ⚠️ 复用 `cellInput` 而不是再抄一遍 `createElement('input')`：
+ * 静态自检第 4 条是**数数**的（造了几个文本框就得关几个自动大写），
+ * 抄一份就多一处要对齐；而且 `autocapitalize="off"` 在这一格同样不能少
+ *（它收的是要粘进来的 emoji，界面不许替用户改字面）。
+ */
+function cellEmoji(value, onChange) {
+  const td = cellInput(value, onChange, '自动');
+  td.className = 'tiny';
+  td.firstElementChild.title = '房间图标：填一个 emoji；留空 = 自动挑一个不重样的（侧栏那个就是）';
+  return td;
+}
+
 function renderRoomRows() {
   // ⚠️ 放**最前面**：下面「一个房间都没有」那条会提前 return，
   // 放末尾的话那一格会留着上一次的内容（而列表已经空了）。
@@ -1225,13 +1248,15 @@ function renderRoomRows() {
   if (!roomDraft.length) {
     const tr = h('tr');
     const td = h('td', 'sub', '还没有房间。点下面的「添加房间」—— 服务端留空就是本机那个。');
-    td.colSpan = 7;
+    td.colSpan = 8;
     tr.append(td);
     body.append(tr);
     return;
   }
   roomDraft.forEach((room, index) => {
     const tr = h('tr');
+    // ⚠️ 图标放**第一格**：与侧栏那个房间行的顺序一致（先图标、再名字）。
+    tr.append(cellEmoji(room.emoji, (v) => { roomDraft[index].emoji = v; }));
     tr.append(cellInput(room.name, (v) => { roomDraft[index].name = v; }));
     tr.append(cellInput(room.server, (v) => { roomDraft[index].server = v; }, 'http://127.0.0.1:9502'));
     tr.append(cellInput(room.room, (v) => { roomDraft[index].room = v; }, 'default'));
@@ -1374,6 +1399,9 @@ function addRoomRow() {
     name: '',
     server: '',
     room: 'default',
+    // ⚠️ 空 = **自动**（壳会挑一个不重样的）：所以「加一个房间」不用问图标，
+    // 它自己就有一个，而且与已有的都不重样（`resolve_emojis`，有测试）。
+    emoji: '',
     auth_token: '',
     // ⚠️★ 两个方向**都默认关**（Jonny 2026-09-27 改的：原来上行是 `true`）。
     // 理由：新建的房间还没填地址、还没测过通不通，先把 ↑ 打开等于「加一个房间就
@@ -1403,10 +1431,18 @@ el('btn-room-add').addEventListener('click', async () => {
 
 el('settings-save').addEventListener('click', async () => {
   const patch = {
+    // ⚠️★ 这里的字段**必须**与 `Channel` 一个一个对上（少一个 = 那个字段被静默清掉）：
+    // 整份房间清单是**替换**语义（`SettingsPatch::rooms` 给了就整份换），
+    // 而 `Channel` 上缺的字段按 `#[serde(default)]` 落回默认值 ——
+    // 少写一个 `emoji` 的症状是「保存一次，所有房间的图标全变回自动的」。
+    // ⚠️ 静态自检第 12 条就是数这里的（它去 `client/src/config.rs` 读字段名）。
     rooms: roomDraft.map((room) => ({
       name: room.name || room.room || '房间',
       server: room.server.trim(),
       room: (room.room || 'default').trim(),
+      // ⚠️ 发回去的是**用户填的那个**（可能为空 = 自动）——
+      // 空就是空，别在这里把壳算出来的图标填进来（那等于替他做了选择）。
+      emoji: (room.emoji || '').trim(),
       auth_token: (room.auth_token || '').trim() || null,
       enable_upload: uploadOn(room),
       enable_download: room.enable_download === true,
