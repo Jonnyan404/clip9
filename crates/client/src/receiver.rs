@@ -611,6 +611,8 @@ pub fn ws_request(server: &str, room: &str, token: Option<&str>) -> Result<Reque
 }
 
 /// 从 `GET /content` 取历史（**只读，不碰剪贴板**）。
+///
+/// ⚠️ 解析那半截在 [`parse_history_body`] 里（那是「投影 ↔ 解析」的接缝，要单独测）。
 pub async fn fetch_history(
     client: &reqwest::Client,
     channel: &Channel,
@@ -633,21 +635,92 @@ pub async fn fetch_history(
     if !(200..300).contains(&status) {
         return Err(parse_api_error(status, &body));
     }
+    parse_history_body(&body)
+}
 
+/// 把 `/content` 的响应体解析成条目。
+///
+/// ⚠️★★ **单独一个函数，是因为它是「服务端投影 ↔ 客户端解析」那道接缝**（2026-09-27 补）。
+/// 这两半原来**各测各的**：服务端对着 Go 导出的 fixture 逐字比投影
+///（`crates/server/tests/content_projection.rs`），客户端只拿手写的小样本测自己 ——
+/// 而**中间那道缝从来没人测过**。于是它一直错着，而且错得完全无声：
+///
+/// ⚠️★ 两个类型对不上（`/content` 是**给前端直接渲染用的投影**，不是 WS 载荷本身）：
+/// 1. **`id` 是字符串** —— Go 那边 `strconv.Itoa(msg.Data.ID())`，
+///    `cases/protocol/content_list.json` 里就写着 `"id":"7"`；而 WS `receive` 载荷里是数字。
+///    同一个字段、两套类型。`ReceiveHolder` 认的是数字（`base.id: i32`）→ **每一条都失败**；
+/// 2. **`type` 是展示类型** —— 文件条目在这里是 `image` / `video` / `document` /
+///    `archive` / `audio`（Go 的 `DetermineResponseType` 按文件名推），
+///    而 `ReceiveHolder` 只认 `text` / `file` → **图片、视频、文档那几类整类读不进来**。
+///
+/// 合起来的症状：服务端那个房间明明有二十几条，桌面端的时间线**一条都没有**
+///（用户 2026-09-27 报的「重启客户端也没有历史」就是这个），而且**没有一个字报错** ——
+/// 因为下面那句「一条坏条目不该让整份历史都看不见」把失败全 `ok()` 掉了。
+/// ⚠️ 所以这次顺手把**丢掉的条数**打进日志：没有这一句，同样的事还能再藏几个月。
+fn parse_history_body(body: &str) -> Result<Vec<ReceiveHolder>, String> {
     #[derive(serde::Deserialize)]
     struct Envelope {
         #[serde(default)]
         messages: Vec<Value>,
     }
     let envelope: Envelope =
-        serde_json::from_str(&body).map_err(|e| format!("历史不是 JSON：{e}"))?;
+        serde_json::from_str(body).map_err(|e| format!("历史不是 JSON：{e}"))?;
 
-    // ⚠️ 逐条解析：**一条坏条目不该让整份历史都看不见**（那会让界面直接空掉）。
-    Ok(envelope
+    let total = envelope.messages.len();
+    let mut reasons: Vec<String> = Vec::new();
+    let entries: Vec<ReceiveHolder> = envelope
         .messages
         .into_iter()
-        .filter_map(|m| serde_json::from_value::<ReceiveHolder>(m).ok())
-        .collect())
+        .filter_map(|raw| {
+            match serde_json::from_value::<ReceiveHolder>(normalize_history_entry(raw)) {
+                Ok(entry) => Some(entry),
+                Err(err) => {
+                    reasons.push(err.to_string());
+                    None
+                }
+            }
+        })
+        .collect();
+
+    if !reasons.is_empty() {
+        // ⚠️ 只报**第一条**理由：一整页同形时刷屏毫无意义，而第一条就够定位了。
+        tracing::warn!(
+            dropped = reasons.len(),
+            total,
+            reason = %reasons.first().unwrap_or(&String::new()),
+            "有些历史条目读不进来，已跳过"
+        );
+    }
+    Ok(entries)
+}
+
+/// 把 `/content` 那一条里**类型对不上**的字段归一化成 `ReceiveHolder` 认的形状。
+///
+/// ⚠️ 两处，理由见 [`parse_history_body`]：`id`（字符串 → 数字）与 `type`（展示类型 → `file`）。
+///
+/// ⚠️★ `type` 的判据是「**带 `name` 的就不是文本**」，不是把六个展示类型列全：
+/// 那个集合在 Go 那边**会长的**（`DetermineResponseType` 的注释就写着
+/// "Add more MIME type to category mappings as needed"）—— 列全了，下次加一类就静默漏掉。
+/// ⚠️ 归一化成 `file` **不会丢信息**：客户端本来就从文件名自己推展示方式
+///（`EntryView::from_holder` 只管 `text` / `file`，图片预览靠 `preview_url`）。
+///
+/// ⚠️ 解析不出来（`id` 不是数字等）就**原样返回**，让它在下游被当成「读不进来的那一条」报出来 ——
+/// 不在这里补一个 0：那会变成一条 **id 错**的记录挂在时间线上，比丢掉更难查。
+fn normalize_history_entry(mut raw: Value) -> Value {
+    let Some(fields) = raw.as_object_mut() else {
+        return raw;
+    };
+    if let Some(id) = fields.get("id").and_then(Value::as_str)
+        && let Ok(number) = id.parse::<i32>()
+    {
+        fields.insert("id".to_owned(), Value::from(number));
+    }
+    if !matches!(fields.get("type").and_then(Value::as_str), Some("text"))
+        && fields.contains_key("name")
+    {
+        fields.insert("type".to_owned(), Value::from("file"));
+    }
+    raw
 }
 
 /// 下行的把手。**drop 它就停**（与 [`crate::WatchHandle`] 同一个形状，
@@ -1593,6 +1666,85 @@ mod tests {
             rx.try_recv().is_err(),
             "老服务端上又推了一条，把 `NoWatermark` 盖掉了"
         );
+    }
+
+    // ── 历史那一页：服务端投影 ↔ 客户端解析 ────────────────────
+
+    /// Go 导出的那份 fixture（`cases/protocol/content_list.json`）。
+    ///
+    /// ⚠️ 两边**用同一份 fixture** 是有意的：服务端拿它比投影，这里拿它比解析。
+    /// 「各测各的」正是这道缝错着却没人发现的原因（见 `parse_history_body` 的注释）。
+    fn content_list_fixture() -> String {
+        let path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../cases/protocol/content_list.json");
+        std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("读不到 {}: {e}", path.display()))
+    }
+
+    /// ⚠️★★ **一整页 `/content` 要真的能读进来**（2026-09-27 修的，用户实测踩到）。
+    ///
+    /// 这条用例是「服务端投影 ↔ 客户端解析」那道缝上的**第一颗钉子**。原来两半各自都有测试，
+    /// 而缝里有两处类型对不上：
+    /// · `id` 是**字符串**（Go 的 `strconv.Itoa`）而 `ReceiveHolder` 要数字；
+    /// · 文件条目的 `type` 是**展示类型**（`image`…）而 `ReceiveHolder` 只认 `text` / `file`。
+    /// 于是**整页一条都进不来**，而失败被 `filter_map(…ok())` 全咽掉了 ——
+    /// 用户看到的是空时间线、日志里一个字都没有（他报的「重启客户端也没有历史」）。
+    ///
+    /// ⚠️★ 断言里必须**同时**有文本条与文件条：只测文本的话，第二处（`type`）照样漏。
+    /// 这正是「夹具的形状决定漏洞的形状」那条教训。
+    #[test]
+    fn a_go_content_page_parses_into_entries() {
+        let entries = parse_history_body(&content_list_fixture()).expect("fixture 是合法 JSON");
+
+        assert_eq!(entries.len(), 2, "一条文本 + 一条图片，两条都要进来");
+        assert_eq!(entries[0].id(), 7, "字符串 id 要归一化成数字");
+        assert_eq!(entries[0].kind(), "text");
+        assert_eq!(
+            entries[0].base().sender_client_id,
+            "client-abc",
+            "顺带钉住「谁发的」那些字段没在归一化时丢掉"
+        );
+
+        assert_eq!(entries[1].id(), 8);
+        assert_eq!(entries[1].kind(), "file", "`image` 要归一化成 `file`");
+        let ReceiveHolder::File(file) = &entries[1] else {
+            panic!("第二条该是文件：{:?}", entries[1]);
+        };
+        assert_eq!(file.name, "screenshot.png");
+        assert_eq!(file.size, 20480);
+    }
+
+    /// ⚠️ 一条坏条目**不许**让整页都看不见（「历史整段空掉」比「少一条」坏得多）——
+    /// 但也不能一声不吭：现在会把**丢掉的条数**打进 WARN 日志（见 `parse_history_body`）。
+    #[test]
+    fn one_unreadable_entry_does_not_hide_the_page() {
+        let raw = r#"{"messages":[
+            {"id":"7","type":"text","content":"好的"},
+            {"type":"不认识的东西"},
+            {"id":"9","type":"text","content":"也在"}
+        ]}"#;
+        let ids: Vec<i32> = parse_history_body(raw)
+            .expect("整体还是能解析的")
+            .iter()
+            .map(ReceiveHolder::id)
+            .collect();
+        assert_eq!(ids, vec![7, 9], "坏的那条跳过，其余照样进来");
+    }
+
+    /// ⚠️ `id` 归一化**不许**瞎补：解析不出来就让它当「读不进来」的那条，
+    /// 而不是补个 `0` —— 那会变成一条 id 错的记录挂在时间线上（比丢掉更难查）。
+    #[test]
+    fn an_id_that_is_not_a_number_is_left_alone_not_zeroed() {
+        let raw = r#"{"messages":[{"id":"不是数字","type":"text","content":"x"}]}"#;
+        assert!(
+            parse_history_body(raw).unwrap().is_empty(),
+            "说不清 id 的条目宁可不要，也不要一条 id=0 的假记录"
+        );
+    }
+
+    /// 空页（服务端说没有更多了）是**正常**结果，不是错误。
+    #[test]
+    fn an_empty_content_page_is_not_an_error() {
+        assert!(parse_history_body(r#"{"messages":[]}"#).unwrap().is_empty());
     }
 
     /// 下载地址是**本地拼**的（用我们配的服务端），不是条目里那个 url。
