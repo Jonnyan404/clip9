@@ -466,7 +466,11 @@ function renderEntry(entry, index) {
   foot.append(h('span', null, timeLabel(entry.timestamp)));
   if (entry.mine) {
     foot.append(h('span', 'spacer'));
-    foot.append(h('span', 'tag', t('我发的')));
+    // ⚠️★ 这两条标签**二选一**：`fromClipboard` 说的是「这条不是在这个窗口里敲的 /
+    // 拖进来的，而是本机剪贴板被复制之后同步过去的」（壳算好递过来，见 `EntryView`
+    // 那个字段 —— 服务端不知道这件事，是本机记的）。
+    // 少了它，用户看着一条自己刚复制的东西被标成「我发的」会以为是自己误点的。
+    foot.append(h('span', 'tag', entry.fromClipboard ? t('剪贴板同步') : t('我发的')));
   }
   // ⚠️ 定时 / 补发**必须**标出来：`source` / `late` / `scheduledAt` 三个字段是
   // 2026-09-26 才补进 `/content` 投影的，漏掉它们的症状是「看不出这条是自动发的」。

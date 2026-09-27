@@ -309,6 +309,16 @@ impl From<ServerLimits> for ServerLimitsView {
 #[derive(Debug, Default)]
 struct Room {
     entries: Vec<EntryView>,
+    /// 这个房间里**本机剪贴板同步出去的**那些条目的 id（见 [`Room::mark_clipboard`]）。
+    ///
+    /// ⚠️★ 为什么留一份集合、而不是「上行成功时去列表里改一下就完了」：
+    /// 「上行成功」与「那条从 WS / 历史回到本机」**没有先后保证** —— 响应晚到时
+    /// 那一条可能已经在列表里（要就地补标签），也可能还没到（要等它插进来时再贴）。
+    /// 集合管后一半，[`Room::mark_clipboard`] 管前一半，两个方向都有测试。
+    ///
+    /// ⚠️ 它**不落盘**：重启之后老条目退回「我发的」—— 那**不是假话**（它确实是我发的），
+    /// 只是少说了一句「从剪贴板来的」。为一句标签维护一份会一直长的磁盘状态不划算。
+    clipboard_ids: std::collections::HashSet<i32>,
     history_loaded: bool,
     /// 这个房间**自己的**一条待显示的提示（取历史失败、界面上发到这个房间的结果…）。
     ///
@@ -752,6 +762,31 @@ impl Store {
             inner.touch();
         }
     }
+
+    /// 记下「刚才这几条是**本机剪贴板**同步过去的」（界面上的标签用）。
+    ///
+    /// 调用点是 [`crate::runtime::Runtime::upload`]，而且**只走剪贴板那一条** ——
+    /// 界面上敲的字、拖进来的文件是**明确的意图**，标成「剪贴板同步」是假话
+    ///（`UploadSource` 就是为这个区分存在的）。
+    ///
+    /// ⚠️★ 身份是 **(服务端, 房间, id)** 三样（与 [`Inner::room_index`] 同一套判据）：
+    /// id 是**每个房间各自**单调的，只按 id 记会给**另一个房间**里那条同号内容也贴上
+    /// 标签 —— 那是假话，而且它看起来完全正常（有测试钉着这一条）。
+    /// ⚠️ 认不出来的（配置刚改过、这个房间已经不在列表里）**丢掉，不 panic**。
+    pub fn mark_clipboard_uploads(&self, uploaded: &[clip9_client::UploadedEntry]) {
+        let mut inner = self.lock();
+        let mut changed = false;
+        for item in uploaded {
+            if let Some(index) = inner.room_index(&item.server, &item.room) {
+                changed |= inner.rooms[index].mark_clipboard(item.id);
+            }
+        }
+        // ⚠️ 只有**列表里那一条真的补上了标签**才前进：光是记进集合时屏幕上什么都没变，
+        // 多走一格版本号就是一次白重绘（前进规则见 `Inner::touch`）。
+        if changed {
+            inner.touch();
+        }
+    }
 }
 
 impl Store {
@@ -1098,7 +1133,12 @@ impl Room {
     /// ⚠️ 返回值是「**列表真的变了**没有」——调用方拿它决定要不要 `touch`
     /// （见 [`Snapshot::version`]）。⚠️ 同一条**原样重传**时它是 `false`：
     /// 内容一个字节没变，不该触发一次整屏重绘。
-    fn upsert(&mut self, view: EntryView) -> bool {
+    fn upsert(&mut self, mut view: EntryView) -> bool {
+        // ⚠️★ 贴「剪贴板同步」标签的**唯一一处**（三个写入点都从这里过：WS 新条目 /
+        // 下行历史 / 界面手动刷新）。写在这一句**之前**是有意的：存的那份带着标签、
+        // 新来的那份不带，先比较就会把「同一条原样重传」判成「变了」——
+        // 于是每来一次重传就整屏重绘一次。
+        view.from_clipboard = self.clipboard_ids.contains(&view.id);
         let changed = match self
             .entries
             .binary_search_by_key(&view.id, |entry| entry.id)
@@ -1118,6 +1158,26 @@ impl Room {
         // 写成 `if changed { … }` 那种短路就会漏掉「插了一条新的、同时挤掉了最旧的」里的后半句。
         let trimmed = self.trim();
         changed || trimmed
+    }
+
+    /// 记下「这个房间里刚才是**本机剪贴板**同步过去的」那一条。
+    ///
+    /// 返回「**屏幕上看得见的那份**变了没有」（调用方拿它决定要不要 `touch`）。
+    ///
+    /// ⚠️★ 两件事，缺一不可：
+    ///   · 记进集合 —— 这条**还没到**列表里时靠它（[`Room::upsert`] 插进来时会贴上）；
+    ///   · 列表里**已经有**它就就地补上 —— 上行响应**可能晚于**它从 WS / 历史回到本机，
+    ///     两个方向的顺序没有保证。
+    /// 少了后半句的症状是「**有时候**标签不出现」：网络快的那台机器上永远是对的。
+    fn mark_clipboard(&mut self, id: i32) -> bool {
+        self.clipboard_ids.insert(id);
+        match self.entries.binary_search_by_key(&id, |entry| entry.id) {
+            Ok(position) if !self.entries[position].from_clipboard => {
+                self.entries[position].from_clipboard = true;
+                true
+            }
+            _ => false,
+        }
     }
 
     /// 把这道房间的两道界都收回来：**条数** + **字节**，都从**最旧**的那端丢。
@@ -1373,6 +1433,131 @@ mod tests {
         assert_eq!(store.entry_text(999), None, "不存在的 id 要说取不到");
     }
 
+    /// 一条「服务端回了 id 的上行」——`Runtime::upload` 记的就是这个形状。
+    fn uploaded(room: &str, id: i32) -> clip9_client::UploadedEntry {
+        clip9_client::UploadedEntry {
+            server: FIXTURE_SERVER.to_owned(),
+            room: room.to_owned(),
+            id,
+        }
+    }
+
+    /// ⚠️★ **只给发到的那个房间贴标签** —— 两个房间可以各有**一条 id 7**。
+    ///
+    /// id 是**每个房间各自**单调的（`CONTRIBUTING.md` §6），所以「按 id 记」那种写法
+    /// 会把**另一个房间**里同号的那条也标成「剪贴板同步」—— 那是假话
+    ///（那条可能是别人发的），而且它看起来完全正常。
+    ///
+    /// ⚠️★ 用例的形状就是为这个错法摆的：两个房间、**同一个 id**、内容不同。
+    /// 场景里只有一个字段在变（房间），另一个字段（id）故意相同 ——
+    /// 少摆一个房间的话，「按 id 记」的写法照样全绿。
+    #[test]
+    fn a_clipboard_upload_marks_only_the_room_it_went_to() {
+        let (_dir, store) = temp_store();
+        store.apply_update(from_work(ReceiverEvent::Entry(Box::new(text(
+            7,
+            "work",
+            "工作那条",
+        )))));
+        store.apply_update(from_default(ReceiverEvent::Entry(Box::new(text(
+            7,
+            "default",
+            "默认那条",
+        )))));
+
+        store.mark_clipboard_uploads(&[uploaded("work", 7)]);
+
+        assert!(
+            !store.snapshot().entries[0].from_clipboard,
+            "default 里那条 7 号不是我们发的，不许贴标签"
+        );
+        store.select(1).unwrap();
+        assert!(
+            store.snapshot().entries[0].from_clipboard,
+            "work 里那条 7 号才是刚同步过去的"
+        );
+    }
+
+    /// ⚠️★ 两个方向的顺序**都要认**：上行响应走 HTTP、条目走 WS，谁先到没有保证。
+    ///
+    /// ① 先记下 id、那条**后到** —— 它插进来时要贴上（集合那一半）；
+    /// ② 那条**已经在列表里**、响应后到 —— 要**就地补上**（`mark_clipboard` 那一半）。
+    ///
+    /// ⚠️ 只做一半的症状是「**有时候**标签不出现」—— 网络上快的那台机器上永远正常，
+    /// 而慢的那台只是偶尔少一句话。所以两个方向各一条断言，缺一不可。
+    #[test]
+    fn the_clipboard_tag_survives_either_order() {
+        // ① 先记，条目后到。
+        let (_dir, store) = temp_store();
+        store.mark_clipboard_uploads(&[uploaded("work", 7)]);
+        store.apply_update(from_work(ReceiverEvent::Entry(Box::new(text(
+            7,
+            "work",
+            "刚复制的",
+        )))));
+        store.select(1).unwrap();
+        assert!(
+            store.snapshot().entries[0].from_clipboard,
+            "先记下的 id 要能等到那条到来"
+        );
+
+        // ② 条目先到，响应后到。
+        let (_dir, store) = temp_store();
+        store.apply_update(from_work(ReceiverEvent::Entry(Box::new(text(
+            7,
+            "work",
+            "刚复制的",
+        )))));
+        store.select(1).unwrap();
+        assert!(
+            !store.snapshot().entries[0].from_clipboard,
+            "前提：这时候还没记下那个 id"
+        );
+        store.mark_clipboard_uploads(&[uploaded("work", 7)]);
+        assert!(
+            store.snapshot().entries[0].from_clipboard,
+            "响应晚到也要就地补上标签"
+        );
+    }
+
+    /// ⚠️★ 贴上标签的那一条**原样重传**不算「变了」。
+    ///
+    /// 贴标签必须发生在 `upsert` **比较之前**：写在之后的话，存的那份带着标签、
+    /// 新来的那份不带，每来一次重传就判成「变了」→ `touch()` → 整屏重绘。
+    /// 而「重传」在这个协议里很常见（服务端重放、多条连接各收到一次）。
+    ///
+    /// ⚠️ 这一条同时钉住「标签不会被重传抹掉」—— 抹掉了用户会看到它变回「我发的」。
+    #[test]
+    fn re_sending_a_stamped_entry_is_not_a_change() {
+        let (_dir, store) = temp_store();
+        store.apply_update(from_work(ReceiverEvent::Entry(Box::new(text(
+            7,
+            "work",
+            "刚复制的",
+        )))));
+        store.mark_clipboard_uploads(&[uploaded("work", 7)]);
+        // ⚠️ 先切到 work 再取版本号：`select` 自己也会前进一格。
+        store.select(1).unwrap();
+        let version = store.snapshot().version;
+
+        // 同一条**一个字节不差**地再来一次。
+        store.apply_update(from_work(ReceiverEvent::Entry(Box::new(text(
+            7,
+            "work",
+            "刚复制的",
+        )))));
+
+        assert_eq!(
+            store.snapshot().version,
+            version,
+            "原样重传不该前进版本号（否则每重传一次就整屏重绘一次）"
+        );
+        assert!(
+            store.snapshot().entries[0].from_clipboard,
+            "重传不许把标签抹掉"
+        );
+    }
+
     /// 一个两房间的配置（`default` / `work`），**两个房间都开着 ↑**、`work` 开着 ↓。
     ///
     /// ⚠️ 这里**故意**不照抄「两个方向默认都关」（Jonny 2026-09-26 定的那个默认值）：
@@ -1457,6 +1642,19 @@ mod tests {
         ReceiverUpdate {
             server: FIXTURE_SERVER.to_owned(),
             room: "work".to_owned(),
+            event,
+        }
+    }
+
+    /// 造一条属于 **`default`** 房间的更新（只有「跨房间」那几条用例要它）。
+    ///
+    /// ⚠️ 它存在是因为「两个房间各有同一条」这种形状是**必须**摆出来的：
+    /// 只摆一个房间时，「按 id 记」那种错法照样全绿（见
+    /// `a_clipboard_upload_marks_only_the_room_it_went_to`）。
+    fn from_default(event: ReceiverEvent) -> ReceiverUpdate {
+        ReceiverUpdate {
+            server: FIXTURE_SERVER.to_owned(),
+            room: "default".to_owned(),
             event,
         }
     }
