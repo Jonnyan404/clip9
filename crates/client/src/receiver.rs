@@ -341,6 +341,18 @@ pub enum ReceiverEvent {
     History(Vec<ReceiveHolder>),
     /// 新来的一条（已认领或已应用）。
     Entry(Box<ReceiveHolder>),
+    /// ⚠️★ 这一条**刚刚写进本机剪贴板**了（实时、且这个房间与这类内容的 ↓ 都开着）。
+    ///
+    /// ⚠️ 与 [`ReceiverEvent::Entry`] **分成两条**而不是给它加个字段：那条事件的语义是
+    /// 「列表里多了一条」，而它**不受 ↓ 的影响**（关掉 ↓ 也照推，见这个枚举的模块注释）。
+    /// 两件事挤进一个结构里，界面迟早会把「没写剪贴板」画成「没收到」。
+    ///
+    /// ⚠️★ 为什么由**这里**报、而不是让上层自己判「该不该写剪贴板」：判据在本文件里
+    /// （房间的 ↓ + 这类内容的 ↓ + [`Verdict`]），上层再写一遍就是**第二份定义**，
+    /// 而两份一定会漂（漂的方向是「通知说写了、其实没写」这种没人会发现的谎）。
+    ///
+    /// ⚠️ 它**不改变任何列表状态** —— 桌面壳拿它发系统通知，列表由 `Entry` 那条管。
+    WroteToClipboard(Box<ReceiveHolder>),
     /// 一条被删了。
     Revoked { id: i32 },
     /// 房间被清空了。
@@ -1035,7 +1047,15 @@ async fn connect_once(
                         // ① 是隐含的。**连接与下载解耦之后它不再隐含**（§4.7），
                         // 漏了 ① 的话：给房间 A 开了 ↓，房间 B 的实时消息也会写进剪贴板。
                         if channel.enable_download && cfg.is_download_enabled(kind) {
-                            apply_entry(client, channel, cfg, &entry, sink, debouncer).await;
+                            // ⚠️★ 只有**真的写进去了**才报这一条：空正文的文本条目
+                            // 走 `Ok(false)`（没东西可写），下载失败走 `Err`（那两种
+                            // 情况 `apply_entry` 自己已经记了日志）。报一条没写成的
+                            // 「已写进剪贴板」比不报更坏。
+                            if let Ok(true) =
+                                apply_entry(client, channel, cfg, &entry, sink, debouncer).await
+                            {
+                                updates.send(ReceiverEvent::WroteToClipboard(entry.clone()));
+                            }
                         }
                         // ⚠️ 开关关掉也**照推列表** —— 开关管的是剪贴板，不是列表。
                         updates.send(ReceiverEvent::Entry(entry));
@@ -1123,6 +1143,10 @@ async fn load_history(
 /// ⚠️★ **写之前先预置指纹**（[`Debouncer::prime`]）—— 不预置的话，监控线程会把自己
 /// 刚写进去的东西当成「用户复制的新内容」，再发回服务端；对端收到又写它自己的剪贴板 ——
 /// 两个客户端之间**来回弹**。这就是为什么 watcher 与 receiver 必须**共享**一个 `Debouncer`。
+///
+/// ⚠️★ 返回值是 **`Ok(true)` = 真的写进去了**。`Ok(false)` 只有一种情况：空正文的
+/// 文本条目（"没有东西可写" —— 不能把剪贴板清空）。上层靠它决定要不要报
+/// [`ReceiverEvent::WroteToClipboard`]，所以**别把 `Ok(false)` 也当成写成功**。
 async fn apply_entry(
     client: &reqwest::Client,
     channel: &Channel,
@@ -1130,30 +1154,31 @@ async fn apply_entry(
     entry: &ReceiveHolder,
     sink: &dyn ClipboardSink,
     debouncer: &Arc<Mutex<Debouncer>>,
-) {
+) -> Result<bool, String> {
     let result = match entry {
         ReceiveHolder::Text(text) => {
             if text.content.is_empty() {
                 // 空正文的文本条目（`content` 是 omitempty，所以空正文会**省略这个 key**）
                 // 没有东西可写 —— 直接跳过，而不是把剪贴板清空。
-                return;
+                return Ok(false);
             }
             prime(debouncer, &ClipboardContent::Text(text.content.clone()));
-            sink.set_text(&text.content)
+            sink.set_text(&text.content).map(|()| true)
         }
         ReceiveHolder::File(file) => match download_file(client, channel, cfg, file).await {
             Ok(path) => {
                 prime(debouncer, &ClipboardContent::Files(vec![path.clone()]));
-                sink.set_files(&[path])
+                sink.set_files(&[path]).map(|()| true)
             }
             Err(reason) => Err(reason),
         },
     };
 
-    if let Err(reason) = result {
+    if let Err(reason) = &result {
         // ⚠️ 只记日志：写剪贴板失败（比如别的程序占着）不该把连接断掉。
         tracing::warn!(%reason, "把收到的内容写进剪贴板失败");
     }
+    result
 }
 
 /// 预置指纹（防回环）。
@@ -1584,6 +1609,66 @@ mod tests {
         let text = handshake_error(network_reset());
         assert!(text.starts_with("连接失败："), "{text}");
         assert!(!text.contains("凭据"), "这跟凭据没关系：{text}");
+    }
+
+    // ── 「到底写没写进剪贴板」──────────────────────────────────
+
+    /// 造一条文本条目。
+    fn text_entry(id: i32, content: &str) -> ReceiveHolder {
+        ReceiveHolder::Text(clip9_protocol::TextReceive {
+            base: clip9_protocol::ReceiveBase {
+                id,
+                kind: "text".to_owned(),
+                room: "default".to_owned(),
+                ..clip9_protocol::ReceiveBase::default()
+            },
+            content: content.to_owned(),
+            ..clip9_protocol::TextReceive::default()
+        })
+    }
+
+    /// ⚠️★ `apply_entry` 的返回值就是「**该不该报『已写进剪贴板』**」的判据，
+    /// 两半都要钉：
+    /// · 正常正文 → `Ok(true)`，而且**真的写了一次**；
+    /// · **空正文 → `Ok(false)`**，而且**一次都不许写**（写下去等于把用户的剪贴板清空）。
+    ///
+    /// ⚠️ 把 `Ok(false)` 当成成功，症状是「弹一句『已写进剪贴板』，
+    /// 而剪贴板里还是旧内容」—— 界面越肯定，用户越不会去怀疑它。
+    #[tokio::test]
+    async fn only_a_real_write_counts_as_written() {
+        let client = reqwest::Client::new();
+        let cfg = ClientConfig::default();
+        let channel = unreachable_channel();
+        let debouncer = crate::shared_debouncer();
+        let sink = crate::sink::RecordingSink::default();
+
+        let wrote = apply_entry(
+            &client,
+            &channel,
+            &cfg,
+            &text_entry(1, "正文"),
+            &sink,
+            &debouncer,
+        )
+        .await;
+        assert_eq!(wrote, Ok(true), "正常正文要算写成功");
+        assert_eq!(sink.taken(), vec!["text:正文".to_owned()], "要真的写下去");
+
+        let wrote = apply_entry(
+            &client,
+            &channel,
+            &cfg,
+            &text_entry(2, ""),
+            &sink,
+            &debouncer,
+        )
+        .await;
+        assert_eq!(wrote, Ok(false), "空正文没东西可写");
+        assert_eq!(
+            sink.taken().len(),
+            1,
+            "空正文那次不许再写一次 —— 也绝不许把用户的剪贴板清空"
+        );
     }
 
     // ── 历史取不回来 ──────────────────────────────────────────
