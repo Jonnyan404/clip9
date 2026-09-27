@@ -700,6 +700,71 @@ fn content_list_limit(raw: Option<&str>, history: i64) -> usize {
         .unwrap_or(max)
 }
 
+/// `GET /content` 一页的**字节预算**。
+///
+/// ⚠️★ 为什么 `CONTENT_LIST_HARD_CAP` 还不够：那只夹住**条数**，而「一条」的字节数是
+/// `text.limit`（**用户可配**）。于是 `text.limit = 8 MB` + `limit = 100` 就是
+/// **一次响应 800 MB** —— 条的界与字节的界是两件事，缺一个另一边就漏。这个洞的形状
+/// 与 `CONTENT_LIST_HARD_CAP` 当初要堵的那个**一模一样**（「把一次推 2MB 从 WS 挪到 HTTP」），
+/// 只是它躲在了另一半上。
+///
+/// 取 1 MiB 的依据与 `CONTENT_LIST_HARD_CAP` 是同一条纪律：**缺省部署一个字都不变** ——
+/// 缺省一页最多 `min(50, 100) = 50` 条 × 4 KiB ≈ 200 KiB，离 1 MiB 还差 4 倍；
+/// 就算把 `history` 顶到硬上限（100 条）也只有 400 KiB。只有把 `text.limit` 调大之后
+/// 它才开始起作用 —— 而那正是需要它的场景。
+///
+/// ⚠️ 它是「一次响应多大」的闸，**不是**「用户可配的一页大小」。别把它做成配置项：
+/// 多一根旋钮就多一种「配了不生效」（见 `CONTENT_LIST_HARD_CAP` 的注释）。
+const CONTENT_PAGE_BYTES: usize = 1024 * 1024;
+
+/// 一条条目在响应正文里占多少字节。
+///
+/// ⚠️ 只数**正文**（文本的 `content` / 文件的名字）—— 每条那点**固定**的元数据
+/// （ip、设备、房间、时间戳、列…）已经被 `CONTENT_LIST_HARD_CAP` 从**条数**上封住了：
+/// 100 条 × 几百字节 = 几十 KB，相对 MiB 级的预算可以忽略。
+/// 反过来（为此再加一个「每条元数据按多少字节算」的常量）只是凭空多一个要维护的数字，
+/// 而且它**永远猜不准**（`senderDevice` 里有没有名字、`column` 是不是空串都会变）。
+#[must_use]
+fn entry_payload_bytes(holder: &ReceiveHolder) -> usize {
+    match holder {
+        ReceiveHolder::Text(t) => t.content.len(),
+        // ⚠️ 文件条目**没有正文**（要另发 `GET /file/...` 才拿得到字节）——
+        // 它占的是文件名那点长度，不能拿 `size` 当正文：那是**盘上**的大小，不在响应里。
+        ReceiveHolder::File(f) => f.name.len(),
+    }
+}
+
+/// 这一页**要从最旧的那一端丢几条**才能装进字节预算。
+///
+/// 入参是**正序**（旧在前，与响应一致）的每条字节数。
+///
+/// ⚠️★ 两条规矩都是刻意的：
+///
+/// 1. **丢最旧的，不是最新的。** 这一页是正序，而客户端要的是「最近这一段」——
+///    从新的一头丢会让 `limit=50` 返回这 50 条里**最旧**的几条，用户看到的是
+///    「历史往新的那头断了一截」；从那头丢，客户端拿 `messages[0].id` 继续往回翻，
+///    一条都不会少。
+/// 2. **至少留一条**（`kept > 0` 那个判断）。单独一条就超预算时**不能**返回空数组：
+///    契约里「**空数组 = 到头了**」（见 `content_list` 的文档，Go/Worker 写的是同一句），
+///    于是被滤掉的那条消息在客户端表现为「这个房间没有更早的历史了」——
+///    **再也拉不到，而且没有任何报错**。宁可超预算一次（那只是慢），
+///    也不能让一条已存在的消息变成「不存在」。
+#[must_use]
+fn page_bytes_to_drop(sizes_oldest_first: &[usize], budget: usize) -> usize {
+    let mut kept_bytes = 0usize;
+    let mut kept = 0usize;
+    // 从**最新**的那条往回数（入参是旧在前，所以从尾部开始）。
+    for size in sizes_oldest_first.iter().rev() {
+        let next = kept_bytes.saturating_add(*size);
+        if kept > 0 && next > budget {
+            break;
+        }
+        kept_bytes = next;
+        kept += 1;
+    }
+    sizes_oldest_first.len() - kept
+}
+
 /// 把一条消息投影成 `/content/<id>` 与 `/content`（列表）共用的 JSON。
 ///
 /// 把「定时消息专有」的三个字段补进条目 —— **只在有值的时候补**。
@@ -845,6 +910,19 @@ pub async fn content_list(
     // ⚠️ store 给的是**新的在前**，而这个接口的契约是**正序**（旧的在前）——
     // 反过来的话客户端 append 渲染会得到倒序的列表，而它不会报错、只是看着不对。
     page.reverse();
+
+    // ⚠️★ 条数的界（上面那个 `limit`）**不等于**字节的界 —— 见 `CONTENT_PAGE_BYTES`。
+    // 上面那条 `limit` 夹的是「最多几条」，而「一条多大」由 `text.limit` 决定，
+    // 两者相乘才是这一页的大小。少任何一道闸，另一边都能把它顶破。
+    let sizes: Vec<usize> = page.iter().map(entry_payload_bytes).collect();
+    let dropped = page_bytes_to_drop(&sizes, CONTENT_PAGE_BYTES);
+    if dropped > 0 {
+        // ⚠️ 顺序要紧：`page` 此时已经 reverse 成**正序**（旧在前），
+        // 所以「从尾部丢」在切片上就是从**头部**丢 —— 丢掉的正是最旧的。
+        // 反过来写（`drain(len - dropped..)`）会让这一页变成「最旧的几条」，
+        // 而它不报错、只是看着不对（`a_page_that_does_not_fit_drops_the_oldest_end` 钉着这条）。
+        page.drain(..dropped);
+    }
 
     let messages: Vec<serde_json::Value> = page.iter().map(content_entry).collect();
     json_response(&json!({ "messages": messages }))
@@ -1324,6 +1402,56 @@ mod tests {
         assert!(
             clip9_core::config::ServerConfig::default().history <= CONTENT_LIST_HARD_CAP as i64,
             "内置缺省已超过硬上限 —— 默认部署会少看历史"
+        );
+    }
+
+    /// 一页的**字节预算**：丢最旧的、至少留一条。
+    ///
+    /// ⚠️ 纯函数，所以这些边界能逐条钉住 —— 而**接没接上去**由
+    /// `tests/content_page_budget.rs` 那三条走真 Router 的用例负责（两件事，别混）。
+    #[test]
+    fn page_bytes_drop_the_oldest_end_and_never_empty_the_page() {
+        // 装得下 → 一条不丢
+        assert_eq!(page_bytes_to_drop(&[10, 10, 10], 100), 0);
+        // 空页 / 没有预算概念时不该 panic
+        assert_eq!(page_bytes_to_drop(&[], 100), 0);
+        // 边界是「**不超过**预算」而不是「小于」：正好等于预算要全留着
+        assert_eq!(page_bytes_to_drop(&[40, 60], 100), 0, "正好 100 = 预算");
+        // 超了 → 从**最旧**的那头丢，而且是**连着丢**（留下的是尾部那一段）
+        assert_eq!(
+            page_bytes_to_drop(&[55, 60], 100),
+            1,
+            "留下最新的 60，丢掉最旧的 55（60+55=115 > 100）"
+        );
+        assert_eq!(
+            page_bytes_to_drop(&[40, 60, 60], 100),
+            2,
+            "⚠️ 留的是**尾部那一段**：最新的 60 + 次新的 60 = 120 > 100，\
+             所以只能留 1 条、丢 2 条 —— 不能「只丢中间那条」（那会让这一页出现空洞）"
+        );
+        // ⚠️★ 「最新那条永远在里面」：无论丢几条，尾部都在
+        assert_eq!(page_bytes_to_drop(&[55, 55], 100), 1, "留下最新的 55");
+        assert_eq!(
+            page_bytes_to_drop(&[10, 999], 100),
+            1,
+            "最新那条自己就超预算 → 照样留着它，丢旧的"
+        );
+        // ⚠️★ 只有一条且超预算 → **一条都不丢**（返回空 = 客户端以为到头了，那条就永远拉不到）
+        assert_eq!(page_bytes_to_drop(&[999], 100), 0);
+    }
+
+    /// 字节预算必须**真的**装得下缺省部署的一页 —— 否则「防一次响应过大」会变成
+    /// 「默认部署少看历史」。与 `hard_cap_leaves_the_default_deployment_alone` 同一条纪律。
+    ///
+    /// ⚠️ 这里用**硬上限**（100 条）而不是缺省的 `history`（50）：那是一页能到的最坏情况。
+    #[test]
+    fn the_page_budget_leaves_the_default_deployment_alone() {
+        let default = clip9_core::Config::default();
+        let worst_page = CONTENT_LIST_HARD_CAP * (default.text.limit.max(0) as usize);
+        assert!(
+            worst_page <= CONTENT_PAGE_BYTES,
+            "缺省配置下最坏的一页是 {worst_page} 字节 > 预算 {CONTENT_PAGE_BYTES} —— \
+             默认部署会开始少看历史"
         );
     }
 
