@@ -163,18 +163,23 @@ let noticeVisible = false;
 
 const NOTICE_MS = 3000;
 
-/** 显示一条提示。`room` = 这件事**是关于哪个房间**的（没有就是与房间无关的）。
+/** 显示一条提示。
  *
- * ⚠️★ 房间名要**显示出来**（`默认：已发到 1 个房间`）：提示是全局一格、却长在
- * 「当前选中房间」的标题下面（`#notice` 在 `.main` 里）—— 不写房间名的话，
- * 一条为别的房间产生的提示会被读成「这个房间出的事」（Jonny 报的「提示串房间了」）。
- * ⚠️ 房间名是**用户配置里的自由文本**，所以整句仍然只走 `textContent`（绝不进 innerHTML）。
+ * ⚠️★ **它不该再带房间名**（2026-09-27 改）：提示在壳里已经是**按房间各一格**
+ *（`store` 的 `Room::notice`），`state.notice` 给出来的**就是当前选中房间那一条**
+ * —— 这一格本来就长在那个房间的标题下面（`#notice` 在 `.main` 里），
+ * 再写一遍房间名是**冗余**（`默认：已发到 1 个房间` 挂在「默认」的标题下）。
+ *
+ * ⚠️ 上一版是「全局一格 + 显示房间名」，那是**说清它串到哪儿去了**；
+ * 现在是从**表示法上**让它不可能串（Jonny 2026-09-27：「房间的提示归每个房间」）。
+ *
+ * ⚠️ 内容（含用户配置里的自由文本）整句只走 `textContent`，绝不进 innerHTML。
  */
-function showNotice(kind, text, room) {
+function showNotice(kind, text) {
   const notice = el('notice');
   notice.hidden = false;
   notice.className = `notice ${kind}`;
-  notice.textContent = room ? `${room}：${text}` : text;
+  notice.textContent = text;
   noticeVisible = true;
   clearTimeout(noticeTimer);
   noticeTimer = setTimeout(() => {
@@ -585,9 +590,9 @@ function render(state) {
   // 原来这里直接写进 DOM，而 `clear_notice` 会让**下一拍**的重绘把它抹掉，
   // 于是「已发送 3 个文件」只闪一下（2026-09-27 修的）。
   if (state.notice) {
-    // ⚠️ `state.notice.room` 是**可选**的（壳里那些与房间无关的提示没有它）。
-    // 有就显示成 `房间名：文字` —— 见 `showNotice` 的注释。
-    showNotice(state.notice.kind, state.notice.text, state.notice.room);
+    // ⚠️★ 没有房间参数了：壳给出来的**就是当前选中房间那一条**
+    //（没有才退回与房间无关的那一格）—— 见 `showNotice` 的注释。
+    showNotice(state.notice.kind, state.notice.text);
     // ⚠️ 顺手把壳里那条清掉：否则一条三分钟前的错误会一直重播。
     // 清掉会前进版本号 → 下一拍还会重绘一次，而那一拍会走到下面的 `else` ——
     // 那时提示**正在显示**，所以用 `noticeVisible` 挡住，别把它抹掉。
