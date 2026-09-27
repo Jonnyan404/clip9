@@ -28,6 +28,7 @@
 
 mod autostart;
 mod commands;
+mod hotkeys;
 mod model;
 mod notify;
 mod runtime;
@@ -243,6 +244,22 @@ fn main() {
         // `capabilities/default.json` 里**故意没有** `notification:*`（见 `notify` 的模块文档）。
         // 只有 Rust 侧的 `notify::SystemNotifier` 能发。
         .plugin(tauri_plugin_notification::init())
+        // ⚠️★ 全局快捷键（`hotkeys` 那个模块：显示 / 隐藏主窗口，默认 ⌘⇧V）。
+        // ⚠️ 与 `notification` 同一条：插件会给页面注入一段它自带的 JS，
+        // 但**页面调不动它** —— `capabilities/default.json` 里故意没有 `global-shortcut:*`
+        //（判据 9 盯着这件事）。只有 `hotkeys` 那几条路能注册全局键。
+        //
+        // ⚠️★ 处理器在这里装上、`apply` 在 `setup` 里调：`with_handler` 只决定
+        // 「按下去之后谁被叫醒」，注册与否由 `hotkeys::apply` 按配置决定
+        //（关掉时 `unregister_all`，于是这个处理器不会被唤醒）。
+        .plugin(
+            tauri_plugin_global_shortcut::Builder::new()
+                .with_handler(|app, _shortcut, event| {
+                    // ⚠️ 只认 `Pressed`（理由在 `hotkeys::on_event` 的文档里）。
+                    hotkeys::on_event(app, event.state());
+                })
+                .build(),
+        )
         .manage(Arc::clone(&store))
         .manage(Arc::clone(&runtime))
         // ⚠️★ 壳要说的那几句话的字典（页面推过来的那份）。
@@ -281,6 +298,7 @@ fn main() {
             commands::open_web,
             commands::apply_settings,
             commands::autostart_enabled,
+            commands::hotkey_registered,
             commands::settings_view,
             commands::server_config,
             commands::server_config_save,
@@ -310,6 +328,14 @@ fn main() {
                 // ⚠️ 把配置里的自启意图**落到系统上**（幂等）。系统里那份可能被用户在
                 // 系统设置里删掉，而界面上还勾着 —— 不补的话就是「界面说一套、实际做另一套」。
                 autostart::apply(app.handle(), store.config().enable_autostart);
+                // ⚠️★ 同一条规矩，只是它是**全局快捷键**：配置里写着「开」就把那个组合键占上。
+                // ⚠️★ 失败**不能只进日志**：用户看到的是「按了没反应」，而他会去查别的程序
+                //（或者重启客户端）。所以除了日志，还推进那块提示区 ——
+                // 启动这一刻主窗口就在眼前，这条提示看得到（见 `hotkeys` 的模块文档）。
+                if let Err(problem) = hotkeys::apply(app.handle(), store.config().enable_hotkey) {
+                    eprintln!("{problem:?}");
+                    store.notice("err", problem);
+                }
                 Ok(())
             }
         })

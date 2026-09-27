@@ -848,6 +848,20 @@ impl Store {
         }
     }
 
+    /// 换「要不要占住那条全局快捷键」（**只有桌面端会用**）。
+    ///
+    /// ⚠️ 与 [`Store::set_notify`] 属于同一类：它**不在快照里**（界面是从
+    /// `settings_view` 那条命令读它的），所以这里**故意不 `touch`** ——
+    /// 前进一格只会让整屏白重绘一次，而界面上什么都看不出来。
+    ///
+    /// ⚠️★ 与 `set_autostart` 的差别只有一处：自启要**落到系统上**（`autostart::apply`），
+    /// 而它也一样（`hotkeys::apply`）—— 两个 `set_*` 都只改**配置里的意图**，
+    /// 「真的占到了没有」由调用方去做，而且**失败要说出来**（见 `hotkeys` 的模块文档）。
+    pub fn set_hotkey(&self, on: bool) {
+        let mut inner = self.lock();
+        inner.config.enable_hotkey = on;
+    }
+
     /// 换整份房间清单（界面上加 / 删 / 改房间）。
     ///
     /// ⚠️★ **房间清单和本机状态是按下标对齐的**（`Inner.rooms[i]` 属于

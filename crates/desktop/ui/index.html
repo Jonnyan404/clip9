@@ -899,7 +899,10 @@ table.ra td input[type='checkbox'] { margin: 0; }
                 <div class="grp" data-i18n="桌面">桌面</div>
                 <div class="it" data-pane="desktop" data-i18n="🖥 窗口与托盘">🖥 窗口与托盘</div>
                 <div class="it" data-pane="hotkeys" data-i18n="⌨ 快捷键">⌨ 快捷键</div>
-                <div class="it" data-pane="notify" data-i18n="🔔 通知与主题">🔔 通知与主题</div>
+                <!-- ⚠️ 叫「通知」不叫「通知与主题」：主题那颗图标在**侧栏顶部**（Jonny
+                     2026-09-28 定的），这一页里原来那张说「主题还没做」的卡片是**假话**
+                     （能切，只是不在这儿）—— 删了它，「与主题」这三个字也就没着落了。 -->
+                <div class="it" data-pane="notify" data-i18n="🔔 通知">🔔 通知</div>
                 <div class="grp" data-i18n="本机">本机</div>
                 <div class="it" data-pane="server" data-i18n="🗄 本地服务端">🗄 本地服务端</div>
                 <div class="it" data-open="server" data-i18n="⚙ 服务端配置">⚙ 服务端配置</div>
@@ -998,25 +1001,34 @@ table.ra td input[type='checkbox'] { margin: 0; }
                 </div>
             </div>
 
+            <!-- ⚠️★ item 1：这一页原来是「还没做。」一句占位。现在三行各管一件事 ——
+                 ①勾选框画的是**配置里的意图**（关掉就不占那个组合键）；
+                 ②中间那行说的是**这条键按下去干什么**：是**切换**，不是「叫出来」——
+                    写成「叫出来」的话，窗口已经在最前面时按一下**什么都不会发生**，
+                    用户会以为这个键没生效（`hotkeys.rs` 的模块文档记着这件事）；
+                 ③最后那行是**系统里的真相**（`#sc-hotkey-state`，JS 填）：组合键被别的
+                    程序占着时勾照旧亮着，而只有那一行会说话。
+                 ⚠️★ `<b id="sc-hotkey-key">` **故意是空的**：那个写法由壳算好递过来
+                    （`hotkeys::display_toggle_window`）。这里写死一份 `⌘⇧V` 的话，
+                    另一台机器上那份就是错的（macOS 是 ⌘、别处是 Ctrl），
+                    而错的那一份**看起来一样正常**。 -->
             <div class="pane" id="pane-hotkeys" hidden>
                 <h3 data-i18n="快捷键">快捷键</h3>
-                <p class="sub" data-i18n="还没做。">还没做。</p>
+                <div class="subcard">
+                    <div class="chk"><span class="sq" id="sc-hotkey"></span><span data-i18n="全局快捷键">全局快捷键</span><span class="hint" data-i18n="关掉就不占这个组合键">关掉就不占这个组合键</span></div>
+                    <p class="sub" style="margin:7px 0 0"><span data-i18n="按一下">按一下</span><b id="sc-hotkey-key"></b><span data-i18n="显示 / 隐藏主窗口 —— 再按一下换回来。">显示 / 隐藏主窗口 —— 再按一下换回来。</span></p>
+                    <p class="sub" style="margin:5px 0 0" id="sc-hotkey-state"></p>
+                </div>
             </div>
 
             <div class="pane" id="pane-notify" hidden>
-                <h3 data-i18n="通知与主题">通知与主题</h3>
+                <h3 data-i18n="通知">通知</h3>
                 <p class="sub"><span data-i18n="剪贴板上那两件事发生时你多半不在这个窗口里，所以走">剪贴板上那两件事发生时你多半不在这个窗口里，所以走</span><b data-i18n="系统通知。">系统通知。</b></p>
                 <div class="subcard">
                     <div class="st" data-i18n="剪贴板的系统通知">剪贴板的系统通知</div>
                     <div class="chk"><span class="sq on" id="sc-notify-up">✓</span><span data-i18n="本机剪贴板">本机剪贴板</span><b data-i18n="没发出去">没发出去</b><span data-i18n="时通知我">时通知我</span><span class="hint" data-i18n="成功不通知">成功不通知</span></div>
                     <div class="chk"><span class="sq on" id="sc-notify-dl">✓</span><span data-i18n="房间的内容">房间的内容</span><b data-i18n="写进本机剪贴板">写进本机剪贴板</b><span data-i18n="时通知我">时通知我</span></div>
                     <p class="sub" style="margin:7px 0 0"><span data-i18n="第一条">第一条</span><b data-i18n="只在没发出去时">只在没发出去时</b><span data-i18n="响（「已发送」是噪音）；第二条">响（「已发送」是噪音）；第二条</span><b data-i18n="每次写成都">每次写成都</b><span data-i18n="响（剪贴板被改你看不见）。">响（剪贴板被改你看不见）。</span></p>
-                </div>
-                <div class="subcard" style="margin-top:13px">
-                    <div class="st" data-i18n="主题">主题</div>
-                    <div style="font-size:12px;line-height:1.6">
-                        ⚠️ <b data-i18n="还没做">还没做</b><span data-i18n="：界面稿里明暗两套令牌都画好了，但">：界面稿里明暗两套令牌都画好了，但</span><b data-i18n="没有地方切。">没有地方切。</b>
-                    </div>
                 </div>
             </div>
 
