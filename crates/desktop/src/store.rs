@@ -78,6 +78,16 @@ pub struct RoomView {
     pub download: bool,
     /// 本机窗口里已有多少条。
     pub count: usize,
+    /// 这个房间时间线里**正文合计多少字节**（全文，不是快照里那份预览）。
+    ///
+    /// ⚠️ 只算**条目正文**，不算盘上文件的字节 —— 文件的字节在服务端
+    ///（`/file/...`），本地这份列表里只有文件名那点长度。
+    ///
+    /// 它存在的理由：`count` 那道界是「几条」，而「一条多大」是另一件事
+    ///（`text.limit` 可配）—— 真正的内存占用是两者相乘。所以它是一个**量具**：
+    /// 「把 `text.limit` 调大之后，本机到底多占了多少」现在看得见，
+    /// 而不用先去做按字节驱逐（那是用户可见的数据丢失，得先有数才敢定阈值）。
+    pub text_bytes: usize,
     /// 取过历史没有（界面上据此显示「还没加载」而不是一个空列表）。
     pub history_loaded: bool,
     /// 这个房间**自己那条连接**的状态（§4.7）。
@@ -344,6 +354,18 @@ impl Store {
                 upload: channel.enable_upload,
                 download: channel.enable_download,
                 count: room.entries.len(),
+                // ⚠️★ **现算，不维护增量计数器**（有意）。
+                //
+                // 原计划是给 `Room` 加一个 `bytes` 字段，在 `upsert` / `Revoked` / `Cleared` /
+                // 驱逐那几处加减 —— 而那个方案的事故点是**计数漂移**：漏一处减法就变成
+                // 「房间明明没几条，却一直丢最旧的」，且**不报错**。
+                //
+                // 现在没有「必须知道字节数才能做的决策」（按字节驱逐还没做，见
+                // `long-message-hardening.md` §7.0 的 S4b），而这个函数**本来就要遍历一遍**
+                // 所有条目（上面那三行）。于是**算一遍就避开了整类漂移 bug** ——
+                // 没有第二份状态，也就没有第二份会漂的状态。
+                // ⚠️ 真要加驱逐时，这段注释是「那时候才需要计数器」的依据，别直接删。
+                text_bytes: room.entries.iter().map(|entry| entry.text_bytes).sum(),
                 history_loaded: room.history_loaded,
                 connection: connection_view(&inner, room),
             })
@@ -1319,6 +1341,55 @@ mod tests {
             51,
             "最旧的 50 条被丢掉了，剩下的是最近的"
         );
+    }
+
+    /// ⚠️★ 房间的**正文字节量**必须是**全文**的字节数，不是快照里那份预览的长度。
+    ///
+    /// 它是「把 `text.limit` 调大之后本机到底多占了多少」的**量具**（`RoomView::text_bytes`）——
+    /// 拿一个被钉在 4 KiB 的数去量长文等于没量，而且那个数**看起来还挺合理**（不报错），
+    /// 所以只有钉住它，量出来的数才敢用。
+    ///
+    /// ⚠️ 它同样是**派生**的（`snapshot()` 现算），于是 `Revoked` / `Cleared` 之后必然跟着减 ——
+    /// 这条顺便把「计数漂移」那一类钉住了：将来谁换成增量计数器而漏了某处减法，这里会红。
+    #[test]
+    fn the_room_bytes_count_full_bodies_and_follow_removals() {
+        let (_dir, store) = temp_store();
+        let long = "中".repeat(100_000); // 100_000 个汉字 = 300_000 字节
+        store.apply_update(from_work(ReceiverEvent::Entry(Box::new(text(
+            1, "work", &long,
+        )))));
+        store.apply_update(from_work(ReceiverEvent::Entry(Box::new(text(
+            2, "work", "短",
+        )))));
+
+        let snapshot = store.snapshot();
+        assert_eq!(
+            snapshot.rooms[1].text_bytes,
+            300_000 + "短".len(),
+            "要是**全文**字节数（快照里那条只有 4096 字节的预览）"
+        );
+        // ⚠️ 按**房间**算，不是全局一个数
+        assert_eq!(snapshot.rooms[0].text_bytes, 0, "另一个房间不该被算进去");
+        // 与快照里那份预览分得开：预览是短的，字节数是真的
+        store.select(1).unwrap();
+        let preview_len = store.snapshot().entries[0].text.len();
+        assert!(preview_len <= crate::model::PREVIEW_BYTES, "快照那份是预览");
+        // ⚠️ 是 `<=` 不是 `==`：截断切在**字符边界**上，而 4096 不是 3 的倍数 ——
+        // 中文正文的预览实际是 4095 字节（多切一个字节就会切开一个汉字，那是 `panic`）。
+        // 上面那个 `assert_eq!` 的数**是**300_000，两个数差着两个数量级，这才是重点。
+        assert_ne!(preview_len, 300_000, "预览等于全文 = 等于没截断");
+
+        // 删一条 → 跟着减（派生实现的必然结果，但**必须**钉住）
+        store.apply_update(from_work(ReceiverEvent::Revoked { id: 1 }));
+        assert_eq!(
+            store.snapshot().rooms[1].text_bytes,
+            "短".len(),
+            "删掉那条长文之后字节数要跟着掉"
+        );
+
+        // 清空 → 归零
+        store.apply_update(from_work(ReceiverEvent::Cleared));
+        assert_eq!(store.snapshot().rooms[1].text_bytes, 0, "清空之后归零");
     }
 
     /// ⚠️★ **下载全局只能一个**：给第二个房间开下载，第一个**自动关掉**。
