@@ -156,21 +156,16 @@ impl Default for ConnectionView {
 ///
 /// ⚠️ 用 `kind` 而不是只给一句话：页面要能**分清**「成功 / 失败 / 只是被跳过」，
 /// 三者的颜色不一样。只给一句话的结果就是界面只能全画成一种颜色。
+///
+/// ⚠️★ 它**不带房间名**（2026-09-27 改）。原来带过一版：一条全局提示加一句
+/// 「这是关于「默认」房间的」—— 那是「说清它串到哪儿去了」，不是把它送回那个房间。
+/// 现在的做法是**每个房间各有一格**（[`Room::notice`]），界面那一格显示的就是
+/// **当前选中房间**那一条，于是「串房间」从**表示法上**不可能发生 ——
+/// 不需要靠一句标签去补救（Jonny 2026-09-27：「房间的提示归每个房间」）。
 #[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Notice {
     pub kind: &'static str,
-    /// 这条提示**是关于哪个房间**的 —— `None` = 与房间无关（改设置、存盘失败…）。
-    ///
-    /// ⚠️★ 2026-09-27 加的（用户报的「提示串房间了」）。界面那一条提示是**全局一格**
-    /// （`index.html` 的 `#notice`），而它长在「**当前选中**房间」的标题下面 ——
-    /// 于是一条**为别的房间**而产生的提示（比如切走之后才回来的「取历史失败」）
-    /// 会看起来像这个房间出的事。带上房间名之后它就不可能被认错。
-    ///
-    /// ⚠️ 存的是**房间在界面上的显示名**（`Channel::name`），不是 `room` 标识 ——
-    /// 界面把它原样显示，所以它必须是用户认得的那一个名字（他可能就是同名房间
-    /// 配在两台服务端上，见 [`Inner::room_index`] 那条注释）。
-    pub room: Option<String>,
     pub text: String,
 }
 
@@ -194,6 +189,15 @@ pub struct Snapshot {
     /// 真相要问 `autostart::is_enabled`（那要 `AppHandle`，而 `Store` 里**不许有 `tauri`**）。
     /// 界面要画真相时走命令，别拿这个字段当「现在到底开没开」。
     pub autostart: bool,
+    /// 界面顶部那一格**此刻该显示**的提示。
+    ///
+    /// ⚠️★ 它是**算出来的**，不是某一处存下来的：先看**当前选中房间**自己有没有
+    /// （[`Room::notice`]），没有才退回与房间无关的那一格（[`Inner::app_notice`]）。
+    /// 这样「这条提示是关于哪个房间的」不需要写在提示里 ——
+    /// 界面那一格本来就长在那个房间的标题下面，**它就是那个房间的**。
+    ///
+    /// ⚠️ 别的房间待着的那条**不在这里**，它在自己的 `Room` 里躺着，
+    /// 等用户切过去才显示（最典型的是「取历史失败」：那正是他切过去看的时候）。
     pub notice: Option<Notice>,
     /// 配置与数据目录（用户要知道自己的配置在哪）。
     pub config_path: String,
@@ -290,6 +294,13 @@ impl From<ServerLimits> for ServerLimitsView {
 struct Room {
     entries: Vec<EntryView>,
     history_loaded: bool,
+    /// 这个房间**自己的**一条待显示的提示（取历史失败、界面上发到这个房间的结果…）。
+    ///
+    /// ⚠️★ 放在 [`Room`] 里而不是一张按房间名索引的表里（2026-09-27）：`set_rooms`
+    /// 已经按 **(服务端, 房间)** 搬状态了（见它的注释），所以这个字段**自动**跟着走 ——
+    /// 不用再写一遍「搬提示」，也不用写一遍「删房间时清掉它的提示」。
+    /// 两份会漂的账，一份都不留。
+    notice: Option<Notice>,
     /// 这个房间**自己那条连接**的状态（§4.7）。
     ///
     /// ⚠️★ 每个房间一份，**不是**一份全局的 —— 每个房间各自有一条连接，
@@ -364,7 +375,11 @@ struct Inner {
     rooms: Vec<Room>,
     selected: usize,
     limits: ServerLimits,
-    notice: Option<Notice>,
+    /// **与房间无关**的那一格提示（改设置、存盘失败、没有房间可发…）。
+    ///
+    /// ⚠️★ 「某个房间的事」不走这里，走那个房间自己的 [`Room::notice`] ——
+    /// 见 [`Notice`] 的注释（用户 2026-09-27：「房间的提示归每个房间」）。
+    app_notice: Option<Notice>,
     /// 快照内容的版本号 —— 见 [`Snapshot::version`] 与 [`Inner::touch`]。
     /// ⚠️ **只有 `touch` 改它**，别在别处直接写（那样就绕过了「前进规则」）。
     version: u64,
@@ -409,7 +424,7 @@ impl Store {
                 rooms,
                 selected: 0,
                 limits: ServerLimits::default(),
-                notice: None,
+                app_notice: None,
                 // ⚠️ 从 0 起。页面那边「上一份」的初值是 `null`，所以**第一拍一定重绘**
                 //（`'0' !== null`）—— 这正是想要的：界面必须至少画一次。
                 version: 0,
@@ -472,7 +487,13 @@ impl Store {
             limits: inner.limits.into(),
             problems: inner.config.problems(),
             autostart: inner.config.enable_autostart,
-            notice: inner.notice.clone(),
+            // ⚠️★ **当前选中房间那一条优先**（见字段注释）。两条同时待着时房间那条赢 ——
+            // 它更具体，而且界面那一格正长在那个房间标题下面。
+            notice: inner
+                .rooms
+                .get(inner.selected)
+                .and_then(|room| room.notice.clone())
+                .or_else(|| inner.app_notice.clone()),
             config_path: self.config_path.display().to_string(),
             data_dir: self.data_dir.display().to_string(),
             max_entries: MAX_ENTRIES_PER_ROOM,
@@ -481,55 +502,73 @@ impl Store {
         }
     }
 
-    /// 界面上的一次性提示（**与房间无关**的：改设置、存盘失败、没有房间可发…）。
+    /// 界面上的一次性提示，**与房间无关**的那些（改设置、存盘失败、没有房间可发…）。
     ///
     /// ⚠️ 同样要 `touch` —— §8.1 第 2 条就是「`shapeOf` 漏了 `notice` → 三类提示永远画不出来」。
     /// 换判据**不改变**「哪些字段要参与判定」这件事（版本号不是免死金牌）。
     ///
-    /// ⚠️★ **是「某个房间」的事就走 [`Store::notice_in`]** —— 提示是全局一格的，
-    /// 不写房间名就会被认成「当前选中那个房间」的事（用户报的「提示串房间了」）。
+    /// ⚠️★ **是「某个房间」的事就走 [`Store::notice_in`]** —— 那一条会落进那个房间
+    /// 自己那一格（[`Room::notice`]），只有**当前显示它的那个房间**看得到。
     pub fn notice(&self, kind: &'static str, text: impl Into<String>) {
-        self.set_notice(kind, None, text.into());
-    }
-
-    /// 界面上的一次性提示，**并且说清是关于哪个房间的**。
-    ///
-    /// 身份是 **(服务端, 房间)** 两样（与 [`Inner::room_index`] 同一套判据）——
-    /// 两个服务端上可以有同名房间，只按房间名找会把提示挂到别人家那个房间上。
-    ///
-    /// ⚠️ 认不出这一对时**退回房间标识本身**，而不是丢掉房间名：那时也该让用户
-    /// 看出「这不是当前这个房间的事」，而这正是这条提示存在的理由。
-    pub fn notice_in(&self, server: &str, room: &str, kind: &'static str, text: impl Into<String>) {
-        let label = {
-            let inner = self.lock();
-            inner
-                .room_index(server, room)
-                .and_then(|index| inner.config.channels.get(index))
-                .map(|channel| channel.name.clone())
-        };
-        self.set_notice(
-            kind,
-            Some(label.unwrap_or_else(|| room.to_owned())),
-            text.into(),
-        );
-    }
-
-    fn set_notice(&self, kind: &'static str, room: Option<String>, text: String) {
         let mut inner = self.lock();
-        // ⚠️ 值一样就不动：`render` 里那一串上传结果提示可能重复出现
-        //（「已上传」连点两次），而重画一次是白花的。
-        let next = Some(Notice { kind, room, text });
-        if inner.notice != next {
-            inner.notice = next;
+        let next = Notice {
+            kind,
+            text: text.into(),
+        };
+        if inner.app_notice.as_ref() != Some(&next) {
+            inner.app_notice = Some(next);
             inner.touch();
         }
     }
 
-    /// 提示已经被看过了（页面取过之后清掉，免得一直挂着）。
+    /// 界面上的一次性提示，**属于某个房间**的那一条。
+    ///
+    /// 身份是 **(服务端, 房间)** 两样（与 [`Inner::room_index`] 同一套判据）——
+    /// 两个服务端上可以有同名房间，只按房间名找会把提示挂到别人家那个房间上
+    /// （2026-09-27 实测踩过：本地与公网各有一个 `default`）。
+    ///
+    /// ⚠️★ 认不出这一对时**退到与房间无关的那一格，并带上房间标识** ——
+    /// 而不是丢掉。这种情况只有一种来路：提示回来的时候那个房间已经被删掉 / 改名了。
+    /// 静默丢掉的话，用户刚删完房间时那条失败就**一个字都看不到**了。
+    pub fn notice_in(&self, server: &str, room: &str, kind: &'static str, text: impl Into<String>) {
+        let text = text.into();
+        let mut inner = self.lock();
+        let Some(index) = inner.room_index(server, room) else {
+            let next = Notice {
+                kind,
+                text: format!("{room}：{text}"),
+            };
+            if inner.app_notice.as_ref() != Some(&next) {
+                inner.app_notice = Some(next);
+                inner.touch();
+            }
+            return;
+        };
+        // ⚠️ 值一样就不动：`render` 里那一串上传结果提示可能重复出现
+        //（「已上传」连点两次），而重画一次是白花的。
+        let next = Notice { kind, text };
+        if inner.rooms[index].notice.as_ref() != Some(&next) {
+            inner.rooms[index].notice = Some(next);
+            inner.touch();
+        }
+    }
+
+    /// 提示已经被看过了（页面取过之后清掉，免得一直挂在界面上）。
+    ///
+    /// ⚠️ 清**两格**：当前选中房间那一格 + 与房间无关那一格。
+    /// 理由：界面一次只显示一条（房间那条优先），所以「另一条」本来就没显示出来；
+    /// 留着它只会在下一次重绘时突然冒出来，而那时它已经过期了。
     pub fn clear_notice(&self) {
         let mut inner = self.lock();
-        if inner.notice.is_some() {
-            inner.notice = None;
+        let mut cleared = inner.app_notice.take().is_some();
+        // ⚠️ 下标先取出来再 `get_mut` —— 直接写 `inner.rooms.get_mut(inner.selected)`
+        // 会让 `inner` 同时被可变与不可变借用（借用检查器会拦，而那是**对的**：
+        // 一旦 `selected` 也能被这次调用改，就说不清清的是哪一格了）。
+        let selected = inner.selected;
+        if let Some(room) = inner.rooms.get_mut(selected) {
+            cleared |= room.notice.take().is_some();
+        }
+        if cleared {
             inner.touch();
         }
     }
@@ -1436,19 +1475,19 @@ mod tests {
         assert_eq!(store.snapshot().rooms[2].count, 1, "它该落在远端那个房间上");
     }
 
-    /// ⚠️★★ **一条提示要说得出它是「哪个房间」的事**（2026-09-27 用户报的「提示串房间了」）。
+    /// ⚠️★★ **房间的提示归每个房间**（2026-09-27 用户报的「提示串房间了」）。
     ///
-    /// 界面那一条提示是**全局一格**（`index.html` 的 `#notice`），却长在「当前选中房间」
-    /// 的标题下面。于是一条为 `work` 产生的提示（最典型的是**异步回来才失败的**
-    /// 「取历史失败」—— 用户很可能已经切走了）会挂在**别的房间**的名字下面。
-    /// 修法是让提示自己带房间名，界面照实显示 —— 不是把提示藏起来（那是「静默」）。
+    /// 上一版的做法是「一条全局提示 + 一句『这是关于「默认」房间的』」——
+    /// 那是**说清它串到哪儿去了**，不是把它送回那个房间（用户没接受，他说的原话是
+    /// 「房间的提示归每个房间」）。现在每个房间各有一格，界面那一格显示的就是
+    /// **当前选中房间**那一条，于是这件事从**表示法上**不可能发生。
     ///
-    /// ⚠️★ 断言必须落在**认的是哪一对**上：只测「有房间名」的话，把 `room_index`
+    /// ⚠️★ 断言必须落在**认的是哪一对**上：只测「有没有提示」的话，把 `room_index`
     /// 换成「按房间名找第一个」也照样绿 —— 而那正是 §8.4 那条同名房间的坑。
     #[test]
-    fn a_notice_says_which_room_it_is_about() {
+    fn a_notice_stays_in_its_own_room() {
         let (_dir, store) = temp_store();
-        // 两个房间都叫 `default`、只是服务端不同 —— 名字里认不出来是哪一个。
+        // 再加一个「另一个服务端上的 default」—— 名字与房间名都认不出是哪一个。
         let mut channels = store.config().channels;
         let mut other = channels[0].clone();
         other.name = "Cf".to_owned();
@@ -1456,26 +1495,104 @@ mod tests {
         channels.push(other);
         store.set_rooms(channels).unwrap();
 
+        // 给**远端那个**房间挂一条。
         store.notice_in("https://cf.example", "default", "err", "取历史失败：401");
-        let notice = store.snapshot().notice.expect("提示该在");
-        assert_eq!(
-            notice.room.as_deref(),
-            Some("Cf"),
-            "挂到同名的本地那个房间上了 —— 身份必须是 (服务端, 房间)"
+
+        // ① 选中本地那个 `default`（下标 0）—— 它**不该看到**别人家的事。
+        assert!(
+            store.snapshot().notice.is_none(),
+            "远端房间的提示被挂到了本地同名房间上（身份必须是 (服务端, 房间)）"
         );
+
+        // ② 切到远端那个房间 → 它在这儿等着。
+        store.select(2).unwrap();
+        let notice = store.snapshot().notice.expect("它自己的房间该看得到");
+        assert_eq!(notice.kind, "err");
         assert_eq!(notice.text, "取历史失败：401");
 
-        // 认不出来的那一对：**房间名照样要说**（退回房间标识），不许悄悄变成「全局的」——
-        // 变成全局的就又会被读成「当前选中那个房间的事」。
-        store.notice_in("https://谁也不是", "room-x", "err", "取历史失败：x");
-        assert_eq!(
-            store.snapshot().notice.and_then(|n| n.room).as_deref(),
-            Some("room-x")
+        // ③ 切到「工作」→ 也不是它的。
+        store.select(1).unwrap();
+        assert!(
+            store.snapshot().notice.is_none(),
+            "别的房间的提示跟着用户切过来了"
         );
 
-        // 与房间无关的提示（存盘失败、改设置）**不带**房间名 —— 带了才是假话。
+        // ④ 再切回去**还在** —— 它没被「别人看了一眼」就吃掉（真正清它的是 `clear_notice`，
+        //    由界面在**显示过**之后调）。
+        store.select(2).unwrap();
+        assert!(store.snapshot().notice.is_some(), "还没显示过就被吃掉了");
+
+        // ⑤ **两条同时待着时房间那条优先**：界面那一格就长在那个房间标题下面。
         store.notice("err", "配置没存上");
-        assert_eq!(store.snapshot().notice.expect("提示该在").room, None);
+        assert_eq!(
+            store.snapshot().notice.expect("提示该在").text,
+            "取历史失败：401",
+            "与房间无关的那条把房间那条顶掉了"
+        );
+
+        // ⑥ 与房间无关的那些**在哪个房间都看得到**（它不是任何房间的事）。
+        store.select(0).unwrap();
+        assert_eq!(
+            store.snapshot().notice.expect("提示该在").text,
+            "配置没存上"
+        );
+
+        // ⑦ 而它**被看到之后要真的清掉**（页面显示完会调 `clear_notice`）。
+        // 不清的话，用户每切回来一次都会重播一条早就看过、而且已经过期的失败
+        // —— 那是「它到底还有效吗」的来源，也是 3 秒这条规矩要解决的同一个问题。
+        store.select(2).unwrap();
+        assert!(store.snapshot().notice.is_some(), "先确认房间那格还在");
+        store.clear_notice();
+        assert!(
+            store.snapshot().notice.is_none(),
+            "`clear_notice` 没清掉房间那一格"
+        );
+    }
+
+    /// ⚠️ 认不出那一对时**退到与房间无关的那一格**，而不是丢掉。
+    ///
+    /// 只有一条来路：提示回来的时候那个房间已经被删掉 / 改名了。那时**静默丢掉**
+    /// 等于「用户刚删完房间，那条失败一个字都看不到」—— 正是这个项目最忌讳的一类。
+    #[test]
+    fn a_notice_for_a_room_that_is_gone_falls_back_instead_of_vanishing() {
+        let (_dir, store) = temp_store();
+        store.notice_in("https://谁也不是", "room-x", "err", "取历史失败：x");
+
+        let notice = store.snapshot().notice.expect("一声不响地丢掉了");
+        assert!(
+            notice.text.contains("room-x"),
+            "至少要让用户认得出是哪个房间：{}",
+            notice.text
+        );
+        assert!(
+            notice.text.contains("取历史失败：x"),
+            "原文不许被改掉：{}",
+            notice.text
+        );
+    }
+
+    /// ⚠️★ 提示**跟着房间走**：房间清单变了（加 / 删 / 挪位置）时，
+    /// 「(服务端, 房间) 没变」的那一条要跟着它到新的下标上。
+    ///
+    /// 这条钉的是「提示存在 [`Room`] 里」这个决定 —— 换成一张按房间名索引的表，
+    /// 就得**再写一遍**搬运与清理，而少写一遍的表现是「提示挂在别的房间下」。
+    #[test]
+    fn a_room_notice_follows_the_room_across_a_room_list_edit() {
+        let (_dir, store) = temp_store();
+        store.notice_in(FIXTURE_SERVER, "work", "err", "取历史失败：500");
+        store.select(1).unwrap();
+        assert!(store.snapshot().notice.is_some(), "先确认它挂上去了");
+
+        // 在**前面**插一个新房间 —— `work` 的下标从 1 变成 2。
+        let mut channels = store.config().channels;
+        channels.insert(0, Channel::new("新加的", "http://127.0.0.1:7000"));
+        store.set_rooms(channels).unwrap();
+        store.select(2).unwrap();
+
+        assert!(
+            store.snapshot().notice.is_some(),
+            "房间挪了位置，它那条提示跟丢了"
+        );
     }
 
     /// ⚠️★ **每个房间各存各的**（§4.7）：每个房间**各自**有一条连接，

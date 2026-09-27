@@ -249,13 +249,13 @@ impl Runtime {
         // 并带回一句带数字的话（`uploader` 的模块文档第 2 条）。
         let limits = self.store.limits();
         let config = self.store.config();
-        // ⚠️★ 这条提示**是关于哪个房间**的 —— 界面那一条是全局一格，却长在
-        // 「当前选中房间」的标题下面（`index.html` 的 `#notice`）。不写房间名的话，
-        // 用户切走之后再看到它，就会读成「这个房间出的事」（他报的「提示串房间了」）。
+        // ⚠️★ 这条提示**是关于哪个房间**的 —— 界面那一格是**按房间**的
+        //（`store` 里的 `Room::notice`）：只有**当前选中那个房间**的事才显示在那里。
         //
         // ⚠️ **剪贴板那条路不算「某个房间的事」**：它的目标是「所有开着 ↑ 的房间」，
         // 可能同时是好几个，也可能一个都没有 —— 那种提示本来就不属于任何一个房间，
-        // 硬安一个上去反而是假话。所以这里只在**界面显式发送**那条路上写房间名。
+        // 硬安一个上去反而是假话。所以这里只在**界面显式发送**那条路上写房间名
+        //（剪贴板那条路走系统通知，见 [`Runtime::report`]）。
         let mut about: Option<(String, String)> = None;
         let report = match source {
             UploadSource::Clipboard => {
@@ -395,10 +395,13 @@ impl Runtime {
             let room = channel.room.clone();
             match fetch_history(&this.http, &channel, crate::store::MAX_ENTRIES_PER_ROOM).await {
                 Ok(entries) => this.store.push_history(&server, &room, entries),
-                // ⚠️★ 必须**带上房间名**：这一步是异步的，用户很可能在它回来之前
-                // 已经切到别的房间了 —— 不带房间名的话，这条失败就会挂在**新选中**
-                // 那个房间的标题下面（用户报的「提示串房间了」就是这个形状）。
-                // ⚠️ 用的是**请求之前**取下的 `server` / `room`，不是「现在选中的那个」。
+                // ⚠️★ 必须**带上房间**：这一步是异步的，用户很可能在它回来之前
+                // 已经切到别的房间了 —— 不带的话，这条失败会挂到**新选中**那个房间身上
+                //（用户报的「提示串房间了」就是这个形状）。
+                // ⚠️ 用的是**请求之前**取下的 `server` / `room`，不是「现在选中的那个」：
+                // 认的是 (服务端, 房间) 那一对，所以它会落进**它自己那个房间**的格子里
+                //（`store` 的 `Room::notice`），等用户切过去才显示 —— 而那正是
+                // 「这个房间的历史取不到、所以列表是空的」最该被说出来的时刻。
                 Err(reason) => {
                     this.store
                         .notice_in(&server, &room, "err", format!("取历史失败：{reason}"))
