@@ -724,7 +724,11 @@ table.ra td input[type='checkbox'] { margin: 0; }
 
             <div class="composer">
                 <div class="box">
-                    <textarea id="input" rows="1" placeholder="输入内容，或直接把文件拖进来…"></textarea>
+                    <!-- ⚠️★ `autocapitalize="off"`：macOS 会在这个框里把每句首字母**自动大写**，
+                         而用户发的常常是命令、路径、代码片段 —— 一个大写字母就让它变成另一回事。
+                         ⚠️ 该页**所有**输入框都要有它（地址格少一个字母就变成 `Https://…`）；
+                         漏了的由 `tools/desktop-ui-smoke.mjs` 那条静态自检拦下。 -->
+                    <textarea id="input" rows="1" autocapitalize="off" placeholder="输入内容，或直接把文件拖进来…"></textarea>
                     <div class="row">
                         <button class="btn icon" id="btn-attach" title="选文件发到房间">📎</button>
                         <button class="btn icon" id="btn-image" title="选图片发到房间">🖼</button>
@@ -801,7 +805,7 @@ table.ra td input[type='checkbox'] { margin: 0; }
                     </div>
                     <div class="field" style="margin:9px 0 0">
                         <label>收到的文件存哪（相对 = 数据目录下）</label>
-                        <input class="inp" id="sc-dir" type="text" />
+                        <input class="inp" id="sc-dir" type="text" autocapitalize="off" />
                     </div>
                 </div>
 
@@ -991,18 +995,18 @@ table.ra td input[type='checkbox'] { margin: 0; }
             <div class="sec">
                 <div class="st">网络</div>
                 <div class="row2">
-                    <div class="field"><label>监听地址（0.0.0.0 = 局域网可访问）</label><input class="inp" id="cfg-host" type="text" /></div>
+                    <div class="field"><label>监听地址（0.0.0.0 = 局域网可访问）</label><input class="inp" id="cfg-host" type="text" autocapitalize="off" /></div>
                     <div class="field"><label>端口</label><input class="inp" id="cfg-port" type="number" min="1" max="65535" /></div>
                 </div>
-                <div class="field"><label>子路径前缀（反代到 /clip 时填）</label><input class="inp" id="cfg-prefix" type="text" /></div>
+                <div class="field"><label>子路径前缀（反代到 /clip 时填）</label><input class="inp" id="cfg-prefix" type="text" autocapitalize="off" /></div>
                 <div class="row2">
-                    <div class="field"><label>证书（空 = 不用 HTTPS）</label><input class="inp" id="cfg-cert" type="text" /></div>
-                    <div class="field"><label>私钥</label><input class="inp" id="cfg-key" type="text" /></div>
+                    <div class="field"><label>证书（空 = 不用 HTTPS）</label><input class="inp" id="cfg-cert" type="text" autocapitalize="off" /></div>
+                    <div class="field"><label>私钥</label><input class="inp" id="cfg-key" type="text" autocapitalize="off" /></div>
                 </div>
             </div>
             <div class="sec">
                 <div class="st">访问控制</div>
-                <div class="field"><label>全局密码（空 = 不设）</label><input class="inp" id="cfg-auth" type="text" /></div>
+                <div class="field"><label>全局密码（空 = 不设）</label><input class="inp" id="cfg-auth" type="text" autocapitalize="off" /></div>
                 <label style="font-size:11.5px;color:var(--text-2)">逐房间凭据（roomAuth）</label>
                 <table class="ra" id="roomauth-table">
                     <thead><tr>
@@ -1039,8 +1043,8 @@ table.ra td input[type='checkbox'] { margin: 0; }
             </div>
             <div class="sec">
                 <div class="st">数据</div>
-                <div class="field"><label>库文件（相对 = 服务端数据目录下）</label><input class="inp" id="cfg-dbpath" type="text" /></div>
-                <div class="field"><label>上传文件目录</label><input class="inp" id="cfg-storage" type="text" /></div>
+                <div class="field"><label>库文件（相对 = 服务端数据目录下）</label><input class="inp" id="cfg-dbpath" type="text" autocapitalize="off" /></div>
+                <div class="field"><label>上传文件目录</label><input class="inp" id="cfg-storage" type="text" autocapitalize="off" /></div>
             </div>
             <div class="sec">
                 <div class="st">定时自动化</div>
@@ -1049,7 +1053,7 @@ table.ra td input[type='checkbox'] { margin: 0; }
                     <div class="field"><label>调度间隔（秒）</label><input class="inp" id="cfg-tick" type="number" min="1" /></div>
                     <div class="field"><label>补发窗口（秒）</label><input class="inp" id="cfg-grace" type="number" min="0" /></div>
                 </div>
-                <div class="field"><label>默认时区</label><input class="inp" id="cfg-tz" type="text" /></div>
+                <div class="field"><label>默认时区</label><input class="inp" id="cfg-tz" type="text" autocapitalize="off" /></div>
             </div>
             <div class="sec">
                 <div class="st">房间与内务</div>
