@@ -543,6 +543,26 @@ pub fn copy_to_clipboard(runtime: State<'_, Arc<Runtime>>, text: String) {
     runtime.copy_to_clipboard(&text);
 }
 
+/// 一条条目的**全文**（界面「展开」用）。
+///
+/// ⚠️★ 存在的理由：快照里只有**截断预览**（2026-09-27 拍板「快照只带截断预览、正文按需取」），
+/// 所以「展开一条长文」必须回来取一次。⚠️ 只认**当前选中**那个房间（id 跨房间不唯一）。
+#[tauri::command]
+pub fn entry_text(store: State<'_, Arc<Store>>, id: i32) -> Result<String, String> {
+    store
+        .entry_text(id)
+        .ok_or_else(|| "这条已经不在列表里了。".to_owned())
+}
+
+/// 「复制内容」（时间线右键菜单）—— ⚠️ 走壳，**不让页面把自己那份传回来**。
+///
+/// ⚠️ 页面手里那份是**预览**：传回来会把长文复制成截断的，而且不报错。
+/// 详见 `Runtime::copy_entry`（顺带省掉一整趟 IPC）。
+#[tauri::command]
+pub fn copy_entry(runtime: State<'_, Arc<Runtime>>, id: i32) {
+    runtime.copy_entry(id);
+}
+
 /// 弹一个**系统文件选择框**，把选中的路径还给页面。
 ///
 /// ⚠️★ 为什么这条命令在 Rust 侧而不在页面上：Tauri 2 的插件 JS API 是一个 npm 包

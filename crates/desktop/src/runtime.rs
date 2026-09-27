@@ -336,6 +336,23 @@ impl Runtime {
         }
     }
 
+    /// 「复制内容」（时间线的右键菜单）—— **由壳去取全文**。
+    ///
+    /// ⚠️★ 为什么不复用「页面把正文传回来」那条路：快照里只有**截断预览**
+    ///（[`crate::model::EntryView::for_snapshot`]），页面手里那份**不是**正文 ——
+    /// 传回来就会把长文**复制成截断的**，而且不报错（用户粘出来才发现少了半截）。
+    ///
+    /// ⚠️ 顺带省掉一整趟 IPC：全文只在 Rust 侧走，一个字节都不进 webview。
+    pub fn copy_entry(self: &Arc<Self>, id: i32) {
+        match self.store.entry_text(id) {
+            Some(text) => self.copy_to_clipboard(&text),
+            // ⚠️ 找不到要**说出来**：静默什么都不做的话，用户以为复制好了。
+            None => self
+                .store
+                .notice("skip", "这条已经不在列表里了，复制不了。"),
+        }
+    }
+
     /// 按需取回**选中房间**的历史（`GET /content`，不碰剪贴板）。
     ///
     /// ⚠️ 为什么要单独一条：下行的历史只覆盖**下载通道那一个房间**，

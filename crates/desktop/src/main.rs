@@ -229,6 +229,10 @@ fn main() {
             commands::set_download,
             commands::send_text,
             commands::copy_to_clipboard,
+            // ⚠️ 这两个是「快照只带截断预览」那条拍板的配套：正文要按需取。
+            // 少注册一个的表现是「点展开/复制**没反应**」，而且不报错。
+            commands::entry_text,
+            commands::copy_entry,
             commands::pick_files,
             commands::send_files,
             commands::refresh,

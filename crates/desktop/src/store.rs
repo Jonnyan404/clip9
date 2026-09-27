@@ -351,7 +351,13 @@ impl Store {
         let entries = inner
             .rooms
             .get(inner.selected)
-            .map(|room| room.entries.clone())
+            .map(|room| {
+                // ⚠️★ 交出去的**只有截断预览**（2026-09-27 拍板：快照只带截断预览、正文按需取）。
+                // `Store` 里那份仍然是**全文** —— 要全文的路径是 [`Store::entry_text`]
+                //（IPC 命令 `entry_text` / `copy_entry`）。
+                // 于是快照体积被钉在「200 条 × 4 KiB」上，与 `text.limit` 调到多大无关。
+                room.entries.iter().map(EntryView::for_snapshot).collect()
+            })
             .unwrap_or_default();
         Snapshot {
             rooms,
@@ -605,6 +611,27 @@ impl Store {
         inner.config.channels.get(inner.selected).cloned()
     }
 
+    /// 一条条目的**全文**（界面「展开」与「复制内容」用）。
+    ///
+    /// ⚠️★ 存在的原因是快照里只有**截断预览**（[`EntryView::for_snapshot`]）：
+    /// 页面手里那份不能当正文用，要正文就回来取。
+    ///
+    /// ⚠️ 只在**当前选中**那个房间里找：界面上的卡片就是从那一屏来的，
+    /// 切了房间之后它已经不在列表里了 —— 那时返回 `None`，界面要说清
+    /// 「这条已经不在列表里了」，**别静默给个空串**（那看起来像「复制成功了但是空的」）。
+    /// ⚠️ 也**不能**跨房间按 id 找：id 是**每个房间各自**单调的，跨房间会找错条。
+    #[must_use]
+    pub fn entry_text(&self, id: i32) -> Option<String> {
+        let inner = self.lock();
+        inner
+            .rooms
+            .get(inner.selected)?
+            .entries
+            .iter()
+            .find(|entry| entry.id == id)
+            .map(|entry| entry.text.clone())
+    }
+
     /// 握手里拿到的限额（上行要用）。
     ///
     /// ⚠️ `ServerLimits::default()`（两个 0）= **不知道**，不是「限额是 0」——
@@ -856,6 +883,59 @@ mod tests {
             content: content.to_owned(),
             ..TextReceive::default()
         })
+    }
+
+    /// ⚠️★ **拍板（2026-09-27）：快照只带截断预览，正文按需取。**
+    ///
+    /// 这条钉住**两件事**，两件都是静默坏掉的类型：
+    /// ① 快照里那份**被截断**了（否则「长文压垮快照」那个问题根本没解决）；
+    /// ② `Store` 里那份**还是全文**（截断只能发生在投影那一步 —— 谁要是去改 Store 里那份，
+    ///    长文就会在本地被截掉，而且**不报错**，只是内容少了）。
+    #[test]
+    fn the_snapshot_carries_a_preview_while_the_store_keeps_the_body() {
+        let (_dir, store) = temp_store();
+        let body = "汉".repeat(2000); // 6000 字节 > 4096
+        store.apply_update(from_work(ReceiverEvent::Entry(Box::new(text(
+            7, "work", &body,
+        )))));
+        store.select(1).unwrap();
+
+        let snapshot = store.snapshot();
+        let preview = &snapshot.entries[0];
+        assert!(preview.truncated, "6000 字节该被标成截断");
+        assert!(
+            preview.text.len() <= crate::model::PREVIEW_BYTES,
+            "快照里那份必须被截断，实际 {} 字节",
+            preview.text.len()
+        );
+        assert_eq!(preview.text_bytes, 6000, "报的字节数要是**全文**的");
+
+        // ② 全文还在，而且要取得到。
+        assert_eq!(
+            store.entry_text(7).as_deref(),
+            Some(body.as_str()),
+            "截断跑到 Store 里去了 —— 长文在本地被截掉，而且不报错"
+        );
+    }
+
+    /// ⚠️★ `entry_text` **只认当前选中那个房间**：id 是每个房间各自单调的，
+    /// 跨房间按 id 找会找到**别人的**那一条（而界面会把内容显示成这条的）。
+    /// 取不到时给 `None`，**别给空串** —— 界面要能分清「取不到」和「内容本来就是空的」。
+    #[test]
+    fn entry_text_never_looks_across_rooms() {
+        let (_dir, store) = temp_store();
+        store.apply_update(from_work(ReceiverEvent::Entry(Box::new(text(
+            7,
+            "work",
+            "在 work 里",
+        )))));
+
+        // 默认选中的是 `default` 房间，那边没有 7 号。
+        assert_eq!(store.entry_text(7), None, "跨房间找到了同 id 的另一条");
+
+        store.select(1).unwrap();
+        assert_eq!(store.entry_text(7).as_deref(), Some("在 work 里"));
+        assert_eq!(store.entry_text(999), None, "不存在的 id 要说取不到");
     }
 
     /// 一个两房间的配置（`default` / `work`），**两个房间都开着 ↑**、`work` 开着 ↓。
