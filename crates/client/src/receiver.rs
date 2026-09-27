@@ -47,6 +47,7 @@ use clip9_protocol::ReceiveHolder;
 use futures_util::{SinkExt, StreamExt};
 use serde_json::{Value, json};
 use tokio_tungstenite::connect_async;
+use tokio_tungstenite::tungstenite::Error as WsError;
 use tokio_tungstenite::tungstenite::client::IntoClientRequest;
 use tokio_tungstenite::tungstenite::http::header::AUTHORIZATION;
 use tokio_tungstenite::tungstenite::http::{HeaderValue, Request};
@@ -413,6 +414,13 @@ pub enum ReceiverStatus {
     /// ⚠️★ **老服务端**：握手不带 `latestId`，边界说不清 → **一行剪贴板都不写**。
     /// 界面要把这条显示出来（「服务端版本太旧，已暂停同步」），而不是静默不动。
     NoWatermark,
+    /// ⚠️★ **连上了、边界也知道，但历史没取到**（凭据不对 / 网络 / 旧服务端没这个接口）。
+    ///
+    /// ⚠️ 这个变体存在的理由是「原来那条是**假话**」：历史取不到时原来发的是 `Disconnected`，
+    /// 而**连接明明是好的** —— 实时照常在收。界面于是画成「已断开」，用户看到「已断开」
+    /// 却还在收消息；`load_history` 的文档注释本来就写着「失败不算致命…不该让整个下行断掉」，
+    /// 那条注释与当时的实现是**相反**的（2026-09-27 修）。
+    HistoryUnavailable { latest_id: i32, reason: String },
     /// 断了（附原因），`retrying` = 会不会自动重连。
     Disconnected { reason: String },
 }
@@ -766,6 +774,39 @@ async fn run_room(
     }
 }
 
+/// 把握手失败翻译成**一句能照做的话**。
+///
+/// ⚠️★ 为什么不能只写 `format!("连接失败：{e}")`：服务端在**升级之前**拒绝时，
+/// `tungstenite` 给的 `Display` 只有「HTTP error: 401 Unauthorized」——
+/// 用户看到的是一句「401」，**看不出下一步该做什么**（2026-09-27 实测：
+/// 一台公网部署设了全局密码，`/push` 401 而 `/content` 200，界面只显示「401」）。
+///
+/// ⚠️ 这个项目和「服务端给了带原因的那句话，就**照抄它**」是有明确规矩的
+/// （`uploader::parse_api_error`，S1 那轮还专门钉过一条测试）：握手这条不是例外 ——
+/// 服务端的 401 body 就是我们的契约 JSON，`message` 里写着「需要认证令牌」。
+///
+/// ⚠️ 401 / 403 上**再补一句去哪儿填凭据**：界面里确实有「凭据」那一列
+/// （`设置 → 房间`），但没人会从「401」联想到「去那一列填东西」。
+///
+/// ⚠️ 文案里**不要写 Markdown 的 `**`**：界面那边是 `textContent`（见 `ui/app.js`
+/// 的 `h()`），星号会**原样显示**给用户。要强调就用「」把它包起来。
+fn handshake_error(err: WsError) -> String {
+    let WsError::Http(response) = &err else {
+        return format!("连接失败：{err}");
+    };
+    let status = response.status().as_u16();
+    let body = response
+        .body()
+        .as_deref()
+        .map(|bytes| String::from_utf8_lossy(bytes).into_owned())
+        .unwrap_or_default();
+    let detail = parse_api_error(status, &body);
+    if status == 401 || status == 403 {
+        return format!("{detail} —— 这个房间要凭据：去「设置 → 房间」的「凭据」那一列填上");
+    }
+    format!("连接被拒：{detail}")
+}
+
 /// 一条连接的生命周期：握手 → 取历史 → 收实时。
 async fn connect_once(
     client: &reqwest::Client,
@@ -783,9 +824,7 @@ async fn connect_once(
     )?;
 
     // ⚠️ 这里**不要** `mut`：下一句 `split()` 会把它整个吃掉（`split` 取 `self`）。
-    let (socket, _response) = connect_async(request)
-        .await
-        .map_err(|e| format!("连接失败：{e}"))?;
+    let (socket, _response) = connect_async(request).await.map_err(handshake_error)?;
 
     // 历史取回来之前**一条都不写剪贴板** —— 所以这里先什么都不做，
     // 等 `config`（它带着边界）到了再说。
@@ -966,6 +1005,9 @@ async fn connect_once(
 ///
 /// ⚠️★ 失败**不算致命**：历史取不到（权限、旧服务端没有这个接口）不该让整个下行断掉 ——
 /// 实时那部分照样能用。所以这里只推一条状态，不返回错误。
+/// ⚠️★ 而且那条状态**必须**是 [`ReceiverStatus::HistoryUnavailable`]（2026-09-27 才加的）：
+/// 原来推的是 `Disconnected` —— 那与上面这句话**相反**，界面会画成「已断开」，
+/// 而用户其实还在收消息。报错不许把「还能用」的部分一起说死。
 async fn load_history(
     client: &reqwest::Client,
     _cfg: &ClientConfig,
@@ -979,9 +1021,15 @@ async fn load_history(
         Ok(entries) => entries,
         Err(reason) => {
             tracing::warn!(%reason, "取历史失败；实时仍然可用");
-            updates.send(ReceiverEvent::Status(ReceiverStatus::Disconnected {
-                reason: format!("取历史失败：{reason}"),
-            }));
+            // ⚠️ `latest_id` 是 `None`（老服务端）时**什么都不发**：那种情况下调用方
+            // 刚发过 `NoWatermark`，而那条**更重要**（它说明「一行剪贴板都不写」）——
+            // 拿一条「历史取不到」去把它盖掉，等于把更要紧的警告藏起来。
+            if let Some(latest_id) = handshake.latest_id {
+                updates.send(ReceiverEvent::Status(ReceiverStatus::HistoryUnavailable {
+                    latest_id,
+                    reason,
+                }));
+            }
             return;
         }
     };
@@ -1388,6 +1436,163 @@ mod tests {
         let req = ws_request("https://host/cloud-clipboard", "default", None).unwrap();
         assert_eq!(req.uri().path(), "/cloud-clipboard/push");
         assert_eq!(req.uri().scheme_str(), Some("wss"));
+    }
+
+    // ── 握手被拒的文案 ────────────────────────────────────────
+
+    /// 一次「连都没连上」的失败（不是 HTTP 拒绝）。
+    fn network_reset() -> WsError {
+        WsError::Io(std::io::Error::new(
+            std::io::ErrorKind::ConnectionReset,
+            "对端把连接掐了",
+        ))
+    }
+
+    /// ⚠️★★ **握手被拒要说人话**（2026-09-27 修，用户实测踩到）。
+    ///
+    /// 原来这里给的是 `format!("连接失败：{e}")`，而 `tungstenite` 在服务端
+    /// **升级之前**拒绝时的 `Display` 只有「HTTP error: 401 Unauthorized」——
+    /// 用户看到的就是一句「401」，**看不出下一步该做什么**。
+    /// 实测场景：一台公网部署设了全局密码（`/push` 401 而 `/content` 200），
+    /// 界面只显示「401」，完全指不到「凭据」那一列。
+    ///
+    /// ⚠️★ 这条用例钉三件事，缺一件这个修复就等于没做：
+    /// ① 服务端 body 里那句理由要**照抄出来**（契约 JSON 的 `message`）；
+    /// ② 401 / 403 上要**说清去哪儿填凭据**；
+    /// ③ 别的状态码上**不许**提凭据 —— 那会把人引到错的地方去。
+    #[test]
+    fn a_refused_handshake_says_what_to_do() {
+        fn refused(status: u16, body: &str) -> String {
+            let response = tokio_tungstenite::tungstenite::http::Response::builder()
+                .status(status)
+                .body(Some(body.as_bytes().to_vec()))
+                .expect("造一个握手响应");
+            handshake_error(WsError::Http(Box::new(response)))
+        }
+
+        let text = refused(401, r#"{"error":"unauthorized","message":"需要认证令牌"}"#);
+        assert!(
+            text.contains("需要认证令牌"),
+            "服务端给的理由被丢了：{text}"
+        );
+        assert!(text.contains("401"), "状态码还是要有：{text}");
+        assert!(text.contains("凭据"), "401 要说清去哪儿填凭据：{text}");
+
+        // 403（密码对但没这个房间的权限）走同一条补救路径。
+        let text = refused(403, "");
+        assert!(text.contains("403"), "{text}");
+        assert!(text.contains("凭据"), "403 同样要指到凭据那一列：{text}");
+
+        // ⚠️ 别的状态码上提「凭据」是**误导**：500 是服务端坏了，填什么凭据都没用。
+        let text = refused(500, "<html>boom</html>");
+        assert!(text.contains("500"), "{text}");
+        assert!(
+            !text.contains("凭据"),
+            "500 不是凭据问题，别把人引歪：{text}"
+        );
+
+        // ⚠️ 界面是 `textContent`，Markdown 的 `**` 会原样显示 —— 别写进来。
+        for text in [
+            refused(401, ""),
+            refused(403, ""),
+            refused(500, ""),
+            handshake_error(network_reset()),
+        ] {
+            assert!(
+                !text.contains("**"),
+                "界面不认 Markdown，星号会露出来：{text}"
+            );
+        }
+    }
+
+    /// 不是 HTTP 拒绝的（网络断）走原来那句，别硬塞状态码进去。
+    #[test]
+    fn a_handshake_failure_that_is_not_http_keeps_the_raw_reason() {
+        let text = handshake_error(network_reset());
+        assert!(text.starts_with("连接失败："), "{text}");
+        assert!(!text.contains("凭据"), "这跟凭据没关系：{text}");
+    }
+
+    // ── 历史取不回来 ──────────────────────────────────────────
+
+    /// 造一个「房间」，服务端地址**故意写坏**：`fetch_history` 会在**拼 URL** 那一步
+    /// 就失败（见 `endpoint::api_url` 的用例），于是这条用例**不用连网**。
+    fn unreachable_channel() -> Channel {
+        Channel::new("够不着的", "不是地址")
+    }
+
+    /// 一个空更新的收端（`load_history` 要往里推状态）。
+    fn sink() -> (
+        RoomSink,
+        tokio::sync::mpsc::UnboundedReceiver<ReceiverUpdate>,
+    ) {
+        let channel = unreachable_channel();
+        let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+        (
+            RoomSink {
+                server: channel.server.clone(),
+                room: channel.room.clone(),
+                updates: tx,
+            },
+            rx,
+        )
+    }
+
+    /// ⚠️★★ **历史取不到 ≠ 已断开**（2026-09-27 修）。
+    ///
+    /// 原来 `load_history` 失败时推的是 `Disconnected` —— 界面于是画成「已断开」，
+    /// 而此刻**实时照常在收**（`/push` 那条连接好着呢，只是 `/content` 拿不到）。
+    /// 用户看到「已断开」却还在收消息，只会以为界面坏了。
+    /// 所以那条状态是 `HistoryUnavailable`（在壳那边是 `warn`，**仍然算「活着」**）。
+    ///
+    /// ⚠️ 这条用例的两半都是必需的：只测「推了一条状态」会漏掉第二半，
+    /// 而那半是**更要紧**的警告别被盖掉（见下面）。
+    #[tokio::test]
+    async fn history_that_cannot_be_fetched_is_not_a_disconnect() {
+        let client = reqwest::Client::new();
+        let channel = unreachable_channel();
+        let cfg = ClientConfig::default();
+        let (sink, mut rx) = sink();
+
+        let handshake = Handshake {
+            latest_id: Some(7),
+            history: Some(50),
+            limits: ServerLimits::default(),
+        };
+        load_history(
+            &client,
+            &cfg,
+            &channel,
+            &handshake,
+            &mut Boundary::new(),
+            &sink,
+        )
+        .await;
+
+        let update = rx.try_recv().expect("取不到历史要说一声，不能一声不响");
+        assert_eq!(update.server, channel.server, "服务端要带上（身份的一半）");
+        assert_eq!(update.room, channel.room);
+        match update.event {
+            ReceiverEvent::Status(ReceiverStatus::HistoryUnavailable { latest_id, reason }) => {
+                assert_eq!(latest_id, 7, "边界要带上 —— 界面拿它显示进度");
+                assert!(!reason.is_empty(), "空理由等于没说");
+            }
+            other => panic!("历史取不到被报成了 {other:?} —— 界面会画成「已断开」"),
+        }
+
+        // ⚠️★ 老服务端（没有边界）上**什么都不发**：调用方刚发过 `NoWatermark`，
+        // 而那条更要紧（它说明「一行剪贴板都不写」）—— 拿这条去盖掉它，
+        // 等于把最该看见的警告藏起来。
+        let old = Handshake {
+            latest_id: None,
+            history: Some(50),
+            limits: ServerLimits::default(),
+        };
+        load_history(&client, &cfg, &channel, &old, &mut Boundary::new(), &sink).await;
+        assert!(
+            rx.try_recv().is_err(),
+            "老服务端上又推了一条，把 `NoWatermark` 盖掉了"
+        );
     }
 
     /// 下载地址是**本地拼**的（用我们配的服务端），不是条目里那个 url。
