@@ -160,6 +160,17 @@ impl Default for ConnectionView {
 #[serde(rename_all = "camelCase")]
 pub struct Notice {
     pub kind: &'static str,
+    /// 这条提示**是关于哪个房间**的 —— `None` = 与房间无关（改设置、存盘失败…）。
+    ///
+    /// ⚠️★ 2026-09-27 加的（用户报的「提示串房间了」）。界面那一条提示是**全局一格**
+    /// （`index.html` 的 `#notice`），而它长在「**当前选中**房间」的标题下面 ——
+    /// 于是一条**为别的房间**而产生的提示（比如切走之后才回来的「取历史失败」）
+    /// 会看起来像这个房间出的事。带上房间名之后它就不可能被认错。
+    ///
+    /// ⚠️ 存的是**房间在界面上的显示名**（`Channel::name`），不是 `room` 标识 ——
+    /// 界面把它原样显示，所以它必须是用户认得的那一个名字（他可能就是同名房间
+    /// 配在两台服务端上，见 [`Inner::room_index`] 那条注释）。
+    pub room: Option<String>,
     pub text: String,
 }
 
@@ -470,18 +481,44 @@ impl Store {
         }
     }
 
-    /// 界面上的一次性提示。
+    /// 界面上的一次性提示（**与房间无关**的：改设置、存盘失败、没有房间可发…）。
     ///
     /// ⚠️ 同样要 `touch` —— §8.1 第 2 条就是「`shapeOf` 漏了 `notice` → 三类提示永远画不出来」。
     /// 换判据**不改变**「哪些字段要参与判定」这件事（版本号不是免死金牌）。
+    ///
+    /// ⚠️★ **是「某个房间」的事就走 [`Store::notice_in`]** —— 提示是全局一格的，
+    /// 不写房间名就会被认成「当前选中那个房间」的事（用户报的「提示串房间了」）。
     pub fn notice(&self, kind: &'static str, text: impl Into<String>) {
+        self.set_notice(kind, None, text.into());
+    }
+
+    /// 界面上的一次性提示，**并且说清是关于哪个房间的**。
+    ///
+    /// 身份是 **(服务端, 房间)** 两样（与 [`Inner::room_index`] 同一套判据）——
+    /// 两个服务端上可以有同名房间，只按房间名找会把提示挂到别人家那个房间上。
+    ///
+    /// ⚠️ 认不出这一对时**退回房间标识本身**，而不是丢掉房间名：那时也该让用户
+    /// 看出「这不是当前这个房间的事」，而这正是这条提示存在的理由。
+    pub fn notice_in(&self, server: &str, room: &str, kind: &'static str, text: impl Into<String>) {
+        let label = {
+            let inner = self.lock();
+            inner
+                .room_index(server, room)
+                .and_then(|index| inner.config.channels.get(index))
+                .map(|channel| channel.name.clone())
+        };
+        self.set_notice(
+            kind,
+            Some(label.unwrap_or_else(|| room.to_owned())),
+            text.into(),
+        );
+    }
+
+    fn set_notice(&self, kind: &'static str, room: Option<String>, text: String) {
         let mut inner = self.lock();
         // ⚠️ 值一样就不动：`render` 里那一串上传结果提示可能重复出现
         //（「已上传」连点两次），而重画一次是白花的。
-        let next = Some(Notice {
-            kind,
-            text: text.into(),
-        });
+        let next = Some(Notice { kind, room, text });
         if inner.notice != next {
             inner.notice = next;
             inner.touch();
@@ -1392,6 +1429,48 @@ mod tests {
             "远端房间的历史串进了本地那个同名房间"
         );
         assert_eq!(store.snapshot().rooms[2].count, 1, "它该落在远端那个房间上");
+    }
+
+    /// ⚠️★★ **一条提示要说得出它是「哪个房间」的事**（2026-09-27 用户报的「提示串房间了」）。
+    ///
+    /// 界面那一条提示是**全局一格**（`index.html` 的 `#notice`），却长在「当前选中房间」
+    /// 的标题下面。于是一条为 `work` 产生的提示（最典型的是**异步回来才失败的**
+    /// 「取历史失败」—— 用户很可能已经切走了）会挂在**别的房间**的名字下面。
+    /// 修法是让提示自己带房间名，界面照实显示 —— 不是把提示藏起来（那是「静默」）。
+    ///
+    /// ⚠️★ 断言必须落在**认的是哪一对**上：只测「有房间名」的话，把 `room_index`
+    /// 换成「按房间名找第一个」也照样绿 —— 而那正是 §8.4 那条同名房间的坑。
+    #[test]
+    fn a_notice_says_which_room_it_is_about() {
+        let (_dir, store) = temp_store();
+        // 两个房间都叫 `default`、只是服务端不同 —— 名字里认不出来是哪一个。
+        let mut channels = store.config().channels;
+        let mut other = channels[0].clone();
+        other.name = "Cf".to_owned();
+        other.server = "https://cf.example".to_owned();
+        channels.push(other);
+        store.set_rooms(channels).unwrap();
+
+        store.notice_in("https://cf.example", "default", "err", "取历史失败：401");
+        let notice = store.snapshot().notice.expect("提示该在");
+        assert_eq!(
+            notice.room.as_deref(),
+            Some("Cf"),
+            "挂到同名的本地那个房间上了 —— 身份必须是 (服务端, 房间)"
+        );
+        assert_eq!(notice.text, "取历史失败：401");
+
+        // 认不出来的那一对：**房间名照样要说**（退回房间标识），不许悄悄变成「全局的」——
+        // 变成全局的就又会被读成「当前选中那个房间的事」。
+        store.notice_in("https://谁也不是", "room-x", "err", "取历史失败：x");
+        assert_eq!(
+            store.snapshot().notice.and_then(|n| n.room).as_deref(),
+            Some("room-x")
+        );
+
+        // 与房间无关的提示（存盘失败、改设置）**不带**房间名 —— 带了才是假话。
+        store.notice("err", "配置没存上");
+        assert_eq!(store.snapshot().notice.expect("提示该在").room, None);
     }
 
     /// ⚠️★ **每个房间各存各的**（§4.7）：每个房间**各自**有一条连接，

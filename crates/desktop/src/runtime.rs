@@ -24,8 +24,8 @@ use clip9_client::receiver::fetch_history;
 use clip9_client::uploader::{build_client, now};
 use clip9_client::{
     ClipboardContent, ClipboardEvent, ClipboardSink, Debouncer, ReceiverHandle, SystemClipboard,
-    WatchConfig, WatchHandle, shared_debouncer, spawn_receiver, spawn_watcher, upload_event,
-    upload_explicit,
+    WatchConfig, WatchHandle, prime_from_current, shared_debouncer, spawn_receiver, spawn_watcher,
+    upload_event, upload_explicit,
 };
 
 use crate::store::Store;
@@ -120,6 +120,12 @@ impl Runtime {
             return;
         }
         let config = self.store.config();
+        // ⚠️★ **起线程之前**先把**当前**剪贴板记成「已经见过」（2026-09-27 用户报的）。
+        // 少了这一步，监控线程读到的第一份内容必然被判成新变化 → 立刻走一次上行：
+        // 默认配置（一个房间都没开 ↑）下，界面在**刚连上那一刻**就弹「没有发出去…」，
+        // 而用户什么都没复制；开着 ↑ 时更糟，会把上次关机前留在剪贴板里的东西再发一遍。
+        // 顺序不能颠倒（先 spawn 再 prime 会漏掉第一拍）；详见 `prime_from_current`。
+        prime_from_current(&SystemClipboard, &self.debouncer);
         let this = Arc::clone(self);
         let handle = spawn_watcher(
             Box::new(SystemClipboard),
@@ -243,6 +249,14 @@ impl Runtime {
         // 并带回一句带数字的话（`uploader` 的模块文档第 2 条）。
         let limits = self.store.limits();
         let config = self.store.config();
+        // ⚠️★ 这条提示**是关于哪个房间**的 —— 界面那一条是全局一格，却长在
+        // 「当前选中房间」的标题下面（`index.html` 的 `#notice`）。不写房间名的话，
+        // 用户切走之后再看到它，就会读成「这个房间出的事」（他报的「提示串房间了」）。
+        //
+        // ⚠️ **剪贴板那条路不算「某个房间的事」**：它的目标是「所有开着 ↑ 的房间」，
+        // 可能同时是好几个，也可能一个都没有 —— 那种提示本来就不属于任何一个房间，
+        // 硬安一个上去反而是假话。所以这里只在**界面显式发送**那条路上写房间名。
+        let mut about: Option<(String, String)> = None;
         let report = match source {
             UploadSource::Clipboard => {
                 upload_event(&config, &event, limits, now(), &self.http).await
@@ -259,17 +273,24 @@ impl Runtime {
                     self.store.notice("err", "没有房间可以发 —— 先在侧栏加一个");
                     return;
                 };
+                about = Some((target.server.clone(), target.room.clone()));
                 upload_explicit(&config, &target, &event, limits, now(), &self.http).await
             }
         };
         // ⚠️ 上传结果**要能被界面看到**，包括「因为开关关着而跳过」——
         // 「点了没反应」是这类客户端最难查的一类故障。
-        if !report.ok() {
-            self.store.notice("err", report.summary());
-        } else if report.skipped || report.delivered == 0 {
-            self.store.notice("skip", report.summary());
+        // ⚠️ 跳过的**理由**由 `report.summary()` 自己说（`SkipReason`）——
+        // 这里不许再拼一句「相关开关关着」那种要用户自己去认的话。
+        let (kind, text) = if !report.ok() {
+            ("err", report.summary())
+        } else if report.skipped() || report.delivered == 0 {
+            ("skip", report.summary())
         } else {
-            self.store.notice("ok", report.summary());
+            ("ok", report.summary())
+        };
+        match about {
+            Some((server, room)) => self.store.notice_in(&server, &room, kind, text),
+            None => self.store.notice(kind, text),
         }
     }
 
@@ -374,7 +395,14 @@ impl Runtime {
             let room = channel.room.clone();
             match fetch_history(&this.http, &channel, crate::store::MAX_ENTRIES_PER_ROOM).await {
                 Ok(entries) => this.store.push_history(&server, &room, entries),
-                Err(reason) => this.store.notice("err", format!("取历史失败：{reason}")),
+                // ⚠️★ 必须**带上房间名**：这一步是异步的，用户很可能在它回来之前
+                // 已经切到别的房间了 —— 不带房间名的话，这条失败就会挂在**新选中**
+                // 那个房间的标题下面（用户报的「提示串房间了」就是这个形状）。
+                // ⚠️ 用的是**请求之前**取下的 `server` / `room`，不是「现在选中的那个」。
+                Err(reason) => {
+                    this.store
+                        .notice_in(&server, &room, "err", format!("取历史失败：{reason}"))
+                }
             }
         });
     }

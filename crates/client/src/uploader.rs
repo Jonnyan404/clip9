@@ -254,10 +254,43 @@ fn size_guard(size: u64, server_limit: u64, max_file_size_mb: u64) -> Result<(),
 pub enum UploadOutcome {
     /// 发了，`succeeded` / `total` 个房间成功。
     Uploaded { total: usize, succeeded: usize },
-    /// 因为开关跳过（没开监控 / 没开这个内容类型 / 没有开着上行的房间）。
-    Skipped,
+    /// 因为开关跳过 —— ⚠️ **带上「卡在哪一道」**（见 [`SkipReason`]）。
+    Skipped(SkipReason),
     /// 全失败。
     Failed(String),
+}
+
+/// 「被跳过」时**到底卡在哪一道开关上**。
+///
+/// ⚠️★ 2026-09-27 加的，起因是用户报的一句话：「default 房间连上提示相关开关关着，
+/// 那个开关功能早就移除不存在了」。原来这里只有一个光秃秃的 `Skipped`，
+/// 提示语就只能写成「没有发出去（相关开关关着）」—— 而这句话**指认不出是哪一个**：
+/// 客户端里同时有「每个房间的 ↑」「全局的文本 / 文件」两档，用户看到「相关开关」
+/// 只会去想起那个**早就删掉的全局同步开关**（§4.1 第 5 条），于是这句话读起来像假的。
+///
+/// ⚠️ 修法不是把文案写得更好听，而是**让判据自己说话**：[`upload_event`] 里
+/// 本来就是两个分支，各自报自己的理由，界面不必再猜（也不必再抄一份判断 ——
+/// 「两处各写一遍」正是这个项目最忌讳的那类）。为什么没跳过，看一眼这个枚举就知道。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SkipReason {
+    /// 这一类内容（文本 / 文件）没开上行 —— 开关在**全局设置**页里。
+    ContentKind,
+    /// 一个房间都没开 ↑ —— 开关在**侧栏的房间行**上。
+    NoUploadRoom,
+}
+
+impl SkipReason {
+    /// 给提示 / 日志用的一句话。
+    ///
+    /// ⚠️★ **必须点出开关在哪儿**（「全局设置」/「侧栏」），而且**只用界面上真有那两处**：
+    /// 原来那句「相关开关关着」之所以被用户当成假话，就是因为它指的东西他不认得。
+    #[must_use]
+    pub fn summary(self) -> &'static str {
+        match self {
+            Self::ContentKind => "这类内容没开上行（「全局设置」页里的「文本 / 文件」）",
+            Self::NoUploadRoom => "本机剪贴板没发出去：侧栏里没有任何房间开着 ↑",
+        }
+    }
 }
 
 /// 一次剪贴板事件的**总账**（可能包含多个载荷 × 多个房间）。
@@ -267,8 +300,12 @@ pub struct UploadReport {
     pub payloads: usize,
     /// 成功送达的「载荷 × 房间」次数。
     pub delivered: usize,
-    /// 整件事因为开关被跳过。
-    pub skipped: bool,
+    /// 整件事因为开关被跳过（**卡在哪一道**见 [`SkipReason`]）。
+    ///
+    /// ⚠️★ 用 `Option<SkipReason>` 而**不是**「一个 `bool` + 一个理由字段」：
+    /// 两个字段就一定会漂（跳过却没说理由、或说了理由却没跳过），
+    /// 而这里要的正是「跳过 ⇒ 一定指得出是哪一道」。
+    pub skip: Option<SkipReason>,
     /// 失败原因，每条一个（**带房间名**，否则多房间时看不出是谁失败了）。
     pub failures: Vec<String>,
 }
@@ -280,11 +317,17 @@ impl UploadReport {
         self.failures.is_empty()
     }
 
+    /// 有没有被开关跳过。
+    #[must_use]
+    pub fn skipped(&self) -> bool {
+        self.skip.is_some()
+    }
+
     /// 把一次载荷的结果并进来。
     pub fn push(&mut self, outcome: UploadOutcome) {
         match outcome {
             UploadOutcome::Uploaded { succeeded, .. } => self.delivered += succeeded,
-            UploadOutcome::Skipped => self.skipped = true,
+            UploadOutcome::Skipped(reason) => self.skip = Some(reason),
             UploadOutcome::Failed(reason) => self.failures.push(reason),
         }
     }
@@ -300,8 +343,10 @@ impl UploadReport {
                 self.failures.join("；")
             );
         }
-        if self.skipped {
-            return "没有发出去（相关开关关着）".to_owned();
+        if let Some(reason) = self.skip {
+            // ⚠️ 理由由 [`SkipReason`] 给，这里**不另写一份**：文案与判据分家，
+            // 下一次改判据就会留下一句过期的话（用户这次报的正是这个）。
+            return reason.summary().to_owned();
         }
         // ⚠️ `delivered == 0` 而**不是**被开关跳过 —— 那是界面上「点一下发送」那条路
         //（[`upload_explicit`]）会走到的分支：它一个开关都不判，所以**不能说**
@@ -356,16 +401,18 @@ pub async fn upload_event(
     now: OffsetDateTime,
     client: &Client,
 ) -> UploadReport {
+    // ⚠️★ 两个分支各自报自己的理由（[`SkipReason`]）—— 界面拿到的是**判据本身**，
+    // 不是一句要靠猜的「相关开关关着」。顺序就是优先级：先说内容类型、再说房间。
     if !cfg.is_upload_enabled(event.upload_kind()) {
         return UploadReport {
-            skipped: true,
+            skip: Some(SkipReason::ContentKind),
             ..UploadReport::default()
         };
     }
     let targets = cfg.upload_channels();
     if targets.is_empty() {
         return UploadReport {
-            skipped: true,
+            skip: Some(SkipReason::NoUploadRoom),
             ..UploadReport::default()
         };
     }
@@ -825,7 +872,9 @@ mod tests {
         };
         let report =
             upload_event(&cfg, &event, ServerLimits::default(), fixed_now(), &client).await;
-        assert!(report.skipped);
+        // ⚠️★ 断言的是**哪一道**，不是一个布尔：布尔分不出「内容类型没开」与
+        // 「没有开着 ↑ 的房间」，而界面上的话就是要照着这个说（见 [`SkipReason`]）。
+        assert_eq!(report.skip, Some(SkipReason::ContentKind));
         assert_eq!(report.payloads, 0);
         assert!(report.ok(), "跳过不是失败");
     }
@@ -847,8 +896,43 @@ mod tests {
         };
         let report =
             upload_event(&cfg, &event, ServerLimits::default(), fixed_now(), &client).await;
-        assert!(report.skipped);
+        // 内容类型是开着的（`ClientConfig::default()` 里 `enable_text` 是 `true`）——
+        // 所以卡住它的**只能**是「一个开着 ↑ 的房间都没有」。这条钉的正是这个区分。
+        assert_eq!(report.skip, Some(SkipReason::NoUploadRoom));
         assert!(report.payloads == 0, "跳过的时候不该去材料化（更不该发）");
+    }
+
+    /// ⚠️★ **被跳过时那句提示要说得出开关在哪儿**（2026-09-27 用户报的那条）。
+    ///
+    /// 起因：用户看到「没有发出去（相关开关关着）」之后说「那个开关功能早就移除
+    /// 不存在了」—— 因为「相关开关」四个字指的是一个**早就删掉的全局同步开关**。
+    /// 所以这里逐条钉住「两种跳过各自点出界面上真有的那一处」。
+    #[test]
+    fn a_skip_says_which_switch_and_where_it_is() {
+        let kind = UploadReport {
+            skip: Some(SkipReason::ContentKind),
+            ..UploadReport::default()
+        }
+        .summary();
+        assert!(kind.contains("全局设置"), "要说清在哪儿：{kind}");
+
+        let room = UploadReport {
+            skip: Some(SkipReason::NoUploadRoom),
+            ..UploadReport::default()
+        }
+        .summary();
+        assert!(
+            room.contains("侧栏") && room.contains('↑'),
+            "要说清在哪儿：{room}"
+        );
+
+        // ⚠️ 两句都**不许**再出现「相关开关」这种要用户自己去认的话。
+        for text in [kind, room] {
+            assert!(
+                !text.contains("相关开关"),
+                "「相关开关」指认不出是哪一道 —— 用户就是这么被绕进去的：{text}"
+            );
+        }
     }
 
     /// ⚠️★ 界面上「点一下发送」**不看任何同步开关** —— 这条钉的就是那个区分。
@@ -883,7 +967,7 @@ mod tests {
         // 下面的断言可能只是碰巧成立（比如两个入口其实走了同一段代码）。
         let automatic =
             upload_event(&cfg, &event, ServerLimits::default(), fixed_now(), &client).await;
-        assert!(automatic.skipped, "剪贴板那条路要过开关");
+        assert!(automatic.skipped(), "剪贴板那条路要过开关");
         assert_eq!(automatic.payloads, 0);
 
         // 同一条事件、同一份配置，走显式那条路就该**照发不误**。
@@ -897,7 +981,7 @@ mod tests {
         )
         .await;
         assert!(
-            !explicit.skipped,
+            !explicit.skipped(),
             "显式发送不许被同步开关拦下来（那正是「点了没反应」）"
         );
         assert_eq!(explicit.payloads, 1, "该去材料化、该发出去");

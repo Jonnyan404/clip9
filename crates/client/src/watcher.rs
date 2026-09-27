@@ -130,6 +130,9 @@ impl Drop for WatchHandle {
 
 /// 起一个后台线程监控剪贴板：每读到一个**新**内容就调一次 `on_event`。
 ///
+/// ⚠️★ 调用方**必须**先 [`prime_from_current`]（把当前剪贴板记为「已经见过」），
+/// 否则第一拍就会把它当成一次变化推出去 —— 那是用户报过的现象，见那个函数的注释。
+///
 /// ⚠️ `on_event` 在**监控线程**上跑 —— 它必须**立刻返回**（把活儿丢给别的任务），
 /// 否则会把轮询卡住、漏掉后面的变化。上行要用通道 / 异步任务，别在这里做 IO。
 ///
@@ -188,12 +191,45 @@ pub fn shared_debouncer() -> Arc<Mutex<Debouncer>> {
     Arc::new(Mutex::new(Debouncer::new()))
 }
 
+/// 把**当前**剪贴板内容记为「已经见过」——起监听**之前**调。
+///
+/// ⚠️★★ 为什么必须有这一步（2026-09-27 修的，用户报的「default 房间连上就提示」）：
+/// [`Debouncer`] 起步时三个指纹都是 `0`，于是监控线程**读到的第一份内容**
+/// 一定被判成「新的」→ 立刻走一次上行。两个后果，都不是小事：
+///
+/// 1. **一个房间都没开 ↑ 时**（`Channel::new` 的默认就是 `false`，装完就是这状态），
+///    界面在**刚连上那一刻**弹一条「没有发出去…」—— 而用户**根本没复制任何东西**。
+///    他原话是「default 房间连上提示相关开关关着」，还补了一句「那个开关功能早就
+///    移除不存在了」（他指的是 §4.1 第 5 条删掉的那个全局同步开关）。
+/// 2. **开着 ↑ 时更糟**：启动会把**上次关机前留在剪贴板里的东西**当成一次新变化
+///    再发一遍到房间里。那对房间来说是一条凭空多出来的消息。
+///
+/// 两件的根子是同一句：「监控」的语义是「**变化**」，而进程刚起来时**没有变化可言** ——
+/// 库里那份是上一轮的遗留，不是这一次的输入。
+///
+/// ⚠️ 与本函数对称的那条已经在 `receiver::apply_entry` 里：下行写剪贴板前也要
+/// `prime`（防回环）。两条合起来才是「谁记得上一次是什么，只能有一处」的完整说法。
+///
+/// ⚠️ 读不到内容（剪贴板空 / 没有权限）时**什么都不做** —— 不是错误：
+/// 那时第一份真内容本来就该发出去。
+pub fn prime_from_current(source: &dyn ClipboardSource, debouncer: &Arc<Mutex<Debouncer>>) {
+    let Some(content) = source.read() else {
+        return;
+    };
+    debouncer
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .prime(&content);
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::collections::VecDeque;
     use std::sync::Mutex;
     use std::sync::mpsc;
+
+    use crate::debounce::Fingerprints;
 
     /// 按脚本吐内容的假剪贴板：读完了就一直 `None`。
     struct ScriptedSource {
@@ -216,6 +252,56 @@ mod tests {
         WatchConfig {
             poll_interval: Duration::from_millis(5),
         }
+    }
+
+    /// ⚠️★ **刚起步那一拍不许把库里那份当成一次变化**（2026-09-27 修的）。
+    ///
+    /// 没有这一步的话，`Debouncer` 三个槽都是 0 → 读到的第一份内容必然被当成新的。
+    /// 这条用例把那个后果直接钉出来：**先 `prime_from_current`，再跑监控线程**，
+    /// 于是脚本里第一份（= 启动时剪贴板里本来就有的那份）**一个事件都不该产生**，
+    /// 后面那份才该发。
+    ///
+    /// ⚠️ 断言必须落在「第一份不发」上：只测「第二份会发」的话，把这一整步删掉
+    /// 用例**照样是绿的**（第一份会多发一次事件，而测试只等了一条）——
+    /// 那正是「跑过了 ≠ 钉住了」。
+    #[test]
+    fn the_clipboard_we_inherit_at_startup_is_not_an_event() {
+        let pending = scripted(vec![
+            Some(ClipboardContent::Text("上一轮留在剪贴板里的".to_owned())),
+            Some(ClipboardContent::Text("上一轮留在剪贴板里的".to_owned())),
+            Some(ClipboardContent::Text("这次真的复制了别的".to_owned())),
+        ]);
+        let debouncer = shared_debouncer();
+
+        // ⚠️ 顺序是**先预置、再起线程**，与 `Runtime::start_watcher` 里一致。
+        prime_from_current(pending.as_ref(), &debouncer);
+
+        let (tx, rx) = mpsc::channel();
+        let handle = spawn_watcher(pending, fast(), Arc::clone(&debouncer), move |event| {
+            let _ = tx.send(event);
+        });
+
+        let first = rx
+            .recv_timeout(Duration::from_secs(2))
+            .expect("该收到「这次真的复制了别的」");
+        assert!(
+            matches!(first, ClipboardEvent::Text { ref content, .. } if content == "这次真的复制了别的"),
+            "启动时剪贴板里那一份被当成了一次新变化：{first:?}"
+        );
+        handle.stop();
+    }
+
+    /// 剪贴板是空的（或没权限读）时，这一步**什么都不做** ——
+    /// 那时第一份真内容本来就该发出去，不能被「预置」误伤。
+    #[test]
+    fn priming_an_empty_clipboard_leaves_the_next_read_alone() {
+        let debouncer = shared_debouncer();
+        prime_from_current(scripted(vec![None]).as_ref(), &debouncer);
+        assert_eq!(
+            debouncer.lock().expect("锁没坏").fingerprints(),
+            Fingerprints::default(),
+            "没读到内容就不该动指纹"
+        );
     }
 
     /// 端到端：**只有新内容会被推出去**，而且 `stop()` 之后线程真的停。

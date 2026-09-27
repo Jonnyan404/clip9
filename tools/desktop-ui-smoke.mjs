@@ -27,6 +27,9 @@
 // 4. 每一个**能打字**的输入框（`type="text"` / 不带 `type` 的 `<input>` / `<textarea>`）
 //    必须带 `autocapitalize="off"` —— 不通过 = 退出码 1。理由见下。
 // 5. 新建房间的默认**不许打开上行**（`addRoomRow`）—— 不通过 = 退出码 1。理由见下。
+// 6. **提示要说得出它是「哪个房间」的事** —— `render` 要把 `state.notice.room`
+//    喂给 `showNotice`，而 `showNotice` 要真的把它显示出来。不通过 = 退出码 1。理由见下。
+// 7. `NOTICE_MS` 不许再回到「挂十几秒」—— 不通过 = 退出码 1。理由见下。
 //
 // # ⚠️ 第 4 条为什么算失败，而不是「提一句」
 //
@@ -50,6 +53,30 @@
 // ⚠️ 这与 §4.1 第 3 条（装完不该自动接管剪贴板）是同一条规矩，只是触发点不同。
 // ⚠️ 判据只钉**这一处默认值**，不做别的道德检查：改成 `false` 是对的，
 // 而「保存时怎么读这个字段」由 `uploadOn()` 那一个定义管（缺字段 = 关）。
+//
+// # ⚠️ 第 6 条为什么算失败（提示要带上房间名）
+//
+// 界面那一条提示是**全局一格**（`#notice`），却长在「当前选中房间」的标题下面 ——
+// 于是一条**为别的房间**产生的提示（典型是异步回来才失败的「取历史失败」：用户很可能
+// 已经切走了）会看起来像这个房间出的事。Jonny 2026-09-27 报的就是这个（「提示串房间了」）。
+//
+// 修法分两半，**一半在 Rust、一半在这里**：壳里 `Notice` 多了个 `room` 字段
+// （`store.rs` 的 `notice_in`），而界面必须把它**接住并显示**。
+// ⚠️★ 这就是「跨语言接缝」那一类：Rust 那半有测试钉着，**这半没有运行器** ——
+// 界面要是把第三个参数丢掉，`cargo test` 全绿、界面也**不报错**，只是提示又变得没有主语
+//（§8.1 第 2 条那种「漏一处字段就静默失效」的同一个形状）。
+// 所以这里逐条钉：① `render` 有没有**把 `state.notice.room` 喂进去**；
+// ② `showNotice` 有没有**拿 `room` 去拼那句话**。少任何一半都算失败。
+// ⚠️ 判据只认「`room` 出现在那句模板串里」这一种写法 —— 换一种拼法会**红**，
+// 那是**故意的**：这时该来改这条判据，而不是让它悄悄放过（脚本头那句话说过了）。
+//
+// # ⚠️ 第 7 条为什么算失败（提示停留 3 秒）
+//
+// Jonny 2026-09-27：「提示停留时间过长了，3s 就挺好的」。原来写的是 15 秒，
+// 于是「切个房间它还杵在那儿」—— 看起来就像**别的房间**的提示（与第 6 条同一个抱怨）。
+// ⚠️ 这个数字**没有任何别的保护**：它不是契约、没有测试、也没写在别处，
+// 改回去只是把用户报过的那条 bug 再种一遍，而**谁都不会注意到**。
+// 判据只给一个上界（不是「必须等于 3000」）：留出微调空间，拦住的是「又挂回十几秒」。
 //
 // # ⚠️ 三条「看不见」的地方（写在这里，免得下次以为是漏检）
 //
@@ -175,6 +202,46 @@ if (!addRoomRow) {
   failed = true;
   console.error('✗ `addRoomRow` 又把新房间的上行默认成 `true` 了：');
   console.error('    那等于「点一下加房间就开始往外发本机剪贴板」—— 用户不会回头去关那个 ↑。');
+}
+
+// ── 判据 6：提示要带房间名，而且界面要真的显示它（理由见文件头）────────────
+// ① 喂：`render` 里那次调用必须把 `state.notice.room` 传进去。
+if (!/showNotice\([^)]*state\.notice\.room/.test(js)) {
+  failed = true;
+  console.error('✗ `render` 没有把 `state.notice.room` 喂给 `showNotice`：');
+  console.error('    那样壳里那条提示的房间名就白带了 —— 它又会挂在「当前选中房间」下面。');
+}
+
+// ② 显示：`showNotice` 的函数体里要拿 `room` 去拼那句话。
+// ⚠️ 找的是函数体本身（不是一个全局 grep `room`：全文到处都有这个名字，grep 等于没测）。
+const showNoticeDef = js.match(/function showNotice\(([^)]*)\)\s*\{[\s\S]*?\n\}/);
+if (!showNoticeDef) {
+  failed = true;
+  console.error('✗ 找不到 `showNotice` —— 这条自检要跟着改（它钉的是「提示要说清是哪个房间」）。');
+} else {
+  const params = showNoticeDef[1].split(',').map((name) => name.trim());
+  if (!params.includes('room')) {
+    failed = true;
+    console.error(`✗ \`showNotice\` 没有接房间名（形参是 ${showNoticeDef[1].trim() || '空'}）：`);
+    console.error('    壳里带了房间名，界面却收不下 —— 提示又变成「没有主语」。');
+  } else if (!/\$\{room\}/.test(showNoticeDef[0])) {
+    failed = true;
+    console.error('✗ `showNotice` 收了 `room` 却没拿它拼那句话：');
+    console.error('    房间名收下了不用，等于没带 —— 那句提示还是会被认成当前这个房间的事。');
+  }
+}
+
+// ── 判据 7：提示不许再挂十几秒（理由见文件头）──────────────────────────
+const noticeMs = js.match(/\bNOTICE_MS\s*=\s*(\d+)/);
+const NOTICE_MS_MAX = 5000;
+if (!noticeMs) {
+  failed = true;
+  console.error('✗ 找不到 `NOTICE_MS` —— 这条自检要跟着改（它钉的是「提示 3 秒后就收」）。');
+} else if (Number(noticeMs[1]) > NOTICE_MS_MAX) {
+  failed = true;
+  console.error(`✗ 提示要停留 ${noticeMs[1]}ms —— 又回到「挂十几秒」了：`);
+  console.error(`    Jonny 2026-09-27 定的是 3 秒（这里只给上界 ${NOTICE_MS_MAX}ms）。`);
+  console.error('    挂久了用户会开始怀疑它是不是当前状态，而切房间时它还杵在那儿。');
 }
 
 if (cssOnly.length) {
