@@ -79,8 +79,28 @@ impl ServerConfigFile {
         merge_into(&mut merged, patch);
 
         // ⚠️ 用**服务端自己那个类型**校验（`clip9-core`），不是这里另写一套规则。
-        serde_json::from_value::<Config>(merged.clone())
+        let parsed = serde_json::from_value::<Config>(merged.clone())
             .map_err(|err| format!("这份配置服务端读不了，没有保存：{err}"))?;
+
+        // ⚠️★ 「解析得了」≠「配得对」。`text.limit` 是 `i64`，所以 16 MiB 也能解析 ——
+        // 而配得比 `TEXT_LIMIT_MAX` 大，那一截正文**在 HTTP 层就被框架拒了**，
+        // 报错还不是契约形状。用户拿到的是「我明明把上限调到了 16 MiB」，
+        // 真相是「8 MiB 以上一律以另一种方式失败」——**配了不生效**，
+        // 而这个项目为这一类问题付过好几次代价（见 `TEXT_LIMIT_MAX` 的注释）。
+        //
+        // ⚠️ 判的是**合并后**的整份配置，不是这次补丁：只改房间凭据的那次保存
+        // 同样要能发现「文件里早就躺着一个不可达的上限」——否则它会一直躺在那儿，
+        // 而界面每次都画出一个假的、更大的数字。
+        if !parsed.text.is_effective() {
+            return Err(format!(
+                "文本上限 {} 字节服务端收不到，没有保存。\n    \
+                 能生效的最大值是 {} 字节（{} MiB）；填 0 = 不限。\n    \
+                 要支持更大的内容请走文件（分片上传），别把消息上限调大。",
+                parsed.text.limit,
+                clip9_core::config::TEXT_LIMIT_MAX,
+                clip9_core::config::TEXT_LIMIT_MAX / (1024 * 1024),
+            ));
+        }
 
         let text = serde_json::to_string_pretty(&merged)
             .map_err(|err| format!("配置序列化失败：{err}"))?;
@@ -236,6 +256,74 @@ mod tests {
             original,
             "被拒绝时磁盘上不该有任何变化"
         );
+    }
+
+    /// ⚠️★ **解析得了 ≠ 配得对**：`text.limit` 是 `i64`，所以 16 MiB 能解析、能写盘、
+    /// 服务端也会照它启动 —— 只是**8 MiB 以上那部分永远到不了我们的检查**
+    /// （HTTP 层的绝对上限先拒，而且报错不是契约形状）。
+    /// 放它过去等于让用户以为「上限调大了」，其实只是换了一种失败方式。
+    #[test]
+    fn a_text_limit_the_server_cannot_reach_is_refused() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.json");
+        let original = r#"{"server":{"port":9501}}"#;
+        std::fs::write(&path, original).unwrap();
+
+        let too_big = clip9_core::config::TEXT_LIMIT_MAX + 1;
+        let err = file_in(dir.path())
+            .patch(&serde_json::json!({"text": {"limit": too_big}}))
+            .expect_err("该拒绝");
+        assert!(
+            err.contains(&too_big.to_string()),
+            "要说清是哪个值不行：{err}"
+        );
+        assert!(
+            err.contains(&clip9_core::config::TEXT_LIMIT_MAX.to_string()),
+            "要给一个能用的最大值（否则用户只能猜）：{err}"
+        );
+        assert_eq!(
+            std::fs::read_to_string(&path).unwrap(),
+            original,
+            "被拒绝时磁盘上不该有任何变化"
+        );
+    }
+
+    /// 边界与两个合法值：上限本身、`0`（= 不限）、缺省。
+    #[test]
+    fn a_text_limit_at_or_below_the_ceiling_is_accepted() {
+        let dir = tempfile::tempdir().unwrap();
+        for limit in [
+            clip9_core::config::TEXT_LIMIT_MAX,
+            4096,
+            0, // ⚠️ `0` = **不限**，是合法值（别当成「没设」）
+        ] {
+            let merged = file_in(dir.path())
+                .patch(&serde_json::json!({"text": {"limit": limit}}))
+                .unwrap_or_else(|err| panic!("{limit} 该被接受：{err}"));
+            assert_eq!(merged["text"]["limit"], limit);
+        }
+    }
+
+    /// ⚠️★ 判的是**合并后的整份配置**，不是这次补丁 —— 文件里早就躺着一个不可达的上限时，
+    /// 改别的字段的那次保存也要拦住它。否则它会一直躺着，而界面每次都画出一个假的、更大的数字
+    /// （用户只会觉得「我配的明明生效了」）。
+    #[test]
+    fn a_stale_unreachable_limit_is_caught_even_when_patching_something_else() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.json");
+        std::fs::write(
+            &path,
+            format!(
+                r#"{{"server":{{"port":9501}},"text":{{"limit":{}}}}}"#,
+                clip9_core::config::TEXT_LIMIT_MAX + 1
+            ),
+        )
+        .unwrap();
+
+        let err = file_in(dir.path())
+            .patch(&serde_json::json!({"server": {"port": 9600}}))
+            .expect_err("改端口也得先把这个不可达的值报出来");
+        assert!(err.contains("文本上限"), "{err}");
     }
 
     /// ⚠️★ **`null` 是「删掉这个键」**（RFC 7396）。界面上「删掉一个房间的凭据」

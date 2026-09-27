@@ -990,6 +990,13 @@ async function openServerPanel() {
     el('cfg-dbpath').value = server.dbPath ?? 'clip9.redb';
     el('cfg-storage').value = server.storageDir ?? 'uploads';
     el('cfg-textlimit').value = text.limit ?? 4096;
+    // ⚠️★ 真实天花板要说出来，而且要和保存时那条校验**同一个数**（都来自 `clip9-core`）。
+    // 不说的话，用户把上限填到 16 MiB 会以为生效了 —— 真相是 8 MiB 以上那部分
+    // 在服务端的 HTTP 层就被拒了，报错还不是契约形状（`TEXT_LIMIT_MAX` 的注释里有完整推导）。
+    // ⚠️ `max` 只挡**微调箭头**，手输的值它拦不住（这个表单没有 form 校验）——
+    // 真正的闸是 `server_config.rs::patch` 里那条校验，这里只是「别让用户白填」。
+    el('cfg-textlimit').max = String(view.textLimitMax);
+    el('cfg-textlimit-max').textContent = `${sizeLabel(view.textLimitMax)}（${view.textLimitMax} 字节）`;
     el('cfg-fileexpire').value = file.expire ?? 3600;
     el('cfg-filechunk').value = file.chunk ?? 1048576;
     el('cfg-filelimit').value = file.limit ?? 268435456;

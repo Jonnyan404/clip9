@@ -144,6 +144,15 @@ pub fn settings_view(app: tauri::AppHandle, store: State<'_, Arc<Store>>) -> Set
 pub struct ServerConfigView {
     pub path: String,
     pub value: serde_json::Value,
+    /// `text.limit` 能生效的最大值（字节）。
+    ///
+    /// ⚠️★ 界面**必须**能说出这个数：那个输入框画的是「用户配的值」，
+    /// 而值超过它时服务端根本收不到（HTTP 层先拒）—— 不说的话，
+    /// 用户看到的是一个**假的**上限（这正是「配了不生效」在界面上的样子）。
+    ///
+    /// ⚠️ 从 `clip9-core` 拿，不在页面里写死：那样就是「第二份定义」，
+    /// 而两份一定会漂（`Cargo.toml` 里那条注释写的就是同一个道理）。
+    pub text_limit_max: i64,
 }
 
 /// 读服务端的**原始**配置（给那个表单；不认识的键也会原样带出来）。
@@ -152,6 +161,7 @@ pub fn server_config(config: State<'_, ServerConfigFile>) -> Result<ServerConfig
     Ok(ServerConfigView {
         path: config.path().display().to_string(),
         value: config.read()?,
+        text_limit_max: clip9_core::config::TEXT_LIMIT_MAX,
     })
 }
 

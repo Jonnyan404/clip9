@@ -51,19 +51,25 @@ pub use state::AppState;
 
 /// `POST /text` 请求体的**绝对**上限。
 ///
-/// ⚠️★ 这条与 `text.limit` **无关**，理由与 `handlers::CONTENT_LIST_HARD_CAP` 是同一条：
-/// `text.limit` 是**用户可配**的，而 axum 的 `DefaultBodyLimit` 默认是 **2 MiB** ——
-/// 于是「把 `text.limit` 调到 8 MB」在**超过 2 MiB 的那一刻就静默失效**了：
-/// 请求到不了我们的 handler，返回的是框架自己那个 **不是契约 JSON** 的 413，
-/// 客户端只能吐一句没有数字的话（`uploader` 的模块文档明说必须照抄带数字那句）。
+/// ⚠️★ 它**就是** [`clip9_core::config::TEXT_LIMIT_MAX`]（配置层那个「有意义的上限」）——
+/// 两个数必须**永远相等**，所以这里直接用它，不再各写一遍：
 ///
-/// 取 8 MiB 的依据：**比框架默认的 2 MiB 大**（不缩小任何现有部署的可用正文），
-/// 又小到「`Bytes` 把整份读进内存」不至于变成 DoS 面。
-/// ⚠️ 再大就该走**文件**（`/upload` + 分片），不是消息。
+/// - 比它**大**：`text.limit` 能被配成一个到不了我们 handler 的值 —— 框架先拒，
+///   而框架拒绝时返回的 body **不是契约 JSON**（客户端只能吐一句没有数字的话）。
+///   那是 S1 要消灭的那个 bug 换了个位置复发。
+/// - 比它**小**：配置层说「合法」的值会被这一层静默砍掉，同一个毛病。
 ///
-/// ⚠️ 超过它的请求仍由**框架层**拒绝，那里的 body 不是契约形状 —— 这是**有意的**：
-/// 它是「最后一道闸」，不是给人配的上限。客户端该用的一直是 `text.limit`。
-const TEXT_BODY_HARD_CAP: usize = 8 * 1024 * 1024;
+/// 也就是说：**「配置允许的最大值」与「这一层放行的最大值」是同一个数**，
+/// 于是「配了不生效」在这一档上不可能发生。配不进去的值由
+/// [`clip9_core::config::TextConfig::is_effective`] 在保存时挡掉。
+///
+/// ⚠️ 取 8 MiB 的依据：**比框架默认的 2 MiB 大**（不缩小任何现有部署的可用正文），
+/// 又小到「`Bytes` 把整份读进内存」不至于变成 DoS 面。再大就该走**文件**
+/// （`/upload` + 分片），不是消息。
+///
+/// ⚠️ 上面那条「比 2 MiB 大」的断言在下面（编译期）。它现在顺带钉住了 core 里那个常量 ——
+/// 谁把 `TEXT_LIMIT_MAX` 调到 2 MiB 以下，编译就会失败。
+const TEXT_BODY_HARD_CAP: usize = clip9_core::config::TEXT_LIMIT_MAX as usize;
 
 /// 单次上传（`POST /upload`、`/upload/chunk*`）请求体的**绝对**上限。
 ///
@@ -83,6 +89,8 @@ const BODY_LIMIT_SLACK: usize = 8 * 1024;
 // ⚠️ 为什么值得钉：硬上限取小了，等于把「框架先拒（非契约形状）」换成
 // 「我们自己的闸先拒」—— 那**不是修复**，只是换了一种静默失效。这种事不该等到跑测试才发现。
 // （写这一条时 clippy 报了 `assertions_on_constants`，它是对的：常量比较就该在编译期。）
+// ⚠️ 第一条现在同时钉住的是 `clip9-core` 里那个 `TEXT_LIMIT_MAX` ——
+// 谁把它调到 2 MiB 以下（或者在这一层换回一个独立的数字），**编译就不过**。
 const _: () = assert!(
     TEXT_BODY_HARD_CAP > 2 * 1024 * 1024,
     "正文硬上限比框架默认的 2 MiB 还小 —— 那是往回退，不是修"
@@ -346,9 +354,13 @@ mod tests {
     fn the_body_caps_do_not_shrink_what_already_works() {
         // ⚠️ `text` / `file` 挂在 `Config` 上，不在 `ServerConfig` 里（`server` 只是它的一段）。
         let default = clip9_core::Config::default();
+        // ⚠️ 这条**故意**走公开的那个判定，而不是再比一次常量：现在
+        //   `TEXT_BODY_HARD_CAP == TEXT_LIMIT_MAX`（同一个数，见上面的 const），
+        //   比常量是**同义反复**，clippy 的 `assertions_on_constants` 也会拦。
+        //   真正要守的是「缺省配置一定在能生效的范围内」—— 它由公开 API 回答。
         assert!(
-            default.text.limit <= TEXT_BODY_HARD_CAP as i64,
-            "缺省 text.limit 已经超过硬上限 —— 默认部署会开始收到框架层的 413（非契约形状）"
+            default.text.is_effective(),
+            "缺省的 text.limit 就不在能生效的范围内 —— 默认部署会开始收到框架层的 413（非契约形状）"
         );
         assert!(
             default.file.chunk > 0 && (default.file.chunk as usize) < UPLOAD_BODY_HARD_CAP,
