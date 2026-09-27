@@ -94,6 +94,13 @@ pub(crate) const CONFIG_FILE: &str = "client.json";
 pub struct RoomView {
     /// 给用户看的名字。
     pub name: String,
+    /// 侧栏那一格图标（**实际显示的那个**，一定非空）。
+    ///
+    /// ⚠️★ 它是 [`clip9_client::resolve_emojis`] 算出来的，**不是**配置里那个 `emoji`
+    /// 字段本身 —— 配置里留空 = 自动（见 `Channel::emoji` 的注释），而界面要画一个**确定的**图标。
+    /// ⚠️ 所以这里没有「空」这个状态：空字符串 = 壳算错了，不是「没图标」。
+    ///    界面那边**不许**为此再写一个兜底（那就是第二份「自动挑哪一个」的定义）。
+    pub emoji: String,
     /// 服务端地址（界面上要显示 —— 「这台客户端连的是哪台服务器」必须看得见）。
     pub server: String,
     /// 服务端那边的房间名。
@@ -442,13 +449,18 @@ impl Store {
     #[must_use]
     pub fn snapshot(&self) -> Snapshot {
         let inner = self.lock();
+        // ⚠️★ 图标**一次算整份**（`resolve_emojis` 要看到全部房间才知道哪个图标还没被占），
+        // 然后按下标取 —— 它保证与 `channels` 一样长、一样有序（那边有测试）。
+        let emojis = clip9_client::resolve_emojis(&inner.config.channels);
         let rooms: Vec<RoomView> = inner
             .config
             .channels
             .iter()
             .zip(&inner.rooms)
-            .map(|(channel, room)| RoomView {
+            .zip(&emojis)
+            .map(|((channel, room), emoji)| RoomView {
                 name: channel.name.clone(),
+                emoji: emoji.clone(),
                 server: channel.server.clone(),
                 room: channel.room.clone(),
                 upload: channel.enable_upload,
@@ -2761,6 +2773,45 @@ mod tests {
         let after = connection(&store, 0);
         assert_eq!(after.kind, "on", "↓ 关着也要连（连接与 ↓ 无关）");
         assert_eq!(after.devices.len(), 1, "至少能看到本机这一台");
+    }
+
+    /// ⚠️★ 侧栏那一格图标：**壳要把配置里那个 `emoji` 算成「实际显示的那一个」**。
+    ///
+    /// 钉的是这条线：`Channel::emoji`（可能为空 = 自动）→ `resolve_emojis` →
+    /// [`RoomView::emoji`]。⚠️ 断了的表现是「侧栏那一格**空着**」——
+    /// 不报错、也看不出来是哪儿断的（所以界面那边**故意**不写兜底）。
+    /// ⚠️ 顺带钉住「用户填的那个原样过来」（不许在中间被换成自动的）。
+    #[test]
+    fn the_snapshot_carries_the_room_icon() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = Store::new(
+            ClientConfig {
+                channels: vec![
+                    Channel {
+                        emoji: "🦊".to_owned(),
+                        ..Channel::new("自己挑的", "http://127.0.0.1:9502")
+                    },
+                    Channel::new("没填的", "http://127.0.0.1:9502"),
+                    Channel::new("也没填的", "http://127.0.0.1:9502"),
+                ],
+                ..ClientConfig::default()
+            },
+            dir.path().join("client.json"),
+            dir.path().to_path_buf(),
+        );
+
+        let icons: Vec<String> = store
+            .snapshot()
+            .rooms
+            .iter()
+            .map(|room| room.emoji.clone())
+            .collect();
+        assert_eq!(icons[0], "🦊", "用户填的要原样过来");
+        assert!(
+            icons.iter().all(|icon| !icon.is_empty()),
+            "一个都不能空 —— 界面那边没有兜底：{icons:?}"
+        );
+        assert_ne!(icons[1], icons[2], "没填的两个要挑到不同的图标：{icons:?}");
     }
 
     /// ⚠️ 轮询间隔的 `0` 要夹到 1ms：`thread::sleep(0)` 会让监听线程**空转**，

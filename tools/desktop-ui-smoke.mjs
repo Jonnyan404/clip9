@@ -3,7 +3,7 @@
 //
 // 用法：
 //   node tools/desktop-ui-smoke.mjs                       # 在 clip9/ 下跑
-//   node tools/desktop-ui-smoke.mjs <app.js> <index.html> [commands.rs] [capabilities.json]
+//   node tools/desktop-ui-smoke.mjs <app.js> <index.html> [commands.rs] [capabilities.json] [boot.js] [client-config.rs]
 //                                                         # 用别的夹具跑（变异验证 / 临时排查）
 //
 // # ⚠️ 为什么要有它
@@ -18,7 +18,7 @@
 // `cloud-clip/tools/page-smoke.mjs`，**只有手写 UI 这一侧是裸奔的**
 //（见 `docs/specs/desktop-client.md` §1.1 缺口 C）。
 //
-// # 判据（**第 1、2、4、5、6、7、8、9、10 条算失败**）
+// # 判据（**第 1、2、4、5、6、7、8、9、10、11、12 条算失败**）
 //
 // 1. `app.js` 引用到的每一个 id，`index.html` 里必须存在 —— 不通过 = 退出码 1；
 // 2. `index.html` 真的加载了**每一个**该加载的脚本（`boot.js` / `app.js`）；
@@ -41,6 +41,8 @@
 // 10. **界面偏好的存储键，`boot.js` 与 `app.js` 必须一致**（`const X_KEY = '…'` 那一族）
 //    —— 不通过 = 退出码 1。理由见下。
 // 11. **两份脚本合起来要能过一遍解析** —— 不通过 = 退出码 1。理由见下。
+// 12. **房间清单里每个 `Channel` 字段，界面都得发得回去**（`addRoomRow` 与保存那两处）
+//    —— 不通过 = 退出码 1。理由见下。
 //
 // # ⚠️ 第 4 条为什么算失败，而不是「提一句」
 //
@@ -161,6 +163,27 @@
 // ⚠️ 它会**顺带**拦下所有语法错（漏括号之类）。那也算赚的：手写这一侧没有构建步骤，
 // 语法错在别处一样没人拦。
 //
+// # ⚠️ 第 12 条为什么算失败（房间清单的字段一个都不能少）
+//
+// 第 8 条只看 `SettingsView` / `SettingsPatch` 的**顶层**字段 —— 而房间清单是
+// `Vec<Channel>`，它的字段（`name` / `server` / `room` / `auth_token` / `enable_upload` /
+// `enable_download` / `emoji`）是**嵌在里面**的另一份形状，第 8 条看不见
+//（文件头那条「嵌进去的字段漏了这一条拦不住」说的就是它）。
+//
+// ⚠️★ 而「少一个字段」在这条路上的症状**特别坏**：
+// `SettingsPatch::rooms` 是**整份替换**语义，发出去的每个房间都是一个**新对象字面量** ——
+// 少写一个键就等于把那个字段**清成 serde 默认值**。三个真实的例子：
+//   · 少 `auth_token` → 保存一次，**所有房间的密码全没了**；
+//   · 少 `enable_download` → 下行开关自己关掉（而且没有任何报错）；
+//   · 少 `emoji` → 所有房间的图标一起变回「自动」的，用户挑的全丢。
+// 这三个都不会报错、都不 panic，用户只知道「我设的东西没了」。
+//
+// ⚠️ 两处**各判一次**（和判据 8 同一个道理）：`addRoomRow` 造新行那一处、
+// 保存时 `roomDraft.map(...)` 那一处 —— 只判一边的话，另一边漏了照样绿。
+//
+// ⚠️ 判据是**从 `client/src/config.rs` 里数出来的**（不手写清单）：
+// 写死的话，下次给 `Channel` 加字段时这条自检照样绿 —— 而它绿的时候看起来一切正常。
+//
 // # ⚠️ 三条「看不见」的地方（写在这里，免得下次以为是漏检）
 //
 // · **只认字符串字面量**：`el('row-' + i)` 这种拼出来的看不见 ——
@@ -172,6 +195,8 @@
 //   是**另一个结构体**，它的字段在 JS 那边长在 `patch.sync` 里 ——
 //   「哪个字段挂在哪一组」是**第三个地方**的知识，脚本猜不出来。
 //   ⚠️ 所以嵌进去的字段漏了，这一条拦不住（先把边界写清，免得下次以为是漏检）。
+//   ⚠️ `Vec<Channel>` 那种**同构列表**已经由第 12 条补上了（它直接去读 `Channel` 的字段），
+//   但 `SyncScopePatch` 还没人管 —— 加它的字段时仍然只能靠人。
 // · **`boot.js` 不参与第 1 条**（id 引用）：它跑在 `<body>` 解析之前，本来就碰不到任何
 //   元素 —— 里面出现一个 `getElementById('x')` 才是错的。它只被第 10 条读（比对常量）。
 
@@ -186,6 +211,7 @@ const [
   rustPath = join(root, 'crates/desktop/src/commands.rs'),
   capabilitiesPath = join(root, 'crates/desktop/capabilities/default.json'),
   bootPath = join(root, 'crates/desktop/ui/boot.js'),
+  clientPath = join(root, 'crates/client/src/config.rs'),
 ] = process.argv.slice(2);
 
 const js = readFileSync(jsPath, 'utf8');
@@ -200,6 +226,16 @@ try {
   boot = readFileSync(bootPath, 'utf8');
 } catch (error) {
   bootReadError = error;
+}
+
+/** ⚠️ 判据 12 要读它（房间清单里 `Channel` 有哪些字段）。读不到 = 一条**真的失败**：
+ * 那正是「`Channel` 被改名 / 搬家」的样子，而它的症状是这条检查**悄悄失效**。 */
+let client = null;
+let clientReadError = null;
+try {
+  client = readFileSync(clientPath, 'utf8');
+} catch (error) {
+  clientReadError = error;
 }
 
 /** 单参调用 `fn('literal')` 里的字面量。 */
@@ -406,7 +442,17 @@ if (!viewFields || !patchFields || !openSettingsBody || !saveBody) {
   console.error('    单侧改名 / 加字段忘了改界面，就靠这里拦。');
 } else {
   // ① 接住：`settings_view` 给的每个字段，`openSettings` 里都要读一次。
-  const notRead = viewFields.filter((name) => !openSettingsBody[0].includes(name));
+  //
+  // ⚠️★ 判的是 **`view.<字段>`** 这个写法，不是「函数体里出现过这个名字」：
+  // 后者会被**注释**满足 —— 这一条自己上面就写着 `view.notifyUpload` 之类的例子，
+  // 于是「把读它的那一行删掉、注释留着」**照样绿**。
+  // 2026-09-28 现场验过（加 `emoji` 那一版时）：删掉读的那一行、注释里留着
+  // `view.xxx`，旧写法全绿 —— 也就是说「读过就算」是**没有牙**的。
+  // 这跟文件头那条「判据不能靠一个全局搜索」是同一个病。
+  // ⚠️ 代价：读法必须是 `view.X`（解构 `const { X } = view` 会被误判）——
+  // 这一侧每个字段都是 `view.X`，而「读法只有一种」本来就是想要的。
+  const notRead = viewFields.filter((name) => !openSettingsBody[0].includes(`view.${name}`));
+
   // ② 发还：保存时每个字段都要发回去。
   const notSent = patchFields.filter((name) => !saveBody[0].includes(name));
   if (notRead.length) {
@@ -414,7 +460,7 @@ if (!viewFields || !patchFields || !openSettingsBody || !saveBody) {
     console.error(`✗ 有 ${notRead.length} 个设置项，界面**没有读**（壳给的、界面没接）：`);
     for (const name of notRead) console.error(`    ${name}`);
     console.error('  ⚠️ 症状：那个控件**永远画的是 HTML 里写死的值** —— 用户改了、关掉再开又变回来，');
-    console.error('    而且不会有任何报错。去 `openSettings` 里补一句读它。');
+    console.error('    而且不会有任何报错。去 `openSettings` 里补一句 `view.<字段>` 读它。');
   }
   if (notSent.length) {
     failed = true;
@@ -509,6 +555,60 @@ if (boot !== null) {
     console.error('    同名变量会让**后解析的那一份整个不执行** = 整页不动。');
     console.error('    修法：`boot.js` 里的常量放进它的 IIFE（见那个文件的注释）。');
     console.error('  ⚠️ 顺带的收益：普通的语法错也会在这里被拦下 —— 这一侧没有构建步骤，别处没人拦。');
+  }
+}
+
+// ── 判据 12：房间清单里每个 `Channel` 字段，界面都得发得回去（理由见文件头）────────
+/**
+ * `Channel` 的字段名（**原样**，不是 camelCase）。
+ *
+ * ⚠️ `Channel` 上**没有** `#[serde(rename_all)]`：嵌套类型不吃外层容器的
+ * `rename_all`，所以它在 JSON 里就是 snake_case（`auth_token` / `enable_upload`）——
+ * 这也是 `app.js` 里那些 `room.auth_token` 的由来。别顺手给它加 camelCase。
+ */
+function channelFields() {
+  // ⚠️ 锚在结构体**自己的名字**上（`pub struct Channel {`），不锚的话
+  // `[\s\S]*?` 会跨过别的结构体 —— 判据 8 里就踩过这个（见 `structFields` 的注释）。
+  const body = (client ?? '').match(/pub struct Channel \{([\s\S]*?)\n\}/);
+  if (!body) return null;
+  return [...body[1].matchAll(/^\s*pub (\w+):/gm)].map((match) => match[1]);
+}
+
+/** 一个对象字面量里有没有这个**键**（`name:` 那种，不是 `room.name` 里的子串）。 */
+const hasKey = (literal, field) => new RegExp(`(^|[,{])\\s*${field}\\s*:`, 'm').test(literal);
+
+if (clientReadError) {
+  failed = true;
+  console.error(`✗ 读不出 ${clientPath}：${clientReadError.message}`);
+  console.error('  ⚠️ 判据 12 要拿它里面的 `Channel` 字段名单 —— 读不到就等于这条检查失效了。');
+} else {
+  const fields = channelFields();
+  // 两处**各判一次**：新加的那一行、以及保存时发回去的那一份。
+  const addLiteral = js.match(/roomDraft\.push\(\{([\s\S]*?)\n\s*\}\);/);
+  const saveLiteral = js.match(/roomDraft\.map\(\(room\) => \(\{([\s\S]*?)\}\)\)/);
+
+  if (!fields || !fields.length || !addLiteral || !saveLiteral) {
+    failed = true;
+    console.error('✗ 判据 12 找不到要比对的东西 —— 这条自检要跟着代码改：');
+    if (!fields || !fields.length) console.error(`    · ${clientPath} 里找不到 \`pub struct Channel {\``);
+    if (!addLiteral) console.error('    · `app.js` 里找不到 `roomDraft.push({ … })\`（加房间那一行）');
+    if (!saveLiteral) console.error('    · `app.js` 里找不到 `roomDraft.map((room) => ({ … }))\`（保存那一份）');
+    console.error('  ⚠️ 它钉的是「房间清单是**整份替换**，少一个字段 = 那个字段被静默清掉」。');
+  } else {
+    const checks = [
+      [addLiteral[0], '`addRoomRow` 造的那个新房间'],
+      [saveLiteral[0], '保存时发回去的那一份'],
+    ];
+    for (const [literal, where] of checks) {
+      const missing = fields.filter((field) => !hasKey(literal, field));
+      if (missing.length) {
+        failed = true;
+        console.error(`✗ ${where}少了 ${missing.length} 个 \`Channel\` 字段：${missing.join('、')}`);
+        console.error('  ⚠️ 房间清单是**整份替换**（`SettingsPatch::rooms`）—— 少一个键 =');
+        console.error('    那个字段落回 serde 默认值。最典型的：少 `auth_token` → 保存一次密码全没；');
+        console.error('    少 `emoji` → 用户挑的图标全变回「自动」。两者都**不报错**。');
+      }
+    }
   }
 }
 

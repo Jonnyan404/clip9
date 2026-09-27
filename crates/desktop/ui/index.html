@@ -585,14 +585,27 @@ table.ra td.tiny, table.ra th.tiny { width: 30px; text-align: center; }
    不定的话（auto 布局）：单元格里的 <input> 有自己的固有宽度，表格会被撑得比容器宽 →
    最右边那列（删除按钮）被切掉。这正是第一次巡检抓到的那 42 处溢出。
    `fixed` 之后列宽**完全**由这里决定，`width:100%` 的输入框也就跟着列走了。 */
+/* ⚠️★ 加了「图标」那一列（2026-09-28，Jonny：「添加房间允许用户自定义 emoji」）之后
+   这七个数**必须重新配平**：`table-layout: fixed` 是**完全**按这里的百分比切的，
+   加起来不是 100% 的话，最右边那一列（删除按钮）会被切掉 —— 而它不会报错。
+   原来的配比是 14/30/13/19/7/7/10；现在多了一列 7%，从名字与服务端各让一点出来。
+   ⚠️ 这一列是**偏离稿 2** 的（稿子里那张表没有图标）—— 偏离都写在这里，不混进照稿抄的那几段。 */
 #rooms-table { table-layout: fixed; }
-#rooms-table th:nth-child(1) { width: 14%; }  /* 名字 */
-#rooms-table th:nth-child(2) { width: 30%; }  /* 服务端（装 URL，最宽） */
-#rooms-table th:nth-child(3) { width: 13%; }  /* 房间 */
-#rooms-table th:nth-child(4) { width: 19%; }  /* 凭据 */
-#rooms-table th:nth-child(5),
-#rooms-table th:nth-child(6) { width: 7%; }   /* ↑ / ↓ */
-#rooms-table th:nth-child(7) { width: 10%; }  /* 删除 */
+#rooms-table th:nth-child(1) { width: 7%; }   /* 图标 */
+#rooms-table th:nth-child(2) { width: 13%; }  /* 名字 */
+#rooms-table th:nth-child(3) { width: 26%; }  /* 服务端（装 URL，最宽） */
+#rooms-table th:nth-child(4) { width: 12%; }  /* 房间 */
+#rooms-table th:nth-child(5) { width: 18%; }  /* 凭据 */
+#rooms-table th:nth-child(6),
+#rooms-table th:nth-child(7) { width: 7%; }   /* ↑ / ↓ */
+#rooms-table th:nth-child(8) { width: 10%; }  /* 删除 */
+/* ⚠️ 窄列（图标 / ↑ / ↓ / 删除）的内边距从 6px 收到 3px：那一列一共才 7% 宽
+   （660px 的窗口上约 46px），原来那 12px 的横向内边距去掉之后，
+   图标那个框里只剩十几像素放一个 emoji + 光标。
+   ⚠️ 只改**表格里**那一条（`table.ra td` 那条公共规则还要给名字/地址那些格子用）；
+   ⚠️ 图标那一格里的 `<input>` 自己还有一层 6px 内边距，再收一次 —— 它比别的格子窄得多。 */
+#rooms-body td.tiny { padding-left: 3px; padding-right: 3px; }
+#rooms-body td.tiny input { padding-left: 2px; padding-right: 2px; text-align: center; }
 #roomauth-table { table-layout: fixed; }
 #roomauth-table th:nth-child(1) { width: 18%; } /* 房间 */
 #roomauth-table th:nth-child(2) { width: 24%; } /* 密码 */
@@ -798,6 +811,7 @@ table.ra td input[type='checkbox'] { margin: 0; }
                 <p class="sub">↑ 把本机剪贴板发到这个房间，↓ 把这个房间的内容收进本机剪贴板（<b>全局只能一个</b>）。</p>
                 <table class="ra" id="rooms-table">
                     <thead><tr>
+                        <th class="tiny" title="留空 = 自动挑一个不重样的">图标</th>
                         <th class="c-name">名字</th><th class="c-server">服务端</th><th class="c-room">房间</th>
                         <th class="c-token">凭据</th><th class="tiny">↑</th><th class="tiny">↓</th><th class="tiny"></th>
                     </tr></thead>

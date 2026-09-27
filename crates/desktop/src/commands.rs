@@ -118,6 +118,15 @@ pub fn autostart_enabled(app: tauri::AppHandle) -> bool {
 #[derive(serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SettingsView {
+    /// ⚠️★ 这里给的是**用户填的**那份（`Channel::emoji`，可能为空 = 自动），
+    /// **不是**「实际显示的那一个」—— 界面那一格留空就是留空。
+    ///
+    /// ⚠️ 为什么不顺手把算出来的图标填进去（那样界面就不用处理「空」了）：
+    /// 填了之后，用户**只是打开过一次设置页**、什么都没改就点保存，那些图标就从
+    /// 「自动」变成「他选的」了 —— 而「他没选过」这个事实**再也回不来**
+    /// （删掉一个房间之后，空出来的图标就回不到新房间身上了）。
+    /// ⚠️ 界面那一格因此在留空时显示一个灰色的「自动」，它对应的就是这条规则
+    /// （`clip9_client::resolve_emojis`）—— 那里是**唯一**算这件事的地方。
     pub rooms: Vec<clip9_client::Channel>,
     pub enable_text: bool,
     pub enable_file: bool,

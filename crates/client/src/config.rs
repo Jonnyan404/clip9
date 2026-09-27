@@ -121,6 +121,21 @@ pub struct Channel {
     #[serde(default = "default_room")]
     pub room: String,
 
+    /// 侧栏里那个房间图标（**用户自己挑的** emoji）。
+    ///
+    /// ⚠️★ **空 = 自动**，而「自动挑了哪一个」是**算出来的**（[`resolve_emojis`]）——
+    /// 所以这里存的东西与界面画的图标**不是同一件事**，别把 `emoji` 当「现在显示的图标」读。
+    /// 想要「实际显示的那一个」就调 [`resolve_emojis`]。
+    ///
+    /// ⚠️ 为什么不在这里存一个算好的：那样「用户没选过」这个事实就丢了 ——
+    /// 而它在**加删房间**的时候要用（删掉一个房间之后，新加的那个应该能捡回空出来的图标）。
+    ///
+    /// ⚠️ 界面上那一格是**自由文本**（可以直接粘贴一个 emoji），所以存进来的值**可能是**
+    /// 一段不像图标的文本 —— 判断规则只有一条（[`clean_emoji`]），
+    /// 不合法的那种由 [`ClientConfig::problems`] **点名报出来**，不静默改掉。
+    #[serde(default)]
+    pub emoji: String,
+
     /// 房间凭据（房间密码，或 `/auth/token` 换来的会话令牌）。
     ///
     /// ⚠️ **它只走请求头**（`Authorization: Bearer`），永远不进 URL ——
@@ -153,11 +168,88 @@ impl Channel {
             name: name.into(),
             server: server.into(),
             room: default_room(),
+            // ⚠️ 空 = **自动**（见字段注释），不是「没有图标」。
+            emoji: String::new(),
             auth_token: None,
             enable_upload: false,
             enable_download: false,
         }
     }
+}
+
+/// 「自动挑一个图标」用的池子（Jonny 2026-09-28：「**否则随机一个不重样的 emoji**」）。
+///
+/// ⚠️★ 挑的是「池子里**第一个还没被占用**的」，不是随机 —— 两个理由：
+/// ① 随机的话，**同一条配置每次启动都会换一个图标**（用户会以为配置坏了）；
+/// ② 「不重样」这件事只有确定性实现才**测得了**（随机的测试只能写「大概在池子里」，
+///    那是没牙的断言 —— 见 `missing_emojis_are_distinct` 里那条「两次算出来必须一样」）。
+///
+/// ⚠️ 只放**单个码位、默认就是 emoji 字形**的那些（`☕` / `⚙` 这种默认是文字字形的
+/// 要靠 `U+FE0F` 才变成图标，而多一个码位就吃掉 [`EMOJI_MAX_CHARS`] 的一半）。
+pub const EMOJI_POOL: [&str; 24] = [
+    "💬", "🏠", "📋", "🔒", "🚀", "🎯", "🍀", "🐱", "🐶", "🦊", "🐼", "🐧", "🦉", "🌈", "🔥", "🍎",
+    "🎵", "📦", "🧩", "🌙", "💡", "🌟", "🐢", "🎈",
+];
+
+/// 一格图标最多几个字符（`⚙️` 那种「基字符 + 变体选择符」算两个）。
+pub const EMOJI_MAX_CHARS: usize = 2;
+
+/// 用户填的那一格**收不收**：只收 1–2 个非 ASCII 字符，别的当成「没填」。
+///
+/// ⚠️★ 为什么要有这条规则：侧栏那个图标格在窄栏里只有十几像素宽 ——
+/// 填一个词（`work` / `room1`）不会报错，只会**把整行撑坏**。
+/// ⚠️ 为什么不是「截断成前两个字符」：`wo` 这种图标比自动挑的更让人迷惑。
+#[must_use]
+pub fn clean_emoji(raw: &str) -> Option<&str> {
+    let text = raw.trim();
+    // ⚠️ 只判两件事：**够短** + **一个 ASCII 都没有**。
+    //    · `is_ascii` 挡掉 `work` / `a1` 这类词；
+    //    · 空白**不用单独判**：`trim` 已经去掉了两头的，而夹在**中间**的空白
+    //      至少要三个字符（`🐱 🐶`）→ 早被「不超过 2 个字符」拦下了。
+    //      ⚠️ 写一条拦不住任何东西的条件，就是留一条**变异验证打不红**的假保护。
+    let ok = !text.is_empty()
+        && text.chars().count() <= EMOJI_MAX_CHARS
+        && text.chars().all(|ch| !ch.is_ascii());
+    ok.then_some(text)
+}
+
+/// 整份房间清单**实际显示**的图标（每个房间一个，顺序与 `channels` 一致）。
+///
+/// # ⚠️★ 这是算这件事的**唯一**一处
+///
+/// 界面上要画图标的地方只有**侧栏那一个**（`RoomView::emoji` 就是从这里来的）——
+/// 设置页那一格画的是**用户填的原文**（留空就留空，占位符写「自动」）。
+/// ⚠️ 也就是说设置页**故意不显示**这里算出来的结果：显示了就成了第二处「现在用的是哪个」，
+/// 而用户会把它当成自己选的、一保存就真的变成他选的了。
+///
+/// 规则三条：
+/// 1. **用户填过的（合法的）原样保留**，哪怕与别人重复 —— 那是他的选择，静默改一个更坏；
+/// 2. 自动挑的**避开所有用户填过的**（不论位置：后面那个房间先挑的那个也得让开），
+///    再避开前面已经挑掉的；
+/// 3. 池子用完就**允许重复**（取模），但**绝不返回空** ——
+///    「两个房间图标一样」只是不好看，「有个房间没图标」是画不出来。
+#[must_use]
+pub fn resolve_emojis(channels: &[Channel]) -> Vec<String> {
+    let mut used: Vec<&str> = channels
+        .iter()
+        .filter_map(|channel| clean_emoji(&channel.emoji))
+        .collect();
+
+    channels
+        .iter()
+        .map(|channel| match clean_emoji(&channel.emoji) {
+            Some(chosen) => chosen.to_owned(),
+            None => {
+                let pick = EMOJI_POOL
+                    .iter()
+                    .copied()
+                    .find(|candidate| !used.contains(candidate))
+                    .unwrap_or(EMOJI_POOL[used.len() % EMOJI_POOL.len()]);
+                used.push(pick);
+                pick.to_owned()
+            }
+        })
+        .collect()
 }
 
 /// 客户端配置。
@@ -437,6 +529,16 @@ impl ClientConfig {
         }
 
         for ch in &self.channels {
+            // ⚠️★ 填了但**画不出来**的图标要点名 —— 不报的话，用户看到的只是
+            //「我填的那个没了」（`resolve_emojis` 会当成没填、另挑一个），
+            // 而**没有一句解释**。这正是「静默修正」那一类。
+            if !ch.emoji.trim().is_empty() && clean_emoji(&ch.emoji).is_none() {
+                out.push(format!(
+                    "房间「{}」的图标只收 1–2 个非 ASCII 字符（填的是「{}」）—— 已经按「自动」处理",
+                    ch.name,
+                    ch.emoji.trim()
+                ));
+            }
             let server = ch.server.trim();
             if server.is_empty() {
                 out.push(format!("房间「{}」没填服务端地址", ch.name));
@@ -908,6 +1010,156 @@ mod tests {
         assert!(
             cfg.channels_pointing_at("http://127.0.0.1:9600").is_empty(),
             "端口不对就不是同一台"
+        );
+    }
+
+    // ── 房间图标（`emoji`）──────────────────────────────────────────
+    //
+    // ⚠️★ 这几条钉的是 Jonny 2026-09-28 那句：「添加房间允许用户自定义 emoji，
+    // **否则随机一个不重样的 emoji**」。
+    // ⚠️ 注意「不重样」是**要求**、「随机」只是他随手写的实现建议 —— 这里选了确定性实现，
+    // 因为随机的东西**测不了**（见 `missing_emojis_are_distinct` 里那条稳定性断言）。
+
+    /// ⚠️★ 没填图标的房间，自动挑的必须**互不相同**、**都在池子里**、而且**两次算出来一样**。
+    #[test]
+    fn missing_emojis_are_distinct() {
+        let rooms: Vec<Channel> = ["a", "b", "c", "d"]
+            .iter()
+            .map(|name| Channel::new(*name, "http://127.0.0.1:9502"))
+            .collect();
+        let icons = resolve_emojis(&rooms);
+
+        assert_eq!(icons.len(), rooms.len(), "每个房间都要有一个图标");
+        for icon in &icons {
+            assert!(
+                EMOJI_POOL.contains(&icon.as_str()),
+                "自动挑的必须来自池子：{icon}"
+            );
+        }
+        let mut unique = icons.clone();
+        unique.sort();
+        unique.dedup();
+        assert_eq!(
+            unique.len(),
+            icons.len(),
+            "四个房间的图标要互不相同：{icons:?}"
+        );
+
+        // ⚠️★ 「随机」会在这条上红 —— 而它正是「不重样」之外用户真正在意的那半边：
+        //    同一条配置每次启动换个图标，看起来就像配置坏了。
+        assert_eq!(resolve_emojis(&rooms), icons, "同一个输入必须给同一个答案");
+    }
+
+    /// 用户填过的**原样保留**，而且自动挑的**要让开它**（哪怕填的那个在后面）。
+    #[test]
+    fn chosen_emoji_is_kept_and_avoided() {
+        let mut first = Channel::new("a", "http://127.0.0.1:9502");
+        first.emoji = "🦊".to_owned();
+        let second = Channel::new("b", "http://127.0.0.1:9502");
+
+        let icons = resolve_emojis(&[first, second]);
+        assert_eq!(icons[0], "🦊", "用户填的不许被换掉");
+        assert_ne!(icons[1], "🦊", "自动挑的不能抢走用户已经填过的那个");
+
+        // ⚠️ 反方向也要对：用户在**后面**那个房间填的，前面那个自动的同样要让开。
+        let mut late = Channel::new("b", "http://127.0.0.1:9502");
+        late.emoji = "💬".to_owned();
+        let icons = resolve_emojis(&[Channel::new("a", "http://127.0.0.1:9502"), late]);
+        assert_ne!(
+            icons[0], "💬",
+            "自动挑的时候要**先**把整份清单里用户填过的都记下来，不能只往前看"
+        );
+        assert_eq!(icons[1], "💬");
+    }
+
+    /// 用户填了**重复**的 → 两份都留着：那是他的选择，静默改掉一个才是坏事。
+    #[test]
+    fn duplicate_chosen_emojis_are_left_alone() {
+        let mut a = Channel::new("a", "http://127.0.0.1:9502");
+        a.emoji = "🔥".to_owned();
+        let mut b = Channel::new("b", "http://127.0.0.1:9502");
+        b.emoji = "🔥".to_owned();
+
+        assert_eq!(resolve_emojis(&[a, b]), vec!["🔥", "🔥"]);
+    }
+
+    /// 不像图标的值一律当成**没填**（而不是「截断成前两个字符」）。
+    #[test]
+    fn values_that_do_not_look_like_an_icon_count_as_unset() {
+        assert_eq!(clean_emoji(""), None, "空 = 自动");
+        assert_eq!(clean_emoji("   "), None, "全是空白也 = 自动");
+        assert_eq!(
+            clean_emoji("work"),
+            None,
+            "ASCII 的词不是图标（会把侧栏撑坏）"
+        );
+        assert_eq!(clean_emoji("a1"), None, "两个 ASCII 字符也不行");
+        assert_eq!(clean_emoji("🐱🐶🐼"), None, "三个字符放不进那一格");
+        assert_eq!(clean_emoji("🐱 🐶"), None, "夹着空白的更放不进（三个字符）");
+
+        assert_eq!(clean_emoji("🦊"), Some("🦊"));
+        assert_eq!(
+            clean_emoji(" 🦊 "),
+            Some("🦊"),
+            "手打会带上前后空白，要容忍"
+        );
+        assert_eq!(
+            clean_emoji("⚙\u{fe0f}"),
+            Some("⚙\u{fe0f}"),
+            "「基字符 + 变体选择符」是两个字符 —— 上限不能比它小"
+        );
+    }
+
+    /// 房间数超过池子大小时**允许重复**，但**一个都不能少**。
+    ///
+    /// ⚠️ 少了的那一个在界面上就是「这一行没有图标」—— 而它**不报错**。
+    #[test]
+    fn more_rooms_than_the_pool_still_gets_an_icon() {
+        let rooms: Vec<Channel> = (0..EMOJI_POOL.len() + 5)
+            .map(|index| Channel::new(format!("r{index}"), "http://127.0.0.1:9502"))
+            .collect();
+        let icons = resolve_emojis(&rooms);
+        assert_eq!(icons.len(), rooms.len());
+        assert!(
+            icons.iter().all(|icon| !icon.is_empty()),
+            "池子用完也得给一个（重复好过没有）：{icons:?}"
+        );
+    }
+
+    /// ⚠️★ 填了却画不出来的图标要**点名报出来** —— 不能静默换成自动的。
+    #[test]
+    fn a_value_that_is_not_an_icon_is_reported() {
+        let cfg = ClientConfig {
+            channels: vec![Channel {
+                emoji: "work".to_owned(),
+                ..ch("家里", false)
+            }],
+            ..ClientConfig::default()
+        };
+        let problems = cfg.problems();
+        assert!(
+            problems.iter().any(|problem| problem.contains("图标")),
+            "填了个画不出来的图标必须被报出来，实际：{problems:?}"
+        );
+        // ⚠️ 反过来：**合法的**图标（包括留空）都不该产生任何提示 ——
+        //    否则每配一个房间就多一句废话。
+        let clean = ClientConfig {
+            channels: vec![
+                Channel {
+                    emoji: "🦊".to_owned(),
+                    ..ch("有图标", false)
+                },
+                ch("自动", false),
+            ],
+            ..ClientConfig::default()
+        };
+        assert!(
+            !clean
+                .problems()
+                .iter()
+                .any(|problem| problem.contains("图标")),
+            "合法的图标与留空都不该报：{:?}",
+            clean.problems()
         );
     }
 }
