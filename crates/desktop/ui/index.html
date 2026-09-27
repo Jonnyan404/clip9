@@ -888,12 +888,29 @@ table.ra td input[type='checkbox'] { margin: 0; }
 
             <div class="pane" id="pane-notify" hidden>
                 <h3>通知与主题</h3>
-                <p class="sub">还没做。</p>
+                <p class="sub">剪贴板上那两件事<b>不在主界面上说</b> —— 它们发生时你多半不在这个窗口里
+                   （刚在别的程序里按了 ⌘C），所以走<b>系统通知</b>。<br>
+                   ⚠️ 主界面那一格提示是<b>按房间</b>的（长在房间标题下面），而剪贴板这条路的
+                   目标是<b>所有</b>开着 ↑ 的房间 —— 挂在某一个房间的名下是假话。</p>
                 <div class="subcard">
+                    <div class="st">剪贴板的系统通知</div>
+                    <div class="chk"><span class="sq on" id="sc-notify-up">✓</span>本机剪贴板<b>没发出去</b>时通知我<span class="hint">成功不通知</span></div>
+                    <div class="chk"><span class="sq on" id="sc-notify-dl">✓</span>房间的内容<b>写进本机剪贴板</b>时通知我</div>
+                    <p class="sub" style="margin:7px 0 0">⚠️ 第一条<b>只在没发出去时</b>响：
+                       「已发送」是噪音 —— 你本来就知道自己刚复制了什么；
+                       要紧的是「它没出去」，那才是你不知道的事。<br>
+                       ⚠️ 第二条<b>每次写成都</b>响：剪贴板被改这件事你看不见，
+                       不说的话你会把房间里的内容当成自己刚才复制的（然后粘到错的地方）。<br>
+                       ⚠️ 两个都<b>只在对应方向真的开着</b>时才有机会响：一个房间的 ↑ 都没开时
+                       监听线程根本不跑；↓ 都没开时没有东西会写你的剪贴板。</p>
+                </div>
+                <div class="subcard" style="margin-top:13px">
+                    <div class="st">主题</div>
                     <div style="font-size:12px;line-height:1.6">
-                        ⚠️ <b>这一页是占位</b>（界面稿 2 里有这一项）。<br>
-                        两件事都缺：① 收到新内容时发不发系统通知（现在**不发**，只有主界面在动）；
-                        ② 明暗主题（界面稿里两套令牌都画好了，但**没有地方切**）。
+                        ⚠️ <b>还没做</b>：界面稿里明暗两套令牌都画好了，但<b>没有地方切</b>。
+                        要做的话得先定「跟随系统 / 手动选」这两条路怎么共存 ——
+                        那不是加一个开关的事（手动选完之后系统变了要不要跟？）。
+                        取舍没定之前先不做，这里只留着位置说明它没被忘掉。
                     </div>
                 </div>
             </div>

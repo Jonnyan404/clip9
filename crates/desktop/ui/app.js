@@ -1275,6 +1275,10 @@ async function openSettings() {
     el('sc-dir').value = view.downloadDir;
     // ⚠️ 自启那个勾画的是**系统里的真相**（壳去问的系统），不是配置里的意图。
     sqSet('sc-autostart', view.autostart);
+    // ⚠️ 这两个画的是**配置里的意图**（与上面那个自启的勾不一样）——
+    // 它们没有「系统里的真相」这一说：发不发通知只有我们自己知道。
+    sqSet('sc-notify-up', view.notifyUpload);
+    sqSet('sc-notify-dl', view.notifyDownload);
     el('dg-data').textContent = view.dataDir;
     el('dg-config').textContent = view.configPath;
   } catch (error) {
@@ -1368,6 +1372,10 @@ el('settings-save').addEventListener('click', async () => {
       downloadDir: el('sc-dir').value.trim() || 'downloads',
     },
     autostart: sqGet('sc-autostart'),
+    // ⚠️ 通知这两个**不在 `sync` 那一组里**（壳那边 `SettingsPatch` 也是平级的）：
+    // 它们是「通知」的事，与「同步范围」无关 —— 放进 `sync` 会让那个分组名开始说谎。
+    notifyUpload: sqGet('sc-notify-up'),
+    notifyDownload: sqGet('sc-notify-dl'),
   };
   try {
     await invoke('apply_settings', { patch });

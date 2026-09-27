@@ -3,7 +3,8 @@
 //
 // 用法：
 //   node tools/desktop-ui-smoke.mjs                       # 在 clip9/ 下跑
-//   node tools/desktop-ui-smoke.mjs <app.js> <index.html> # 用别的夹具跑（变异验证 / 临时排查）
+//   node tools/desktop-ui-smoke.mjs <app.js> <index.html> [commands.rs] [capabilities.json]
+//                                                         # 用别的夹具跑（变异验证 / 临时排查）
 //
 // # ⚠️ 为什么要有它
 //
@@ -17,7 +18,7 @@
 // `cloud-clip/tools/page-smoke.mjs`，**只有手写 UI 这一侧是裸奔的**
 //（见 `docs/specs/desktop-client.md` §1.1 缺口 C）。
 //
-// # 判据（**只有第 1、4 条算失败**）
+// # 判据（**第 1、4、5、6、7、8、9 条算失败**）
 //
 // 1. `app.js` 引用到的每一个 id，`index.html` 里必须存在 —— 不通过 = 退出码 1；
 // 2. `index.html` 真的加载了 `app.js`（改名只改一侧 = 整页不工作）；
@@ -30,6 +31,10 @@
 // 6. **提示不许自己拼房间名** —— 「一条提示归哪个房间」只有壳说了算
 //    （`store` 里每个房间各一格），界面只显示壳给的那一条。不通过 = 退出码 1。理由见下。
 // 7. `NOTICE_MS` 不许再回到「挂十几秒」—— 不通过 = 退出码 1。理由见下。
+// 8. **设置项的字段名要跨语言对得上**：`SettingsView` 的每个字段，`openSettings` 里都要读；
+//    `SettingsPatch` 的每个字段，保存时都要发回去 —— 不通过 = 退出码 1。理由见下。
+// 9. **页面不许拿到系统通知的权限**（`capabilities/default.json` 里不许出现 `notification*`）
+//    —— 不通过 = 退出码 1。理由见下。
 //
 // # ⚠️ 第 4 条为什么算失败，而不是「提一句」
 //
@@ -79,6 +84,47 @@
 // 改回去只是把用户报过的那条 bug 再种一遍，而**谁都不会注意到**。
 // 判据只给一个上界（不是「必须等于 3000」）：留出微调空间，拦住的是「又挂回十几秒」。
 //
+// # ⚠️ 第 8 条为什么算失败（设置项的字段名要跨语言对得上）
+//
+// 一个设置项要跨**三个地方**才真的能用：壳给出它（`SettingsView` 的字段）、
+// 界面**接住**它（`openSettings` 里读一次 → 画到那个勾上）、
+// 界面**发还**它（保存时进 `SettingsPatch`）。而这三处**没有一处是同一个语言**：
+// 前者是 Rust 的 `notify_upload`，后两处是 JS 里那个 `notifyUpload` 字符串
+//（`#[serde(rename_all = "camelCase")]` 变的）。
+//
+// ⚠️★ 于是有**两个独立的坏法**，而且症状一模一样（勾永远是默认样子、点了也不生效）：
+// ① **没接住** —— `openSettings` 里漏了一句 `sqSet('sc-notify-up', view.notifyUpload)`：
+//    界面上那个勾**永远画的是 HTML 里写死的那个值**（`class="sq on"`），
+//    用户关掉它、重开设置，勾又亮着 —— 而**不会有任何报错**；
+// ② **没发还** —— 保存时漏了 `notifyUpload: sqGet('sc-notify-up')`：
+//    勾能点、能变，但**永远存不下去**，下次启动又变回来。
+//
+// ⚠️ 只判①（「调用处出现过 `view.X`」）的话，把保存那半边删掉**照样全绿** ——
+// 而用户看到的症状完全一样。所以**两头各判一次**，而且判的是**函数体内部**
+//（不是全文 grep：`notifyUpload` 这个名字在另一个函数里也出现过，全文 grep 等于没测）。
+//
+// ⚠️ 判据**不收窄**到「通知那两项」：它读的是两个结构体的**全部字段** ——
+// 下次谁加一个设置项而忘了界面那一半，这条会红。这才是它值钱的地方。
+//
+// # ⚠️ 第 9 条为什么算失败（页面不许拿到系统通知的权限）
+//
+// 2026-09-27 加了系统通知（「本机剪贴板没发出去」「房间的内容写进剪贴板了」）。
+// 那个插件**会给页面注入一段它自带的 JS**，所以「页面能不能发通知」只由一件事决定：
+// `capabilities/default.json` 里给不给 `notification:*`。
+//
+// ⚠️★ 我们**决定不给**，而且这是一个**刻意的架构选择**，不是忘了配：
+// 这个项目里页面与壳的分工是「页面只跟 IPC 命令说话」（`desktop-client.md` §2 的硬边界），
+// 每给页面开一个插件的口子，那条边界就薄一分 —— 而**发系统通知**还给了一个
+// 「页面能弹东西到用户桌面」的能力（一个页面 bug 就能变成通知轰炸）。
+//
+// ⚠️ 那三处注释（`Cargo.toml` / `notify.rs` / 能力文件自己）都写着「故意不给」，
+// 但**注释拦不住人**：`notification:default` 这七个字母加进去之后，
+// 页面调得动、没有任何东西会报错 —— 直到有人发现通知的来源不对。
+// 所以把它变成一条会红的检查。
+//
+// ⚠️ 这条**不是**「插件不许注册」：插件必须注册（Rust 侧要用它），
+// 判的只是**权限那一格**。
+//
 // # ⚠️ 三条「看不见」的地方（写在这里，免得下次以为是漏检）
 //
 // · **只认字符串字面量**：`el('row-' + i)` 这种拼出来的看不见 ——
@@ -86,17 +132,26 @@
 // · **间接路径要自己列**：`sqGet('x')` / `sqSet('x')` / `numField('x', …)` 的**首参也是 id**，
 //   它们内部才调 `el` —— 只匹配 `el(` 会把一大批 id 误判成「没引用」（第一版就是这么错的）。
 // · **不做**「HTML 里定义了就必须用」的强制检查：那会逼人去删标记，比留着更糟。
+// · 第 8 条**只看两个结构体的顶层字段**：`sync` 里面那一组（`SyncScopePatch`）
+//   是**另一个结构体**，它的字段在 JS 那边长在 `patch.sync` 里 ——
+//   「哪个字段挂在哪一组」是**第三个地方**的知识，脚本猜不出来。
+//   ⚠️ 所以嵌进去的字段漏了，这一条拦不住（先把边界写清，免得下次以为是漏检）。
 
 import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
-const [jsPath = join(root, 'crates/desktop/ui/app.js'), htmlPath = join(root, 'crates/desktop/ui/index.html')] =
-  process.argv.slice(2);
+const [
+  jsPath = join(root, 'crates/desktop/ui/app.js'),
+  htmlPath = join(root, 'crates/desktop/ui/index.html'),
+  rustPath = join(root, 'crates/desktop/src/commands.rs'),
+  capabilitiesPath = join(root, 'crates/desktop/capabilities/default.json'),
+] = process.argv.slice(2);
 
 const js = readFileSync(jsPath, 'utf8');
 const html = readFileSync(htmlPath, 'utf8');
+const rust = readFileSync(rustPath, 'utf8');
 
 /** 单参调用 `fn('literal')` 里的字面量。 */
 function singleArgLiterals(source, fnName) {
@@ -240,6 +295,92 @@ if (!noticeMs) {
   console.error(`✗ 提示要停留 ${noticeMs[1]}ms —— 又回到「挂十几秒」了：`);
   console.error(`    Jonny 2026-09-27 定的是 3 秒（这里只给上界 ${NOTICE_MS_MAX}ms）。`);
   console.error('    挂久了用户会开始怀疑它是不是当前状态，而切房间时它还杵在那儿。');
+}
+
+// ── 判据 8：设置项的字段名要跨语言对得上（理由见文件头）──────────────────
+// ⚠️★ 「接住」与「发还」**各判一次** —— 只判一头的话，另一头删掉照样全绿，
+// 而用户看到的症状一模一样（勾不生效）。
+// ⚠️ 判的是**函数体内部**，不是全文 grep：`notifyUpload` 这个名字在两个函数里都出现，
+// 全文 grep 等于没测（这正是「判据不能靠一个全局搜索」那一条）。
+const camelCase = (name) => name.replace(/_([a-z])/g, (_, ch) => ch.toUpperCase());
+
+/** 从 `commands.rs` 里取一个结构体的字段名（serde camelCase 之后的那一份）。
+ *
+ * ⚠️ 正则里**刻意带上 `#[serde(rename_all = "camelCase")]`**：那条属性是
+ * 「字段名怎么变」的**唯一依据**。不带它的话，哪天有人把它删了（改成 snake_case 下发），
+ * 这条自检会**拿着错的字段名去比对**、而且悄悄通过 —— 那比没有这条检查更坏。
+ *
+ * ⚠️★ 属性与结构体之间**不许跨过 `}`**（那个 `(?!\n\})` 的「温顺点」写法）：
+ * 一开始写的是 `[\s\S]*?`，而它是**无界**的 —— 于是删掉 `SettingsView` 上面那条属性之后，
+ * 正则掉头去吃**上面那个结构体**（`SettingsPatch`）的属性，照样匹配成功。
+ * 也就是说这条自检对「属性被删」**完全没牙**，而它看起来一点问题都没有。
+ * ⚠️ 判据里的「任意字符」要盯紧：`[\s\S]*?` 这种写法在**同构的文本块**里几乎总是错的。
+ */
+function structFields(name) {
+  const pattern = new RegExp(
+    `#\\[serde\\(rename_all = "camelCase"[^)]*\\)\\]((?:(?!\\n\\})[\\s\\S])*?)pub struct ${name} \\{([\\s\\S]*?)\\n\\}`,
+  );
+  const body = rust.match(pattern);
+  if (!body) return null;
+  return [...body[2].matchAll(/^\s*pub (\w+):/gm)].map((match) => camelCase(match[1]));
+}
+
+const viewFields = structFields('SettingsView');
+const patchFields = structFields('SettingsPatch');
+/** ① `openSettings` 的函数体（「接住」要在里面）。
+ * ② `settings-save` 那个回调的函数体（「发还」要在里面）。 */
+const openSettingsBody = js.match(/async function openSettings\(\)\s*\{[\s\S]*?\n\}/);
+const saveBody = js.match(/el\('settings-save'\)\.addEventListener\([\s\S]*?\n\}\);/);
+
+if (!viewFields || !patchFields || !openSettingsBody || !saveBody) {
+  failed = true;
+  console.error('✗ 判据 8 找不到要比对的东西 —— 这条自检要跟着代码改：');
+  if (!viewFields) console.error('    · `commands.rs` 里找不到带 camelCase 的 `SettingsView`');
+  if (!patchFields) console.error('    · `commands.rs` 里找不到带 camelCase 的 `SettingsPatch`');
+  if (!openSettingsBody) console.error('    · `app.js` 里找不到 `async function openSettings()`');
+  if (!saveBody) console.error('    · `app.js` 里找不到 `settings-save` 那个监听器');
+  console.error('  ⚠️ 它钉的是「壳给出的每个设置项，界面都要读、也要发得回去」——');
+  console.error('    单侧改名 / 加字段忘了改界面，就靠这里拦。');
+} else {
+  // ① 接住：`settings_view` 给的每个字段，`openSettings` 里都要读一次。
+  const notRead = viewFields.filter((name) => !openSettingsBody[0].includes(name));
+  // ② 发还：保存时每个字段都要发回去。
+  const notSent = patchFields.filter((name) => !saveBody[0].includes(name));
+  if (notRead.length) {
+    failed = true;
+    console.error(`✗ 有 ${notRead.length} 个设置项，界面**没有读**（壳给的、界面没接）：`);
+    for (const name of notRead) console.error(`    ${name}`);
+    console.error('  ⚠️ 症状：那个控件**永远画的是 HTML 里写死的值** —— 用户改了、关掉再开又变回来，');
+    console.error('    而且不会有任何报错。去 `openSettings` 里补一句读它。');
+  }
+  if (notSent.length) {
+    failed = true;
+    console.error(`✗ 有 ${notSent.length} 个设置项，界面**没有发回去**（能点、存不下去）：`);
+    for (const name of notSent) console.error(`    ${name}`);
+    console.error('  ⚠️ 症状：控件能点能变，但**永远存不下去**，下次启动又变回来。');
+    console.error('    去 `settings-save` 那个回调的 `patch` 里补上它。');
+  }
+}
+
+// ── 判据 9：页面不许拿到系统通知的权限（理由见文件头）────────────────────
+let capabilities = null;
+try {
+  capabilities = JSON.parse(readFileSync(capabilitiesPath, 'utf8'));
+} catch (error) {
+  failed = true;
+  console.error(`✗ 读不出能力文件（${capabilitiesPath}）：${error}`);
+}
+if (capabilities) {
+  // ⚠️ 一条权限可以是字符串，也可以是 `{ identifier, allow }` —— 两种都要认。
+  const granted = (capabilities.permissions ?? [])
+    .map((entry) => (typeof entry === 'string' ? entry : (entry?.identifier ?? '')))
+    .filter((identifier) => String(identifier).startsWith('notification'));
+  if (granted.length) {
+    failed = true;
+    console.error(`✗ 能力文件给页面放了系统通知的权限：${granted.join('、')}`);
+    console.error('  ⚠️ 发通知的只有 Rust 侧的 `notify::SystemNotifier` —— 页面**不该**有这个能力');
+    console.error('    （desktop-client.md §2：页面只跟 IPC 命令说话）。要去掉它。');
+  }
 }
 
 if (cssOnly.length) {
