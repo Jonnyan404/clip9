@@ -907,6 +907,15 @@ impl Inner {
                 latest_id: None,
                 room: None,
             },
+            // ⚠️★ 「连上了，但历史取不到」—— **不是** `off`：连接是好的、实时照常在收，
+            // 只是列表可能是空的。⚠️ `warn` 在那个「这条连接算不算活着」的判据里**算活着**
+            //（见 `connection_view` 的 `live`），所以设备行与延迟照常显示 —— 这是对的。
+            ReceiverStatus::HistoryUnavailable { latest_id, reason } => StatusView {
+                kind: "warn",
+                text: format!("已连接，但历史取不到：{reason}"),
+                latest_id: Some(latest_id),
+                room: None,
+            },
             ReceiverStatus::Disconnected { reason } => StatusView {
                 kind: "off",
                 text: format!("已断开：{reason}"),
@@ -1538,6 +1547,49 @@ mod tests {
             snapshot.rooms[1].connection.text.contains("太旧"),
             "要说清是「服务端版本太旧」：{}",
             snapshot.rooms[1].connection.text
+        );
+    }
+
+    /// ⚠️★ **「连上了、但历史取不到」既不是「已连接」也不是「已断开」**（2026-09-27 修）。
+    ///
+    /// 原因：`/push` 那条连接好着呢、实时照常在收，只是 `/content` 拿不到。
+    /// 说成「已断开」是**假话** —— 用户看到「已断开」却还在收消息，只会以为界面坏了。
+    ///
+    /// ⚠️★ 而它**必须算「活着」**（`connection_view` 的 `live` 认 `warn`）：
+    /// 不然设备行与延迟会跟着一起消失，看起来更像掉线，用户就去查一个不存在的网络问题。
+    #[test]
+    fn a_history_failure_is_a_warning_that_stays_live() {
+        let (_dir, store) = temp_store();
+        connect_work(&store);
+        store.apply_update(from_work(ReceiverEvent::DevicesChanged(vec![peer(
+            "d1",
+            "iPhone",
+            "smartphone",
+        )])));
+
+        store.apply_update(from_work(ReceiverEvent::Status(
+            ReceiverStatus::HistoryUnavailable {
+                latest_id: 7,
+                reason: "HTTP 401：需要认证令牌".to_owned(),
+            },
+        )));
+
+        let connection = connection(&store, 1);
+        assert_eq!(connection.kind, "warn", "取不到历史不许说成「已断开」");
+        assert!(
+            connection.text.contains("401"),
+            "服务端给的理由要露出来：{}",
+            connection.text
+        );
+        assert_eq!(
+            connection.latest_id,
+            Some(7),
+            "边界还是要记住 —— 后面那条实时消息靠它判是不是历史"
+        );
+        assert_eq!(
+            connection.devices.len(),
+            2,
+            "连接好好活着，设备行不该跟着消失（本机 + d1）"
         );
     }
 
