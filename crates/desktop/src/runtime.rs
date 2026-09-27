@@ -36,7 +36,7 @@ use clip9_client::receiver::fetch_history;
 use clip9_client::uploader::{build_client, now};
 use clip9_client::{
     ClipboardContent, ClipboardEvent, ClipboardSink, Debouncer, Msg, ReceiverEvent, ReceiverHandle,
-    ReceiverUpdate, SystemClipboard, WatchConfig, WatchHandle, prime_from_current,
+    ReceiverUpdate, SystemClipboard, UploadReport, WatchConfig, WatchHandle, prime_from_current,
     shared_debouncer, spawn_receiver, spawn_watcher, upload_event, upload_explicit,
 };
 use clip9_protocol::ReceiveHolder;
@@ -405,6 +405,21 @@ fn notify_download(
     notifier.send(&Msg::key("notifyWroteToClipboard"), &entry_preview(entry));
 }
 
+/// 剪贴板那条上行**记下「是哪几条」**（界面上「我发的」/「剪贴板同步」那个标签用）。
+///
+/// ⚠️★ **界面上发的那条不记**：敲进输入框的字、拖进来的文件是**明确的意图**，
+/// 把它们标成「剪贴板同步」是假话 —— 用户会想「我又没复制，它怎么说是剪贴板来的」。
+/// 而反过来漏记的症状也一样轻：标签退回到「我发的」（那**不是假话**，只是少说一句）。
+///
+/// ⚠️ 与 [`notify_upload`] / [`notify_download`] 同一族：**判据单独成一个函数**，
+/// 于是它有自己的测试（两个方向各一次）。写在一个 `match` 里的话，这一处错了
+/// **不会有任何报错**（只是标签说错话），靠手点界面是发现不了的。
+fn record_clipboard_uploads(store: &Store, source: UploadSource, report: &UploadReport) {
+    if matches!(source, UploadSource::Clipboard) {
+        store.mark_clipboard_uploads(&report.uploaded);
+    }
+}
+
 /// 一条条目在通知里怎么被说成**一行**。
 ///
 /// ⚠️ 只取**第一行**正文：通知那一行放不下多行文本，而**从中间截断**会让人以为
@@ -533,6 +548,10 @@ impl Runtime {
                 upload_explicit(&config, channel, &event, limits, now(), &self.http).await
             }
         };
+        // ⚠️★ **只有剪贴板那条**把「这几条是我同步过去的」记下来（界面上那条标签用：
+        // 「我发的」还是「剪贴板同步」）。判据在那个小函数里，有测试（两个方向）。
+        // ⚠️ 放在这里（结果一到就记）而不是等界面来问：界面只认变化，没有「问一次」的入口。
+        record_clipboard_uploads(&self.store, source, &report);
         // ⚠️ 上传结果**要能被界面看到**，包括「因为开关关着而跳过」——
         // 「点了没反应」是这类客户端最难查的一类故障。
         // ⚠️ 跳过的**理由**由 `report.summary()` 自己说（`SkipReason`）——
@@ -688,7 +707,8 @@ impl Runtime {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use clip9_client::ClientConfig;
+    use clip9_client::{Channel, ClientConfig, UploadedEntry};
+    use clip9_protocol::{ReceiveBase, TextReceive};
 
     /// ⚠️★ 配了要生效。第一版这里写死的是 `WatchConfig::default()`，
     /// 于是 `poll_interval_ms` 这个配置项**全项目没有一处读它**。
@@ -829,6 +849,61 @@ mod tests {
             notifier.sent(),
             vec![(Msg::key("notifyUploadFailed"), body)]
         );
+    }
+
+    /// ⚠️★ **只有剪贴板那条**会记下「这几条是我同步过去的」（界面上那条标签用）。
+    ///
+    /// 界面上敲的字、拖进来的文件是**明确的意图** —— 把它们标成「剪贴板同步」是假话，
+    /// 用户会想「我又没复制，它怎么说是剪贴板来的」。
+    ///
+    /// ⚠️★ 两个分支的差别只有一个 `match`，而**哪一个方向错了都不会报错**
+    ///（只是标签说错话 / 少说一句话）—— 所以这里用一个真的 `Store` 把两个方向都走一遍，
+    /// 而不是靠手点界面。判据在 [`record_clipboard_uploads`]。
+    #[test]
+    fn only_the_clipboard_path_records_what_it_sent() {
+        const SERVER: &str = "http://127.0.0.1:9501";
+        let dir = tempfile::tempdir().expect("建临时目录");
+        let store = Store::new(
+            ClientConfig {
+                channels: vec![Channel::new("默认", SERVER)],
+                ..ClientConfig::default()
+            },
+            dir.path().join("client.json"),
+            dir.path().to_path_buf(),
+        );
+        // 房间里先有 7 号那一条（模拟「上行已经发出去了，它从 WS 回到了本机」）。
+        store.apply_update(ReceiverUpdate {
+            server: SERVER.to_owned(),
+            room: "default".to_owned(),
+            event: ReceiverEvent::Entry(Box::new(ReceiveHolder::Text(TextReceive {
+                base: ReceiveBase {
+                    id: 7,
+                    kind: "text".to_owned(),
+                    room: "default".to_owned(),
+                    ..ReceiveBase::default()
+                },
+                content: "刚复制的东西".to_owned(),
+                ..TextReceive::default()
+            }))),
+        });
+        let report = UploadReport {
+            uploaded: vec![UploadedEntry {
+                server: SERVER.to_owned(),
+                room: "default".to_owned(),
+                id: 7,
+            }],
+            ..UploadReport::default()
+        };
+        let tagged = |store: &Store| store.snapshot().entries[0].from_clipboard;
+
+        record_clipboard_uploads(&store, UploadSource::FromUi, &report);
+        assert!(
+            !tagged(&store),
+            "界面上发的那条不许贴「剪贴板同步」——那是假话"
+        );
+
+        record_clipboard_uploads(&store, UploadSource::Clipboard, &report);
+        assert!(tagged(&store), "剪贴板那条要贴上（漏了就是「少说一句话」）");
     }
 
     /// 关掉那个开关 → **一条都不许发**（包括失败那条）。「配了不生效」的反面。

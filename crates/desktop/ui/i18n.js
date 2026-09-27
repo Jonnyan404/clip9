@@ -474,6 +474,9 @@
       '(没有文件名)': '(no file name)',
       '未知设备': 'Unknown device',
       '我发的': 'Sent by me',
+      // ⚠️ 与上面那条**二选一**（`entry.mine` 为真时才画，`fromClipboard` 决定画哪个）：
+      //   它说的是「不是我在这里敲的，是剪贴板同步过去的」（见 `EntryView::from_clipboard`）。
+      '剪贴板同步': 'Clipboard sync',
       '自动·补发': 'Scheduled · late',
       '自动': 'Scheduled',
       '收起': 'Collapse',

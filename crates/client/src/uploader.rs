@@ -265,11 +265,40 @@ fn megabytes(bytes: u64) -> String {
     format!("{:.1} MB", bytes as f64 / (1024.0 * 1024.0))
 }
 
+/// 一次成功的上行落在哪儿、服务端给它编了多少号。
+///
+/// # ⚠️★ 为什么要「连房间一起记」，而不是光一个 id
+///
+/// id 是**每个房间各自**单调的（`CONTRIBUTING.md` §6）：两个房间可以同时有一条 id 7。
+/// 只按 id 记的话，会给**另一个房间**里那条 7 也贴上「本机剪贴板同步」的标签 ——
+/// 而那是**假话**（那条内容可能是别人发的），而且它看起来完全正常。
+/// 所以身份是 **(服务端, 房间, id)** 三样，和 `Store::notice_in` / `room_index` 同一套判据。
+///
+/// ⚠️ 它服务的**只有界面上的一个标签**（「我发的」还是「剪贴板同步」，见 `EntryView`）：
+/// 服务端不认这个区分，翻历史也翻不出来 —— 记不下来的那次（老服务端没回 id、
+/// 分片上传那条路）就照旧显示「我发的」。那**不是假话**，只是信息少一点。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct UploadedEntry {
+    /// 哪个服务端（原样，不归一化 —— 归一化是 `Store` 的事）。
+    pub server: String,
+    pub room: String,
+    /// 服务端给这条内容的编号。
+    pub id: i32,
+}
+
 /// 一次载荷的结果。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum UploadOutcome {
     /// 发了，`succeeded` / `total` 个房间成功。
-    Uploaded { total: usize, succeeded: usize },
+    ///
+    /// ⚠️★ `entries` 里**只有服务端回了 id 的那几条** —— 它不是「成功了几条」的
+    /// 第二份计数（那个数是 `succeeded`），而是「哪几条能认出来」的清单。
+    /// 两个数**本来就可以不一样**，别拿其中一个去校验另一个。
+    Uploaded {
+        total: usize,
+        succeeded: usize,
+        entries: Vec<UploadedEntry>,
+    },
     /// 因为开关跳过 —— ⚠️ **带上「卡在哪一道」**（见 [`SkipReason`]）。
     Skipped(SkipReason),
     /// 全失败。
@@ -332,6 +361,12 @@ pub struct UploadReport {
     pub skip: Option<SkipReason>,
     /// 失败原因，每条一个（**带房间名**，否则多房间时看不出是谁失败了）。
     pub failures: Vec<Msg>,
+    /// 这一趟里**认得出 id 的**那些成功上行（见 [`UploadedEntry`]）。
+    ///
+    /// ⚠️★ 上层拿它去标「这条是本机剪贴板同步过去的」（`Store::mark_clipboard_uploads`）。
+    /// ⚠️ 界面那条路（[`upload_explicit`]）也会填它，但**上层故意不用** ——
+    /// 从输入框敲的字、拖进来的文件是**明确的意图**，标成「剪贴板同步」是假话。
+    pub uploaded: Vec<UploadedEntry>,
 }
 
 impl UploadReport {
@@ -350,7 +385,12 @@ impl UploadReport {
     /// 把一次载荷的结果并进来。
     pub fn push(&mut self, outcome: UploadOutcome) {
         match outcome {
-            UploadOutcome::Uploaded { succeeded, .. } => self.delivered += succeeded,
+            UploadOutcome::Uploaded {
+                succeeded, entries, ..
+            } => {
+                self.delivered += succeeded;
+                self.uploaded.extend(entries);
+            }
             UploadOutcome::Skipped(reason) => self.skip = Some(reason),
             UploadOutcome::Failed(reason) => self.failures.push(reason),
         }
@@ -512,10 +552,21 @@ async fn upload_payload(
 ) -> UploadOutcome {
     let mut succeeded = 0usize;
     let mut failures = Vec::new();
+    // ⚠️ 只收**服务端回了 id** 的那些（见 `UploadedEntry` 的文档：认不出就不标）。
+    let mut entries = Vec::new();
 
     for channel in targets {
         match post_to_channel(client, channel, cfg, payload).await {
-            Ok(()) => succeeded += 1,
+            Ok(id) => {
+                succeeded += 1;
+                if let Some(id) = id {
+                    entries.push(UploadedEntry {
+                        server: channel.server.clone(),
+                        room: channel.room.clone(),
+                        id,
+                    });
+                }
+            }
             Err(reason) => failures.push(
                 Msg::key("roomScopedFailure")
                     .param("room", &channel.name)
@@ -528,6 +579,7 @@ async fn upload_payload(
         UploadOutcome::Uploaded {
             total: targets.len(),
             succeeded,
+            entries,
         }
     } else {
         UploadOutcome::Failed(
@@ -539,12 +591,14 @@ async fn upload_payload(
 }
 
 /// 发一个载荷到**一个**房间。
+///
+/// 返回服务端给那条内容的 id（能认出来才有，见 [`parse_upload_id`]）。
 pub(crate) async fn post_to_channel(
     client: &Client,
     channel: &Channel,
     cfg: &ClientConfig,
     payload: &UploadPayload,
-) -> Result<(), Msg> {
+) -> Result<Option<i32>, Msg> {
     let device_name = cfg.device_name.as_str();
 
     let mut builder = match payload {
@@ -591,9 +645,49 @@ pub(crate) async fn post_to_channel(
     let status = response.status().as_u16();
     let body = response.text().await.unwrap_or_default();
     if (200..300).contains(&status) {
-        Ok(())
+        // ⚠️★ 成不成**不看**这个 id：认不出来照样算成功（它只影响界面上的一个标签）。
+        Ok(parse_upload_id(&body))
     } else {
         Err(Msg::verbatim(parse_api_error(status, &body)))
+    }
+}
+
+/// 从上行成功的响应体里抠出「服务端给这条内容编的号」。
+///
+/// 形状是 `docs/api.md` §5 那一份：`{"url": "…", "id": "7", "type": "text"}`。
+///
+/// ⚠️★ **字符串和数字都要认**：Go 服务端与 Worker 回的 `id` 都是**字符串**
+/// （`strconv.Itoa` / `toString()`），但这件事**不是契约**里最稳的一条 ——
+/// 下一个服务端写成数字是很容易发生的事。认不出就 `None`，**不报错**：
+/// 这个 id 只用来决定卡片上写「我发的」还是「剪贴板同步」，
+/// 为一个标签让整个上行变成失败是「小事变大」。
+///
+/// ⚠️ 走**分片**上传那条路（`/upload/finish/:uuid`）时响应里没有 id（是个 `{}`）——
+/// 那几张大文件就不带标签，照旧显示「我发的」。
+///
+/// ⚠️ 之所以把它抽成一个**纯函数**：它上面没有任何 IO，于是可以拿真响应体直接测
+/// （两个服务端的两种形状都在测试里）。
+#[must_use]
+pub fn parse_upload_id(body: &str) -> Option<i32> {
+    /// `{"id": "7"}` 与 `{"id": 7}` 都收。
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum Ack {
+        Number(i64),
+        Text(String),
+    }
+
+    #[derive(Deserialize)]
+    struct AckBody {
+        #[serde(default)]
+        id: Option<Ack>,
+    }
+
+    // ⚠️ 解析失败（不是 JSON、没有 `id`、`id` 是别的东西）一律 `None` —— 与上面同一条：
+    // 认不出不是错误。
+    match serde_json::from_str::<AckBody>(body.trim()).ok()?.id? {
+        Ack::Number(value) => i32::try_from(value).ok(),
+        Ack::Text(text) => text.trim().parse::<i32>().ok(),
     }
 }
 
@@ -666,6 +760,40 @@ mod tests {
             delta < time::Duration::seconds(5),
             "now() 应当就是现在，与 UTC 的差应当只有时区偏移，实际 {delta}"
         );
+    }
+
+    /// 上行响应里那个 `id`：**两种形状都要认，认不出不许报错**。
+    ///
+    /// ⚠️★ 它服务的是界面上的一个标签（「我发的」/「剪贴板同步」），所以判据不是
+    /// 「抠得出来」，而是「**抠不出来时不要闹**」：老服务端不回 id、分片上传那条路
+    /// 回的是 `{"result":{"uuid":…}}`、被人塞了个 `{"id":"abc"}` —— 这三种都只是
+    /// `None`，而上行**照样是成功的**。
+    ///
+    /// ⚠️ 两种形状分别是 Go 服务端（`strconv.Itoa` → 字符串）与「万一写成数字」那一份。
+    /// 那一份**现在还不存在**，但把它写进测试是便宜的 —— 认不出的症状是
+    /// 「所有条目都显示我发的」，看起来完全正常。
+    #[test]
+    fn the_upload_id_is_read_from_both_shapes() {
+        // ① Go 服务端（`docs/api.md` §5 那一份，`id` 是**字符串**）。
+        assert_eq!(
+            parse_upload_id(r#"{"url":"http://h:9502/content/7","id":"7","type":"text"}"#),
+            Some(7)
+        );
+        // ② 数字形状（下一个服务端可能就是这样的）。
+        assert_eq!(parse_upload_id(r#"{"id":42}"#), Some(42));
+        // ③ 认不出的：一律 `None`，**不是错误**。
+        assert_eq!(parse_upload_id(""), None, "空响应体");
+        assert_eq!(parse_upload_id("not json"), None, "不是 JSON");
+        assert_eq!(parse_upload_id("{}"), None, "没有 id 这个键");
+        assert_eq!(
+            parse_upload_id(r#"{"result":{"uuid":"abc"}}"#),
+            None,
+            "分片上传那条路回的就是这个形状"
+        );
+        assert_eq!(parse_upload_id(r#"{"id":"abc"}"#), None, "id 不是数字");
+        assert_eq!(parse_upload_id(r#"{"id":null}"#), None);
+        // ⚠️ 超出 `i32`：`Option` 里不许装一个截断过的值（那会给**另一条**内容贴标签）。
+        assert_eq!(parse_upload_id(r#"{"id":"99999999999"}"#), None);
     }
 
     /// ⚠️ 图片文件名与行为基准 `clip-sync` 逐字一致（它是 `clipboard_<时间戳>.png`）。
@@ -895,12 +1023,29 @@ mod tests {
         report.push(UploadOutcome::Uploaded {
             total: 3,
             succeeded: 2,
+            entries: vec![UploadedEntry {
+                server: "http://a:9502".to_owned(),
+                room: "default".to_owned(),
+                id: 7,
+            }],
         });
         report.push(UploadOutcome::Uploaded {
             total: 3,
             succeeded: 3,
+            // ⚠️★ 这一条**成功但认不出 id**（老服务端不回 id）—— 它照样算送达，
+            // 只是不进那张「认得出」的清单。两个数**本来就允许不一样**。
+            entries: Vec::new(),
         });
         assert_eq!(report.delivered, 5);
+        assert_eq!(
+            report.uploaded,
+            vec![UploadedEntry {
+                server: "http://a:9502".to_owned(),
+                room: "default".to_owned(),
+                id: 7,
+            }],
+            "只有认得出 id 的那几条进清单"
+        );
         assert!(report.ok());
         let sent = report.summary();
         assert_eq!(sent.key, "uploadSentToRooms");
