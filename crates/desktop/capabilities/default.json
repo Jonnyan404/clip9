@@ -1,7 +1,7 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "主窗口的权限。⚠️ 页面上**没有任何插件的能力**（那是刻意的，见 desktop-client.md §2）：数据全走自带的命令与 IPC 事件，插件的调用全在 Rust 侧。这里只有一条 `dialog:default` —— 它给的是**选文件**那个系统对话框，而弹它的代码在 Rust 侧的 `pick_files` 命令里（页面拿不到它的 JS API，也拿不到返回值之外的任何东西）。⚠️★ **故意没有 `notification:*`**：系统通知那个插件注册了（Rust 侧 `notify::SystemNotifier` 要用它），也照例会往页面注入一段它自带的 JS，但权限没给 —— 所以页面一行都调不到它。别顺手加进来（`tools/desktop-ui-smoke.mjs` 的判据 9 会红）。",
+  "description": "主窗口的权限。⚠️ 页面上**没有任何插件的能力**（那是刻意的，见 desktop-client.md §2）：数据全走自带的命令与 IPC 事件，插件的调用全在 Rust 侧。这里只有一条 `dialog:default` —— 它给的是**选文件**那个系统对话框，而弹它的代码在 Rust 侧的 `pick_files` 命令里（页面拿不到它的 JS API，也拿不到返回值之外的任何东西）。⚠️★ **故意没有 `notification:*`**：系统通知那个插件注册了（Rust 侧 `notify::SystemNotifier` 要用它），也照例会往页面注入一段它自带的 JS，但权限没给 —— 所以页面一行都调不到它。⚠️★ **故意也没有 `global-shortcut:*`**：全局快捷键那个插件同样注册了（Rust 侧 `hotkeys::apply` 要用它），而页面**不该**能占全局键 —— 那是系统级的，别的程序也受影响。**两个前缀都由 `tools/desktop-ui-smoke.mjs` 的判据 9 盯着**（⚠️ 它在 2026-09-28 之前只查 `notification`，加 `global-shortcut` 时才发现漏了一半）。别顺手加进来。",
   "windows": ["main"],
   "permissions": ["core:default", "dialog:default"]
 }

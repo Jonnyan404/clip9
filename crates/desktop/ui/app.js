@@ -476,7 +476,16 @@ function renderEntry(entry, index) {
   // 2026-09-26 才补进 `/content` 投影的，漏掉它们的症状是「看不出这条是自动发的」。
   if (entry.automation) {
     foot.append(h('span', 'spacer'));
-    foot.append(h('span', 'tag auto', entry.late ? t('自动·补发') : t('自动')));
+    const tag = h('span', 'tag auto', entry.late ? t('自动·补发') : t('自动'));
+    // ⚠️★ 预定时刻**搬到 `title` 上**（§8.9 那条规矩：不丢掉、也不占画面）。
+    // ⚠️★ 这一段是 2026-09-28 补的，而它补的是**一个躺了三天的洞**：
+    //    `scheduledAt` 从 2026-09-26 起就在快照里，但这个文件里**只有上面那句注释
+    //    提到过它** —— 字段一直在发，界面上一个像素都不差、不报错，只是那一块功能**没有**。
+    //    现在由判据 19 盯着「`EntryView` 的每个字段都要在 `renderEntry` 里读一次」。
+    if (entry.scheduledAt > 0) {
+      tag.title = t('预定 {time}', { time: timeLabel(entry.scheduledAt) });
+    }
+    foot.append(tag);
   }
   if (entry.kind === 'file') {
     foot.append(h('span', 'spacer'));

@@ -479,6 +479,9 @@
       '剪贴板同步': 'Clipboard sync',
       '自动·补发': 'Scheduled · late',
       '自动': 'Scheduled',
+      // ⚠️ 定时那条的**预定时刻**（搬到卡片上那个标签的 `title` 里，见 `renderEntry`）：
+      //    它填的是 `timeLabel()`（本地时间），所以两种语种里都没有时区说明。
+      '预定 {time}': 'Scheduled for {time}',
       '收起': 'Collapse',
       '展开全文（共 {size}）': 'Show full text ({size})',
       '展开': 'Expand',
