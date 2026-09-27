@@ -44,9 +44,40 @@ pub mod ws;
 use std::sync::Arc;
 
 use axum::Router;
+use axum::extract::DefaultBodyLimit;
 use axum::routing::{get, post};
 
 pub use state::AppState;
+
+/// `POST /text` 请求体的**绝对**上限。
+///
+/// ⚠️★ 这条与 `text.limit` **无关**，理由与 `handlers::CONTENT_LIST_HARD_CAP` 是同一条：
+/// `text.limit` 是**用户可配**的，而 axum 的 `DefaultBodyLimit` 默认是 **2 MiB** ——
+/// 于是「把 `text.limit` 调到 8 MB」在**超过 2 MiB 的那一刻就静默失效**了：
+/// 请求到不了我们的 handler，返回的是框架自己那个 **不是契约 JSON** 的 413，
+/// 客户端只能吐一句没有数字的话（`uploader` 的模块文档明说必须照抄带数字那句）。
+///
+/// 取 8 MiB 的依据：**比框架默认的 2 MiB 大**（不缩小任何现有部署的可用正文），
+/// 又小到「`Bytes` 把整份读进内存」不至于变成 DoS 面。
+/// ⚠️ 再大就该走**文件**（`/upload` + 分片），不是消息。
+///
+/// ⚠️ 超过它的请求仍由**框架层**拒绝，那里的 body 不是契约形状 —— 这是**有意的**：
+/// 它是「最后一道闸」，不是给人配的上限。客户端该用的一直是 `text.limit`。
+const TEXT_BODY_HARD_CAP: usize = 8 * 1024 * 1024;
+
+/// 单次上传（`POST /upload`、`/upload/chunk*`）请求体的**绝对**上限。
+///
+/// ⚠️ 同样与 `file.limit`（缺省 **256 MiB**）无关：那个是**一个文件**的上限，
+/// 而这一条是**一次请求**的上限。大文件走**分片**（`/upload/chunk/{uuid}`，
+/// 片大小 `file.chunk` 缺省 1 MiB），所以 16 MiB 已经很宽松。
+///
+/// ⚠️ 取 16 MiB 而**不是**跟着 `file.limit`：跟着它等于允许**一次请求把 256 MiB
+/// 读进内存**（handler 拿的是 `Bytes`）—— 那是现成的 OOM 面。
+const UPLOAD_BODY_HARD_CAP: usize = 16 * 1024 * 1024;
+
+/// 给框架上限留的余量：HTTP 头、multipart 边界与包装都算在 body 里，
+/// 不留的话「正好等于上限」的正文会被莫名其妙地拒掉。
+const BODY_LIMIT_SLACK: usize = 8 * 1024;
 
 /// 组装路由。
 ///
@@ -120,7 +151,16 @@ pub fn router(state: Arc<AppState>) -> Router {
         // ⚠️ 分享页本体。**必须排在静态资源兜底之前**，否则它会拿到一份没注入卡片的
         // 空白外壳（而那正是「抓取程序只看到域名」的那个 bug）。
         .route("/s/{token}", get(share::landing).fallback(only_get))
-        .route("/text", post(handlers::text).fallback(only_post))
+        // ⚠️★ 这条与下面三条上传路由都**必须显式设请求体上限** ——
+        // 不设就走框架默认的 2 MiB，而它拒绝时返回的 body **不是契约形状**。
+        // 判据与取值见 `TEXT_BODY_HARD_CAP` / `UPLOAD_BODY_HARD_CAP`。
+        // ⚠️ 回归测试在 `tests/body_limit.rs`（那几条**只有走真 Router 才测得到**）。
+        .route(
+            "/text",
+            post(handlers::text)
+                .layer(DefaultBodyLimit::max(TEXT_BODY_HARD_CAP + BODY_LIMIT_SLACK))
+                .fallback(only_post),
+        )
         // ⚠️ WS 用 `get` 注册是刻意的：握手是一个 GET + `Upgrade` 头。
         .route("/push", get(ws::push))
         // ⚠️ `/content`（**没有**尾斜杠）是**历史分页**（`docs/specs/ws-live-only.md` W1）。
@@ -139,11 +179,29 @@ pub fn router(state: Arc<AppState>) -> Router {
         // ⚠️ `/upload/chunk`（初始化，body 是文件名）和 `/upload/chunk/{uuid}`（追加分片）
         // 是**两条不同的路由** —— Go 那边靠「路径后缀 + Content-Type 全等」在一个 handler 里
         // 分叉，这里交给路由表分，更清楚。
-        .route("/upload", post(files::upload).fallback(only_post))
-        .route("/upload/chunk", post(files::upload).fallback(only_post))
+        .route(
+            "/upload",
+            post(files::upload)
+                .layer(DefaultBodyLimit::max(
+                    UPLOAD_BODY_HARD_CAP + BODY_LIMIT_SLACK,
+                ))
+                .fallback(only_post),
+        )
+        .route(
+            "/upload/chunk",
+            post(files::upload)
+                .layer(DefaultBodyLimit::max(
+                    UPLOAD_BODY_HARD_CAP + BODY_LIMIT_SLACK,
+                ))
+                .fallback(only_post),
+        )
         .route(
             "/upload/chunk/{uuid}",
-            post(files::chunk).fallback(only_post),
+            post(files::chunk)
+                .layer(DefaultBodyLimit::max(
+                    UPLOAD_BODY_HARD_CAP + BODY_LIMIT_SLACK,
+                ))
+                .fallback(only_post),
         )
         .route(
             "/upload/finish/{uuid}",
@@ -257,5 +315,40 @@ pub fn router(state: Arc<AppState>) -> Router {
     } else {
         // 带前缀时，无前缀的路径**也**保留 —— 反代常把前缀剥掉再转发。
         Router::new().nest(&prefix, app.clone()).merge(app)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// ⚠️★ 硬上限**必须真的**比任何可能配出来的正文大 —— 否则「显式设上限」这个修复
+    /// 会**缩小**可用正文，那比不修更坏（症状还是静默的：客户端报一句没数字的错）。
+    ///
+    /// ⚠️ 这条照 `handlers` 里 `hard_cap_leaves_the_default_deployment_alone` 的先例写：
+    /// **硬上限与「用户配的那个值」是两件事，改一个要能在这里对账。**
+    #[test]
+    fn the_body_caps_do_not_shrink_what_already_works() {
+        // ⚠️ `text` / `file` 挂在 `Config` 上，不在 `ServerConfig` 里（`server` 只是它的一段）。
+        let default = clip9_core::Config::default();
+        // 缺省部署一定不受影响。
+        assert!(
+            default.text.limit <= TEXT_BODY_HARD_CAP as i64,
+            "缺省 text.limit 已经超过硬上限 —— 默认部署会开始收到框架层的 413（非契约形状）"
+        );
+        // ⚠️ 框架默认是 2 MiB：硬上限**比它小**就等于把静默失效换成了另一种静默失效。
+        assert!(
+            TEXT_BODY_HARD_CAP > 2 * 1024 * 1024,
+            "硬上限比框架默认的 2 MiB 还小 —— 那是往回退，不是修"
+        );
+        // 上传那条同理，而且它必须能装下至少一个分片（`file.chunk` 缺省 1 MiB）。
+        assert!(
+            default.file.chunk as usize > 0 && (default.file.chunk as usize) < UPLOAD_BODY_HARD_CAP,
+            "缺省分片大小装不进单次上传上限 —— 分片路径会整条走不通"
+        );
+        assert!(
+            UPLOAD_BODY_HARD_CAP < default.file.limit as usize,
+            "单次上传上限不该大于文件上限：那样它就不是「一次请求」的闸了"
+        );
     }
 }
