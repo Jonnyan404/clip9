@@ -361,8 +361,17 @@ pub enum ReceiverEvent {
 /// 「这条历史 / 这条延迟 / 这条状态是谁的」**不再是隐含的** ——
 /// 原来那个「只有一个下行房间」的前提**已经不存在了**，
 /// 而少了房间名，N 条连接的状态会互相覆盖（界面上的表现是数字乱跳）。
+///
+/// ⚠️★★ 而且**光有房间名还不够**（2026-09-27 修的）：**不同服务端上可以有同名房间**。
+/// 实测踩到：房间清单里同时有 `default@127.0.0.1:9502` 和 `default@example.com`，
+/// 而壳那边是「**按房间名**找下标」→ 两条连接的更新**全都落进第一个同名房间**：
+/// 公网那条的 401 被挂到了**本地那个房间**的状态栏上（用户看到的正是
+/// 「本地这个房间明明连着、却显示 401」），取回的历史也会串到别人家的房间里。
+/// 所以身份是 **(服务端, 房间)** 两样 —— 与 `store` 里 `room_key` 用的是同一条规则。
 #[derive(Debug, Clone)]
 pub struct ReceiverUpdate {
+    /// 这条更新属于**哪个服务端上的**房间（身份的一半，别省）。
+    pub server: String,
     pub room: String,
     pub event: ReceiverEvent,
 }
@@ -370,9 +379,12 @@ pub struct ReceiverUpdate {
 /// 一个**只属于某个房间**的发送口 —— 每条连接任务一个。
 ///
 /// ⚠️★ 包一层是为了「**不可能忘**」：每个任务只服务一个房间，
-/// 让房间名在构造时绑定一次，比在几十处 `send` 上各写一遍房间名可靠得多
+/// 让房间身份在构造时绑定一次，比在几十处 `send` 上各写一遍可靠得多
 ///（漏写一处就是「状态挂到了别的房间上」，而且不报错）。
+///
+/// ⚠️ 绑的是 **(服务端, 房间)** 两样 —— 只绑房间名就是上面那个串台 bug 的形状。
 struct RoomSink {
+    server: String,
     room: String,
     updates: tokio::sync::mpsc::UnboundedSender<ReceiverUpdate>,
 }
@@ -381,6 +393,7 @@ impl RoomSink {
     fn send(&self, event: ReceiverEvent) {
         // ⚠️ 收端没了（壳正在退出）不是错误 —— 与原来那些 `let _ =` 同一个口径。
         let _ = self.updates.send(ReceiverUpdate {
+            server: self.server.clone(),
             room: self.room.clone(),
             event,
         });
@@ -703,6 +716,7 @@ async fn run_room(
     updates: tokio::sync::mpsc::UnboundedSender<ReceiverUpdate>,
 ) {
     let updates = RoomSink {
+        server: channel.server.clone(),
         room: channel.room.clone(),
         updates,
     };

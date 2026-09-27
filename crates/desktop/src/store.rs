@@ -39,16 +39,22 @@ pub struct SyncScopePatch {
     pub download_dir: Option<PathBuf>,
 }
 
-/// 一个房间的**稳定标识**（换清单时搬状态用它）。
+/// 一个房间的**稳定标识**：`(服务端, 房间)` 拼成的字符串。
 ///
 /// ⚠️ 用「服务端 + 房间」而不是显示名：显示名是给用户改的，
 /// **改个名字就把历史清空**是说不通的。也**不含凭据** —— 改密码同样不该清历史。
+///
+/// ⚠️★ 服务端要**归一化**（去首尾空白、去尾部 `/`）：`http://h:9502` 与
+/// `http://h:9502/` 明明是同一条地址，写法差一个斜杠就认不出是同一个房间。
+/// ⚠️★ 而**这里是唯一的归一化点** —— [`Inner::room_index`] 也调这个函数。
+/// 两处各归一化一遍一定会漂，而漂了**不报错**，只是「这个房间怎么不刷新了」。
+fn channel_key(server: &str, room: &str) -> String {
+    format!("{}|{}", server.trim().trim_end_matches('/'), room)
+}
+
+/// 一个房间的稳定标识（从 `Channel` 上取）。
 fn room_key(channel: &clip9_client::Channel) -> String {
-    format!(
-        "{}|{}",
-        channel.server.trim().trim_end_matches('/'),
-        channel.room
-    )
+    channel_key(&channel.server, &channel.room)
 }
 
 /// 每个房间在界面上**留多少条**。
@@ -515,7 +521,9 @@ impl Store {
         // ⚠️★ 房间名**由这条更新自己带**（§4.7）：每个房间各自有一条连接，
         // 「这条是谁的」不再是隐含的 —— 原来靠「只有一个下行房间」推出来的那个前提
         // **已经不存在了**。少了它，N 条连接的状态会互相覆盖。
-        let Some(index) = inner.room_index(&update.room) else {
+        // ⚠️★ 房间身份是 **(服务端, 房间)** 两样 —— 见 `ReceiverUpdate::server` 的注释：
+        // 只按房间名找的话，不同服务端上的同名房间会互相串（实测踩到过）。
+        let Some(index) = inner.room_index(&update.server, &update.room) else {
             // 配置刚被改过、这个房间已经不在列表里了 —— 丢掉，不要 panic。
             return;
         };
@@ -611,12 +619,17 @@ impl Store {
     /// （`spawn_receiver` 只连那一个），而界面可以选中任何一个房间 ——
     /// 别的房间得自己按需取一次。
     ///
-    /// ⚠️★ 房间名**由调用方给**，不从 `entries.first()` 猜：空响应（新房间 / 服务端说没有）
-    /// 时那个办法会回落到「下行房间」，于是把**另一个房间**标成「已加载」——
+    /// ⚠️★ 房间**由调用方给**（`server` + `room`），不从 `entries.first()` 猜：
+    /// 空响应（新房间 / 服务端说没有）时那个办法会回落到「下行房间」，
+    /// 于是把**另一个房间**标成「已加载」——
     /// 症状是切到那个房间看到空列表且写着「这个房间还没有内容」，而它其实有内容。
-    pub fn push_history(&self, room: &str, entries: Vec<ReceiveHolder>) {
+    ///
+    /// ⚠️★ 而且要给的是 **(服务端, 房间)** 两样：两个服务端上可以同时有 `default`，
+    /// 只按房间名落的话，从 `example.com` 取回的历史会写进**本地**那个 `default` 房间
+    ///（2026-09-27 修的同一条根因，见 `ReceiverUpdate::server`）。
+    pub fn push_history(&self, server: &str, room: &str, entries: Vec<ReceiveHolder>) {
         let mut inner = self.lock();
-        if let Some(index) = inner.room_index(room) {
+        if let Some(index) = inner.room_index(server, room) {
             let server = inner.config.channels[index].server.clone();
             let client_id = inner.config.client_id.clone();
             for entry in &entries {
@@ -827,12 +840,18 @@ impl Store {
 }
 
 impl Inner {
-    /// 按房间名找下标（`None` = 配置里没有这个房间）。
-    fn room_index(&self, room: &str) -> Option<usize> {
-        self.config
-            .channels
-            .iter()
-            .position(|channel| channel.room == room)
+    /// 按 **(服务端, 房间)** 找下标（`None` = 配置里没有这一对）。
+    ///
+    /// ⚠️★★ **两样都要匹配**（2026-09-27 修的）：**不同服务端上可以有同名房间** ——
+    /// 房间清单里同时有 `default@127.0.0.1:9502` 与 `default@example.com` 时，
+    /// 只按房间名找会让**两条连接的更新全落进第一个同名房间**：
+    /// 公网那条的 401 挂到本地那个房间的状态栏上（用户看到的正是「本地这个房间
+    /// 明明连着、却显示 401」），取回的历史也会串进别人家的房间。
+    /// ⚠️ 这条规则与 [`room_key`] **必须一致**（两处都走 [`channel_key`]）——
+    /// 两处不一致的话，同一个房间会因为多一个斜杠而找不着。
+    fn room_index(&self, server: &str, room: &str) -> Option<usize> {
+        let key = channel_key(server, room);
+        self.config.channels.iter().position(|c| room_key(c) == key)
     }
 
     /// 状态变化（**某个房间**那条连接的）。
@@ -1240,6 +1259,13 @@ mod tests {
         }
     }
 
+    /// 夹具里那两个房间指向的**同一台**服务端（`store_with` 里两个都用它）。
+    ///
+    /// ⚠️ 单独一个常量：`ReceiverUpdate` 现在要带服务端了（见它的注释），
+    /// 每处各写一遍字符串迟早会写歪一个字符 —— 而那种错的表现是「更新被丢掉」，
+    /// 不报错，只是界面不动。
+    const FIXTURE_SERVER: &str = "http://127.0.0.1:9501";
+
     /// 造一条属于 **`work`** 房间的更新。
     ///
     /// ⚠️ 大多数用例都用它 —— `work` 是 `store_with` 里的第二个房间，
@@ -1247,6 +1273,7 @@ mod tests {
     /// `each_room_keeps_its_own_connection`）。
     fn from_work(event: ReceiverEvent) -> ReceiverUpdate {
         ReceiverUpdate {
+            server: FIXTURE_SERVER.to_owned(),
             room: "work".to_owned(),
             event,
         }
@@ -1259,10 +1286,24 @@ mod tests {
     }
 
     /// 让**某个房间**那条连接连上（其余房间不受影响）。
+    ///
+    /// ⚠️★★ 服务端**从 `store` 自己的配置里取**，不写死 [`FIXTURE_SERVER`]：
+    /// 真实代码给的也是 `channel.server`（见 `runtime.rs` 的 `spawn_receiver`），
+    /// 照抄它就不会出现「夹具写的服务端和配置里的对不上」。
+    /// 那种错的表现是**更新被静默丢掉**（身份是 (服务端, 房间) 两样，找不到就 `return`），
+    /// 界面不动、也没有任何报错 —— 只有断言「状态该变了」才会炸，
+    /// 于是看起来像「连接没连上」而不是「夹具写歪了」（9502 那个用例就是这么露出来的）。
     fn connect_room(store: &Store, room: &str) {
+        let server = store
+            .config()
+            .channels
+            .iter()
+            .find(|channel| channel.room == room)
+            .map(|channel| channel.server.clone())
+            .unwrap_or_else(|| panic!("夹具的配置里没有 `{room}` 这个房间"));
         for event in [
             ReceiverEvent::Status(ReceiverStatus::Connecting {
-                server: "http://127.0.0.1:9501".to_owned(),
+                server: server.clone(),
                 room: room.to_owned(),
             }),
             ReceiverEvent::Status(ReceiverStatus::Connected {
@@ -1271,6 +1312,7 @@ mod tests {
             }),
         ] {
             store.apply_update(ReceiverUpdate {
+                server: server.clone(),
                 room: room.to_owned(),
                 event,
             });
@@ -1282,6 +1324,67 @@ mod tests {
         connect_room(store, "work");
     }
 
+    /// ⚠️★★ **两个服务端上的同名房间不能互相串**（2026-09-27 修的，用户实测踩到）。
+    ///
+    /// 房间身份是 **(服务端, 房间)** 两样：只按房间名找下标的话，
+    /// `default@A` 与 `default@B` 的更新会**同时落进第一个**同名房间 ——
+    /// 表现就是用户报的那条：「**本地这个房间明明连着（日志里有 WS 连上），
+    /// 状态栏却显示 401**」（那条 401 其实是另一个服务端上同名房间的），
+    /// 取回的历史也会串进别人家的房间。
+    /// ⚠️★ 这两件事都**不报错**，只是显示错 —— 所以只有这条用例能拦住它。
+    #[test]
+    fn two_rooms_with_the_same_name_on_different_servers_do_not_mix() {
+        let (_dir, store) = temp_store();
+        // 再挂一个「另一个服务端上的 default」—— 这正是触发那条 bug 的形状。
+        let mut channels = store.config().channels;
+        let mut other = channels[0].clone();
+        other.name = "Cf".to_owned();
+        other.server = "https://cf.example".to_owned();
+        channels.push(other);
+        store.set_rooms(channels).unwrap();
+
+        // 远端那条报 401，本地那条报已连接。
+        store.apply_update(ReceiverUpdate {
+            server: "https://cf.example".to_owned(),
+            room: "default".to_owned(),
+            event: ReceiverEvent::Status(ReceiverStatus::Disconnected {
+                reason: "HTTP 401：需要认证令牌".to_owned(),
+            }),
+        });
+        store.apply_update(ReceiverUpdate {
+            server: FIXTURE_SERVER.to_owned(),
+            room: "default".to_owned(),
+            event: ReceiverEvent::Status(ReceiverStatus::Connected {
+                latest_id: 9,
+                limits: ServerLimits::default(),
+            }),
+        });
+
+        assert_eq!(
+            connection(&store, 0).kind,
+            "on",
+            "本地那个 default 被**另一个服务端**同名房间的 401 覆盖了"
+        );
+        assert_eq!(
+            connection(&store, 2).kind,
+            "off",
+            "远端那条状态自己该是 off（它才是报 401 的那条）"
+        );
+
+        // 历史同理：推给远端那个房间，**不能**出现在本地这个同名房间里。
+        store.push_history(
+            "https://cf.example",
+            "default",
+            vec![text(1, "default", "远端的")],
+        );
+        assert_eq!(
+            store.snapshot().rooms[0].count,
+            0,
+            "远端房间的历史串进了本地那个同名房间"
+        );
+        assert_eq!(store.snapshot().rooms[2].count, 1, "它该落在远端那个房间上");
+    }
+
     /// ⚠️★ **每个房间各存各的**（§4.7）：每个房间**各自**有一条连接，
     /// 所以「谁有几台设备 / 谁的边界在哪」必须按房间分开。混在一起的话，
     /// 两个房间的 `connect` 会互相覆盖 —— 表现是数字乱跳，而且不报错。
@@ -1291,13 +1394,15 @@ mod tests {
         // 两个房间**都**连上（这正是新的模型：连接与 ↑/↓ 无关）。
         connect_work(&store);
         store.apply_update(ReceiverUpdate {
+            server: FIXTURE_SERVER.to_owned(),
             room: "default".to_owned(),
             event: ReceiverEvent::Status(ReceiverStatus::Connecting {
-                server: "http://127.0.0.1:9501".to_owned(),
+                server: FIXTURE_SERVER.to_owned(),
                 room: "default".to_owned(),
             }),
         });
         store.apply_update(ReceiverUpdate {
+            server: FIXTURE_SERVER.to_owned(),
             room: "default".to_owned(),
             event: ReceiverEvent::Status(ReceiverStatus::Connected {
                 latest_id: 5,
@@ -1311,6 +1416,7 @@ mod tests {
             peer("d2", "MacBook", "desktop"),
         ])));
         store.apply_update(ReceiverUpdate {
+            server: FIXTURE_SERVER.to_owned(),
             room: "default".to_owned(),
             event: ReceiverEvent::DevicesChanged(vec![peer("d3", "iPad", "tablet")]),
         });
@@ -1977,7 +2083,7 @@ mod tests {
             "push_history",
             |_| {},
             |store| {
-                store.push_history("work", vec![text(1, "work", "a")]);
+                store.push_history(FIXTURE_SERVER, "work", vec![text(1, "work", "a")]);
             },
         );
     }
@@ -2154,7 +2260,7 @@ mod tests {
                 room: "work".to_owned(),
             },
         )));
-        store.push_history("default", vec![]);
+        store.push_history(FIXTURE_SERVER, "default", vec![]);
 
         let snapshot = store.snapshot();
         assert!(
@@ -2243,6 +2349,7 @@ mod tests {
         // ⚠️★ 房间名由**更新自己带**（§4.7），不是从条目的 `room` 字段推 ——
         // 所以这里要显式给 `default`，不能图省事全用 `from_work`。
         store.apply_update(ReceiverUpdate {
+            server: FIXTURE_SERVER.to_owned(),
             room: "default".to_owned(),
             event: ReceiverEvent::Entry(Box::new(text(1, "default", "来自默认"))),
         });
