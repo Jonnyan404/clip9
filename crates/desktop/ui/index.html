@@ -769,8 +769,7 @@ table.ra td input[type='checkbox'] { margin: 0; }
 
             <div class="pane" id="pane-rooms">
                 <h3>服务端与房间</h3>
-                <p class="sub">每一行是一个房间：↑ 决定它收不收你的剪贴板，↓ 决定它的内容写不写进你的剪贴板。<br>
-                   ⚠️ <b>「收进剪贴板」全局只能一个</b> —— 两个房间同时往剪贴板写，你看到的是随机内容。</p>
+                <p class="sub">↑ 把本机剪贴板发到这个房间，↓ 把这个房间的内容收进本机剪贴板（<b>全局只能一个</b>）。</p>
                 <table class="ra" id="rooms-table">
                     <thead><tr>
                         <th class="c-name">名字</th><th class="c-server">服务端</th><th class="c-room">房间</th>
@@ -783,9 +782,8 @@ table.ra td input[type='checkbox'] { margin: 0; }
 
             <div class="pane" id="pane-sync" hidden>
                 <h3>方向与内容</h3>
-                <p class="sub">↑ <b>发到房间</b>：本机剪贴板的内容发到这个房间（可多选）。<br>
-                   ↓ <b>收进剪贴板</b>：这个房间的实时内容<b>写进本机剪贴板</b>（全局只能一个房间）。</p>
-
+                <!-- ⚠️ 这一页**故意没有 `.sub`**（2026-09-28 精简）：下面两张卡片的 `.st`
+                     已经把「谁发给谁」写全了，再来一句就是**同一句话的第二个说法**。 -->
                 <div class="subcard" style="margin-bottom:13px">
                     <div class="st">↑ 发到房间（可多房间同时开）</div>
                     <div class="chk"><span class="sq on" id="sc-text">✓</span>文本<span class="hint">默认开</span></div>
@@ -809,108 +807,75 @@ table.ra td input[type='checkbox'] { margin: 0; }
                     </div>
                 </div>
 
+                <!-- ⚠️★ 原来这里是一整张黄色警告卡（六行）。2026-09-28 精简成一句 ——
+                     那六行里有三句是**别处已经说过的**：
+                     ①「开关不决定连不连」在「监听与去重」那一页说得更全（那里还写着
+                       「设备与延迟照旧看得见」）；
+                     ②「水印 / 不靠时间窗猜」是**实现细节**，用户不需要拿它来判断什么。
+                     留着的一句是**用户真的会搞错**的那件：历史重放**不写剪贴板**。 -->
                 <div class="divider"></div>
-                <div class="subcard" style="border-color:color-mix(in srgb, var(--warn) 40%, transparent)">
-                    <div style="font-size:12px;line-height:1.6">
-                        ⚠️ <b>两个方向默认都是关的</b>：装完既不该动你的剪贴板，也不该把本机剪贴板发出去 ——
-                        要用哪个房间，在左边栏给它点开关。<br>
-                        ⚠️★ <b>开关只决定「有没有东西流过去」，不决定连不连</b> ——
-                        每个房间**一直**连着，所以两个都关时你照样看得到在线设备、延迟和历史。<br>
-                        ⚠️ 连上时服务端会重放历史。<b>历史只进列表、不写剪贴板</b> ——
-                        边界由握手时给的<b>水印</b>（<code>config.latestId</code>）确定，<b>不靠时间窗猜</b>。
-                    </div>
-                </div>
+                <p class="sub" style="margin:0">装完两个方向都关着。连上时服务端会重放历史 —— <b>历史只进列表，不写剪贴板</b>。</p>
             </div>
 
             <div class="pane" id="pane-watch" hidden>
                 <h3>监听与去重</h3>
-                <p class="sub">本机剪贴板是<b>轮询</b>读的（macOS / X11 上没有「剪贴板变了」这个通知）。<br>
-                   间隔就是「多快能同步过去」与「空转」之间的取舍。</p>
+                <p class="sub">剪贴板是<b>轮询</b>读的（系统没有「剪贴板变了」这个通知）。间隔 = 多快同步过去 / 空转多少。</p>
                 <div class="subcard">
                     <div class="field" style="margin:0">
                         <label>监听间隔（毫秒）</label>
                         <input class="inp" id="sc-poll" type="number" min="1" />
                     </div>
-                    <p class="sub" style="margin:7px 0 0">⚠️ 改完点「保存」才生效 —— 它会重启监听线程（改配置不影响一个已经在跑的线程）。<br>
-                       ⚠️ 但下面那条规矩优先：<b>一个房间的 ↑ 都没开时，它不会把线程起起来</b>。</p>
+                    <p class="sub" style="margin:7px 0 0">改完点「保存」才生效 —— 它会重启监听线程。</p>
                 </div>
+                <!-- ⚠️★ 原来这张卡片是一整段 11 行的说明（2026-09-28 精简到两行）。留下的两句是
+                     **用户会搞错、而且错了看得出来**的：①「全关就不读了」——它决定了「读不读我的
+                     剪贴板」这件隐私上的事；②「↓ 不是理由」——那正是用户 2026-09-27 提的那一问。
+                     ⚠️ 删掉的那几句里，「每个房间一直连着」也说了两遍（「方向与内容」那页刚说过），
+                     而「这一条是 2026-09-27 改的」「原来那个总开关不存在了」是**我们自己的历史**，
+                     用户不需要知道 —— 需要知道这件事的是**改这一段的人**，而它写在设计稿与
+                     `config.rs` 的模块文档里，不在这儿。 -->
                 <div class="subcard" style="margin-top:13px">
                     <div class="st">什么时候在读你的剪贴板</div>
-                    <div style="font-size:12px;line-height:1.6">
-                        ⚠️★ <b>有一个房间开着 ↑ 才读</b>；一个都没开，客户端<b>完全不读</b>剪贴板
-                        （那个轮询线程直接停掉）。关掉最后一个 ↑ 的那一刻就停。<br>
-                        ⚠️ <b>↓ 不影响这件事</b> —— 「收进剪贴板」是把房间里的内容写进来，
-                        那是接消息那条路干的活，跟「读本机剪贴板」无关。<br>
-                        ⚠️ ★ <b>它不停连接、不停接收、不停延迟测量</b> ——
-                        每个房间<b>一直</b>连着，所以一个 ↑ 都没开时你照样看得到在线设备与延迟，
-                        别人发来的内容也照样进列表（只是<b>不发你的剪贴板出去</b>）。<br>
-                        ⚠️ 这一条是 2026-09-27 改的（原来那个独立的「剪贴板监听」总开关早就不存在了）：
-                        现在的判据只有「有没有房间开着 ↑」这一条 ——
-                        省得「开关关着却在读剪贴板」这种事没人说得清。
-                    </div>
+                    <p class="sub" style="margin:0">有房间开着 <b>↑</b> 才读；一个都没开就把轮询线程<b>停掉</b>。<br>
+                       ↓ 与此无关，<b>连接照常</b> —— 设备、延迟、别人发来的内容都不受影响。</p>
                 </div>
                 <div class="subcard" style="margin-top:13px">
                     <div class="st">去重</div>
-                    <div style="font-size:12px;line-height:1.6">
-                        同一份内容连着出现<b>不会重复发</b> —— 按类型（文本 / 图片 / 文件）各记一份指纹，
-                        短时间内一样就跳过。<b>没有开关</b>：关掉它只会让同一个东西发两遍。
-                    </div>
+                    <p class="sub" style="margin:0">同一份内容连着出现不会发两遍（按类型记指纹）。<b>没有开关</b>。</p>
                 </div>
             </div>
 
             <div class="pane" id="pane-desktop" hidden>
                 <h3>窗口与托盘</h3>
-                <p class="sub">这些是桌面端独有的 —— 手机和网页版没有。</p>
                 <div class="subcard">
                     <div class="chk"><span class="sq" id="sc-autostart"></span>开机自动启动</div>
-                    <p class="sub" style="margin:7px 0 0">⚠️ 这个勾画的是<b>系统里的真相</b>（启动项在不在），不是我们「想要」的值。装完默认<b>不开</b>。</p>
+                    <p class="sub" style="margin:7px 0 0">勾的是<b>系统里的真相</b>（启动项在不在），不是我们「想要」的值。装完默认不开。</p>
                 </div>
                 <div class="subcard" style="margin-top:13px">
                     <div class="st">托盘</div>
-                    <p class="sub" style="margin:0">托盘菜单里有：打开主窗口、开机自动启动、切换房间、退出。<br>
-                       ⚠️ 「暂停 / 恢复同步」那一项 2026-09-26 删掉了（它背后的总开关不存在了）——
-                       现在**要不要发本机剪贴板**只看每个房间的 ↑。<br>
-                       ⚠️ 关掉主窗口只是<b>藏起来</b> —— 同步照常跑，要真退出得用托盘里的「退出」。</p>
+                    <p class="sub" style="margin:0">菜单：打开主窗口 / 开机自动启动 / 切换房间 / 退出。<br>
+                       关掉窗口只是<b>藏起来</b> —— 同步照常跑，要退出得走托盘。</p>
                 </div>
             </div>
 
             <div class="pane" id="pane-hotkeys" hidden>
                 <h3>快捷键</h3>
                 <p class="sub">还没做。</p>
-                <div class="subcard">
-                    <div style="font-size:12px;line-height:1.6">
-                        ⚠️ <b>这一页是占位</b>（界面稿 2 里有这一项，所以留着位置）。<br>
-                        真要做的话得先定：全局快捷键（系统级，要注册）还是窗口内快捷键（只在主窗口聚焦时生效）——
-                        前者会跟别的应用抢键，后者在很多场景下按不到。这个取舍没定之前不做。
-                    </div>
-                </div>
             </div>
 
             <div class="pane" id="pane-notify" hidden>
                 <h3>通知与主题</h3>
-                <p class="sub">剪贴板上那两件事<b>不在主界面上说</b> —— 它们发生时你多半不在这个窗口里
-                   （刚在别的程序里按了 ⌘C），所以走<b>系统通知</b>。<br>
-                   ⚠️ 主界面那一格提示是<b>按房间</b>的（长在房间标题下面），而剪贴板这条路的
-                   目标是<b>所有</b>开着 ↑ 的房间 —— 挂在某一个房间的名下是假话。</p>
+                <p class="sub">剪贴板上那两件事发生时你多半不在这个窗口里，所以走<b>系统通知</b>。</p>
                 <div class="subcard">
                     <div class="st">剪贴板的系统通知</div>
                     <div class="chk"><span class="sq on" id="sc-notify-up">✓</span>本机剪贴板<b>没发出去</b>时通知我<span class="hint">成功不通知</span></div>
                     <div class="chk"><span class="sq on" id="sc-notify-dl">✓</span>房间的内容<b>写进本机剪贴板</b>时通知我</div>
-                    <p class="sub" style="margin:7px 0 0">⚠️ 第一条<b>只在没发出去时</b>响：
-                       「已发送」是噪音 —— 你本来就知道自己刚复制了什么；
-                       要紧的是「它没出去」，那才是你不知道的事。<br>
-                       ⚠️ 第二条<b>每次写成都</b>响：剪贴板被改这件事你看不见，
-                       不说的话你会把房间里的内容当成自己刚才复制的（然后粘到错的地方）。<br>
-                       ⚠️ 两个都<b>只在对应方向真的开着</b>时才有机会响：一个房间的 ↑ 都没开时
-                       监听线程根本不跑；↓ 都没开时没有东西会写你的剪贴板。</p>
+                    <p class="sub" style="margin:7px 0 0">第一条<b>只在没发出去时</b>响（「已发送」是噪音）；第二条<b>每次写成都</b>响（剪贴板被改你看不见）。</p>
                 </div>
                 <div class="subcard" style="margin-top:13px">
                     <div class="st">主题</div>
                     <div style="font-size:12px;line-height:1.6">
                         ⚠️ <b>还没做</b>：界面稿里明暗两套令牌都画好了，但<b>没有地方切</b>。
-                        要做的话得先定「跟随系统 / 手动选」这两条路怎么共存 ——
-                        那不是加一个开关的事（手动选完之后系统变了要不要跟？）。
-                        取舍没定之前先不做，这里只留着位置说明它没被忘掉。
                     </div>
                 </div>
             </div>
@@ -940,10 +905,14 @@ table.ra td input[type='checkbox'] { margin: 0; }
                             <span class="k">房间 / 条目</span><span class="v" id="srv-rooms">—</span>
                             <span class="k">运行时长</span><span class="v" id="srv-uptime">—</span>
                         </div>
+                        <!-- ⚠️★ Jonny 2026-09-28：「打开网页版」挨着「重启 / 停止」放（原来中间
+                             夹一个 `flex:1`，把它推到整行的最右边 —— 看着像**另一组**按钮，
+                             而且它跟左边那两个是同一件事：都是**对这个服务端**做的动作）。
+                             ⚠️ 顺序也有讲究：重启 / 停止在前（改完配置之后最常点的两个），
+                             打开网页版在后（它是「去看一眼」，不是「改一下」）。 -->
                         <div style="display:flex;gap:8px;margin-bottom:14px;">
                             <button class="btn" id="srv-restart">重启</button>
                             <button class="btn danger" id="srv-stop">停止</button>
-                            <div style="flex:1"></div>
                             <button class="btn" id="srv-open">🌐 打开网页版</button>
                         </div>
                         <div class="divider"></div>
@@ -962,7 +931,7 @@ table.ra td input[type='checkbox'] { margin: 0; }
 
             <div class="pane" id="pane-log" hidden>
                 <h3>日志</h3>
-                <p class="sub">内嵌服务端的日志（它的 stdout/stderr 都倒进这个文件）。⚠️ 客户端自己那些「发不出去 / 存不上」的提示在<b>主界面顶部</b>闪一次，不在这儿。</p>
+                <p class="sub">内嵌服务端的日志。客户端自己的提示在<b>主界面顶部</b>闪一次，不在这儿。</p>
                 <div class="subcard"><div class="kv"><span class="k">文件</span><span class="v" id="log-path">—</span></div></div>
                 <div style="display:flex;gap:8px;margin-bottom:9px">
                     <button class="btn" id="log-refresh">刷新</button>
@@ -973,7 +942,7 @@ table.ra td input[type='checkbox'] { margin: 0; }
 
             <div class="pane" id="pane-diag" hidden>
                 <h3>关于</h3>
-                <p class="sub">出问题时先看这里 —— 「配置在哪个文件」「连的是哪台服务端」是最常见的两个原因。</p>
+                <p class="sub">出问题时先看这里。</p>
                 <div class="subcard">
                     <div class="kv">
                         <span class="k">数据目录</span><span class="v" id="dg-data">—</span>
