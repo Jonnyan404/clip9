@@ -4,6 +4,10 @@
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>clip9</title>
+<!-- ⚠️★ 同步加载、而且在 `<style>` **之前**：它要把上次选的主题在第一次绘制之前贴到
+     `<html data-theme>` 上，否则深色用户每次启动都先闪一下白屏（见 boot.js 的模块注释）。
+     它**不是** `defer` 的 —— 这一点是它存在的全部理由（`app.js` / `i18n.js` 都是 defer）。 -->
+<script src="./boot.js"></script>
 <style>
 /* ⚠️★ **这一段是从两份界面稿逐字拼出来的**（`desktop-client-mockup.html` +
    `desktop-client-settings-mockup.html`），剔除的只有演示页专属的块（说明条 / 标题 /
@@ -627,6 +631,19 @@ table.ra td input[type='checkbox'] { margin: 0; }
    ⚠️ 用 `--sidebar-chip-border`（不是 `--border`）：它在侧栏那套灰底上才够清楚。 */
 .sidebar-foot button { border: 1px dashed var(--sidebar-chip-border); }
 .sidebar-foot button + button { margin-top: 6px; }
+
+/* ⚠️★ 侧栏顶部那排界面偏好（主题 / 语言 / 收起）—— 见 `index.html` 里 `.sidebar-head`
+   上那段注释（「图标放哪儿、为什么放那儿」）。
+   ⚠️ 它们必须比房间行**轻**：这一栏的主角是房间列表，这一排是「设置」。
+   所以不给边框、不给底色，进 hover 才显一下 —— 与底部那两个按钮（虚线框、一眼是「动作」）
+   刻意不同：那一对是**日常要点的**，这一排是偶尔点一次的。 */
+.sidebar-head .tools { display: flex; align-items: center; gap: 2px; }
+.sidebar-head .tool {
+    border: 0; background: transparent; color: var(--sidebar-sub);
+    font: inherit; font-size: 12px; line-height: 1;
+    padding: 3px 4px; border-radius: 5px; cursor: default;
+}
+.sidebar-head .tool:hover { background: var(--sidebar-hover); color: var(--sidebar-head); }
 /* 「来源房间」那一格里的说明 —— ⚠️ 同样不能复用 .hint：稿 2 里它**紧跟在房间名后面**
    （不是右对齐），而 .hint 是 `margin-left:auto` 的右对齐短提示。 */
 .inp .src-note { color: var(--text-2); font-size: 11px; margin-left: 8px; }
@@ -697,7 +714,16 @@ table.ra td input[type='checkbox'] { margin: 0; }
          `Snapshot.monitoring` + 托盘里那一项 + 稿 1 的 `.sync` 那几条 CSS（进了生成脚本的剔除名单）。 -->
     <div class="body">
         <div class="sidebar">
-            <div class="sidebar-head">房间 <span class="count" id="room-count">—</span></div>
+            <!-- ⚠️★ 侧栏顶部这一行是**这一栏唯一永远在的地方**：房间列表会滚、
+                 底部两个按钮跟着栏走，而它钉在最上面。所以「界面偏好」那几件
+                 （主题、语言、收起）都放这儿（Jonny 2026-09-28：「图标放在侧栏顶部」）——
+                 收起之后也要点得到，那正是它长在这一行的理由。 -->
+            <div class="sidebar-head">
+                <span class="ttl">房间 <span class="count" id="room-count">—</span></span>
+                <div class="tools">
+                    <button class="tool" id="btn-theme" title="切到深色模式">🌙</button>
+                </div>
+            </div>
             <div class="rooms" id="rooms"></div>
             <div class="problems" id="problems" hidden></div>
             <!-- ⚠️★ 底部这两个按钮是**动作**，不是房间行（所以给了虚线框，见 shell.css）。

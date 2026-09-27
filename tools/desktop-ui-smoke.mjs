@@ -18,10 +18,13 @@
 // `cloud-clip/tools/page-smoke.mjs`，**只有手写 UI 这一侧是裸奔的**
 //（见 `docs/specs/desktop-client.md` §1.1 缺口 C）。
 //
-// # 判据（**第 1、4、5、6、7、8、9 条算失败**）
+// # 判据（**第 1、2、4、5、6、7、8、9、10 条算失败**）
 //
 // 1. `app.js` 引用到的每一个 id，`index.html` 里必须存在 —— 不通过 = 退出码 1；
-// 2. `index.html` 真的加载了 `app.js`（改名只改一侧 = 整页不工作）；
+// 2. `index.html` 真的加载了**每一个**该加载的脚本（`boot.js` / `app.js`）；
+//    ⚠️ 少一个的症状**各不相同**，所以每一条都写清了「少了会怎样」（见下面那张表）——
+//    「改名只改一侧」这句话对 `boot.js` 是不准的：少了它页面照常能用，
+//    只有深色用户会发现启动时闪一下白屏（那是**最容易被当成「本来就那样」**的一类）；
 // 3. 反向（HTML 有、JS 没引用）**只提示**，而且分两种：
 //    · 「只被选择器用」（`#rooms-table { … }` 这类样式钩子）→ 正常，**不吵**；
 //    · 「既没被 JS 引用、也没有选择器用它」→ 才提一句（可能是死标记，与 §8.1 第 6 条那两段死 CSS 同类）。
@@ -35,6 +38,9 @@
 //    `SettingsPatch` 的每个字段，保存时都要发回去 —— 不通过 = 退出码 1。理由见下。
 // 9. **页面不许拿到系统通知的权限**（`capabilities/default.json` 里不许出现 `notification*`）
 //    —— 不通过 = 退出码 1。理由见下。
+// 10. **界面偏好的存储键，`boot.js` 与 `app.js` 必须一致**（`const X_KEY = '…'` 那一族）
+//    —— 不通过 = 退出码 1。理由见下。
+// 11. **两份脚本合起来要能过一遍解析** —— 不通过 = 退出码 1。理由见下。
 //
 // # ⚠️ 第 4 条为什么算失败，而不是「提一句」
 //
@@ -125,6 +131,36 @@
 // ⚠️ 这条**不是**「插件不许注册」：插件必须注册（Rust 侧要用它），
 // 判的只是**权限那一格**。
 //
+// # ⚠️ 第 10 条为什么算失败（存储键两份要一致）
+//
+// 2026-09-28 加了「明暗主题」与「中英界面」。这两件事各需要一个**存储键**
+// （`localStorage`），而它们都必须在**第一次绘制之前**生效 —— 所以读它的那一份
+// （`ui/boot.js`）是**同步**的、在 `app.js` **之前**跑，**读不到 `app.js` 里的常量**。
+// 于是同一个键名必然写了两份。
+//
+// ⚠️★ 漂了之后的症状很坏，而且**只在重启之后**才看得出来：
+//   · `boot.js` 用 `theme` 读、`app.js` 用 `appTheme` 写 → 点一下能换、重启就变回去；
+//   · 反过来 → 存下去了，可启动时贴的是另一个键的值（等于没存）。
+// 两种都不报错、不 panic，用户只会觉得「这软件记不住我的选择」。
+//
+// ⚠️ 清单**从 `boot.js` 里数出来**、不手写：写死一份的话，下次谁在 `boot.js` 里多读一个键，
+// 这条自检照样绿 —— 而它绿的时候看起来一切正常（这正是这类检查最容易失效的方式）。
+//
+// # ⚠️ 第 11 条为什么算失败（两份脚本要能一起解析）
+//
+// 2026-09-28 加 `boot.js` 时当场踩到的：它和 `app.js` 都是**普通脚本**（不是 module），
+// 而普通脚本顶层的 `const` / `let` 进的是**同一个全局词法作用域** ——
+// 于是「两份各自都对、各写一个 `const THEME_KEY`」的结果是**后解析的那一份整个不执行**：
+// 页面还能显示，只是一动不动（一个字节的数据都画不出来）。
+//
+// ⚠️★ 这个错**没有任何前兆**：两份文件单独看都对、`node --check` 各自也过，
+// 只有把两份**拼在一起**才看得见（浏览器就是这么干的）。所以这条判据也照着拼。
+// ⚠️ 用 `new Function` 是**只编译不执行** —— 函数体一行都不会跑
+//（`app.js` 开头那个 `throw` 是为了「用浏览器直接打开」时给人一句话，别让它在这里生效）。
+//
+// ⚠️ 它会**顺带**拦下所有语法错（漏括号之类）。那也算赚的：手写这一侧没有构建步骤，
+// 语法错在别处一样没人拦。
+//
 // # ⚠️ 三条「看不见」的地方（写在这里，免得下次以为是漏检）
 //
 // · **只认字符串字面量**：`el('row-' + i)` 这种拼出来的看不见 ——
@@ -136,6 +172,8 @@
 //   是**另一个结构体**，它的字段在 JS 那边长在 `patch.sync` 里 ——
 //   「哪个字段挂在哪一组」是**第三个地方**的知识，脚本猜不出来。
 //   ⚠️ 所以嵌进去的字段漏了，这一条拦不住（先把边界写清，免得下次以为是漏检）。
+// · **`boot.js` 不参与第 1 条**（id 引用）：它跑在 `<body>` 解析之前，本来就碰不到任何
+//   元素 —— 里面出现一个 `getElementById('x')` 才是错的。它只被第 10 条读（比对常量）。
 
 import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
@@ -147,11 +185,22 @@ const [
   htmlPath = join(root, 'crates/desktop/ui/index.html'),
   rustPath = join(root, 'crates/desktop/src/commands.rs'),
   capabilitiesPath = join(root, 'crates/desktop/capabilities/default.json'),
+  bootPath = join(root, 'crates/desktop/ui/boot.js'),
 ] = process.argv.slice(2);
 
 const js = readFileSync(jsPath, 'utf8');
 const html = readFileSync(htmlPath, 'utf8');
 const rust = readFileSync(rustPath, 'utf8');
+/** ⚠️ 判据 10 要读它（界面偏好的存储键在 `boot.js` 与 `app.js` 里**各写了一份**）。
+ * 读不到就是一条**真的失败** —— 那正是「`boot.js` 被改名 / 删掉」的样子，
+ * 而它的症状是「主题与语言每次启动都闪一下默认值」，不报错、也看不出来。 */
+let boot = null;
+let bootReadError = null;
+try {
+  boot = readFileSync(bootPath, 'utf8');
+} catch (error) {
+  bootReadError = error;
+}
 
 /** 单参调用 `fn('literal')` 里的字面量。 */
 function singleArgLiterals(source, fnName) {
@@ -201,9 +250,23 @@ for (const id of [...declared].filter((id) => !referenced.has(id) && !isDynamic(
 
 let failed = false;
 
-if (!/src=["'][^"']*app\.js["']/.test(html)) {
-  failed = true;
-  console.error('✗ index.html 没有加载 app.js —— 整页都是死的（改名只改了一侧？）');
+/** ⚠️★ 页面的脚本**一个都不能少**，而且「少了会怎样」每一条都不一样 ——
+ * 所以这里逐条写清症状，而不是打印一句「缺少脚本」。
+ *
+ * ⚠️ `boot.js` 那条尤其值得单独说：它少了之后**页面照常能用**，只有界面偏好
+ * （主题 / 语言）会在启动时闪一下默认值 —— 那是最容易被当成「本来就那样」的一类坏，
+ * 而它**一次都不会报错**。
+ */
+const REQUIRED_SCRIPTS = [
+  ['boot.js', '主题与语言不会在第一次绘制之前贴上 —— 深色用户每次启动都先闪一下白屏'],
+  ['app.js', '整页都是死的（一个字节的数据都画不出来）'],
+];
+for (const [script, symptom] of REQUIRED_SCRIPTS) {
+  const pattern = new RegExp(`src=["'][^"']*${script.replace('.', '\\.')}["']`);
+  if (!pattern.test(html)) {
+    failed = true;
+    console.error(`✗ index.html 没有加载 ${script}：${symptom}（改名只改了一侧？）`);
+  }
 }
 
 if (missing.length) {
@@ -380,6 +443,72 @@ if (capabilities) {
     console.error(`✗ 能力文件给页面放了系统通知的权限：${granted.join('、')}`);
     console.error('  ⚠️ 发通知的只有 Rust 侧的 `notify::SystemNotifier` —— 页面**不该**有这个能力');
     console.error('    （desktop-client.md §2：页面只跟 IPC 命令说话）。要去掉它。');
+  }
+}
+
+// ── 判据 10：界面偏好的存储键，两份脚本必须一致（理由见文件头）──────────────
+/**
+ * 取一份源码里 `const NAME = '值';` 的那个值。
+ *
+ * ⚠️★ 正则**锚在行首**（`^\s*const`，带 `m`）：不锚的话它会去匹配**注释里**提到的
+ * `const X_KEY = '…'` —— 实测当场踩到过（那条注释就在解释这个常量）。
+ * 症状是「对着注释里的示例报红」，而更坏的方向是**注释里随便写一个值就能让这条自检失去意义**。
+ *
+ * ⚠️ 也只认**单引号字面量**这一种写法：写得别致一点（模板串 / 拼出来）就返回 `null`，
+ * 而 `null` 会让下面判红 —— 那是故意的。
+ */
+function constString(source, name) {
+  const match = new RegExp(`^\\s*const ${name} = '([^']*)';?\\s*$`, 'm').exec(source ?? '');
+  return match ? match[1] : null;
+}
+
+if (bootReadError) {
+  failed = true;
+  console.error(`✗ 读不出 ${bootPath}：${bootReadError.message}`);
+  console.error('  ⚠️ 主题 / 语言就是靠它在第一次绘制之前贴上去的 —— 少了它，界面偏好会闪一下默认值。');
+} else {
+  // ⚠️★ 这些键**故意写了两份**：`boot.js` 要在 `app.js` **之前**跑（见它的模块注释），
+  // 所以它读不到 `app.js` 里那份常量。而「两份会漂」这件事在这里是**真的危险**：
+  // 键漂了之后，`boot.js` 用 A 键去读、`app.js` 用 B 键去写 ——
+  // 症状是「**点一下能换、重启就变回去**」，或者反过来「存下去了、启动时又不生效」。
+  // 两种都不报错，而且都只在**重启之后**才看得出来（用户早就忘了自己点过什么）。
+  //
+  // ⚠️ 清单是**从 `boot.js` 里数出来的**（不手写）：写死一份清单的话，
+  // 下次谁在 `boot.js` 里多读一个键、忘了在 `app.js` 里对上，这一条**照样绿**。
+  // 方向只有一个（boot → app）：`app.js` 里可以有自己的键（那个不需要 `boot.js` 认识）。
+  // ⚠️ 锚在行首（同 `constString` 的理由）：`boot.js` 的注释里也写着 `const X_KEY = '…'`。
+  const bootKeys = [...boot.matchAll(/^\s*const (\w+_KEY) = '([^']*)'/gm)];
+  if (!bootKeys.length) {
+    failed = true;
+    console.error(`✗ 判据 10 在 ${bootPath} 里一个 \`const X_KEY = '值';\` 都没找到 —— 这条自检要跟着代码改。`);
+  }
+  for (const [, name, value] of bootKeys) {
+    const inApp = constString(js, name);
+    if (inApp === null) {
+      failed = true;
+      console.error(`✗ ${name} 只在 boot.js 里有（'${value}'），app.js 里没有同名常量 —— 这条自检要跟着代码改。`);
+    } else if (inApp !== value) {
+      failed = true;
+      console.error(`✗ ${name} 在两份脚本里不一样：boot.js 是 '${value}'、app.js 是 '${inApp}'`);
+      console.error('  ⚠️ 症状是「点一下能换、重启就变回去」（或反过来），**不报错**，只有重启后才看得出来。');
+    }
+  }
+}
+
+// ── 判据 11：两份脚本合起来要能过一遍解析（理由见文件头）────────────────
+if (boot !== null) {
+  try {
+    // ⚠️ **只编译、不执行**：`new Function(…)` 只把源码过一遍解析器，
+    // 函数体一行都不会跑（否则 `app.js` 开头那个 `throw` 会立刻把我们打停）。
+    new Function(`${boot}\n${js}`);
+  } catch (error) {
+    failed = true;
+    console.error(`✗ 两份脚本合起来解析不过：${error.message}`);
+    console.error('  ⚠️★ 最常见的一种是「两份脚本各自都好、合起来却死了」：它们都是**普通脚本**');
+    console.error('    （不是 module），顶层的 `const` / `let` 进的是**同一个**全局词法作用域 ——');
+    console.error('    同名变量会让**后解析的那一份整个不执行** = 整页不动。');
+    console.error('    修法：`boot.js` 里的常量放进它的 IIFE（见那个文件的注释）。');
+    console.error('  ⚠️ 顺带的收益：普通的语法错也会在这里被拦下 —— 这一侧没有构建步骤，别处没人拦。');
   }
 }
 
