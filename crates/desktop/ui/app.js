@@ -68,6 +68,25 @@ let lastLimits = { textLimit: 0, fileLimit: 0 };
  */
 let lastEntries = [];
 
+/** 「展开」的两份状态。⚠️ 都按 **entry.id**，而且**切房间时必须清**。
+ *
+ * ⚠️★ 为什么按 id 而不是下标：`renderTimeline` 每次都是**整表重建**，
+ * 下标会被新消息挤走 —— 那样「展开」的会是**另一条**，而且不报错。
+ * ⚠️★ 为什么切房间要清：id 是**每个房间各自**单调的（`CONTRIBUTING.md` §6），
+ * 不清的话会把「B 房间的 7 号」当成「A 房间展开过的 7 号」，展开出**别人的内容**。
+ */
+const openedIds = new Set(); // 现在摊开的那几条
+const openedBodies = new Map(); // id -> 取回来的**全文**（取过一次就留着，收起也不丢）
+
+/** 超过多少字节才画「展开」。
+ *
+ * ⚠️ 这个数是**估的**：卡片宽约 590px、13px 字体 ≈ 一行 80 字符，
+ * 而 CSS 里 clamp 的是 12 行 → 约 960 字节。两处要对得上（改了 clamp 行数就该改这里），
+ * 但**对不齐也不致命**：判据偏小只是多画一个「展开」，点了照样正常。
+ * ⚠️ 不改成「量一下有没有被 clamp」的理由：那要为每张卡片强制一次排版。
+ */
+const EXPANDABLE_BYTES = 960;
+
 const el = (id) => document.getElementById(id);
 
 /** 一个方框开关（稿子里的 `<span class="sq">`）。
@@ -197,7 +216,11 @@ function renderEntry(entry, index) {
       card.append(row);
     }
   } else {
-    card.append(h('div', 'txt', entry.text));
+    // ⚠️★ 这里的 `entry.text` 是**截断预览**（壳只给这么多，见 `EntryView::for_snapshot`）。
+    // 展开过的那些改用取回来的全文来画（`openedBodies`），所以**下一次重绘不会把它收回去**。
+    // ⚠️ 两处规则要一致（这里与 `toggleEntry`），不一致的表现是「展开之后过一会儿自己收起来」。
+    const open = openedIds.has(entry.id);
+    card.append(h('div', open ? 'txt open' : 'txt', openedBodies.get(entry.id) ?? entry.text));
   }
 
   const foot = h('div', 'ft');
@@ -220,8 +243,61 @@ function renderEntry(entry, index) {
     foot.append(h('span', 'spacer'));
     foot.append(h('span', 'tag', '文件'));
   }
+  // ⚠️★ 长文默认**截断**（CSS clamp 12 行），这里给一个「展开 / 收起」。
+  // ⚠️ 判据用**字节数**而不是「量一下高度」：量高度要为每张卡片强制排版一次
+  //（200 张 = 200 次），而算术不碰 DOM。
+  // 代价是**偶尔**点开之后看不到变化（那条恰好没被 clamp 住）—— 但按钮会变成「收起」，
+  // 所以那是「点了有反应但没必要」，不是「点了没反应」（后者才是这个项目最忌讳的）。
+  if (entry.kind === 'text' && (entry.truncated || entry.textBytes > EXPANDABLE_BYTES)) {
+    const toggle = h('button', 'lnk', expandLabel(entry));
+    toggle.addEventListener('click', () => toggleEntry(card, entry, toggle));
+    foot.append(h('span', 'spacer'), toggle);
+  }
   card.append(foot);
   return card;
+}
+
+/** 「展开」那颗按钮上的字（⚠️ 两处渲染点都要用它，别各写一份）。 */
+function expandLabel(entry) {
+  if (openedIds.has(entry.id)) return '收起';
+  // ⚠️ 被截断的说清「一共多大」—— 否则用户以为这就是全文（只是有点长）。
+  return entry.truncated ? `展开全文（共 ${sizeLabel(entry.textBytes)}）` : '展开';
+}
+
+/** 展开 / 收起一条。
+ *
+ * ⚠️★ 只改**这一张卡片**的 DOM，不触发整屏重绘；`openedIds` / `openedBodies` 才是状态，
+ * 所以下一次重绘会照同样的规则画回来。
+ *
+ * ⚠️★ **只有真被截断的才去取全文**（`entry.truncated`）：短消息本地摊开就够，
+ * 省一次 IPC。判错的代价是「本地摊开却没内容」—— 而截断与否是壳算好给的，不会错。
+ */
+async function toggleEntry(card, entry, button) {
+  const text = card.querySelector('.txt');
+  if (openedIds.has(entry.id)) {
+    openedIds.delete(entry.id);
+    text.classList.remove('open');
+    button.textContent = expandLabel(entry);
+    return;
+  }
+  if (entry.truncated && !openedBodies.has(entry.id)) {
+    button.disabled = true;
+    button.textContent = '取全文中…';
+    try {
+      openedBodies.set(entry.id, await invoke('entry_text', { id: entry.id }));
+    } catch (error) {
+      // ⚠️ 取不到要**说出来**：最常见的原因是这条已经被挤出去了（或换了房间）。
+      button.disabled = false;
+      button.textContent = expandLabel(entry);
+      showNotice('skip', `取不到全文：${error}`);
+      return;
+    }
+    button.disabled = false;
+    text.textContent = openedBodies.get(entry.id);
+  }
+  openedIds.add(entry.id);
+  text.classList.add('open');
+  button.textContent = expandLabel(entry);
 }
 
 /** 那个延迟胶囊（§4.3）。三种取值**分开画**。 */
@@ -415,6 +491,13 @@ function renderDevices(state) {
 /** 整个界面。⚠️ 「有没有房间」也要画出来 —— 半个状态是骗人的。 */
 function render(state) {
   lastRooms = state.rooms;
+  // ⚠️★ 换房间**必须**把「展开」那两份状态清掉：`entry.id` 是每个房间各自单调的，
+  // 不清就会把「B 房间的 7 号」当成「A 房间展开过的 7 号」—— 展开出**别人的内容**，
+  // 而且不报错。⚠️ 这段必须在下面更新 `lastSelected` **之前**判。
+  if (state.selected !== lastSelected) {
+    openedIds.clear();
+    openedBodies.clear();
+  }
   lastSelected = state.selected;
   lastLimits = state.limits;
   el('room-count').textContent = String(state.rooms.length);
@@ -585,13 +668,25 @@ function openEntryMenu(entry, x, y) {
   copyText.append(h('span', null, '📋'), h('span', null, '复制内容'));
   copyText.addEventListener('click', () => {
     closeMenu();
-    // ⚠️ 文件条目**没有正文**，能复制的是**文件名**（§4.4 表格里写着这一条）。
-    const text = entry.kind === 'file' ? entry.fileName : entry.text;
-    if (!text) {
+    // ⚠️★ 文本条目**不在页面里取正文**：页面手里的 `entry.text` 是**截断预览**
+    //（壳只给 4 KiB，见 `EntryView::for_snapshot`），传回去会把长文**复制成半截**，
+    // 而且不报错（用户粘出来才发现少了）。所以文本条目一律走 `copy_entry`：
+    // 全文在壳里取、在壳里写剪贴板，一个字节都不进 webview。
+    if (entry.kind === 'text') {
+      invoke('copy_entry', { id: entry.id }).catch((error) =>
+        showNotice('err', `复制失败：${error}`),
+      );
+      return;
+    }
+    // ⚠️ 文件条目**没有正文**，能复制的是**文件名**（§4.4 表格里写着这一条）——
+    // 那是元数据，页面手里本来就有。
+    if (!entry.fileName) {
       showNotice('skip', '这条没有可复制的内容。');
       return;
     }
-    invoke('copy_to_clipboard', { text }).catch((error) => showNotice('err', `复制失败：${error}`));
+    invoke('copy_to_clipboard', { text: entry.fileName }).catch((error) =>
+      showNotice('err', `复制失败：${error}`),
+    );
   });
   menu.append(copyText);
 

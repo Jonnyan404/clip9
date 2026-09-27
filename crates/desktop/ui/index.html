@@ -195,7 +195,29 @@
 
     .card.me { align-self: flex-end; border-color: var(--sidebar-active-border); }
 
-    .card .txt { white-space: pre-wrap; word-break: break-word; }
+    /* ⚠️★ 长文默认**截断**（12 行）+「展开」。
+       一条 10 万字符的正文全画出来会把整屏撑到几万像素高，而用户多半只想看开头；
+       而**截断之后每张卡片的高度是有界的**，所以「整表重建」的代价也就有界了 ——
+       这也是**不引 `content-visibility`** 的原因（它会让 `scrollHeight` 变成估算值，
+       而「贴底才跟随」那条判据正靠它；为了省一点排版去动那条判据不划算）。
+       ⚠️ 展开时必须切出 `-webkit-box` 那套模型（改 `display`），
+       而不是把 `-webkit-line-clamp` 设回 `none` —— 后者跨浏览器不可靠。 */
+    .card .txt {
+        white-space: pre-wrap; word-break: break-word;
+        display: -webkit-box; -webkit-box-orient: vertical;
+        -webkit-line-clamp: 12; overflow: hidden;
+    }
+
+    .card .txt.open { display: block; overflow: visible; }
+
+    /* 卡片底部的「展开 / 收起」——是按钮，但长成链接的样子（别在气泡里放一个大按钮）。
+       ⚠️ 原生 <button> 自带边框/底色/内边距，不重置的话会在 `.ft` 那行里很突兀。 */
+    .card .ft button.lnk {
+        border: 0; padding: 0; background: none; cursor: pointer;
+        font: inherit; font-size: 10.5px; color: var(--accent);
+    }
+
+    .card .ft button.lnk:disabled { opacity: .55; cursor: default; }
 
     .card .ft {
         margin-top: 6px; display: flex; align-items: center; gap: 8px;

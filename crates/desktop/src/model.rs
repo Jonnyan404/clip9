@@ -27,12 +27,23 @@ const AUTOMATION_SOURCE: &str = "automation";
 #[serde(rename_all = "camelCase")]
 pub struct EntryView {
     /// 服务端给的 id —— **列表的 key 就用它**（三边 id 单调，`CONTRIBUTING.md` §6）。
+    /// ⚠️ 它是**每个房间各自**单调的：跨房间不唯一，所以「记住一条」要连房间一起记。
     pub id: i32,
     /// `text` / `file`。页面据此选卡片形状（⚠️ 别按「有没有正文」猜：
     /// 文件条目**没有**正文，见 `FileReceive` 的注释）。
     pub kind: &'static str,
     /// 文本正文（`kind == "text"` 时有值）。
+    ///
+    /// ⚠️★ **`Store` 里这份是全文；快照里那份是截断预览**（见 [`EntryView::for_snapshot`]）。
+    /// 类型上区分不出来（刻意：少一份重复定义），所以**别把快照回来的那份当正文用** ——
+    /// 要全文就走 `Store::entry_text`（IPC 命令 `entry_text`）。
     pub text: String,
+    /// 正文的**完整字节数**（与 `text.len()` 不同：后者是预览的长度）。
+    /// 界面用来说清「共 N 字节」与「这只是开头」。
+    pub text_bytes: usize,
+    /// 正文**被截断**了吗（只有 `text_bytes > PREVIEW_BYTES` 时为真）。
+    /// ⚠️ 界面据此决定「展开」是**本地摊开**还是**真的去取全文**（少一次 IPC）。
+    pub truncated: bool,
     /// 文件名（`kind == "file"` 时有值）。
     pub file_name: String,
     /// 文件字节数（`kind == "file"` 时有值；`0` = 服务端没给）。
@@ -61,6 +72,33 @@ pub struct EntryView {
     /// （`docs/specs/ws-live-only.md` §0.6），漏掉它们的表现是「定时消息看不出是自动发的」，
     /// 而且**不会有任何报错**。所以下面有专门的测试钉住它们。
     pub scheduled_at: i64,
+}
+
+/// 快照里每条正文最多多少**字节**。
+///
+/// ⚠️★ 取 4096 不是随手定的：**它就是缺省 `text.limit`**。于是「每条最多 4 KiB」这条
+/// **设计基线**（`ARCHITECTURE.md` §2.1）在 `text.limit` 被调大之后**依然成立** ——
+/// 快照体积被钉在「200 条 × 4 KiB ≈ 0.8 MB」，与用户把上限调到多大**无关**。
+///
+/// 这是 2026-09-27 拍板的形态：**快照只带截断预览，正文按需取**（原话：
+/// 「放截断预览正文按需取」）。理由与业内做法见 `docs/specs/desktop-client.md` §8.3 ④
+/// 与 `long-message-hardening.md` S5。
+pub(crate) const PREVIEW_BYTES: usize = 4096;
+
+/// 把一段正文切成（预览、完整字节数、是否被截断）。
+///
+/// ⚠️★ 必须切在**字符边界**上：`&text[..4096]` 遇到多字节字符会**直接 panic**，
+/// 而中文一个字 3 字节、4096 不是 3 的倍数 —— 这条几乎一踩一个准。
+fn preview_of(text: &str) -> (String, usize, bool) {
+    let bytes = text.len();
+    if bytes <= PREVIEW_BYTES {
+        return (text.to_owned(), bytes, false);
+    }
+    let mut end = PREVIEW_BYTES;
+    while end > 0 && !text.is_char_boundary(end) {
+        end -= 1;
+    }
+    (text[..end].to_owned(), bytes, true)
 }
 
 impl EntryView {
@@ -95,6 +133,9 @@ impl EntryView {
             id: base.id,
             kind,
             text,
+            // ⚠️ 这里是**全文**：`Store` 存的是它。截断只发生在 [`Self::for_snapshot`]。
+            text_bytes: 0,
+            truncated: false,
             file_name,
             file_size,
             preview_url,
@@ -107,6 +148,35 @@ impl EntryView {
             late: base.late,
             scheduled_at: base.scheduled_at,
         }
+        // ⚠️ 把 `text_bytes` 补成真值 —— 上面写 0 只是占位，别忘（忘掉的表现是
+        // 「界面说这条共 0 字节」，而它不报错）。
+        .with_text_bytes_from_body()
+    }
+
+    /// 给**快照**看的那一份：正文**截断成预览**，并补上「一共多少字节 / 有没有被截断」。
+    ///
+    /// ⚠️★ 这是「快照只带截断预览」这条拍板唯一的落点（2026-09-27，原话
+    /// 「放截断预览正文按需取」）。它**不改 `Store` 里那份** —— 要全文走
+    /// `Store::entry_text`（IPC 命令 `entry_text`）。
+    ///
+    /// ⚠️ 之所以不另立一个 `EntrySnapshot` 类型：那会变成**第二份字段清单**，
+    /// 而两份一定会漂（这个项目为这个付过几次代价）。代价是类型上分不出
+    /// 「全文还是预览」，所以上面 `text` 那段注释与 `Store` 的测试里那条不变量
+    /// （「快照之后 Store 里还是全文」）是**必须**的。
+    #[must_use]
+    pub fn for_snapshot(&self) -> Self {
+        let (text, text_bytes, truncated) = preview_of(&self.text);
+        Self {
+            text,
+            text_bytes,
+            truncated,
+            ..self.clone()
+        }
+    }
+
+    fn with_text_bytes_from_body(mut self) -> Self {
+        self.text_bytes = self.text.len();
+        self
     }
 }
 
@@ -215,6 +285,68 @@ mod tests {
         let view = EntryView::from_holder(&file_entry(9, "u-1", "a.png", 1), "", "");
         assert!(view.preview_url.is_none());
         assert_eq!(view.file_name, "a.png", "名字照常显示");
+    }
+
+    /// ⚠️★ 预览必须切在**字符边界**上。
+    ///
+    /// `&text[..4096]` 遇到中文会**直接 panic**（一个汉字 3 字节，而 4096 不是 3 的倍数），
+    /// 而这条路径是「用户发一条长中文」—— 一踩一个准。
+    #[test]
+    fn a_long_cjk_body_is_truncated_on_a_char_boundary() {
+        let view = EntryView::from_holder(&text_entry(1, &"汉".repeat(2000)), "", "");
+        assert_eq!(view.text_bytes, 6000, "记录里那份是全文");
+        assert!(!view.truncated, "记录自己不算「截断」");
+
+        let preview = view.for_snapshot();
+        assert!(preview.truncated, "6000 字节 > 4096，必须标成截断");
+        assert_eq!(
+            preview.text_bytes, 6000,
+            "报的字节数要是**全文**的，不是预览的"
+        );
+        assert!(preview.text.len() <= PREVIEW_BYTES);
+        assert_eq!(
+            preview.text.len() % 3,
+            0,
+            "切在字符边界上 → 中文预览的字节数必然是 3 的倍数"
+        );
+        assert!(
+            preview.text.chars().all(|c| c == '汉'),
+            "切出了半个字：{:?}",
+            preview.text.chars().last()
+        );
+
+        // ⚠️★ 关键不变量：`for_snapshot` **不能**改到记录里那份。
+        // 改到的话就是「发出去的长文在本地被截断」—— 而它不报错，只是内容少了。
+        assert_eq!(view.text.len(), 6000, "for_snapshot 改了原文");
+    }
+
+    /// 短正文（含**正好等于**缺省上限那一档）不该被标成截断 ——
+    /// 否则界面会给一条本来就完整的消息显示「展开」。
+    #[test]
+    fn a_body_at_or_below_the_preview_size_is_not_truncated() {
+        for size in [0, 1, PREVIEW_BYTES - 1, PREVIEW_BYTES] {
+            let body = "x".repeat(size);
+            let preview = EntryView::from_holder(&text_entry(2, &body), "", "").for_snapshot();
+            assert!(!preview.truncated, "{size} 字节不该算截断");
+            assert_eq!(preview.text_bytes, size);
+            assert_eq!(preview.text, body, "没截断就该原样给");
+        }
+        // 多一个字节才算。
+        let over = "x".repeat(PREVIEW_BYTES + 1);
+        let preview = EntryView::from_holder(&text_entry(3, &over), "", "").for_snapshot();
+        assert!(preview.truncated);
+        assert_eq!(preview.text_bytes, PREVIEW_BYTES + 1);
+        assert_eq!(preview.text.len(), PREVIEW_BYTES);
+    }
+
+    /// 文件条目**没有正文**，所以既不该被标成截断、字节数也得是 0。
+    #[test]
+    fn a_file_entry_has_no_body_and_no_preview() {
+        let preview = EntryView::from_holder(&file_entry(4, "u-1", "a.png", 9), "", "http://x")
+            .for_snapshot();
+        assert_eq!(preview.kind, "file");
+        assert_eq!(preview.text_bytes, 0);
+        assert!(!preview.truncated);
     }
 
     /// ⚠️★ 定时消息的三个字段（`source` / `scheduledAt` / `late`）**不能丢** ——
