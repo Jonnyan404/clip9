@@ -22,7 +22,7 @@
 // `cloud-clip/tools/page-smoke.mjs`，**只有手写 UI 这一侧是裸奔的**
 //（见 `docs/specs/desktop-client.md` §1.1 缺口 C）。
 //
-// # 判据（**第 1、2、4、5、6、7、8、9、10、11、12、13、14、15、16、17、18 条算失败**）
+// # 判据（**第 1、2、4、5、6、7、8、9、10、11、12、13、14、15、16、17、18、19 条算失败**）
 //
 // 1. `app.js` 引用到的每一个 id，`index.html` 里必须存在 —— 不通过 = 退出码 1；
 // 2. `index.html` 真的加载了**每一个**该加载的脚本（`boot.js` / `i18n.js` / `app.js`）；
@@ -40,8 +40,8 @@
 // 7. `NOTICE_MS` 不许再回到「挂十几秒」—— 不通过 = 退出码 1。理由见下。
 // 8. **设置项的字段名要跨语言对得上**：`SettingsView` 的每个字段，`openSettings` 里都要读；
 //    `SettingsPatch` 的每个字段，保存时都要发回去 —— 不通过 = 退出码 1。理由见下。
-// 9. **页面不许拿到系统通知的权限**（`capabilities/default.json` 里不许出现 `notification*`）
-//    —— 不通过 = 退出码 1。理由见下。
+// 9. **页面不许拿到系统通知 / 全局快捷键的权限**（`capabilities/default.json` 里不许出现
+//    `notification*` 或 `global-shortcut*`）—— 不通过 = 退出码 1。理由见下。
 // 10. **界面偏好的存储键，`boot.js` 与「拥有它的那份脚本」必须一致**（`const X_KEY = '…'` 那一族）
 //    —— 不通过 = 退出码 1。理由见下。
 // 11. **三份脚本合起来要能过一遍解析** —— 不通过 = 退出码 1。理由见下。
@@ -56,6 +56,8 @@
 //     —— 不通过 = 退出码 1。理由见下。
 // 18. **两份渲染器（壳 / 页面）读同一份夹具、逐字一致**（`say-cases.json`）
 //     —— 不通过 = 退出码 1。理由见下。
+// 19. **快照里每条条目的字段（`EntryView`），`renderEntry` 都要读**（与第 8 条同族，
+//     但管的是**卡片**那一个形状）—— 不通过 = 退出码 1。理由见下。
 //
 // # ⚠️ 第 4 条为什么算失败，而不是「提一句」
 //
@@ -127,16 +129,43 @@
 // ⚠️ 判据**不收窄**到「通知那两项」：它读的是两个结构体的**全部字段** ——
 // 下次谁加一个设置项而忘了界面那一半，这条会红。这才是它值钱的地方。
 //
-// # ⚠️ 第 9 条为什么算失败（页面不许拿到系统通知的权限）
+// # ⚠️ 第 19 条为什么算失败（快照里每条条目的字段都要读）
+//
+// 第 8 条那句话（「读的是全部字段」）只覆盖**设置**那一个形状。**卡片**那个形状
+//（`EntryView`）是另一份字段表，而它当时**一条判据都没有** —— 于是 2026-09-26
+// 补进投影的 `scheduledAt` **从来没有被界面读过**，躺了三天：
+//
+// · 快照里字段一个不少（`model.rs` 那条测试还钉着它）；
+// · 界面一个像素都不差、不报错、不崩 —— 因为**没人读它**这件事没有任何外部表现；
+// · 唯一的表现是「功能缺了一块」：看不出这条定时消息**本来定在什么时候**。
+//
+// ⚠️★ 这是「加一个字段」这类改动最容易留下的洞，而且它**与第 8 条不是同一个地方**：
+// 第 8 条的清单是从 `SettingsView` / `SettingsPatch` 数出来的，`EntryView` 压根不在里面。
+// 「一个形状有判据」不等于「另一个形状也有」—— 判据的作用域同样要有东西守着。
+//
+// ⚠️ 所以它有**两半**，缺一不可：① 去 `rustSrcArg` 那几个目录里**找到**声明 `EntryView`
+// 的那份文件（要**恰好一份**，找不到就报失败：0 个字段会让「每个字段都读了」**恒真**）；
+// ② 一个字段一个字段地对着 `renderEntry` 的函数体找 `entry.<字段>`。
+//
+// # ⚠️ 第 9 条为什么算失败（页面不许拿到系统通知 / 全局快捷键的权限）
 //
 // 2026-09-27 加了系统通知（「本机剪贴板没发出去」「房间的内容写进剪贴板了」）。
 // 那个插件**会给页面注入一段它自带的 JS**，所以「页面能不能发通知」只由一件事决定：
 // `capabilities/default.json` 里给不给 `notification:*`。
 //
+// ⚠️★ 2026-09-28 加**全局快捷键**（`hotkeys.rs`）时，同一条道理再来一遍，而这次
+// 顺手查出**这条判据原来只有一半**：它只按 `notification` 前缀过滤，
+// 而 `hotkeys.rs` 的文件头当时就写着「判据 9 盯着这一个」—— **注释在骗人**。
+// 现场验过：把 `global-shortcut:default` 加进能力文件，旧写法**照样全绿**。
+// 现在两个前缀都管，那句注释才是真的。⚠️ 教训与「判据不能靠一个全局搜索」同源：
+// **一条判据的「范围」本身要有东西守着** —— 否则它绿着，而你以为它盖住了整片。
+//
 // ⚠️★ 我们**决定不给**，而且这是一个**刻意的架构选择**，不是忘了配：
 // 这个项目里页面与壳的分工是「页面只跟 IPC 命令说话」（`desktop-client.md` §2 的硬边界），
 // 每给页面开一个插件的口子，那条边界就薄一分 —— 而**发系统通知**还给了一个
-// 「页面能弹东西到用户桌面」的能力（一个页面 bug 就能变成通知轰炸）。
+// 「页面能弹东西到用户桌面」的能力（一个页面 bug 就能变成通知轰炸），
+// **抢全局快捷键**则更直接：页面里的脚本能占住 `⌘⇧V`（那是**系统级**的，
+// 别的程序也受影响）。
 //
 // ⚠️ 那三处注释（`Cargo.toml` / `notify.rs` / 能力文件自己）都写着「故意不给」，
 // 但**注释拦不住人**：`notification:default` 这七个字母加进去之后，
@@ -232,6 +261,11 @@
 //   ⚠️ 所以嵌进去的字段漏了，这一条拦不住（先把边界写清，免得下次以为是漏检）。
 //   ⚠️ `Vec<Channel>` 那种**同构列表**已经由第 12 条补上了（它直接去读 `Channel` 的字段），
 //   但 `SyncScopePatch` 还没人管 —— 加它的字段时仍然只能靠人。
+// · 第 19 条**只看 `renderEntry` 的函数体**：字段在**别处**（右键菜单那一段）读也算没读。
+//   ⚠️ 这是**故意偏严**的一侧：漏的那个方向是「红一次、看一眼就明白」，而放宽的方向是
+//   「注释里写一句 `entry.x` 就满足了」—— 判据 8 就是那样栽的。
+//   哪天真的有个字段只在菜单里用，**要么在卡片上也读它、要么把这里的边界写宽并说明**，
+//   别默默加白名单（白名单里的字段从此没人看）。
 // · **`boot.js` 不参与第 1 条**（id 引用）：它跑在 `<body>` 解析之前，本来就碰不到任何
 //   元素 —— 里面出现一个 `getElementById('x')` 才是错的。它只被第 10 条读（比对常量）。
 
@@ -479,7 +513,7 @@ if (!noticeMs) {
 // 全文 grep 等于没测（这正是「判据不能靠一个全局搜索」那一条）。
 const camelCase = (name) => name.replace(/_([a-z])/g, (_, ch) => ch.toUpperCase());
 
-/** 从 `commands.rs` 里取一个结构体的字段名（serde camelCase 之后的那一份）。
+/** 从一份 Rust 源码里取一个结构体的字段名（serde camelCase 之后的那一份）。
  *
  * ⚠️ 正则里**刻意带上 `#[serde(rename_all = "camelCase")]`**：那条属性是
  * 「字段名怎么变」的**唯一依据**。不带它的话，哪天有人把它删了（改成 snake_case 下发），
@@ -490,18 +524,33 @@ const camelCase = (name) => name.replace(/_([a-z])/g, (_, ch) => ch.toUpperCase(
  * 正则掉头去吃**上面那个结构体**（`SettingsPatch`）的属性，照样匹配成功。
  * 也就是说这条自检对「属性被删」**完全没牙**，而它看起来一点问题都没有。
  * ⚠️ 判据里的「任意字符」要盯紧：`[\s\S]*?` 这种写法在**同构的文本块**里几乎总是错的。
+ *
+ * ⚠️★ 参数是**源码**、不是文件名：判据 8 读 `commands.rs`、判据 19 读 `EntryView`
+ * 所在的那一份（`model.rs`）—— 两个结构体不在同一个文件里。
  */
-function structFields(name) {
+function structFields(source, name) {
   const pattern = new RegExp(
     `#\\[serde\\(rename_all = "camelCase"[^)]*\\)\\]((?:(?!\\n\\})[\\s\\S])*?)pub struct ${name} \\{([\\s\\S]*?)\\n\\}`,
   );
-  const body = rust.match(pattern);
+  const body = source.match(pattern);
   if (!body) return null;
   return [...body[2].matchAll(/^\s*pub (\w+):/gm)].map((match) => camelCase(match[1]));
 }
 
-const viewFields = structFields('SettingsView');
-const patchFields = structFields('SettingsPatch');
+const viewFields = structFields(rust, 'SettingsView');
+const patchFields = structFields(rust, 'SettingsPatch');
+/** 判据 8 / 19 的「读了没有」判在**去掉注释**之后的函数体上。
+ *
+ * ⚠️★ 这是 2026-09-28 补的，补掉的是判据 8 自己那段注释里的**半个谎**：
+ * 它写着「判的是 `view.<字段>` 这个写法，不是『出现过这个名字』——后者会被注释满足」，
+ * 但**注释里写全 `view.notifyUpload`** 照样满足它。也就是说那一半根本没关上。
+ * `stripJs` 把注释整段丢掉（字符串字面量被包成 `\0…\0`），这一半才真的关上。
+ *
+ * ⚠️★ 所以**先按原名定位、再按去注释的内容判** —— 定位那两个正则**不能**吃 `stripJs`
+ * 的输出：`el('settings-save')` 在那里会变成 `el(\0settings-save\0)`，正则当场找不到，
+ * 症状是「这条自检跑不了」（红，但红错了地方）。剥注释与定位是两件事，别一起改。
+ */
+const stripComments = (slice) => stripJs(slice);
 /** ① `openSettings` 的函数体（「接住」要在里面）。
  * ② `settings-save` 那个回调的函数体（「发还」要在里面）。 */
 const openSettingsBody = js.match(/async function openSettings\(\)\s*\{[\s\S]*?\n\}/);
@@ -516,21 +565,24 @@ if (!viewFields || !patchFields || !openSettingsBody || !saveBody) {
   if (!saveBody) console.error('    · `app.js` 里找不到 `settings-save` 那个监听器');
   console.error('  ⚠️ 它钉的是「壳给出的每个设置项，界面都要读、也要发得回去」——');
   console.error('    单侧改名 / 加字段忘了改界面，就靠这里拦。');
+  console.error('  ⚠️ 快照里**每条条目的形状**（`EntryView`）是同一族的问题，由**判据 19** 管');
+  console.error('    —— 它在文件末尾（编号顺序），别以为这里没写就没人管。');
 } else {
   // ① 接住：`settings_view` 给的每个字段，`openSettings` 里都要读一次。
   //
   // ⚠️★ 判的是 **`view.<字段>`** 这个写法，不是「函数体里出现过这个名字」：
-  // 后者会被**注释**满足 —— 这一条自己上面就写着 `view.notifyUpload` 之类的例子，
-  // 于是「把读它的那一行删掉、注释留着」**照样绿**。
-  // 2026-09-28 现场验过（加 `emoji` 那一版时）：删掉读的那一行、注释里留着
+  // 后者会被**注释**满足。2026-09-28 现场验过：删掉读它的那一行、注释里留着
   // `view.xxx`，旧写法全绿 —— 也就是说「读过就算」是**没有牙**的。
-  // 这跟文件头那条「判据不能靠一个全局搜索」是同一个病。
+  // ⚠️ 判据 15 是同一个病（「判据不能靠一个全局搜索」）；这里再加一层：
+  // **连 `view.X` 写全的注释也不认**（`stripComments`，见它上面那段）。
   // ⚠️ 代价：读法必须是 `view.X`（解构 `const { X } = view` 会被误判）——
   // 这一侧每个字段都是 `view.X`，而「读法只有一种」本来就是想要的。
-  const notRead = viewFields.filter((name) => !openSettingsBody[0].includes(`view.${name}`));
+  const notRead = viewFields.filter((name) =>
+    !stripComments(openSettingsBody[0]).includes(`view.${name}`)
+  );
 
   // ② 发还：保存时每个字段都要发回去。
-  const notSent = patchFields.filter((name) => !saveBody[0].includes(name));
+  const notSent = patchFields.filter((name) => !stripComments(saveBody[0]).includes(name));
   if (notRead.length) {
     failed = true;
     console.error(`✗ 有 ${notRead.length} 个设置项，界面**没有读**（壳给的、界面没接）：`);
@@ -547,23 +599,38 @@ if (!viewFields || !patchFields || !openSettingsBody || !saveBody) {
   }
 }
 
-// ── 判据 9：页面不许拿到系统通知的权限（理由见文件头）────────────────────
+// ── 判据 9：页面不许拿到**系统通知 / 全局快捷键**的权限（理由见文件头）────────
+//
+// ⚠️★ 2026-09-28 加全局快捷键时**发现这条原来漏了一半**：它只按 `notification`
+// 前缀过滤，而 `hotkeys.rs` 的文件头当时就写着「判据 9 盯着这一个」——
+// **注释在骗人**：把 `global-shortcut:default` 加进能力文件，旧写法**照样全绿**。
+// 两个前缀都由这条管了之后，那句注释才是真的。
 let capabilities = null;
+let capabilitiesReadError = null;
 try {
   capabilities = JSON.parse(readFileSync(capabilitiesPath, 'utf8'));
 } catch (error) {
-  failed = true;
-  console.error(`✗ 读不出能力文件（${capabilitiesPath}）：${error}`);
+  capabilitiesReadError = error;
 }
-if (capabilities) {
+/** ⚠️★ 页面**一格都不该有**的插件权限。加新插件时要想清楚：
+ * 它给页面的 JS API 一旦有权限，这个项目「页面只跟 IPC 命令说话」那条边界就薄一分。
+ * ⚠️ 用**前缀**匹配（`notification:*` / `global-shortcut:*` / `notification:default` 都要拦）。 */
+const PAGE_FORBIDDEN_PLUGIN_PREFIXES = ['notification', 'global-shortcut'];
+if (capabilitiesReadError) {
+  failed = true;
+  console.error(`✗ 判据 9 跑不了：读不出能力文件（${capabilitiesPath}）：${capabilitiesReadError}`);
+} else if (capabilities) {
   // ⚠️ 一条权限可以是字符串，也可以是 `{ identifier, allow }` —— 两种都要认。
   const granted = (capabilities.permissions ?? [])
     .map((entry) => (typeof entry === 'string' ? entry : (entry?.identifier ?? '')))
-    .filter((identifier) => String(identifier).startsWith('notification'));
+    .filter((identifier) =>
+      PAGE_FORBIDDEN_PLUGIN_PREFIXES.some((prefix) => String(identifier).startsWith(prefix))
+    );
   if (granted.length) {
     failed = true;
-    console.error(`✗ 能力文件给页面放了系统通知的权限：${granted.join('、')}`);
-    console.error('  ⚠️ 发通知的只有 Rust 侧的 `notify::SystemNotifier` —— 页面**不该**有这个能力');
+    console.error(`✗ 能力文件给页面放了不该给的插件权限：${granted.join('、')}`);
+    console.error('  ⚠️ 系统通知只有 Rust 侧的 `notify::SystemNotifier` 该发，全局快捷键只有');
+    console.error('    `hotkeys::apply` 该注册 —— 页面**不该**有这两个能力');
     console.error('    （desktop-client.md §2：页面只跟 IPC 命令说话）。要去掉它。');
   }
 }
@@ -1358,6 +1425,55 @@ if (i18nSource) {
         console.log(`· 判据 18：${(fixture.cases ?? []).length} 条夹具用例 × ${locales.length} 种语种`
           + `（共 ${count} 次渲染）在**页面这一侧**逐字对上。`);
       }
+    }
+  }
+}
+
+// ── 判据 19：快照里每条条目的字段，卡片渲染都得读（理由见文件头）──────────────
+//
+// ⚠️★ 与判据 8 **同一族**（壳给出的字段 ↔ 界面接住），只是形状不同：
+//    判据 8 管 `SettingsView`（一个**设置页**读一次），这条管 `EntryView`
+//    （一条**卡片**的形状，`renderEntry` 读）。⚠️ 它只有「接住」那一半 ——
+//    `EntryView` 是壳**下发**的，界面没有要发回去的东西。
+//
+// ⚠️★ 为什么非有它不可：`EntryView::scheduled_at` 是 **2026-09-26 补进 `/content` 投影的**，
+//    而它**从来没有被界面读过**（`app.js` 里只有一句注释提到它）。没人看得出来 ——
+//    快照里字段一个不少、界面一个像素不差、不报错。这正是「多一个字段」这类改动
+//    最容易留下的洞，而它只在**功能缺了一块**的时候才显形（这里缺的是「看出这条定时消息
+//    本来定在什么时候」）。⚠️ 2026-09-28 补上那次顺手加了这条判据。
+const entryViewFiles = rustSources(rustSrcArg).filter((path) =>
+  readFileSync(path, 'utf8').includes('pub struct EntryView')
+);
+if (entryViewFiles.length !== 1) {
+  failed = true;
+  console.error(`✗ 判据 19 跑不了：在 \`${rustSrcArg}\` 里找到 ${entryViewFiles.length} 份声明 \`EntryView\` 的文件`
+    + '（要**恰好一份**）—— 这条自检要跟着仓库结构改。');
+  console.error('  ⚠️★ 找不到就当成 0 个字段 → 「每个字段都读了」**恒真**，这条检查会悄悄失效。');
+} else {
+  const entryFields = structFields(readFileSync(entryViewFiles[0], 'utf8'), 'EntryView');
+  /** ⚠️★ 判的是 **`renderEntry` 的函数体**（而且**去掉注释**之后的那一份，见 `stripComments`），
+   * 不是全文 grep —— 判据 8 在这上面栽过：注释里写一句 `entry.text` 就能满足全文 grep
+   *（这个文件里**真的有**那样一句注释），而「读法只有一种」（`entry.X`）本来就是想要的。 */
+  const renderEntryBody = js.match(/function renderEntry\(entry, index\)\s*\{[\s\S]*?\n\}/);
+  if (!entryFields || !renderEntryBody) {
+    failed = true;
+    console.error('✗ 判据 19 找不到要比对的东西 —— 这条自检要跟着代码改：');
+    if (!entryFields) console.error('    · `EntryView` 上找不到带 camelCase 的字段（属性被删了？）');
+    if (!renderEntryBody) console.error('    · `app.js` 里找不到 `function renderEntry(entry, index)`');
+  } else {
+    const notRead = entryFields.filter((name) =>
+      !stripComments(renderEntryBody[0]).includes(`entry.${name}`)
+    );
+    if (notRead.length) {
+      failed = true;
+      console.error(`✗ 有 ${notRead.length} 个字段，壳在快照里发了、界面**没读**（那部分功能是缺的）：`);
+      for (const name of notRead) console.error(`    ${name}`);
+      console.error('  ⚠️ 症状：字段一直在快照里，界面上却一个像素都不差 —— 不报错、不崩，');
+      console.error('    只是那一块功能**没有**（`scheduledAt` 就是这么躺了三天）。');
+      console.error('    要么在 `renderEntry` 里用它，要么把它从 `EntryView` 上删掉 ——');
+      console.error('    **别**在这里加白名单：白名单里的字段从此没人看。');
+    } else {
+      console.log(`· 判据 19：\`EntryView\` 的 ${entryFields.length} 个字段，卡片渲染都读了。`);
     }
   }
 }
