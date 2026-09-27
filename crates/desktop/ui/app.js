@@ -139,18 +139,36 @@ for (const id of ['settings-overlay', 'server-overlay']) {
  * 「下一次形状变化」时才被抹掉，而那可能是几分钟后。
  * 15 秒：够看清、够去点一下，又不至于一直挂着（「它到底还有效吗」用户判断不了，
  * 这与 `render` 里那条注释是同一个理由）。
+ *
+ * ⚠️★★ 而且**壳里那条也归这里管**（2026-09-27 修）。原来 `render` 自己把壳里那条
+ * 写进 DOM，然后 `clear_notice` —— 清掉会**前进版本号**，于是**下一拍**（≤700ms）
+ * 的重绘就走 `else` 把它 `hidden = true`。用户看到的是一次闪动：
+ * 「已发送 3 个文件」这种提示**根本来不及看**（他报的就是这条）。
+ * 现在「显示多久」只有一个说法（这个计时器），`render` 那边只负责**喂**给它。
  */
 let noticeTimer = null;
+
+/** 「那条提示现在正显示着吗」—— `render` 用它决定能不能抹掉。
+ *
+ * ⚠️ 必须单独记：清了壳里那条之后**还会再来一次重绘**（版本号前进过），
+ * 而那一拍 `state.notice` 已经是 `null` 了 —— 不记这个标志就会**立刻**把它抹掉，
+ * 也就是把那个 bug 原样搬到了另一个分支里。
+ */
+let noticeVisible = false;
+
+const NOTICE_MS = 15000;
 
 function showNotice(kind, text) {
   const notice = el('notice');
   notice.hidden = false;
   notice.className = `notice ${kind}`;
   notice.textContent = text;
+  noticeVisible = true;
   clearTimeout(noticeTimer);
   noticeTimer = setTimeout(() => {
     notice.hidden = true;
-  }, 15000);
+    noticeVisible = false;
+  }, NOTICE_MS);
 }
 
 /** 这一份快照要不要重画 —— **只看版本号**。
@@ -551,16 +569,17 @@ function render(state) {
     problems.hidden = true;
   }
 
-  const notice = el('notice');
+  // ⚠️★ 壳里那条提示**走同一条显示路径**（`showNotice`）—— 见它的注释：
+  // 原来这里直接写进 DOM，而 `clear_notice` 会让**下一拍**的重绘把它抹掉，
+  // 于是「已发送 3 个文件」只闪一下（2026-09-27 修的）。
   if (state.notice) {
-    notice.hidden = false;
-    notice.className = `notice ${state.notice.kind}`;
-    notice.textContent = state.notice.text;
-    // ⚠️ 显示过一次就清掉：否则一条三分钟前的错误会一直挂在界面上，
-    // 而「它到底还有效吗」用户判断不了。
+    showNotice(state.notice.kind, state.notice.text);
+    // ⚠️ 顺手把壳里那条清掉：否则一条三分钟前的错误会一直重播。
+    // 清掉会前进版本号 → 下一拍还会重绘一次，而那一拍会走到下面的 `else` ——
+    // 那时提示**正在显示**，所以用 `noticeVisible` 挡住，别把它抹掉。
     invoke('clear_notice');
-  } else {
-    notice.hidden = true;
+  } else if (!noticeVisible) {
+    el('notice').hidden = true;
   }
 }
 
@@ -966,6 +985,16 @@ for (const [id, on] of [['srv-mode-local', true], ['srv-mode-remote', false]]) {
     runServerAction('set_local_server', { on }, on ? '切到「随客户端启动」' : '切到「连别人的服务端」'));
 }
 
+/** 「服务端配置」这一层是从「设置」里点进来的吗 —— 关掉它时要**回到设置**。
+ *
+ * ⚠️★ 为什么需要这个标志（而不是「干脆别关设置」或「关的时候直接 `openSettings()`」）：
+ * · 两个 `.overlay` 都铺满窗口，同时可见 = 两层窗口糊在一起（见设置导航那段注释）；
+ * · `openSettings()` 会**重新读一遍壳里的设置**，把用户在设置里**还没保存的改动**冲掉 ——
+ *   而「点开服务端配置看一眼就回来」正是最容易连着发生的操作。
+ * 所以关掉时只是把设置那层**重新显示出来**：草稿还在 DOM 里，用户改了一半的东西不动。
+ */
+let serverPanelFromSettings = false;
+
 async function openServerPanel() {
   el('server-msg').textContent = '';
   el('server-overlay').hidden = false;
@@ -1031,6 +1060,13 @@ async function openServerPanel() {
 
 el('cfg-close').addEventListener('click', () => {
   el('server-overlay').hidden = true;
+  // ⚠️★ 从「设置」进来的 → **回到设置**（不是把两层一起关掉）。
+  // 清掉标志：下一次打开这一层会自己重新设一次（否则它会在「不是从设置进来的」时候
+  // 也把设置弹出来）。
+  if (serverPanelFromSettings) {
+    serverPanelFromSettings = false;
+    el('settings-overlay').hidden = false;
+  }
 });
 
 el('cfg-save').addEventListener('click', async () => {
@@ -1074,17 +1110,34 @@ el('cfg-save-restart').addEventListener('click', async () => {
 let roomDraft = [];
 
 /** 一个单元格里的文本框。⚠️ 用 `input` 事件更新草稿，不重渲染 ——
- *  每次重渲染都把 `value` 重设会把用户正在输入的光标顶掉。 */
+ *  每次重渲染都把 `value` 重设会把用户正在输入的光标顶掉。
+ *
+ *  ⚠️★ `autocapitalize="off"`：macOS 会在这个框里把首字母**自动大写**，
+ *  而这一格填的是**地址**（用户实测把 `https://…` 打成了 `Https://…`，
+ *  然后怎么都连不上）。见 `tools/desktop-ui-smoke.mjs` 里那条静态自检 ——
+ *  这一侧没有测试运行器，「新加的输入框忘了关」只能靠它拦。
+ */
 function cellInput(value, onChange, placeholder) {
   const td = h('td');
   const input = document.createElement('input');
   input.type = 'text';
+  input.setAttribute('autocapitalize', 'off');
   input.value = value ?? '';
   if (placeholder) input.placeholder = placeholder;
   input.addEventListener('input', () => onChange(input.value));
   td.append(input);
   return td;
 }
+
+/** 草稿里这个房间的 ↑ 打开了吗。
+ *
+ * ⚠️★ 判据是 `=== true`：**字段缺了算关**。原来这里（和保存那处）写的是
+ * `!== false` —— 那是「字段没有就是**开**」，与侧栏（直接读 `room.upload` 这个真布尔）
+ * 以及 `Channel::new`（两个方向都关）**说两套话**。而 2026-09-27 把新建房间的默认
+ * 也改成关之后，三种说法必须是同一个（「加个房间就悄悄往外发剪贴板」不能再有任何入口）。
+ * ⚠️ 只有一个定义：保存时用**同一个函数**，别再抄一遍 `=== true`。
+ */
+const uploadOn = (room) => room.enable_upload === true;
 
 /** 一个方向开关（表格里的 ↑ / ↓）。 */
 function cellDir(on, kind, title, onToggle) {
@@ -1122,7 +1175,7 @@ function renderRoomRows() {
     // 同一个图标在同一个 app 里说两句不同的话，就是第二份定义。
     // ⚠️「可多选」「全局只能一个」不再写进 title：这一页的说明文字
     //（上面那段 `.sub`）已经写着「收进剪贴板全局只能一个」了。
-    tr.append(cellDir(room.enable_upload !== false, 'up', '发送本地剪贴板到远程房间', (on) => {
+    tr.append(cellDir(uploadOn(room), 'up', '发送本地剪贴板到远程房间', (on) => {
       roomDraft[index].enable_upload = on;
       renderRoomRows();
     }));
@@ -1222,9 +1275,13 @@ el('settings-nav').addEventListener('click', (event) => {
   const item = event.target.closest('.it');
   if (!item) return;
   // ⚠️ 有的项是**动作**不是页（`data-open`）：它打开另一个浮层，而不是切页。
-  // 先关掉设置窗口 —— 两个浮层叠在一起，用户分不清在改哪个。
+  // ⚠️★ 两层不许同时可见 —— 两个 `.overlay` 都是**铺满窗口**的，叠起来时下面那层的
+  // 暗底会把设置窗口一起压暗，用户看到「两个窗口糊在一起」，分不清在改哪个。
+  // 所以这里先关掉设置，并**记住是从设置进来的**：关掉那个浮层要**回到设置**，
+  // 而不是把两层一起关掉（2026-09-27 修 —— 用户报的就是「点进去再关，两层都没了」）。
   if (item.dataset.open) {
     el('settings-overlay').hidden = true;
+    serverPanelFromSettings = true;
     openServerPanel();
     return;
   }
@@ -1247,11 +1304,13 @@ function addRoomRow() {
     server: '',
     room: 'default',
     auth_token: '',
-    // ⚠️ 上行**默认开**（新建的房间是要用的那个），下行**默认关**（全局只能一个，
-    // 而且装完不该自动接管剪贴板 —— §4.1 第 3 条）。这两个默认值与
-    // `Channel::new` 那边**不一样**（那边两个都关），是有意的：
-    // 那是「首次运行的默认房间」，这是「用户自己点出来的房间」。
-    enable_upload: true,
+    // ⚠️★ 两个方向**都默认关**（Jonny 2026-09-27 改的：原来上行是 `true`）。
+    // 理由：新建的房间还没填地址、还没测过通不通，先把 ↑ 打开等于「加一个房间就
+    // 悄悄开始往外发本地剪贴板」—— 那与 §4.1 第 3 条（装完不该自动接管剪贴板）
+    // 是同一个道理，只是触发点从「首次运行」换成了「点了添加房间」。
+    // 另外这也与 `Channel::new`（两个都关）**一致**了 —— 原来两处不一样，
+    // 于是「侧栏那个 ↑ 显示什么」在保存前后会变一次（保存前按草稿算、保存后按配置算）。
+    enable_upload: false,
     enable_download: false,
   });
   renderRoomRows();
@@ -1278,7 +1337,7 @@ el('settings-save').addEventListener('click', async () => {
       server: room.server.trim(),
       room: (room.room || 'default').trim(),
       auth_token: (room.auth_token || '').trim() || null,
-      enable_upload: room.enable_upload !== false,
+      enable_upload: uploadOn(room),
       enable_download: room.enable_download === true,
     })),
     sync: {

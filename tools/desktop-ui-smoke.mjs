@@ -17,13 +17,39 @@
 // `cloud-clip/tools/page-smoke.mjs`，**只有手写 UI 这一侧是裸奔的**
 //（见 `docs/specs/desktop-client.md` §1.1 缺口 C）。
 //
-// # 判据（**只有第一条算失败**）
+// # 判据（**只有第 1、4 条算失败**）
 //
 // 1. `app.js` 引用到的每一个 id，`index.html` 里必须存在 —— 不通过 = 退出码 1；
 // 2. `index.html` 真的加载了 `app.js`（改名只改一侧 = 整页不工作）；
 // 3. 反向（HTML 有、JS 没引用）**只提示**，而且分两种：
 //    · 「只被选择器用」（`#rooms-table { … }` 这类样式钩子）→ 正常，**不吵**；
 //    · 「既没被 JS 引用、也没有选择器用它」→ 才提一句（可能是死标记，与 §8.1 第 6 条那两段死 CSS 同类）。
+// 4. 每一个**能打字**的输入框（`type="text"` / 不带 `type` 的 `<input>` / `<textarea>`）
+//    必须带 `autocapitalize="off"` —— 不通过 = 退出码 1。理由见下。
+// 5. 新建房间的默认**不许打开上行**（`addRoomRow`）—— 不通过 = 退出码 1。理由见下。
+//
+// # ⚠️ 第 4 条为什么算失败，而不是「提一句」
+//
+// macOS 会把文本框里**每句的首字母**自动大写，而这个界面里被用户手打的每一格
+// 都是**不许改字面**的东西：服务端地址、房间名、凭据、要发出去的消息正文。
+// 实测踩到（2026-09-27）：地址格里的 `https://` 被写成 `Https://`，
+// 表现是「明明填对了却连不上」—— 而**一个字母的大小写**是看不出来的，
+// 用户查了半天网络。⚠️ 它不会让任何东西报错，所以只有这里能拦。
+//
+// ⚠️★ 看**两个**入口：`index.html` 里写死的，与 `app.js` 现造的（`cellInput`）。
+// 只看一边的话，另一边新加的框会静默漏过去 —— 而漏过去**不报错**。
+// ⚠️ 扫描前要先**剥掉注释与 `<style>`**：CSS 注释里就写着 `<input>`（讲表格列宽那段），
+// 不剥的话会把它当成一个真的输入框来报。
+//
+// # ⚠️ 第 5 条为什么算失败
+//
+// 「加一个房间」是**用户已经养成的手势**（侧栏那个「＋」），而他不会想到要回头去关 ↑。
+// 于是「新建房间默认打开上行」的实际后果是：**点一下加房间就开始把本机剪贴板发出去**
+// —— 静默、不报错、也不在界面上留下任何痕迹（侧栏那个 ↑ 是亮的，但没人会去看）。
+// Jonny 2026-09-27 明确改掉了这个默认（原来是 `true`），那就得有一条命令守着它。
+// ⚠️ 这与 §4.1 第 3 条（装完不该自动接管剪贴板）是同一条规矩，只是触发点不同。
+// ⚠️ 判据只钉**这一处默认值**，不做别的道德检查：改成 `false` 是对的，
+// 而「保存时怎么读这个字段」由 `uploadOn()` 那一个定义管（缺字段 = 关）。
 //
 // # ⚠️ 三条「看不见」的地方（写在这里，免得下次以为是漏检）
 //
@@ -102,6 +128,53 @@ if (missing.length) {
   console.error(`✗ app.js 引用了 ${missing.length} 个 index.html 里**不存在**的 id：`);
   for (const id of missing) console.error(`    ${id}`);
   console.error('  ⚠️ 这一类错的表现是「那个功能静默失效」，不会 panic —— 别放过它。');
+}
+
+// ── 判据 4：能打字的框都要 `autocapitalize="off"`（理由见文件头）──────────
+// ⚠️ 先剥注释与样式表：CSS 注释里写着 `<input>`，不剥会被当成真的输入框。
+const markup = html
+  .replace(/<!--[\s\S]*?-->/g, '')
+  .replace(/<style\b[\s\S]*?<\/style>/gi, '')
+  .replace(/<script\b[\s\S]*?<\/script>/gi, '');
+
+const autoCapMissing = [];
+for (const match of markup.matchAll(/<(input|textarea)\b[^>]*>/gi)) {
+  const tag = match[0];
+  // ⚠️ `<input>` **不带 `type` 就是 text**（HTML 的默认值）—— 别只看写了 type 的那些。
+  const typesText = !/\btype\s*=/i.test(tag) || /\btype\s*=\s*["']text["']/i.test(tag);
+  if (typesText && !/autocapitalize\s*=\s*["']off["']/i.test(tag)) autoCapMissing.push(tag.trim());
+}
+
+// ⚠️ JS 那侧用**计数**：`cellInput` 这类工厂每造一个文本框就该关一次自动大写。
+// 不是逐个匹配（那是给文本做结构分析，假的精确），而是「造了几个、关了几个」对不上就说话。
+const jsTextFields = (js.match(/\.type\s*=\s*['"]text['"]/g) ?? []).length;
+const jsNoAutoCap = (js.match(/\.setAttribute\(\s*['"]autocapitalize['"]\s*,\s*['"]off['"]\s*\)/g) ?? []).length;
+
+if (autoCapMissing.length || jsTextFields !== jsNoAutoCap) {
+  failed = true;
+  console.error('✗ 有能打字的输入框没关掉「首字母自动大写」（macOS 会把地址打成 `Https://`）：');
+  for (const tag of autoCapMissing) console.error(`    index.html: ${tag}`);
+  if (jsTextFields !== jsNoAutoCap) {
+    console.error(
+      `    app.js: 造了 ${jsTextFields} 个文本输入框，只关了 ${jsNoAutoCap} 个的自动大写` +
+        '（找 `cellInput` 那一类工厂）。',
+    );
+  }
+  console.error('  ⚠️ 加上 `autocapitalize="off"`；确实要自动大写的话，先想清楚那一格是不是「不许改字面」的。');
+}
+
+// ── 判据 5：新建房间不许默认开上行（理由见文件头）────────────────────
+// ⚠️ 找的是**那个对象字面量**（`addRoomRow` 的函数体），而不是全文 grep `enable_upload: true`：
+// 别处（保存、渲染）出现 `true` 是正常的，只有「新加的那一行」不许带上它。
+// ⚠️ 找不到函数 = 也算失败：自检要跟着代码改，不能悄悄失效（那正是这个脚本存在的理由）。
+const addRoomRow = js.match(/function addRoomRow\(\)\s*\{[\s\S]*?\n\}/);
+if (!addRoomRow) {
+  failed = true;
+  console.error('✗ 找不到 `addRoomRow` —— 这条自检要跟着改（它钉的是「加房间不顺手打开 ↑」）。');
+} else if (/enable_upload\s*:\s*true/.test(addRoomRow[0])) {
+  failed = true;
+  console.error('✗ `addRoomRow` 又把新房间的上行默认成 `true` 了：');
+  console.error('    那等于「点一下加房间就开始往外发本机剪贴板」—— 用户不会回头去关那个 ↑。');
 }
 
 if (cssOnly.length) {
