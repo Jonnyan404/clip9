@@ -50,6 +50,14 @@ let lastShape = null;
  */
 let lastRooms = [];
 
+/** 上一次渲染时**选中的是哪个房间**（下标）。
+ *
+ * ⚠️ 与 `lastRooms` 配对用：光有房间数组、没有下标，读不到「当前那个」的状态。
+ * 现在的用处是计数器要判「这条连接到底通没通」—— 因为 `textLimit === 0` 有
+ * 「没连上」与「服务端不限」两种含义（见 `updateCounter`）。
+ */
+let lastSelected = 0;
+
 /** 上一次渲染的**限额**（握手下发的那一份）。只给输入区右下角那个计数器用。 */
 let lastLimits = { textLimit: 0, fileLimit: 0 };
 
@@ -336,15 +344,29 @@ function renderTimeline(state) {
  *
  * ⚠️ 上限是**握手**里下发的（不在 `/server`）。没连上就是「不知道」，
  * 这时要写「还不知道」而不是 `0 / 0` —— 后者会让用户以为「一个字都发不了」。
- * ⚠️ 用 `[...value].length` 而不是 `value.length`：后者数的是 UTF-16 码元，
- * 一个 emoji 会算成 2，而服务端那边按**字节**判限额 —— 两个数都不是精确的，
- * 但按「肉眼可见的字符」数最贴近用户心里的那个数，也最不容易吓到他。
+ *
+ * ⚠️★ 数的是**字节**，与两侧同一口径：服务端 `handlers.rs` 用 `text.len()` 判，
+ * 而这一页的标签写的就是「文本上限（**字节**）」（`index.html`）。
+ * 这里**原来数码点**（`[...value].length`）—— 于是同一页上三个说法：标签说字节、
+ * 服务端按字节判、而计数器和提示语说的是「字符」。后果：一条 3000 汉字的长文
+ * 会显示「3000 / 4096」然后被服务端按 9000 字节拒掉，用户完全看不懂
+ *（`docs/specs/desktop-client.md` §8.2 第 4 条 / `long-message-hardening.md` S2）。
+ * ⚠️ 也别改用 `value.length`：那是 **UTF-16 码元**数（emoji 算 2），第三种口径。
+ *
+ * ⚠️★ `0` 有**两种**含义，必须分开说：**没连上**（上限不知道）与
+ * **服务端设了 0 = 不限**（`handlers.rs` 那条 `text.limit > 0` 的判断）。
+ * 只判 `limit` 真值的话，后一种会被画成「还没连上」—— 明明连着却说不清。
  */
 function updateCounter() {
-  const limit = lastLimits.textLimit;
-  el('limits').textContent = limit
-    ? `${[...el('input').value].length} / ${limit}`
-    : '上限还不知道（还没连上）';
+  const bytes = new TextEncoder().encode(el('input').value).length;
+  const kind = lastRooms[lastSelected]?.connection?.kind;
+  if (lastLimits.textLimit > 0) {
+    el('limits').textContent = `${bytes} / ${lastLimits.textLimit}`;
+  } else if (kind === 'on' || kind === 'warn') {
+    el('limits').textContent = `${bytes} / 不限`;
+  } else {
+    el('limits').textContent = '上限还不知道（还没连上）';
+  }
 }
 
 /** 主区那一行**右边**的设备行（稿 1 有：几个圆圈 + 「N 台在线」）。
@@ -393,6 +415,7 @@ function renderDevices(state) {
 /** 整个界面。⚠️ 「有没有房间」也要画出来 —— 半个状态是骗人的。 */
 function render(state) {
   lastRooms = state.rooms;
+  lastSelected = state.selected;
   lastLimits = state.limits;
   el('room-count').textContent = String(state.rooms.length);
   renderRooms(state);
