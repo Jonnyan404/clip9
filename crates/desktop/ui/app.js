@@ -30,6 +30,49 @@
  */
 const t = (key, params) => I18N.t(key, params);
 
+/** **壳递过来的**一句话（`{key, params}`）→ 成文的文本。
+ *
+ * ⚠️★ 与 `t()` 分开是**故意的**：`t()` 收的是一个键（页面自己知道要哪句），
+ * 而这里收的是壳说的一件事（壳才知道发生了什么，页面只负责把它说成人话）。
+ * 渲染规则（参数可能是字符串 / 整份列表 / 另一句话）在 `i18n.js` 的 `I18N.say` 里。
+ */
+const say = (msg) => I18N.say(msg);
+
+/** `catch` 到的东西 → 一句能显示的话。
+ *
+ * ⚠️★ 三种都要认，**少一种就是一个假象**：
+ *  - **对象**（`{key, params}`）：壳的 15 条命令报错从 2026-09-28 起是这个形状
+ *    （`Msg`，见 `crates/desktop/src/commands.rs` 的模块文档）。⚠️ 不认它的症状是
+ *    界面上顶着一句 `取不到状态：[object Object]` —— 完全看不出哪里坏了；
+ *  - **`Error`**：JS 自己抛的（`TypeError`、以及 `invoke` 参数写错时 Tauri 抛的那种）；
+ *  - **字符串**：`throw 'x'`、以及老版本壳的交界期。
+ *
+ * ⚠️ 顺序要紧：先认**具体**的（字符串 / `Error`），再落回「是不是壳的一句话」——
+ * 反过来会让 `Error` 走到 `say` 里（它不是句子，`say` 会返回空串）。
+ */
+function errorText(error) {
+  if (typeof error === 'string') return error;
+  if (error instanceof Error) return error.message;
+  return say(error);
+}
+
+/** 把两份字典**整个推给壳** —— 系统通知 / 托盘菜单 / 系统文件对话框的标题要用它。
+ *
+ * ⚠️★ 为什么是「推」而不是让壳自己去读这份文件：`i18n.js` 是**普通脚本**（不是 JSON），
+ * 壳读不了；而语言设置只在页面这边（`<html data-locale>` + `localStorage`），
+ * 壳不知道用户选了哪个语种。所以**启动时推一次、每次换语种再推一次**
+ * （壳那边收完顺带把托盘菜单重建一遍）。取舍写在 `crates/desktop/src/shell_text.rs` 的模块文档里。
+ *
+ * ⚠️ 失败**不弹提示**：这三处（通知 / 托盘 / 文件对话框）用的字典缺了，
+ * **界面本身一点问题都没有** —— 表现只是「壳说的那几句还是旧语言」。
+ * 为它打断用户不值得；留一行 `console.error` 是为了排查时看得见。
+ */
+function pushShellMessages() {
+  invoke('set_shell_messages', { locale: I18N.locale(), dicts: I18N.DICTS }).catch((error) => {
+    console.error('把字典推给壳失败（通知/托盘会停在旧语言）：', error);
+  });
+}
+
 // ⚠️ 用普通浏览器打开时（开发时双击 index.html）没有 `__TAURI__`。
 // 那时要说清「怎么才对」，而不是抛一句 undefined 的错。
 if (!window.__TAURI__ || !window.__TAURI__.core) {
@@ -50,6 +93,10 @@ const { invoke } = window.__TAURI__.core;
 // ⚠️ 这一步**必须在 `tick()` 之前** —— 首次绘制里就有 `data-i18n` 的节点。
 I18N.apply(document);
 I18N.ready();
+// ⚠️★ 紧接着把那两份字典推给壳：系统通知、托盘菜单、系统文件对话框的标题
+// 是**操作系统画的**，页面渲染不了它们（见 `shell_text.rs`）。推晚了不会错，
+// 但那一小段里壳弹的通知 / 托盘菜单会显示成键（`notifyUploadFailed` 那样的词）。
+pushShellMessages();
 
 /** 多久取一次快照。
  *
@@ -265,6 +312,9 @@ function applyLocale() {
   setTheme(currentTheme());
   setSidebar(sidebarNarrow());
   renderComposerHint();
+  // ⚠️★ 这一条是**页面之外**那几处（系统通知 / 托盘菜单 / 文件对话框标题）的唯一更新路径：
+  // 它们由操作系统画，`I18N.apply` 碰不到。漏了的表现是「界面全变了、托盘还是旧语言」。
+  pushShellMessages();
   if (lastState) render(lastState);
 }
 
@@ -476,7 +526,7 @@ async function toggleEntry(card, entry, button) {
       // ⚠️ 取不到要**说出来**：最常见的原因是这条已经被挤出去了（或换了房间）。
       button.disabled = false;
       button.textContent = expandLabel(entry);
-      showNotice('skip', t('取不到全文：{error}', { error }));
+      showNotice('skip', t('取不到全文：{error}', { error: errorText(error) }));
       return;
     }
     button.disabled = false;
@@ -676,7 +726,9 @@ function renderDevices(state) {
   if (!devices.length) {
     // ⚠️ 用连接状态自己的那句话（「还没开始连」/「已断开：连接被拒绝」…），
     // **不在这里另编一句** —— 那句话是壳给的，两处说法不一致就是第二份定义。
-    host.append(h('span', null, room ? (room.connection?.text || t('还没连上')) : t('没有房间')));
+    // ⚠️ 那句状态也是壳给的（`Msg`），同样要 `say`。
+    const status = room?.connection?.text ? say(room.connection.text) : '';
+    host.append(h('span', null, room ? (status || t('还没连上')) : t('没有房间')));
     return;
   }
   for (const device of devices) {
@@ -751,7 +803,7 @@ function render(state) {
   // ⚠️ 这里两个出口写的是**同一个字符串**（不是两句同义的话）：一处是画出来的正文，
   // 一处是它的悬停提示。所以「有毛病 / 没毛病」也只需要判一次。
   const problemText = state.problems.length
-    ? t('配置有毛病：{list}', { list: state.problems.join(t('problem.sep')) })
+    ? t('配置有毛病：{list}', { list: state.problems.map(say).join(t('problem.sep')) })
     : '';
   problems.hidden = problemText === '';
   problems.title = problemText;
@@ -764,7 +816,9 @@ function render(state) {
   if (state.notice) {
     // ⚠️★ 没有房间参数了：壳给出来的**就是当前选中房间那一条**
     //（没有才退回与房间无关的那一格）—— 见 `showNotice` 的注释。
-    showNotice(state.notice.kind, state.notice.text);
+    // ⚠️★ `state.notice.text` 是壳的一句话（`{key, params}`），要走 `say` 渲染 ——
+    // 直接塞进 `textContent` 会印出 `[object Object]`。
+    showNotice(state.notice.kind, say(state.notice.text));
     // ⚠️ 顺手把壳里那条清掉：否则一条三分钟前的错误会一直重播。
     // 清掉会前进版本号 → 下一拍还会重绘一次，而那一拍会走到下面的 `else` ——
     // 那时提示**正在显示**，所以用 `noticeVisible` 挡住，别把它抹掉。
@@ -793,7 +847,7 @@ async function tick() {
   } catch (error) {
     // ⚠️ 取不到状态要把「为什么」说出来：最常见的是窗口比壳活得久（壳崩了/正在退出）。
     // 主界面上没有地方放它（侧栏那块调试信息已删），所以进一次性提示。
-    showNotice('err', t('取不到状态：{error}', { error }));
+    showNotice('err', t('取不到状态：{error}', { error: errorText(error) }));
   } finally {
     setTimeout(tick, POLL_MS);
   }
@@ -803,7 +857,7 @@ function sendCurrentInput() {
   const input = el('input');
   const text = input.value;
   if (!text.trim()) return;
-  invoke('send_text', { text }).catch((error) => showNotice('err', t('发不出去：{error}', { error })));
+  invoke('send_text', { text }).catch((error) => showNotice('err', t('发不出去：{error}', { error: errorText(error) })));
   input.value = '';
 }
 
@@ -827,7 +881,7 @@ function sendCurrentInput() {
 function sendFiles(paths) {
   const list = (paths || []).filter((path) => typeof path === 'string' && path.trim() !== '');
   if (!list.length) return;
-  invoke('send_files', { paths: list }).catch((error) => showNotice('err', t('发不出去：{error}', { error })));
+  invoke('send_files', { paths: list }).catch((error) => showNotice('err', t('发不出去：{error}', { error: errorText(error) })));
 }
 
 /** 📎 / 🖼：让**壳**弹系统文件选择框（页面自己没有这个能力，见 `commands::pick_files`）。 */
@@ -835,7 +889,7 @@ async function pickAndSend(imagesOnly) {
   try {
     sendFiles(await invoke('pick_files', { imagesOnly }));
   } catch (error) {
-    showNotice('err', t('打不开文件选择框：{error}', { error }));
+    showNotice('err', t('打不开文件选择框：{error}', { error: errorText(error) }));
   }
 }
 
@@ -913,7 +967,7 @@ function openEntryMenu(entry, x, y) {
     // 全文在壳里取、在壳里写剪贴板，一个字节都不进 webview。
     if (entry.kind === 'text') {
       invoke('copy_entry', { id: entry.id }).catch((error) =>
-        showNotice('err', t('复制失败：{error}', { error })),
+        showNotice('err', t('复制失败：{error}', { error: errorText(error) })),
       );
       return;
     }
@@ -924,7 +978,7 @@ function openEntryMenu(entry, x, y) {
       return;
     }
     invoke('copy_to_clipboard', { text: entry.fileName }).catch((error) =>
-      showNotice('err', t('复制失败：{error}', { error })),
+      showNotice('err', t('复制失败：{error}', { error: errorText(error) })),
     );
   });
   menu.append(copyText);
@@ -940,7 +994,7 @@ function openEntryMenu(entry, x, y) {
     copyLink.addEventListener('click', () => {
       closeMenu();
       invoke('copy_to_clipboard', { text: entry.previewUrl }).catch((error) =>
-        showNotice('err', t('复制失败：{error}', { error })),
+        showNotice('err', t('复制失败：{error}', { error: errorText(error) })),
       );
     });
     menu.append(copyLink);
@@ -1109,7 +1163,7 @@ async function refreshServerState() {
   try {
     status = await invoke('server_status');
   } catch (error) {
-    el('srv-state').textContent = t('读不到本地服务端的状态：{error}', { error });
+    el('srv-state').textContent = t('读不到本地服务端的状态：{error}', { error: errorText(error) });
     return;
   }
   const { bundled, running } = status;
@@ -1167,7 +1221,7 @@ async function runServerAction(command, args, label) {
     await refreshServerState();
     // ⚠️ 失败要**留在界面上**：重启失败而界面写着「运行中」，用户会以为好了。
     // 最常见的失败是「端口上那个不是这个客户端起的，所以不替你停」—— 那句话原样显示。
-    el('srv-state').textContent = t('{label}失败：{error}', { label, error });
+    el('srv-state').textContent = t('{label}失败：{error}', { label, error: errorText(error) });
     return;
   }
   await refreshServerState();
@@ -1179,7 +1233,7 @@ el('srv-stop').addEventListener('click', () => runServerAction('server_stop', un
 el('srv-open').addEventListener('click', () => {
   invoke('open_web').catch(async (error) => {
     await refreshServerState();
-    el('srv-state').textContent = t('打不开网页版：{error}', { error });
+    el('srv-state').textContent = t('打不开网页版：{error}', { error: errorText(error) });
   });
 });
 // 「运行方式」两选一。
@@ -1260,7 +1314,7 @@ async function openServerPanel() {
     el('cfg-grace').value = automation.graceSeconds ?? 600;
     el('cfg-tz').value = automation.defaultTZ ?? 'Asia/Shanghai';
   } catch (error) {
-    el('server-msg').textContent = t('读不到配置：{error}', { error });
+    el('server-msg').textContent = t('读不到配置：{error}', { error: errorText(error) });
   }
   await refreshServerState();
 }
@@ -1281,7 +1335,7 @@ el('cfg-save').addEventListener('click', async () => {
     await invoke('server_config_save', { patch: serverPatch() });
     el('server-msg').textContent = t('已保存 —— 重启服务端后生效');
   } catch (error) {
-    el('server-msg').textContent = t('没保存：{error}', { error });
+    el('server-msg').textContent = t('没保存：{error}', { error: errorText(error) });
   }
 });
 
@@ -1290,7 +1344,7 @@ el('cfg-save-restart').addEventListener('click', async () => {
     await invoke('server_config_save', { patch: serverPatch() });
   } catch (error) {
     // ⚠️ 没保存成功就**别重启** —— 拿一份没生效的配置去重启，只会让用户更糊涂。
-    el('server-msg').textContent = t('没保存：{error}', { error });
+    el('server-msg').textContent = t('没保存：{error}', { error: errorText(error) });
     return;
   }
   el('server-msg').textContent = t('正在重启…');
@@ -1299,7 +1353,7 @@ el('cfg-save-restart').addEventListener('click', async () => {
     el('server-msg').textContent = t('已保存并重启');
   } catch (error) {
     // ⚠️ 说清是「保存成功了、重启失败」—— 这两种的下一步完全不同。
-    el('server-msg').textContent = t('保存了，但重启失败：{error}', { error });
+    el('server-msg').textContent = t('保存了，但重启失败：{error}', { error: errorText(error) });
   }
   await refreshServerState();
 });
@@ -1447,7 +1501,7 @@ async function refreshLog() {
     el('log-text').textContent = text || t('（还没有日志 —— 服务端起来之后才会有）');
     el('log-state').textContent = text ? '' : '';
   } catch (error) {
-    el('log-text').textContent = t('读日志失败：{error}', { error });
+    el('log-text').textContent = t('读日志失败：{error}', { error: errorText(error) });
   }
 }
 
@@ -1491,7 +1545,7 @@ async function openSettings() {
     el('dg-data').textContent = view.dataDir;
     el('dg-config').textContent = view.configPath;
   } catch (error) {
-    el('settings-msg').textContent = t('读不到设置：{error}', { error });
+    el('settings-msg').textContent = t('读不到设置：{error}', { error: errorText(error) });
   }
   // ⚠️ 本地服务端那一块（`#srv-*` / `#dg-server`）**不从这里填** ——
   // 它有自己的来源（`server_status`：状态 + 连接地址 + 哪些房间指向它）。
@@ -1602,7 +1656,7 @@ el('settings-save').addEventListener('click', async () => {
     el('settings-msg').textContent = t('已保存');
   } catch (error) {
     // ⚠️ 失败要**留在界面上**：设置没存上而界面看着像存了，用户下次启动会发现白改。
-    el('settings-msg').textContent = t('没保存：{error}', { error });
+    el('settings-msg').textContent = t('没保存：{error}', { error: errorText(error) });
   }
 });
 

@@ -23,6 +23,7 @@
 
 use std::path::{Path, PathBuf};
 
+use clip9_client::Msg;
 use clip9_core::Config;
 use serde_json::Value;
 
@@ -47,22 +48,28 @@ impl ServerConfigFile {
     /// ⚠️ 不存在**不是错误**：第一次运行就是这样，而用户要的是一个能编辑的表单，
     /// 不是一句「文件不存在」。⚠️ 但**坏掉的 JSON 是错误**：那时候原样报错、
     /// **绝不**悄悄换成默认值 —— 那等于把用户配过的东西全清掉。
-    pub fn read(&self) -> Result<Value, String> {
+    ///
+    /// ⚠️ 报错是 [`Msg`]（键 + 参数）：这几句会走到界面上（就是这个编辑页），
+    /// 所以不能是写死的中文（理由见 [`crate::commands`] 的模块文档）。
+    /// ⚠️ 而 `serde_json` 那句**原文**是**参数**进去的（`reason`）—— 它是**外来文本**，
+    /// 我们不翻、也翻不了（`Msg::verbatim` 那一条说的就是这件事）。
+    pub fn read(&self) -> Result<Value, Msg> {
         let raw = match std::fs::read_to_string(&self.path) {
             Ok(raw) => raw,
             Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
                 return serde_json::to_value(Config::default())
-                    .map_err(|err| format!("默认配置序列化失败：{err}"));
+                    .map_err(|reason| Msg::key("configSerializeFailed").param("reason", reason));
             }
-            Err(err) => {
-                return Err(format!("读配置失败（{}）：{err}", self.path.display()));
+            Err(reason) => {
+                return Err(Msg::key("serverConfigUnreadable")
+                    .param("path", self.path.display())
+                    .param("reason", reason));
             }
         };
-        serde_json::from_str::<Value>(&raw).map_err(|err| {
-            format!(
-                "配置不是合法 JSON（{}）：{err}\n    这个文件**没被动过** —— 改好它再打开这个界面。",
-                self.path.display()
-            )
+        serde_json::from_str::<Value>(&raw).map_err(|reason| {
+            Msg::key("serverConfigBroken")
+                .param("path", self.path.display())
+                .param("reason", reason)
         })
     }
 
@@ -74,13 +81,13 @@ impl ServerConfigFile {
     /// ⚠️★ 校验不过就**不写**（返回错误，磁盘上的文件一个字节都不动）。
     /// 服务端解析不了配置就**拒绝启动**，所以「写进去一个它读不了的配置」
     /// 等于把用户的服务端弄停 —— 那比「保存失败」严重得多。
-    pub fn patch(&self, patch: &Value) -> Result<Value, String> {
+    pub fn patch(&self, patch: &Value) -> Result<Value, Msg> {
         let mut merged = self.read()?;
         merge_into(&mut merged, patch);
 
         // ⚠️ 用**服务端自己那个类型**校验（`clip9-core`），不是这里另写一套规则。
         let parsed = serde_json::from_value::<Config>(merged.clone())
-            .map_err(|err| format!("这份配置服务端读不了，没有保存：{err}"))?;
+            .map_err(|reason| Msg::key("serverConfigInvalid").param("reason", reason))?;
 
         // ⚠️★ 「解析得了」≠「配得对」。`text.limit` 是 `i64`，所以 16 MiB 也能解析 ——
         // 而配得比 `TEXT_LIMIT_MAX` 大，那一截正文**在 HTTP 层就被框架拒了**，
@@ -91,19 +98,20 @@ impl ServerConfigFile {
         // ⚠️ 判的是**合并后**的整份配置，不是这次补丁：只改房间凭据的那次保存
         // 同样要能发现「文件里早就躺着一个不可达的上限」——否则它会一直躺在那儿，
         // 而界面每次都画出一个假的、更大的数字。
+        //
+        // ⚠️★ 三个数**都要递过去**（填的那个值 / 能生效的最大值 / 最大值是多少 MiB）——
+        // 「最大值」那句是**算出来的**（`TEXT_LIMIT_MAX / 1 MiB`），在 Rust 里算、
+        // 在字典里组装：两句句子的形状（`{} 字节` / `{} MiB`）是由语言定的，
+        // 而这个数本身与语言无关（数字不翻）。
         if !parsed.text.is_effective() {
-            return Err(format!(
-                "文本上限 {} 字节服务端收不到，没有保存。\n    \
-                 能生效的最大值是 {} 字节（{} MiB）；填 0 = 不限。\n    \
-                 要支持更大的内容请走文件（分片上传），别把消息上限调大。",
-                parsed.text.limit,
-                clip9_core::config::TEXT_LIMIT_MAX,
-                clip9_core::config::TEXT_LIMIT_MAX / (1024 * 1024),
-            ));
+            return Err(Msg::key("textLimitUnreachable")
+                .param("limit", parsed.text.limit)
+                .param("max", clip9_core::config::TEXT_LIMIT_MAX)
+                .param("mib", clip9_core::config::TEXT_LIMIT_MAX / (1024 * 1024)));
         }
 
         let text = serde_json::to_string_pretty(&merged)
-            .map_err(|err| format!("配置序列化失败：{err}"))?;
+            .map_err(|reason| Msg::key("configSerializeFailed").param("reason", reason))?;
         write_atomically(&self.path, format!("{text}\n").as_bytes())?;
         Ok(merged)
     }
@@ -138,23 +146,28 @@ fn merge_into(target: &mut Value, patch: &Value) {
 /// ⚠️ 与 `store.rs` 里那个（写客户端配置的）同一个形状、同一个理由：
 /// 写坏了 = 用户下次起不来服务端，而界面画得再对也救不回来。
 /// ⚠️ 临时名带进程 id：两个进程同时保存时不会互相踩掉对方的临时文件。
-fn write_atomically(path: &Path, bytes: &[u8]) -> Result<(), String> {
+fn write_atomically(path: &Path, bytes: &[u8]) -> Result<(), Msg> {
     if let Some(parent) = path.parent()
         && !parent.as_os_str().is_empty()
     {
-        std::fs::create_dir_all(parent)
-            .map_err(|err| format!("建目录失败（{}）：{err}", parent.display()))?;
+        std::fs::create_dir_all(parent).map_err(|reason| {
+            Msg::key("configDirCreateFailed")
+                .param("path", parent.display())
+                .param("reason", reason)
+        })?;
     }
     let tmp = path.with_extension(format!("{}.tmp", std::process::id()));
-    std::fs::write(&tmp, bytes)
-        .map_err(|err| format!("写临时文件失败（{}）：{err}", tmp.display()))?;
+    std::fs::write(&tmp, bytes).map_err(|reason| {
+        Msg::key("configTempWriteFailed")
+            .param("path", tmp.display())
+            .param("reason", reason)
+    })?;
     // ⚠️ `rename` 在同一个文件系统内是原子的 —— 这正是「临时文件与目标同目录」的意义。
-    std::fs::rename(&tmp, path).map_err(|err| {
-        format!(
-            "覆盖配置失败（{} → {}）：{err}",
-            tmp.display(),
-            path.display()
-        )
+    std::fs::rename(&tmp, path).map_err(|reason| {
+        Msg::key("configRenameFailed")
+            .param("from", tmp.display())
+            .param("to", path.display())
+            .param("reason", reason)
     })
 }
 
@@ -164,6 +177,17 @@ mod tests {
 
     fn file_in(dir: &Path) -> ServerConfigFile {
         ServerConfigFile::new(dir.join("config.json"))
+    }
+
+    /// 取一个字符串参数 —— ⚠️ 这条测试模块里的断言**只钉键与参数**，不钉句子：
+    /// 那些句子现在住在 `ui/i18n.js` 的两个字典里（判据 14/17 盯着它们），
+    /// 改文案不该让服务端这边的测试红（与 `store` / `client` 同一条规矩）。
+    fn param(msg: &Msg, name: &str) -> String {
+        msg.params
+            .get(name)
+            .and_then(clip9_client::ParamValue::as_str)
+            .unwrap_or_else(|| panic!("参数 {name} 该是个字符串：{msg:?}"))
+            .to_owned()
     }
 
     /// 文件不存在 → 给一份**默认**配置（不是报错）：第一次运行就是这样，
@@ -188,7 +212,16 @@ mod tests {
         std::fs::write(&path, "{ 这不是 JSON").unwrap();
 
         let err = file_in(dir.path()).read().unwrap_err();
-        assert!(err.contains("config.json"), "要说清是哪个文件：{err}");
+        assert_eq!(err.key, "serverConfigBroken", "坏 JSON 要报这一条：{err:?}");
+        assert!(
+            param(&err, "path").ends_with("config.json"),
+            "要说清是哪个文件：{err:?}"
+        );
+        // ⚠️ `serde_json` 那句原文是**外来文本**，它作为参数原样带出来（不翻）。
+        assert!(
+            !param(&err, "reason").is_empty(),
+            "要带上解析器说的话：{err:?}"
+        );
         assert_eq!(
             std::fs::read_to_string(&path).unwrap(),
             "{ 这不是 JSON",
@@ -250,7 +283,10 @@ mod tests {
         let err = file_in(dir.path())
             .patch(&serde_json::json!({"server": {"port": "不是数字"}}))
             .expect_err("该拒绝");
-        assert!(err.contains("服务端读不了"), "要说清为什么没保存：{err}");
+        assert_eq!(
+            err.key, "serverConfigInvalid",
+            "要说清为什么没保存：{err:?}"
+        );
         assert_eq!(
             std::fs::read_to_string(&path).unwrap(),
             original,
@@ -273,13 +309,21 @@ mod tests {
         let err = file_in(dir.path())
             .patch(&serde_json::json!({"text": {"limit": too_big}}))
             .expect_err("该拒绝");
-        assert!(
-            err.contains(&too_big.to_string()),
-            "要说清是哪个值不行：{err}"
+        assert_eq!(err.key, "textLimitUnreachable", "{err:?}");
+        assert_eq!(
+            param(&err, "limit"),
+            too_big.to_string(),
+            "要说清是哪个值不行：{err:?}"
         );
-        assert!(
-            err.contains(&clip9_core::config::TEXT_LIMIT_MAX.to_string()),
-            "要给一个能用的最大值（否则用户只能猜）：{err}"
+        assert_eq!(
+            param(&err, "max"),
+            clip9_core::config::TEXT_LIMIT_MAX.to_string(),
+            "要给一个能用的最大值（否则用户只能猜）：{err:?}"
+        );
+        assert_eq!(
+            param(&err, "mib"),
+            (clip9_core::config::TEXT_LIMIT_MAX / (1024 * 1024)).to_string(),
+            "还要说清它合多少 MiB（句子形状由字典定，数字由这里算）：{err:?}"
         );
         assert_eq!(
             std::fs::read_to_string(&path).unwrap(),
@@ -299,7 +343,7 @@ mod tests {
         ] {
             let merged = file_in(dir.path())
                 .patch(&serde_json::json!({"text": {"limit": limit}}))
-                .unwrap_or_else(|err| panic!("{limit} 该被接受：{err}"));
+                .unwrap_or_else(|err| panic!("{limit} 该被接受：{err:?}"));
             assert_eq!(merged["text"]["limit"], limit);
         }
     }
@@ -323,7 +367,7 @@ mod tests {
         let err = file_in(dir.path())
             .patch(&serde_json::json!({"server": {"port": 9600}}))
             .expect_err("改端口也得先把这个不可达的值报出来");
-        assert!(err.contains("文本上限"), "{err}");
+        assert_eq!(err.key, "textLimitUnreachable", "{err:?}");
     }
 
     /// ⚠️★ **`null` 是「删掉这个键」**（RFC 7396）。界面上「删掉一个房间的凭据」

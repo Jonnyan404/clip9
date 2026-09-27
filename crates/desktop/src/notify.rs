@@ -14,6 +14,13 @@
 //! 于是真正要紧的那条也没人看了），要么「该弹的不弹」（他根本不知道东西没发出去）。
 //! 所以判据留在能测的那一侧，这里只负责把**已经定好的标题 + 正文**递出去。
 //!
+//! # ⚠️★ 文本谁来渲染：**壳自己**（和托盘、文件对话框同一类）
+//!
+//! 通知是**操作系统画的**，页面渲染不了它 —— 所以 `Notifier::send` 收的是
+//! [`Msg`]（键 + 参数），成文那一步在 [`SystemNotifier::send`] 里，
+//! 用的是页面推过来的那份字典（[`crate::shell_text`]）。
+//! ⚠️ 「什么时候该弹」仍然只在 [`crate::runtime`] 里判 —— 那一侧看不到 `tauri`。
+//!
 //! # ⚠️★ 页面**拿不到**这个能力
 //!
 //! 插件会给页面注入一段它自带的 JS（`init-iife.js`），但**能不能调**由 ACL 决定，
@@ -44,7 +51,11 @@
 //!
 //! [`notify_rust`]: https://docs.rs/notify-rust
 
-use std::sync::OnceLock;
+use std::sync::{Arc, OnceLock};
+
+use clip9_client::Msg;
+
+use crate::shell_text::ShellText;
 
 /// 发一条系统通知。
 ///
@@ -53,10 +64,12 @@ use std::sync::OnceLock;
 ///
 /// ⚠️ 实现必须是 `Send + Sync`：运行时会在下行那条搬运任务里调它。
 pub trait Notifier: Send + Sync {
-    /// 发一条。**没有返回值**是刻意的 —— 通知弹不出来不该影响同步：
+    /// 发一条（收的是**键 + 参数**，见模块文档「文本谁来渲染」）。
+    ///
+    /// **没有返回值**是刻意的 —— 通知弹不出来不该影响同步：
     /// 它是**旁路**（发失败最坏的结果是用户少看一眼提示，而不是「东西没发出去」）。
     /// 想让它可失败，上游就得处理一个「失败了也不能怎么办」的错误 —— 那是纯噪音。
-    fn send(&self, title: &str, body: &str);
+    fn send(&self, title: &Msg, body: &Msg);
 }
 
 /// 真的把通知发给系统的那一份。
@@ -67,14 +80,19 @@ pub trait Notifier: Send + Sync {
 pub struct SystemNotifier {
     /// 真实的窗口句柄。⚠️ 只有 `setup` 里才拿得到，所以是**后填**的（见模块文档）。
     app: OnceLock<tauri::AppHandle>,
+    /// 壳自己要说的那几句话的字典（页面推过来的）。⚠️ **和窗口句柄一样是「后填」的** ——
+    /// 造的时候它还空着，页面起来之后再推。所以它是 `Arc` 共享的（同一个
+    /// [`ShellText`] 也被托盘和文件对话框用着），不是这里 `new` 一个。
+    shell: Arc<ShellText>,
 }
 
 impl SystemNotifier {
     /// 造一份**还没接上窗口**的。`main.rs` 在 `tauri::Builder` 之前就这么造。
     #[must_use]
-    pub fn new() -> Self {
+    pub fn new(shell: Arc<ShellText>) -> Self {
         Self {
             app: OnceLock::new(),
+            shell,
         }
     }
 
@@ -89,15 +107,17 @@ impl SystemNotifier {
     }
 }
 
-impl Default for SystemNotifier {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
 impl Notifier for SystemNotifier {
-    fn send(&self, title: &str, body: &str) {
+    fn send(&self, title: &Msg, body: &Msg) {
         use tauri_plugin_notification::NotificationExt;
+
+        // ⚠️★ **成文就在这里**：页面渲染不了系统通知（它连 `notification:*` 权限都没有），
+        // 所以壳拿字典把两句 `Msg` 渲染出来（`shell_text` 的模块文档里有这条分工）。
+        // ⚠️ 字典是页面推过来的；推过来之前这里拿到的是**键本身** ——
+        // 那时窗口都还没画完，能看见一条带键的通知比看不见好查。
+        let title = self.shell.say(title);
+        let body = self.shell.say(body);
+        let (title, body) = (title.as_str(), body.as_str());
 
         let Some(app) = self.app.get() else {
             // ⚠️ 窗口还没建起来（`setup` 还没跑）。丢掉 + 说一句 ——

@@ -13,7 +13,7 @@
 //! 漂移风险就在这里。所以下面每条「界面上怎么显示」都对着 `web-vue3` 的约定写，
 //! 并在注释里指出对照点。
 
-use clip9_client::endpoint::download_url;
+use clip9_client::{Msg, endpoint::download_url};
 use clip9_protocol::ReceiveHolder;
 use serde::Serialize;
 
@@ -204,12 +204,16 @@ fn device_label(device: Option<&std::collections::HashMap<String, String>>) -> S
 ///
 /// ⚠️★ 它现在是**按房间**的一份（`store::ConnectionView` 里嵌着它）——
 /// 每个房间各自有一条连接（§4.7），所以「唯一那条连接的状态」已经不存在了。
+///
+/// ⚠️★ `text` 是 [`Msg`]（键 + 参数），**不是成文的句子**（2026-09-28 改）——
+/// 这一族的句子全是壳写的，成文的话界面切英文时它们一个字都不变。
+/// 见 `clip9_client::msg` 的模块文档。
 #[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct StatusView {
     /// `wait` / `on` / `off` / `warn` —— 页面据此换圆点颜色。
     pub kind: &'static str,
-    pub text: String,
+    pub text: Msg,
     /// 连上之后拿到的边界（`latestId`）—— 界面上用它核对「历史到哪为止」。
     pub latest_id: Option<i32>,
 

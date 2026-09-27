@@ -50,6 +50,7 @@ use time::{OffsetDateTime, UtcOffset};
 use crate::config::{Channel, ClientConfig};
 use crate::endpoint;
 use crate::event::{ClipboardEvent, UploadKind};
+use crate::msg::Msg;
 
 /// 单个通道的上传超时。
 ///
@@ -122,15 +123,20 @@ impl UploadPayload {
 
     /// 给日志 / 通知用的一句话。
     ///
+    /// ⚠️★ 它是 [`Msg`]（键 + 参数），**不是成文的中文**（2026-09-28 改）——
+    /// 见 [`crate::msg`] 的模块文档。这条会进系统通知，而通知是壳渲染的。
+    ///
     /// ⚠️★ 文本**必须截断**：剪贴板里可能是一整篇文档、也可能是密码。
     /// 日志和系统通知都不是放这些的地方。
     #[must_use]
-    pub fn describe(&self) -> String {
+    pub fn describe(&self) -> Msg {
         match self {
-            UploadPayload::Text(text) => format!("文本「{}」", truncate_middle(text, 40)),
-            UploadPayload::File { name, bytes } => {
-                format!("文件「{name}」（{} 字节）", bytes.len())
+            UploadPayload::Text(text) => {
+                Msg::key("payloadText").param("text", truncate_middle(text, 40))
             }
+            UploadPayload::File { name, bytes } => Msg::key("payloadFile")
+                .param("name", name)
+                .param("bytes", bytes.len()),
         }
     }
 }
@@ -184,17 +190,17 @@ pub async fn materialize(
     now: OffsetDateTime,
     limits: ServerLimits,
     max_file_size_mb: u64,
-) -> Result<Vec<UploadPayload>, String> {
+) -> Result<Vec<UploadPayload>, Msg> {
     match event {
         ClipboardEvent::Text { content, .. } => {
             if content.is_empty() {
-                return Err("文本是空的".to_owned());
+                return Err(Msg::key("uploadTextEmpty"));
             }
             Ok(vec![UploadPayload::Text(content.clone())])
         }
         ClipboardEvent::Image { png } => {
             if png.is_empty() {
-                return Err("图片是空的".to_owned());
+                return Err(Msg::key("uploadImageEmpty"));
             }
             Ok(vec![UploadPayload::File {
                 name: image_file_name(now),
@@ -203,22 +209,24 @@ pub async fn materialize(
         }
         ClipboardEvent::Files { paths } => {
             if paths.is_empty() {
-                return Err("文件列表是空的".to_owned());
+                return Err(Msg::key("uploadFileListEmpty"));
             }
             let mut out = Vec::with_capacity(paths.len());
             for path in paths {
                 let name = crate::download::sanitize_file_name(&path.to_string_lossy());
                 if name.is_empty() {
-                    return Err(format!("文件名不可用：{}", path.display()));
+                    return Err(Msg::key("uploadBadFileName").param("path", path.display()));
                 }
                 // ⚠️★ **先看大小再读文件**：不先看就要把整个文件读进内存，
                 // 复制一个几百 MB 的文件会直接把客户端撑爆。
                 if let Ok(meta) = tokio::fs::metadata(path).await {
                     size_guard(meta.len(), limits.file_limit, max_file_size_mb)?;
                 }
-                let bytes = tokio::fs::read(path)
-                    .await
-                    .map_err(|e| format!("读不了文件 {}：{e}", path.display()))?;
+                let bytes = tokio::fs::read(path).await.map_err(|err| {
+                    Msg::key("uploadFileUnreadable")
+                        .param("path", path.display())
+                        .param("reason", err)
+                })?;
                 size_guard(bytes.len() as u64, limits.file_limit, max_file_size_mb)?;
                 out.push(UploadPayload::File { name, bytes });
             }
@@ -231,7 +239,9 @@ pub async fn materialize(
 ///
 /// ⚠️ 返回的错误信息里**带上具体数字** —— 那是 §11 第 2 条要的
 /// 「让它带数字，用户才知道要减到多少」。
-fn size_guard(size: u64, server_limit: u64, max_file_size_mb: u64) -> Result<(), String> {
+/// ⚠️ 数字在**这里**格式化（`12.3 MB`），而且单位（B / KB / MB）两种语言一样 ——
+/// 把字节数交给页面去格式化会变成**第二份**分档规则（`ui/app.js` 的 `sizeLabel` 已经有一份）。
+fn size_guard(size: u64, server_limit: u64, max_file_size_mb: u64) -> Result<(), Msg> {
     let mb = max_file_size_mb.saturating_mul(1024 * 1024);
     let cap = match (server_limit, mb) {
         (0, 0) => 0,        // 两个都不知道 / 都不限
@@ -242,11 +252,17 @@ fn size_guard(size: u64, server_limit: u64, max_file_size_mb: u64) -> Result<(),
     if cap == 0 || size <= cap {
         return Ok(());
     }
-    Err(format!(
-        "文件有 {:.1} MB，超过上限 {:.1} MB",
-        size as f64 / (1024.0 * 1024.0),
-        cap as f64 / (1024.0 * 1024.0)
-    ))
+    Err(Msg::key("uploadFileTooLarge")
+        .param("size", megabytes(size))
+        .param("limit", megabytes(cap)))
+}
+
+/// 字节 → `12.3 MB`（带一位小数）。
+///
+/// ⚠️ 单位是**语言无关**的（B / KB / MB 中英文一样），所以这一份格式化放在 Rust 里没问题；
+/// 有语言差异的是**句子**，那部分在字典里。
+fn megabytes(bytes: u64) -> String {
+    format!("{:.1} MB", bytes as f64 / (1024.0 * 1024.0))
 }
 
 /// 一次载荷的结果。
@@ -257,7 +273,12 @@ pub enum UploadOutcome {
     /// 因为开关跳过 —— ⚠️ **带上「卡在哪一道」**（见 [`SkipReason`]）。
     Skipped(SkipReason),
     /// 全失败。
-    Failed(String),
+    ///
+    /// ⚠️★ 里面是 [`Msg`]（键 + 参数）—— 它可能是**我们自己**说的话
+    ///（空文本、文件太大、请求失败），也可能是**服务端**给的原话
+    ///（`parse_api_error` 抄回来的 `message`，那是**数据**、不翻译）。
+    /// 两种都能放进 `Msg`：后者只当一个参数。
+    Failed(Msg),
 }
 
 /// 「被跳过」时**到底卡在哪一道开关上**。
@@ -282,13 +303,16 @@ pub enum SkipReason {
 impl SkipReason {
     /// 给提示 / 日志用的一句话。
     ///
-    /// ⚠️★ **必须点出开关在哪儿**（「全局设置」/「侧栏」），而且**只用界面上真有那两处**：
+    /// ⚠️★ **必须点出开关在哪儿**（「设置」/「侧栏」），而且**只用界面上真有那两处**：
     /// 原来那句「相关开关关着」之所以被用户当成假话，就是因为它指的东西他不认得。
+    /// ⚠️ 所以这两句里的「设置」「文本 / 文件」**必须与页面上那两个标签逐字一致**
+    ///（`ui/i18n.js` 的 `'全局设置': 'Settings'` / `'文本': 'Text'`）——
+    /// 那边改了名字这边不改，用户又会对着一句指错地方的话找开关。
     #[must_use]
-    pub fn summary(self) -> &'static str {
+    pub fn summary(self) -> Msg {
         match self {
-            Self::ContentKind => "这类内容没开上行（「全局设置」页里的「文本 / 文件」）",
-            Self::NoUploadRoom => "本机剪贴板没发出去：侧栏里没有任何房间开着 ↑",
+            Self::ContentKind => Msg::key("uploadSkippedContentKind"),
+            Self::NoUploadRoom => Msg::key("uploadSkippedNoRoom"),
         }
     }
 }
@@ -307,7 +331,7 @@ pub struct UploadReport {
     /// 而这里要的正是「跳过 ⇒ 一定指得出是哪一道」。
     pub skip: Option<SkipReason>,
     /// 失败原因，每条一个（**带房间名**，否则多房间时看不出是谁失败了）。
-    pub failures: Vec<String>,
+    pub failures: Vec<Msg>,
 }
 
 impl UploadReport {
@@ -333,40 +357,42 @@ impl UploadReport {
     }
 
     /// 给通知 / 日志用的一句话。
+    ///
+    /// ⚠️★ 它是 [`Msg`]（键 + 参数）—— 见 [`crate::msg`] 的模块文档。
+    /// ⚠️★ 失败原因**整份递过去**（`{reasons}` 是个列表），**不在这里拼接**：
+    /// 原来这里是 `failures.join("；")` —— 那个全角分号在英文句子中间很突兀。
     #[must_use]
-    pub fn summary(&self) -> String {
+    pub fn summary(&self) -> Msg {
         if !self.failures.is_empty() {
-            return format!(
-                "{} 个载荷里有 {} 处失败：{}",
-                self.payloads,
-                self.failures.len(),
-                self.failures.join("；")
-            );
+            return Msg::key("uploadSomeFailed")
+                .param("payloads", self.payloads)
+                .param("failed", self.failures.len())
+                .param_msg_list("reasons", self.failures.iter().cloned());
         }
         if let Some(reason) = self.skip {
             // ⚠️ 理由由 [`SkipReason`] 给，这里**不另写一份**：文案与判据分家，
             // 下一次改判据就会留下一句过期的话（用户这次报的正是这个）。
-            return reason.summary().to_owned();
+            return reason.summary();
         }
         // ⚠️ `delivered == 0` 而**不是**被开关跳过 —— 那是界面上「点一下发送」那条路
         //（[`upload_explicit`]）会走到的分支：它一个开关都不判，所以**不能说**
         // 「相关开关关着」，那是一句假话（用户会去关着的地方找原因）。
         if self.delivered == 0 {
-            return "没有发出去".to_owned();
+            return Msg::key("uploadNothingSent");
         }
-        format!("已发到 {} 个房间", self.delivered)
+        Msg::key("uploadSentToRooms").param("count", self.delivered)
     }
 }
 
 /// 建一个上行用的 HTTP 客户端。
 ///
 /// ⚠️ 超时是**必配**的，理由见 [`CHANNEL_TIMEOUT_SECS`]。
-pub fn build_client() -> Result<Client, String> {
+pub fn build_client() -> Result<Client, Msg> {
     Client::builder()
         .connect_timeout(Duration::from_secs(CONNECT_TIMEOUT_SECS))
         .timeout(Duration::from_secs(CHANNEL_TIMEOUT_SECS))
         .build()
-        .map_err(|e| format!("建 HTTP 客户端失败：{e}"))
+        .map_err(|e| Msg::key("httpClientFailed").param("reason", e))
 }
 
 /// 现在的时刻 —— **上层要主动发事件时该用的唯一时钟**。
@@ -490,7 +516,11 @@ async fn upload_payload(
     for channel in targets {
         match post_to_channel(client, channel, cfg, payload).await {
             Ok(()) => succeeded += 1,
-            Err(reason) => failures.push(format!("「{}」{reason}", channel.name)),
+            Err(reason) => failures.push(
+                Msg::key("roomScopedFailure")
+                    .param("room", &channel.name)
+                    .param_msg("text", reason),
+            ),
         }
     }
 
@@ -500,11 +530,11 @@ async fn upload_payload(
             succeeded,
         }
     } else {
-        UploadOutcome::Failed(format!(
-            "{} 个房间全部失败：{}",
-            targets.len(),
-            failures.join("；")
-        ))
+        UploadOutcome::Failed(
+            Msg::key("uploadAllRoomsFailed")
+                .param("count", targets.len())
+                .param_msg_list("reasons", failures),
+        )
     }
 }
 
@@ -514,7 +544,7 @@ pub(crate) async fn post_to_channel(
     channel: &Channel,
     cfg: &ClientConfig,
     payload: &UploadPayload,
-) -> Result<(), String> {
+) -> Result<(), Msg> {
     let device_name = cfg.device_name.as_str();
 
     let mut builder = match payload {
@@ -546,7 +576,7 @@ pub(crate) async fn post_to_channel(
             .body(text.clone())
             .send()
             .await
-            .map_err(|e| format!("请求失败：{e}"))?,
+            .map_err(|e| Msg::key("requestFailed").param("reason", e))?,
         UploadPayload::File { name, bytes } => builder
             // ⚠️ 字段名恒为 `file`（`docs/api.md` §5）。
             .multipart(multipart::Form::new().part(
@@ -555,7 +585,7 @@ pub(crate) async fn post_to_channel(
             ))
             .send()
             .await
-            .map_err(|e| format!("请求失败：{e}"))?,
+            .map_err(|e| Msg::key("requestFailed").param("reason", e))?,
     };
 
     let status = response.status().as_u16();
@@ -563,7 +593,7 @@ pub(crate) async fn post_to_channel(
     if (200..300).contains(&status) {
         Ok(())
     } else {
-        Err(parse_api_error(status, &body))
+        Err(Msg::verbatim(parse_api_error(status, &body)))
     }
 }
 
@@ -604,11 +634,22 @@ pub fn parse_api_error(status: u16, body: &str) -> String {
 mod tests {
     use super::*;
     use crate::event::TextSubtype;
+    use crate::msg::ParamValue;
     use std::path::PathBuf;
     use time::macros::datetime;
 
     fn fixed_now() -> OffsetDateTime {
         datetime!(2026-09-26 13:45:00 +8)
+    }
+
+    /// 取一个字符串参数 —— 断言只认「键 + 参数」，不再拿中文句子当判据
+    /// （见 `crate::msg` 的模块文档）。
+    fn param(msg: &Msg, name: &str) -> String {
+        msg.params
+            .get(name)
+            .and_then(ParamValue::as_str)
+            .unwrap_or_else(|| panic!("`{name}` 这个参数不见了：{msg:?}"))
+            .to_owned()
     }
 
     /// ⚠️ 上层（「手动发一条」那条路）要的是一个**真实时钟** —— 而这个 crate 原来
@@ -689,18 +730,30 @@ mod tests {
     }
 
     /// ⚠️★ 文本日志必须**截断**（剪贴板里可能是一整篇文档，也可能是密码）。
+    ///
+    /// ⚠️ 判据是**句子被拆开之后**的形状（键 + 参数，2026-09-28 改）：截断发生在
+    /// **参数值**上，不在句子上。所以「有没有截断」要去 `text` 这个参数里看 ——
+    /// 这才是它进日志、进通知时真正被看见的那一段。
     #[test]
     fn text_is_truncated_for_logging() {
         let short = UploadPayload::Text("hi".to_owned());
-        assert_eq!(short.describe(), "文本「hi」");
+        let described = short.describe();
+        assert_eq!(described.key, "payloadText");
+        assert_eq!(param(&described, "text"), "hi");
+        assert_eq!(
+            serde_json::to_string(&described).unwrap(),
+            r#"{"key":"payloadText","params":{"text":"hi"}}"#,
+            "一个文本载荷的形状"
+        );
 
         let long = UploadPayload::Text("很".repeat(500));
         let described = long.describe();
-        assert!(described.chars().count() < 100, "日志里的文本必须截断");
-        assert!(described.contains('…'));
+        let text = param(&described, "text");
+        assert!(text.chars().count() < 100, "日志里的文本必须截断");
+        assert!(text.contains('…'));
 
         // 按字符截断 —— 多字节字符不能被切成半个。
-        assert!(!described.contains('\u{fffd}'));
+        assert!(!text.contains('\u{fffd}'));
     }
 
     /// 图片 → 文件载荷，文件名带时间戳。
@@ -763,7 +816,8 @@ mod tests {
         // 服务端 10 MB、用户不限 → 按 10 MB 拦。
         assert!(size_guard(5 * MB, 10 * MB, 0).is_ok());
         let err = size_guard(20 * MB, 10 * MB, 0).expect_err("超了要报错");
-        assert!(err.contains("10.0 MB"), "要说清上限是多少：{err}");
+        assert_eq!(err.key, "uploadFileTooLarge");
+        assert_eq!(param(&err, "limit"), "10.0 MB", "要说清上限是多少：{err:?}");
 
         // 服务端 100 MB、用户配了 10 MB → 按 10 MB 拦（取严）。
         assert!(size_guard(5 * MB, 100 * MB, 10).is_ok());
@@ -848,13 +902,29 @@ mod tests {
         });
         assert_eq!(report.delivered, 5);
         assert!(report.ok());
-        assert_eq!(report.summary(), "已发到 5 个房间");
+        let sent = report.summary();
+        assert_eq!(sent.key, "uploadSentToRooms");
+        assert_eq!(param(&sent, "count"), "5");
+        assert!(sent.params.contains_key("count"));
 
-        report.push(UploadOutcome::Failed("「家里」HTTP 401：未授权".to_owned()));
-        assert!(!report.ok());
-        assert!(
-            report.summary().contains("家里"),
-            "失败信息要能看出是哪个房间"
+        // ⚠️★ 「失败时要能看出是哪个房间」这条现在钉在**结构**上（2026-09-28 改）：
+        // `reasons` 是个**列表**，里面每一项是 `roomScopedFailure`，房间名在那个
+        // 内层消息的 `room` 参数上。这样**页面**才能把每一项各自排好 ——
+        // 换成我们在这儿 `join("；")` 的话，那个全角分号在英文句子里很突兀，
+        // 而且「怎么排」是语言决定的事（见 `crate::msg` 的模块文档）。
+        let failed = Msg::key("roomScopedFailure")
+            .param("room", "家里")
+            .param_msg("text", Msg::verbatim("HTTP 401：未授权"));
+        report.push(UploadOutcome::Failed(failed.clone()));
+        assert!(!report.ok(), "有失败就不是 ok");
+
+        let summary = report.summary();
+        assert_eq!(summary.key, "uploadSomeFailed");
+        assert_eq!(param(&summary, "failed"), "1");
+        assert_eq!(
+            summary.params.get("reasons"),
+            Some(&ParamValue::Many(vec![ParamValue::Msg(Box::new(failed))])),
+            "失败原因要**整份**递过去，别在这儿拼句子"
         );
     }
 
@@ -914,25 +984,27 @@ mod tests {
             ..UploadReport::default()
         }
         .summary();
-        assert!(kind.contains("全局设置"), "要说清在哪儿：{kind}");
-
         let room = UploadReport {
             skip: Some(SkipReason::NoUploadRoom),
             ..UploadReport::default()
         }
         .summary();
-        assert!(
-            room.contains("侧栏") && room.contains('↑'),
-            "要说清在哪儿：{room}"
-        );
 
-        // ⚠️ 两句都**不许**再出现「相关开关」这种要用户自己去认的话。
-        for text in [kind, room] {
-            assert!(
-                !text.contains("相关开关"),
-                "「相关开关」指认不出是哪一道 —— 用户就是这么被绕进去的：{text}"
-            );
-        }
+        // ⚠️★ 2026-09-28 之后「说清在哪儿」的**判据换了个地方住**，但没取消 ——
+        // 它现在分成两半，各自住在能验证它的那一侧：
+        //   ① **键必须是两个**：两个开关 = 两个键。一个泛泛的键（原来是同一句
+        //      「相关开关」）**说不出**在哪儿，这是这个设计要挡的东西；
+        //   ② **字典里各自点出界面上真有的那一处**（中文那句要出现「全局设置」/
+        //      「↑」）。那半句在 `ui/i18n.js` 里，**这个 crate 看不见它** ——
+        //      所以由 `tools/desktop-ui-smoke.mjs` 盯着（那半边没有测试运行器）。
+        // ⚠️ 判据换地方 = 风险搬家，不是消失：两条都要有，缺一条就是「说了但没说清」。
+        assert_eq!(kind.key, "uploadSkippedContentKind");
+        assert_eq!(room.key, "uploadSkippedNoRoom");
+        assert_ne!(kind.key, room.key, "两个开关必须是两个键");
+        assert!(
+            kind.params.is_empty() && room.params.is_empty(),
+            "这两句不带参数 —— 带上了就说明又有东西被拼进句子里了"
+        );
     }
 
     /// ⚠️★ 界面上「点一下发送」**不看任何同步开关** —— 这条钉的就是那个区分。

@@ -13,12 +13,18 @@ use std::path::PathBuf;
 
 use clipboard_rs::{Clipboard, ClipboardContext};
 
+use crate::msg::Msg;
 use crate::watcher::SystemClipboard;
 
 /// 往剪贴板写。
+///
+/// ⚠️★ 报错是 [`Msg`]（键 + 参数），**不是成文的句子**（2026-09-28 改）——
+/// 与 `clip9-client` 里其余那些要给人看的句子同一个理由（见 [`crate::msg`]）：
+/// 写剪贴板失败这句话也可能被界面说出来（`runtime` 的「复制内容」那条路），
+/// 而壳**不知道用户选了哪个语种**。
 pub trait ClipboardSink: Send + Sync {
     /// 写文本。
-    fn set_text(&self, text: &str) -> Result<(), String>;
+    fn set_text(&self, text: &str) -> Result<(), Msg>;
 
     /// 写一批文件（**绝对路径**）。
     ///
@@ -32,29 +38,38 @@ pub trait ClipboardSink: Send + Sync {
     /// 2. **可查**：落盘之后用户能在下载目录里看到它。
     ///    直接写进剪贴板图片的话，这条内容在本机**没有任何落点**，
     ///    用户想再找回来只能重新同步一次。
-    fn set_files(&self, paths: &[PathBuf]) -> Result<(), String>;
+    fn set_files(&self, paths: &[PathBuf]) -> Result<(), Msg>;
 }
 
 impl ClipboardSink for SystemClipboard {
-    fn set_text(&self, text: &str) -> Result<(), String> {
+    fn set_text(&self, text: &str) -> Result<(), Msg> {
         // ⚠️ 与读那一侧同一个理由：上下文**每次重建**
         // （`clipboard-rs` 的 `ClipboardContext` 在部分平台不适合长期持有）。
-        let ctx = ClipboardContext::new().map_err(|e| format!("无法创建剪贴板上下文：{e}"))?;
+        let ctx = context()?;
         ctx.set_text(text.to_owned())
-            .map_err(|e| format!("写剪贴板文本失败：{e}"))
+            .map_err(|reason| Msg::key("clipboardWriteTextFailed").param("reason", reason))
     }
 
-    fn set_files(&self, paths: &[PathBuf]) -> Result<(), String> {
+    fn set_files(&self, paths: &[PathBuf]) -> Result<(), Msg> {
         if paths.is_empty() {
-            return Err("没有文件可写".to_owned());
+            return Err(Msg::key("clipboardNoFiles"));
         }
-        let ctx = ClipboardContext::new().map_err(|e| format!("无法创建剪贴板上下文：{e}"))?;
+        let ctx = context()?;
         // ⚠️ `clipboard-rs` 要 `Vec<String>`；这里把**绝对路径**原样给它
         // （不加工、不加 `file://` —— 加了之后部分平台会当成普通文件名）。
         let list: Vec<String> = paths.iter().map(|p| p.display().to_string()).collect();
         ctx.set_files(list)
-            .map_err(|e| format!("写剪贴板文件失败：{e}"))
+            .map_err(|reason| Msg::key("clipboardWriteFilesFailed").param("reason", reason))
     }
+}
+
+/// 拿一个剪贴板上下文。
+///
+/// ⚠️ **每次重建**（理由见上面两处的注释），所以抽出来只是为了让「建不出来」那句话
+/// **只有一处**：两个方法各写一遍的话，改文案时一定会漏一处。
+fn context() -> Result<ClipboardContext, Msg> {
+    ClipboardContext::new()
+        .map_err(|reason| Msg::key("clipboardUnavailable").param("reason", reason))
 }
 
 /// 测试用的假实现：**只记不写**。
@@ -80,7 +95,7 @@ impl RecordingSink {
 
 #[cfg(test)]
 impl ClipboardSink for RecordingSink {
-    fn set_text(&self, text: &str) -> Result<(), String> {
+    fn set_text(&self, text: &str) -> Result<(), Msg> {
         self.written
             .lock()
             .unwrap_or_else(|e| e.into_inner())
@@ -88,11 +103,11 @@ impl ClipboardSink for RecordingSink {
         Ok(())
     }
 
-    fn set_files(&self, paths: &[PathBuf]) -> Result<(), String> {
+    fn set_files(&self, paths: &[PathBuf]) -> Result<(), Msg> {
         // ⚠️ 假实现也要**照抄真实现的那条拒绝规则** —— 一个不比真的更宽松、
         // 也不比真的更严格的替身，才叫替身；否则测试验的是替身的脾气。
         if paths.is_empty() {
-            return Err("没有文件可写".to_owned());
+            return Err(Msg::key("clipboardNoFiles"));
         }
         let joined = paths
             .iter()

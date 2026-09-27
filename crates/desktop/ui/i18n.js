@@ -22,6 +22,22 @@
   ⚠️★ 判据 14 就是照这条分的：**键里有中文 → 只要求 `en` 有译文**（`zh` 回落到键本身）；
   **键里没有中文 → `zh` 和 `en` 都必须有**。于是「Rust 拼了中文」
   （在 `zh` 里缺一条符号键）和「改了文案忘了补译文」（`en` 里缺一条）都会当场变红。
+  ⚠️★ 判据 17 是这条的补集：**壳发出去的每一个键都得在这两份字典里**（抠的是
+  `Msg::key("…")` 那个形态）—— 上面那条只保证「字典自己一致」，不保证「壳要的那条在不在」。
+
+  # ⚠️★ 两份渲染器，一份夹具
+
+  `t()` 是给**页面自己**的句子用的；壳递过来的「一句话」（`{key, params}`）走 [`say`] ——
+  它多一步**参数渲染**（字符串 / 整份列表 / 另一句话，见 `clip9_client::ParamValue`）。
+
+  ⚠️★ 而**壳那边也有一份一模一样的渲染器**（`crates/desktop/src/shell_text.rs`）：
+  系统通知、托盘菜单、系统文件对话框的标题都是**操作系统画的**，页面碰不到它们，
+  所以那几句只能由壳自己查表。⚠️ 两份实现一定会漂，钉住它们的是**同一份夹具**：
+  `crates/desktop/tests/fixtures/say-cases.json` —— 页面侧就是这里的 `say`（判据 18 跑它），
+  壳侧是 `shell_text.rs` 测试模块里的 `the_fixture_renders_the_same_on_this_side`。
+  ⚠️ 那两半**都要在**：只跑一边的话，漂掉的正好可能是另一边（变异验证过：把壳里那个
+  分隔符写死成「、」，JS 这一侧的判据 18 照样全绿）。加一种参数形状就得往夹具里加一条，
+  **两边一起变红才算数** —— 「两边代码看起来一样」不是判据。
 
   # ⚠️★ 三级回落，缺键时**故意画得难看**
 
@@ -96,6 +112,123 @@
       // ⚠️ 本地服务端那一页「正在做…」：`label` 是 `t('重启')` / `t('停止')`，拼出来的。
       //    ⚠️★ 它是**符号键**（键里没有汉字，只有省略号）—— 所以中文这份也得有一条。
       '{label}…': '{label}…',
+
+      // ── ★ 列表参数的分隔符：**它是译文，不是常量** ──
+      //    ⚠️★ 中文用顿号、英文用「逗号 + 空格」，所以它必须住在字典里。
+      //    壳那边（`crates/desktop/src/shell_text.rs` 的 `LIST_SEP_KEY`）查的是**同一个键**：
+      //    写死在任一侧都等于「替另一种语言定了一个中国标点」。
+      'list.sep': '、',
+      // ── ★ 原样照搬的外来文本（`Msg::verbatim`）──
+      //    ⚠️★ 模板**只有 `{text}`**、一个字都不加：这一条存在的意义就是「不翻」。
+      //    加任何前缀都会把别人的话（服务端的一句 `message`、系统抛出来的原话、
+      //    同步过来那段正文）变成我们的话，而**改文案不该动别人的字**。
+      'verbatim': '{text}',
+      'configNoRooms': '配置里一个房间都没有',
+      'configRoomNoServer': '房间「{room}」没填服务端地址',
+      'configRoomBadServer': '房间「{room}」的服务端地址不对：{reason}',
+      'configRoomBadScheme': '房间「{room}」的地址用了 {scheme}，只支持 http/https',
+      'configRoomEmojiIgnored': '房间「{room}」的图标「{emoji}」不像 emoji，已忽略',
+      'configMultipleDownloads': '{count} 个房间同时开着下载：{rooms}',
+      'configNotSaved': '配置没存下去：{reason}',
+      'configUnreadable': '读配置文件失败（{path}）：{reason}',
+      'configFileBroken': '配置文件不是合法 JSON（{path}）：{reason}',
+      'configDirCreateFailed': '建目录失败（{path}）：{reason}',
+      'configWriteFailed': '写配置失败（{path}）：{reason}',
+      'configTempWriteFailed': '写临时文件失败（{path}）：{reason}',
+      'configRenameFailed': '覆盖配置失败（{from} → {to}）：{reason}',
+      'configSerializeFailed': '配置序列化失败：{reason}',
+      'downloadDirNeedsDataDir': '「{path}」是相对路径，但拿不到数据目录',
+      'downloadDirCreateFailed': '建下载目录失败（{path}）：{reason}',
+      'serverAddressEmpty': '还没填服务端地址',
+      'serverAddressUnparsable': '「{url}」不是能用的服务端地址：{reason}',
+      'schemeChangeFailed': '把这个地址换成 {scheme} 失败了',
+      'fileNameEmpty': '文件名是空的',
+      'credentialHeaderInvalid': '凭据里不能有换行这类字符：{reason}',
+      'notConnectedToServer': '还没连上服务端',
+      'connectingTo': '正在连 {room}…',
+      'connected': '已连接',
+      'serverTooOldNoWatermark': '连上了，但服务端太旧（没有水印）',
+      'connectedButHistoryFailed': '已连接，但取不到历史：{reason}',
+      'disconnectedWithReason': '已断开：{reason}',
+      'connectFailed': '连不上：{reason}',
+      'connectNeedsCredentials': '服务端要凭据，但配置里没有或者不对：{detail}',
+      'connectRejected': '服务端拒绝了这条连接：{detail}',
+      'httpClientFailed': '建 HTTP 客户端失败：{reason}',
+      'requestFailed': '请求失败：{reason}',
+      'historyFailed': '取历史失败：{reason}',
+      'historyNotJson': '历史不是合法 JSON：{reason}',
+      'wsHandshakeBuildFailed': '拼 WebSocket 握手请求失败：{reason}',
+      'wsReadFailed': '读 WebSocket 失败：{reason}',
+      'wsPingFailed': 'ping 没有回来',
+      'wsIdleTimeout': '{seconds} 秒没收到心跳',
+      'clipboardUnavailable': '用不了系统剪贴板：{reason}',
+      'clipboardWriteTextFailed': '把文本写进剪贴板失败：{reason}',
+      'clipboardWriteFilesFailed': '把文件写进剪贴板失败：{reason}',
+      'clipboardNoFiles': '剪贴板里没有文件',
+      'downloadFailed': '下载失败：{reason}',
+      'downloadReadFailed': '读下载内容失败：{reason}',
+      'downloadWriteFailed': '写文件失败（{path}）：{reason}',
+      'fileEntryNoCache': '这条文件记录里没有 cache 字段',
+      'uploadTextEmpty': '剪贴板里的文本是空的',
+      'uploadImageEmpty': '这张图片是空的',
+      'uploadFileListEmpty': '没有文件可发',
+      'uploadBadFileName': '这个路径没有文件名，发不了：{path}',
+      'uploadFileUnreadable': '读不了这个文件（{path}）：{reason}',
+      'uploadFileTooLarge': '文件 {size}，超过上限 {limit}',
+      'uploadSkippedContentKind': '这类内容按配置不发（去「↑ 方向与内容」里开）',
+      'uploadSkippedNoRoom': '没有房间开着「↑」（去侧栏开一个）',
+      'uploadNothingSent': '什么都没发出去',
+      'uploadSentToRooms': '已发到 {count} 个房间',
+      'uploadSomeFailed': '{payloads} 份内容里有 {failed} 份没发成：{reasons}',
+      'uploadAllRoomsFailed': '{count} 个房间全部失败：{reasons}',
+      'roomScopedFailure': '{room}：{text}',
+      'payloadText': '文本「{text}」',
+      'payloadFile': '文件「{name}」（{bytes} 字节）',
+      'trayOpen': '打开主窗口',
+      'trayAutostart': '开机自动启动',
+      'trayRooms': '切换房间',
+      'trayQuit': '退出',
+      'notifyUploadFailed': '本机剪贴板没发出去',
+      'notifyWroteToClipboard': '房间的内容写进本机剪贴板了',
+      'notifyEmptyText': '（空文本）',
+      'notifyFilePreview': '文件 {name}（{size}）',
+      'pickFilesTitle': '选文件发到房间',
+      'pickImagesTitle': '选图片发到房间',
+      'imageFilterName': '图片',
+      'noRoomToSend': '没有房间开着「↑」，没地方发',
+      'noRoomsConfigured': '一个房间都没有，先去「服务端与房间」加一个',
+      'entryGone': '这条内容已经不在了（可能换了房间，或者被本机的条数 / 字节上限挤出去了）',
+      'entryGoneCannotCopy': '这条内容已经不在了，复制不了',
+      'noSuchRoom': '没有第 {index} 个房间（一共 {count} 个）',
+      'serverTaskFailed': '{label}失败：{reason}',
+      'serverStart': '启动',
+      'serverStop': '停止',
+      'serverRestart': '重启',
+      'serverStatusTaskFailed': '读本地服务端状态失败：{reason}',
+      'localServerNotRunning': '本地服务端没在跑，先把这一页上面那两选一切到「随客户端启动」',
+      'serverUrlEmpty': '地址是空的',
+      'serverUrlNotHttp': '只支持 http/https：{url}',
+      'openWebTaskFailed': '打开网页版失败：{reason}',
+      'openBrowserFailed': '用系统浏览器打开 {url} 失败：{reason}',
+      'noBundledServer': '这个客户端没有自带服务端（找不到 clip9-server）',
+      'logUnreadable': '读日志失败（{path}）：{reason}',
+      'logSeekFailed': '日志太长了，跳到结尾那段失败（{path}）',
+      'logReadFailed': '读日志失败（{path}）：{reason}',
+      'serverConfigUnreadable': '读服务端配置失败（{path}）：{reason}',
+      'serverConfigBroken': '服务端配置不是合法 JSON（{path}）：{reason}。这个文件没被动过 —— 改好它再打开这一页',
+      'serverConfigInvalid': '这份配置服务端读不了，没有保存：{reason}',
+      'textLimitUnreachable': '文本上限 {limit} 字节服务端收不到，没有保存。能生效的最大值是 {max} 字节（{mib} MiB）；填 0 = 不限。要支持更大的内容请走文件（分片上传），别把消息上限调大。',
+      'serverStartTimeout': '本地服务端 {seconds} 秒内没有答话（端口 {port}）。日志最后一行：{reason}\n完整日志：{log}',
+      'serverStartTimeoutNoLog': '本地服务端 {seconds} 秒内没有答话（端口 {port}），而且它一行日志都没写。日志：{log}',
+      'foreignServerNotStopped': '端口 {port} 上有一个服务端在跑，但不是这个客户端起的，所以不替你停它',
+      'serverStopFailed': '停本地服务端失败：{reason}',
+      'serverLogCreateFailed': '建日志文件失败（{path}）：{reason}',
+      'serverLogCloneFailed': '复制日志句柄失败：{reason}',
+      'serverSpawnFailed': '起不了本地服务端（{path}）：{reason}',
+      'binaryPathUnavailable': '取不到自己的路径：{reason}',
+      'binaryNoParent': '{path} 没有父目录',
+      'binaryNotFound': '找不到本地服务端：{path}（它应该和客户端放在一起）',
+      'noticeForMissingRoom': '{room}：{text}',
     },
     en: {
       // ══════════ 侧栏（`index.html`）══════════
@@ -433,6 +566,115 @@
       // ⚠️ 分隔符在英文里要**多一个空格**：`A;B` 挤在一起，`A; B` 才读得下去。
       'problem.sep': '; ',
       '{label}…': '{label}…',
+
+      'list.sep': ', ',
+      'verbatim': '{text}',
+      'configNoRooms': 'No rooms in the config',
+      'configRoomNoServer': 'Room "{room}" has no server address',
+      'configRoomBadServer': 'Room "{room}" has a bad server address: {reason}',
+      'configRoomBadScheme': 'Room "{room}" uses {scheme}; only http/https is supported',
+      'configRoomEmojiIgnored': 'Room "{room}" has an icon "{emoji}" that does not look like an emoji, so it was ignored',
+      'configMultipleDownloads': '{count} rooms download at once: {rooms}',
+      'configNotSaved': 'The config was not saved: {reason}',
+      'configUnreadable': 'Could not read the config file ({path}): {reason}',
+      'configFileBroken': 'The config file is not valid JSON ({path}): {reason}',
+      'configDirCreateFailed': 'Could not create the directory ({path}): {reason}',
+      'configWriteFailed': 'Could not write the config ({path}): {reason}',
+      'configTempWriteFailed': 'Could not write the temporary file ({path}): {reason}',
+      'configRenameFailed': 'Could not replace the config ({from} → {to}): {reason}',
+      'configSerializeFailed': 'Could not serialize the config: {reason}',
+      'downloadDirNeedsDataDir': '"{path}" is relative, but the data dir is unavailable',
+      'downloadDirCreateFailed': 'Could not create the download dir ({path}): {reason}',
+      'serverAddressEmpty': 'No server address yet',
+      'serverAddressUnparsable': '"{url}" is not a usable server address: {reason}',
+      'schemeChangeFailed': 'Could not switch this address to {scheme}',
+      'fileNameEmpty': 'The file name is empty',
+      'credentialHeaderInvalid': 'Credentials cannot contain newlines and the like: {reason}',
+      'notConnectedToServer': 'Not connected to the server yet',
+      'connectingTo': 'Connecting to {room}…',
+      'connected': 'Connected',
+      'serverTooOldNoWatermark': 'Connected, but the server is too old (no watermark)',
+      'connectedButHistoryFailed': 'Connected, but history could not be fetched: {reason}',
+      'disconnectedWithReason': 'Disconnected: {reason}',
+      'connectFailed': 'Could not connect: {reason}',
+      'connectNeedsCredentials': 'The server wants credentials, but none are set (or they are wrong): {detail}',
+      'connectRejected': 'The server refused the connection: {detail}',
+      'httpClientFailed': 'Could not create the HTTP client: {reason}',
+      'requestFailed': 'Request failed: {reason}',
+      'historyFailed': 'Could not fetch history: {reason}',
+      'historyNotJson': 'History is not valid JSON: {reason}',
+      'wsHandshakeBuildFailed': 'Could not build the WebSocket handshake: {reason}',
+      'wsReadFailed': 'Could not read from the WebSocket: {reason}',
+      'wsPingFailed': 'No ping came back',
+      'wsIdleTimeout': 'No heartbeat for {seconds} s',
+      'clipboardUnavailable': 'The system clipboard is unavailable: {reason}',
+      'clipboardWriteTextFailed': 'Could not write text to the clipboard: {reason}',
+      'clipboardWriteFilesFailed': 'Could not write files to the clipboard: {reason}',
+      'clipboardNoFiles': 'There are no files on the clipboard',
+      'downloadFailed': 'Download failed: {reason}',
+      'downloadReadFailed': 'Could not read the download: {reason}',
+      'downloadWriteFailed': 'Could not write the file ({path}): {reason}',
+      'fileEntryNoCache': 'This file entry has no cache field',
+      'uploadTextEmpty': 'The clipboard text is empty',
+      'uploadImageEmpty': 'This image is empty',
+      'uploadFileListEmpty': 'There are no files to send',
+      'uploadBadFileName': 'This path has no file name, so it cannot be sent: {path}',
+      'uploadFileUnreadable': 'Could not read this file ({path}): {reason}',
+      'uploadFileTooLarge': 'The file is {size}, over the {limit} limit',
+      'uploadSkippedContentKind': 'This kind of content is off in the config (turn it on under "↑ Direction & content")',
+      'uploadSkippedNoRoom': 'No room has "↑" on (turn one on in the sidebar)',
+      'uploadNothingSent': 'Nothing was sent',
+      'uploadSentToRooms': 'Sent to {count} rooms',
+      'uploadSomeFailed': '{failed} of {payloads} payloads failed: {reasons}',
+      'uploadAllRoomsFailed': 'All {count} rooms failed: {reasons}',
+      'roomScopedFailure': '{room}: {text}',
+      'payloadText': 'text "{text}"',
+      'payloadFile': 'file "{name}" ({bytes} bytes)',
+      'trayOpen': 'Open the main window',
+      'trayAutostart': 'Start at login',
+      'trayRooms': 'Switch rooms',
+      'trayQuit': 'Quit',
+      'notifyUploadFailed': 'This machine\'s clipboard could not be sent',
+      'notifyWroteToClipboard': 'The room\'s content was written to this machine',
+      'notifyEmptyText': '(empty text)',
+      'notifyFilePreview': 'file {name} ({size})',
+      'pickFilesTitle': 'Choose files to send to the room',
+      'pickImagesTitle': 'Choose images to send to the room',
+      'imageFilterName': 'Images',
+      'noRoomToSend': 'No room has "↑" on, so there is nowhere to send it',
+      'noRoomsConfigured': 'No rooms at all — add one under "Server & rooms" first',
+      'entryGone': 'This entry is gone (the room changed, or it was pushed out by the local entry / byte limit)',
+      'entryGoneCannotCopy': 'This entry is gone and cannot be copied',
+      'noSuchRoom': 'There is no room #{index} (there are {count} in total)',
+      'serverTaskFailed': '{label} failed: {reason}',
+      'serverStart': 'Start',
+      'serverStop': 'Stop',
+      'serverRestart': 'Restart',
+      'serverStatusTaskFailed': 'Could not read the local server state: {reason}',
+      'localServerNotRunning': 'The local server is not running — switch the choice above to "start with the client" first',
+      'serverUrlEmpty': 'The address is empty',
+      'serverUrlNotHttp': 'Only http/https is supported: {url}',
+      'openWebTaskFailed': 'Could not open the web UI: {reason}',
+      'openBrowserFailed': 'Could not open {url} in the system browser: {reason}',
+      'noBundledServer': 'This client has no bundled server (clip9-server not found)',
+      'logUnreadable': 'Could not read the log ({path}): {reason}',
+      'logSeekFailed': 'The log is too long and seeking to its tail failed ({path})',
+      'logReadFailed': 'Could not read the log ({path}): {reason}',
+      'serverConfigUnreadable': 'Could not read the server config ({path}): {reason}',
+      'serverConfigBroken': 'The server config is not valid JSON ({path}): {reason}. The file was left untouched — fix it, then reopen this page',
+      'serverConfigInvalid': 'The server cannot read this config, so nothing was saved: {reason}',
+      'textLimitUnreachable': 'A text limit of {limit} bytes never reaches the server, so nothing was saved. The largest value that works is {max} bytes ({mib} MiB); 0 = unlimited. For bigger content use files (chunked upload) instead of raising the message limit.',
+      'serverStartTimeout': 'The local server did not answer within {seconds} s (port {port}). Last log line: {reason}\nFull log: {log}',
+      'serverStartTimeoutNoLog': 'The local server did not answer within {seconds} s (port {port}) and wrote not a single log line. Log: {log}',
+      'foreignServerNotStopped': 'Something is serving on port {port}, but this client did not start it, so it will not be stopped for you',
+      'serverStopFailed': 'Could not stop the local server: {reason}',
+      'serverLogCreateFailed': 'Could not create the log file ({path}): {reason}',
+      'serverLogCloneFailed': 'Could not duplicate the log handle: {reason}',
+      'serverSpawnFailed': 'Could not start the local server ({path}): {reason}',
+      'binaryPathUnavailable': 'Could not determine my own path: {reason}',
+      'binaryNoParent': '{path} has no parent directory',
+      'binaryNotFound': 'Local server not found: {path} (it should sit next to the client)',
+      'noticeForMissingRoom': '{room}: {text}',
     },
   };
 
@@ -458,6 +700,44 @@
     return template.replace(/\{(\w+)\}/g, (whole, name) =>
       Object.prototype.hasOwnProperty.call(params, name) ? String(params[name]) : whole
     );
+  }
+
+  /** 一个**壳下发的句子**（`{key, params}`）→ 成文的文本。
+   *
+   * ⚠️★ 它和 `t()` 只差**参数那一步**：`t()` 的参数是页面自己拼好的字符串，
+   * 而壳递过来的参数可能是三种形状（见 `clip9_client::ParamValue`）：
+   *
+   * | JSON | 有哪几种 | 怎么渲染 |
+   * |---|---|---|
+   * | `"reason": "HTTP 401"` | 字符串 | 原样 |
+   * | `"rooms": ["默认","工作"]` | **一整份列表** | 按**译文里的**分隔符拼（`list.sep`） |
+   * | `"text": {"key":…,"params":…}` | **另一句话** | 递归 `say` |
+   *
+   * ⚠️★ 规则**与壳那边是同一条**（`crates/desktop/src/shell_text.rs` 的 `render_param`）：
+   * 系统通知 / 托盘菜单 / 文件对话框标题那几处**页面渲染不了**（操作系统画的），
+   * 所以壳自己也有一份渲染器。两份一定会漂 —— 钉住它们的是**同一份夹具**
+   * （`crates/desktop/tests/fixtures/say-cases.json`：壳侧一条测试 + 判据 18）。
+   *
+   * ⚠️ 返回值是**纯文本**（调用方走 `textContent`）：参数里可能是用户的东西
+   * （房间名、路径、服务端原话），所以这条路**不碰 `innerHTML`**。
+   */
+  function say(msg) {
+    if (!msg || typeof msg !== 'object' || typeof msg.key !== 'string') return '';
+    const params = {};
+    for (const [name, value] of Object.entries(msg.params ?? {})) {
+      params[name] = renderParam(value);
+    }
+    return t(msg.key, params);
+  }
+
+  /** 一个占位符的值 → 文本。三种形状见 [`say`]。 */
+  function renderParam(value) {
+    // ⚠️ 数组要**整份**拼，分隔符从字典拿：`A、B` 与 `A, B` 是两件事。
+    if (Array.isArray(value)) return value.map(renderParam).join(t('list.sep'));
+    // ⚠️ 认「是不是一句话」看的是 `key`：`ParamValue` 三种形状里只有 `Msg` 有 `key`
+    //（`Many` 是数组，`One` 是字符串），而 `untagged` 的序列化形状就是这个。
+    if (value && typeof value === 'object' && typeof value.key === 'string') return say(value);
+    return String(value);
   }
 
   /** 转义 `&<>`。⚠️★ 只给 `html()` 用，`t()` 那条路走 `textContent`、不需要转义。
@@ -531,5 +811,17 @@
     delete document.documentElement.dataset.i18n;
   }
 
-  window.I18N = { LOCALE_KEY, SOURCE, LOCALES, DICTS, locale, setLocale, t, html, apply, ready };
+  window.I18N = {
+    LOCALE_KEY,
+    SOURCE,
+    LOCALES,
+    DICTS,
+    locale,
+    setLocale,
+    t,
+    say,
+    html,
+    apply,
+    ready,
+  };
 })();

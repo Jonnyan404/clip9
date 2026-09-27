@@ -20,16 +20,36 @@
 //! ⚠️ 这条边界的意义在于：[`action_for`] 是**唯一**把「菜单项的 id」翻译成动作的地方。
 //! id 打错的表现是**点了没反应**（不报错、不 panic），而那正是这个项目最忌讳的一类。
 //! 所以那个函数有测试，而这里的接线没有（接线只能在真机上点）。
+//!
+//! # ⚠️★ 菜单的四句话**是壳渲染的**（2026-09-28，多语言那一轮）
+//!
+//! 菜单是 **Tauri 建的**，页面碰不到它 —— 所以「菜单项叫什么」这件事页面渲染不了，
+//! 只能由壳自己查字典（[`crate::shell_text`]）。菜单项自己**只递一个键**
+//! （`trayOpen` / `trayAutostart` / `trayRooms` / `trayQuit`），句子住在那两个字典里。
+//! ⚠️ 语言设置**只在页面那边**，所以页面启动时、以及每次换语种时会把字典推过来，
+//! 推完顺带调 [`retranslate`] 把菜单重建一遍 —— 不重建的话菜单永远停在启动那一刻
+//! （那时页面还没跑起来 = 只有键）。
+//!
+//! ⚠️ 菜单项里的**房间名不翻**：那是用户起的名字（或服务端那边的房间名），是**数据** ——
+//! 与「日志内容不翻」「同步过来的正文不翻」是同一条规矩。
 
 use std::sync::Arc;
 
-use tauri::menu::{CheckMenuItemBuilder, MenuBuilder, MenuItemBuilder, SubmenuBuilder};
+use tauri::menu::{
+    CheckMenuItem, CheckMenuItemBuilder, Menu, MenuBuilder, MenuItemBuilder, SubmenuBuilder,
+};
 use tauri::tray::TrayIconBuilder;
 use tauri::{AppHandle, Manager, Wry};
 
+use clip9_client::Msg;
+
 use crate::runtime::Runtime;
 use crate::server_process::ServerProcess;
+use crate::shell_text::ShellText;
 use crate::store::Store;
+
+/// 托盘的 id。⚠️ 建菜单与 [`retranslate`] **必须同一个** —— 所以这里只写一份。
+const TRAY_ID: &str = "main";
 
 /// 一个菜单项对应的动作。
 ///
@@ -75,30 +95,38 @@ pub fn room_id(index: usize) -> String {
     format!("{ROOM_PREFIX}{index}")
 }
 
-/// 建托盘 + 接事件。在 `setup` 里调（那时 `app` 已经能建菜单了）。
+/// 建菜单。**建一次**用在 [`install`]，换语种时再建一次用在 [`retranslate`] ——
+/// 两处**必须是同一个函数**：各写一份的话，换语言之后菜单会悄悄少一项，
+/// 而「少的那一项」永远是后来加的那个。
 ///
-/// ⚠️ 菜单是**建一次**的：房间列表在启动时读一次，之后用户在窗口里改了配置
-/// （加房间之类）**不会**反映到托盘上 —— 窗口里的房间列表才是权威。
-/// 这是有意的取舍：重建菜单要动 `tauri` 的菜单句柄，而收益只是「托盘里的房间名新一点」。
-/// ⚠️ 原来这里还有一个轮询任务，专门同步「暂停项」的勾选状态。**它跟着那个开关一起删了**
-/// （见模块文档）—— 现在菜单里唯一有勾选状态的是自启，而它每次点完就地更新。
-pub fn install(
+/// ⚠️ 返回自启那一项（点完之后要就地改它的勾），它**不能**从外面另建一个句柄 ——
+/// 菜单里那个才是画在屏幕上的那个。
+///
+/// ⚠️★ 四项的文案走 [`ShellText`]（查表 + 键）。**菜单是 Tauri 建的，页面碰不到它**，
+/// 所以这四句是壳自己渲染的少数几处之一（见 [`crate::shell_text`] 的模块文档）。
+/// ⚠️ 页面把字典推过来**之前**（启动后那几十毫秒）渲染出来的是**键本身** ——
+/// 那时托盘菜单根本没被点开过，而 [`retranslate`] 一到就正了（取舍见模块文档）。
+fn build_menu(
     app: &AppHandle<Wry>,
     store: &Arc<Store>,
-    runtime: &Arc<Runtime>,
-) -> tauri::Result<()> {
+    shell: &Arc<ShellText>,
+) -> tauri::Result<(Menu<Wry>, CheckMenuItem<Wry>)> {
     let snapshot = store.snapshot();
 
-    let open = MenuItemBuilder::with_id("open", "打开主窗口").build(app)?;
+    let open = MenuItemBuilder::with_id("open", shell.say(&Msg::key("trayOpen"))).build(app)?;
     // ⚠️★ 自启那个勾画的是**系统里的真相**（`autostart::initial_checked`），
     // 不是配置里的意图 —— 用户在系统设置里关掉之后，画意图就是骗人。
-    let autostart = CheckMenuItemBuilder::with_id("autostart", "开机自动启动")
-        .checked(crate::autostart::initial_checked(app))
-        .build(app)?;
-    let quit = MenuItemBuilder::with_id("quit", "退出").build(app)?;
+    let autostart =
+        CheckMenuItemBuilder::with_id("autostart", shell.say(&Msg::key("trayAutostart")))
+            .checked(crate::autostart::initial_checked(app))
+            .build(app)?;
+    let quit = MenuItemBuilder::with_id("quit", shell.say(&Msg::key("trayQuit"))).build(app)?;
 
     // 房间子菜单：下标就是配置里的下标（`Action::SelectRoom` 拿它去 `store.select`）。
-    let mut rooms = SubmenuBuilder::with_id(app, "rooms", "切换房间");
+    //
+    // ⚠️ 房间**名字本身不翻**（那是用户起的名字 / 服务端那边那个房间名，是数据）——
+    // 翻的只有外面那层「切换房间」。这条与「日志内容不翻」是同一条规矩。
+    let mut rooms = SubmenuBuilder::with_id(app, "rooms", shell.say(&Msg::key("trayRooms")));
     for (index, room) in snapshot.rooms.iter().enumerate() {
         let label = if room.name.is_empty() {
             room.room.clone()
@@ -118,12 +146,68 @@ pub fn install(
         .item(&quit)
         .build()?;
 
+    Ok((menu, autostart))
+}
+
+/// **换语言**：把菜单按新字典重建一遍再挂回去。
+///
+/// ⚠️★ 菜单是**建出来的一棵固定的树** —— 不重建的话它永远停在启动那一刻的语言上
+/// （而启动那一刻页面还没跑起来 = 只有键）。`commands::set_shell_messages` 在
+/// **启动时**和**每次换语种**各调一次这里。
+///
+/// ⚠️ 它**不是** [`install`] 的一部分：`install` 只在 `setup` 里跑一次，
+/// 而语言随时会变。两件事混在一起的话，换语言就得重造整个托盘图标
+/// （在 macOS 上表现为任务栏图标闪一下）。
+///
+/// ⚠️ 失败**不 panic 也不上报**，只打一行日志：这一步失败的最坏结果是
+/// 「菜单还是旧语言」，而为一个语言问题崩掉主进程显然更坏。
+pub fn retranslate(app: &AppHandle<Wry>, shell: &Arc<ShellText>) {
+    let Some(store) = app.try_state::<Arc<Store>>() else {
+        // ⚠️ `setup` 之前（或状态没注册）—— 那时还没有菜单，正常。
+        return;
+    };
+    let Some(tray) = app.tray_by_id(TRAY_ID) else {
+        eprintln!("托盘：找不到托盘图标（id={TRAY_ID}），换语言之后菜单还是旧的那份");
+        return;
+    };
+    match build_menu(app, &store, shell) {
+        Ok((menu, _)) => {
+            // ⚠️ 那个 `_` 是自启项的新句柄：`checked` 已经按**系统里的真相**画好了，
+            // 而点它时的句柄由 `install` 的那个闭包持着（菜单重建不影响事件回调）。
+            if let Err(err) = tray.set_menu(Some(menu)) {
+                eprintln!("托盘：换语言时挂回菜单失败：{err}");
+            }
+        }
+        Err(err) => eprintln!("托盘：换语言时重建菜单失败：{err}"),
+    }
+}
+
+/// 建托盘 + 接事件。在 `setup` 里调（那时 `app` 已经能建菜单了）。
+///
+/// ⚠️ 菜单是**建一次**的：房间列表在启动时读一次，之后用户在窗口里改了配置
+/// （加房间之类）**不会**反映到托盘上 —— 窗口里的房间列表才是权威。
+/// 这是有意的取舍：重建菜单要动 `tauri` 的菜单句柄，而收益只是「托盘里的房间名新一点」。
+/// ⚠️★ 唯一的例外是**换语言**（[`retranslate`]）：那时会重建一次。
+/// 那条路上房间名也是照当时那份快照填的 —— 于是「换了语言，托盘里的房间列表也顺手新了一点」，
+/// 这是可接受的副产品（**不是**新加了一条同步机制）。
+/// ⚠️ 原来这里还有一个轮询任务，专门同步「暂停项」的勾选状态。**它跟着那个开关一起删了**
+/// （见模块文档）—— 现在菜单里唯一有勾选状态的是自启，而它每次点完就地更新。
+pub fn install(
+    app: &AppHandle<Wry>,
+    store: &Arc<Store>,
+    runtime: &Arc<Runtime>,
+    shell: &Arc<ShellText>,
+) -> tauri::Result<()> {
+    let (menu, autostart) = build_menu(app, store, shell)?;
+
     let store_for_menu = Arc::clone(store);
     let runtime_for_menu = Arc::clone(runtime);
-    TrayIconBuilder::with_id("main")
+    TrayIconBuilder::with_id(TRAY_ID)
         // ⚠️ 用应用自己的图标（`tauri.conf.json` 的 `bundle.icon`）。
         // 托盘图标缺了的话在 macOS 上是个**看不见的空位** —— 用户找不到入口。
         .icon(app.default_window_icon().cloned().ok_or_else(|| {
+            // `bundle.icon` 缺了是**打包配置**错，用户看不到这句，看到的是「托盘空了」。
+            // i18n-ok: **开发者面**的报错（`tauri::Error::AssetNotFound` 收 `String`，塞不进 `Msg`）
             tauri::Error::AssetNotFound("托盘图标：tauri.conf.json 里没有 bundle.icon".to_owned())
         })?)
         .menu(&menu)
@@ -144,7 +228,8 @@ pub fn install(
                 }
                 Action::SelectRoom(index) => {
                     if let Err(reason) = store_for_menu.select(index) {
-                        eprintln!("托盘：切房间失败：{reason}");
+                        // ⚠️ `{reason:?}`：那是一条 `Msg`，它故意没有 `Display`（句子该由页面渲染）。
+                        eprintln!("托盘：切房间失败：{reason:?}");
                         return;
                     }
                     runtime_for_menu.refresh_history();
@@ -189,7 +274,7 @@ fn stop_bundled_server(app: &AppHandle<Wry>) {
     if let Err(reason) = server.stop() {
         // ⚠️ 失败要**出声**：留下的会是一个占着端口的孤儿，而用户只会在
         // 下次「起不来」时才发现 —— 那时已经离这里很远了。
-        eprintln!("托盘：退出时停本地服务端失败：{reason}");
+        eprintln!("托盘：退出时停本地服务端失败：{reason:?}");
     }
 }
 

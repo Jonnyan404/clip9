@@ -22,6 +22,8 @@
 
 use url::Url;
 
+use crate::msg::Msg;
+
 /// 一个端点的绝对地址（含查询串）。
 pub type Endpoint = Url;
 
@@ -30,13 +32,16 @@ pub type Endpoint = Url;
 /// - `path` 必须以 `/` 开头（接口路径，**不含**服务端的子路径前缀 —— 那个从 `server` 里读）；
 /// - `params` 会**按顺序 append** 到查询串（不是覆盖，所以同名参数不会互相吃掉）；
 /// - ⚠️ **凭据不该出现在 `params` 里**，见模块文档第 3 条。
-pub fn api_url(server: &str, path: &str, params: &[(&str, &str)]) -> Result<Endpoint, String> {
+pub fn api_url(server: &str, path: &str, params: &[(&str, &str)]) -> Result<Endpoint, Msg> {
     let trimmed = server.trim();
     if trimmed.is_empty() {
-        return Err("服务端地址是空的".to_owned());
+        return Err(Msg::key("serverAddressEmpty"));
     }
-    let mut url =
-        Url::parse(trimmed).map_err(|e| format!("服务端地址无法解析（{trimmed}）：{e}"))?;
+    let mut url = Url::parse(trimmed).map_err(|err| {
+        Msg::key("serverAddressUnparsable")
+            .param("url", trimmed)
+            .param("reason", err)
+    })?;
 
     if !url.path().starts_with('/') {
         // `Url::parse` 对 `http://host` 会给出 path = "/"，所以这里其实到不了；
@@ -70,7 +75,7 @@ pub fn text_url(
     room: &str,
     device_name: &str,
     client_id: &str,
-) -> Result<Endpoint, String> {
+) -> Result<Endpoint, Msg> {
     api_url(
         server,
         "/text",
@@ -79,7 +84,7 @@ pub fn text_url(
 }
 
 /// `POST /upload` —— 文件与**图片**上行（图片走文件那条路，见 [`crate::UploadKind`]）。
-pub fn upload_url(server: &str, room: &str, device_name: &str) -> Result<Endpoint, String> {
+pub fn upload_url(server: &str, room: &str, device_name: &str) -> Result<Endpoint, Msg> {
     api_url(server, "/upload", &[("room", room), ("name", device_name)])
 }
 
@@ -88,7 +93,7 @@ pub fn upload_url(server: &str, room: &str, device_name: &str) -> Result<Endpoin
 /// ⚠️ 不带 `?format=`：这个端点**永远**是 JSON（`{"messages":[…]}`），
 /// 而 `?format=` 那套只对 `/content/latest` 与 `/content/:id` 生效（§1.3）。
 /// 顺手也就不用操心「别用 `.json` 后缀」那条了。
-pub fn history_url(server: &str, room: &str, limit: usize) -> Result<Endpoint, String> {
+pub fn history_url(server: &str, room: &str, limit: usize) -> Result<Endpoint, Msg> {
     api_url(
         server,
         "/content",
@@ -100,14 +105,14 @@ pub fn history_url(server: &str, room: &str, limit: usize) -> Result<Endpoint, S
 ///
 /// ⚠️ 协议要跟着换：`http`→`ws`、`https`→`wss`。换了域名不换协议，
 /// 表现是「https 站点上 WebSocket 静默连不上」（混合内容被浏览器/系统拦掉）。
-pub fn ws_url(server: &str, room: &str) -> Result<Endpoint, String> {
+pub fn ws_url(server: &str, room: &str) -> Result<Endpoint, Msg> {
     let mut url = api_url(server, "/push", &[("room", room)])?;
     let scheme = match url.scheme() {
         "https" | "wss" => "wss",
         _ => "ws",
     };
     url.set_scheme(scheme)
-        .map_err(|()| format!("无法把协议换成 {scheme}"))?;
+        .map_err(|()| Msg::key("schemeChangeFailed").param("scheme", scheme))?;
     Ok(url)
 }
 
@@ -120,10 +125,10 @@ pub fn ws_url(server: &str, room: &str) -> Result<Endpoint, String> {
 ///
 /// ⚠️ 文件名要过 [`crate::download::sanitize_file_name`] 再用：
 /// 带 `/` 或 `..` 的名字会拼出别的路径（这是**路径穿越**，不只是显示问题）。
-pub fn download_url(server: &str, cache: &str, name: &str) -> Result<Endpoint, String> {
+pub fn download_url(server: &str, cache: &str, name: &str) -> Result<Endpoint, Msg> {
     let safe = crate::download::sanitize_file_name(name);
     if safe.is_empty() {
-        return Err("文件名为空".to_owned());
+        return Err(Msg::key("fileNameEmpty"));
     }
     api_url(server, &format!("/file/{cache}/{safe}"), &[])
 }
