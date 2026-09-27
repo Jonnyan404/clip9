@@ -37,6 +37,15 @@ pub struct SettingsPatch {
     pub sync: Option<crate::store::SyncScopePatch>,
     /// 开机自启（**意图**；落到系统上由 `autostart::apply` 做）。
     pub autostart: Option<bool>,
+    /// 「本机剪贴板**没发出去**时发系统通知」。
+    ///
+    /// ⚠️ 为什么**不在** `sync` 那一组里：它们是**通知**的事，与「同步范围」无关 ——
+    /// 塞进 `SyncScopePatch` 的话，那个结构体的名字就开始说谎了（下一棒会问
+    /// 「通知开关为什么在同步范围里」）。它们与 `autostart` 同一类：
+    /// 一个**不带房间、也不属于某个分组**的直接项 —— 所以这里也放成平级的 `Option<bool>`。
+    pub notify_upload: Option<bool>,
+    /// 「房间的内容**写进本机剪贴板**时发系统通知」。
+    pub notify_download: Option<bool>,
 }
 
 /// 保存「设置」窗口。
@@ -78,6 +87,13 @@ pub fn apply_settings(
         // ⚠️ 两件事都要做：改配置里的意图 + 落到系统上（见 `autostart` 的模块文档）。
         crate::autostart::apply(&app, on);
     }
+    // ⚠️ 通知这两个开关**没有「重启谁」这一步**：读它们的地方是 `runtime` 里那两条
+    // 纯判据（要发通知时现读 `self.store.config()`），所以**存下去就生效**。
+    // 需要「重启某个线程才生效」的只有 `poll_interval_ms`（见上面那段）——
+    // 两者别混：给这里加一句 `restart_*` 是白重启，而**漏了该重启的那处**才是配了不生效。
+    if patch.notify_upload.is_some() || patch.notify_download.is_some() {
+        store.set_notify(patch.notify_upload, patch.notify_download);
+    }
     runtime.persist();
     Ok(())
 }
@@ -109,6 +125,10 @@ pub struct SettingsView {
     pub enable_file_download: bool,
     pub poll_interval_ms: u64,
     pub download_dir: String,
+    /// 本机剪贴板**没发出去**时发系统通知（`notify_upload`）。
+    pub notify_upload: bool,
+    /// 房间的内容**写进本机剪贴板**时发系统通知（`notify_download`）。
+    pub notify_download: bool,
     /// ⚠️ **系统里的真相**（启动项在不在），不是配置里的意图。
     pub autostart: bool,
     pub data_dir: String,
@@ -128,6 +148,8 @@ pub fn settings_view(app: tauri::AppHandle, store: State<'_, Arc<Store>>) -> Set
         enable_file_download: config.enable_file_download,
         poll_interval_ms: config.poll_interval_ms,
         download_dir: config.download_dir.display().to_string(),
+        notify_upload: config.notify_upload,
+        notify_download: config.notify_download,
         autostart: crate::autostart::initial_checked(&app),
         data_dir: snapshot.data_dir,
         config_path: snapshot.config_path,

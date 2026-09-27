@@ -10,8 +10,13 @@
 //! |---|---|---|
 //! | [`store`] | 状态机 + 配置落盘 | ❌（所以能测） |
 //! | [`runtime`] | 线程 / 任务 / 句柄的接线 | ❌（所以能测） |
-//! | [`commands`] | 转发 | ✅（就它需要） |
+//! | [`commands`] | 转发 | ✅ |
+//! | [`notify`] | 系统通知那一下（判据在 `runtime`） | ✅ |
 //! | 这里 | 参数、启动、退出 | ✅ |
+//!
+//! ⚠️★ 两个 ❌ 是这个项目的支点：**判据都在不依赖 `tauri` 的那一侧**
+//!（`store` 的状态机、`runtime` 的接线与通知判据），所以它们能被 `cargo test` 钉住。
+//! ✅ 那几个只做「把 `tauri` 的东西变成参数」或「把已经定好的东西递出去」。
 //!
 //! # ⚠️ 为什么没有「加载 SPA 的 dist + 注入 `<base>`」
 //!
@@ -22,6 +27,7 @@
 mod autostart;
 mod commands;
 mod model;
+mod notify;
 mod runtime;
 mod server_config;
 mod server_process;
@@ -142,13 +148,18 @@ fn main() {
     // 文件**不需要 tauri** 的原因：它只认 tokio 的句柄，认的是「谁能 spawn」。
     let async_handle = tauri::async_runtime::handle();
     let tokio_handle = async_handle.inner().clone();
-    let runtime = match runtime::Runtime::new(Arc::clone(&store), tokio_handle) {
-        Ok(runtime) => runtime,
-        Err(reason) => {
-            eprintln!("起不来：{reason}");
-            std::process::exit(1);
-        }
-    };
+    // ⚠️★ 通知器**先造、后接窗口**：`AppHandle` 只有 `setup` 里才有，而运行时必须在
+    // `tauri::Builder` 之前造出来（上面那段注释）。所以这里交一个**空壳**进去，
+    // 到了 `setup` 再 `attach`（理由与「丢掉了会怎样」见 `notify` 的模块文档）。
+    let notifier = std::sync::Arc::new(notify::SystemNotifier::new());
+    let runtime =
+        match runtime::Runtime::with_notifier(Arc::clone(&store), tokio_handle, notifier.clone()) {
+            Ok(runtime) => runtime,
+            Err(reason) => {
+                eprintln!("起不来：{reason}");
+                std::process::exit(1);
+            }
+        };
     // ── 本地服务端（随包分发 ✓，§9.1 第 2 条）────────────────────────────
     // ⚠️★ 「找不到二进制」和「起不来」都**不阻止客户端启动**：客户端还能连配置里
     // 那个地址（可能是用户自己的服务端）—— 那才是权威。但两件事都要**说出来**，
@@ -207,6 +218,11 @@ fn main() {
         // 那要一个打包器（`@tauri-apps/plugin-dialog`），而这份界面是手写的、
         // 没有构建步骤。所以走壳里那条 `pick_files` 命令，由 Rust 侧调它。
         .plugin(tauri_plugin_dialog::init())
+        // ⚠️ 系统通知（「本机剪贴板没发出去」「房间的内容写进剪贴板了」）。
+        // ⚠️★ 插件会给页面注入一段它自带的 JS，但**页面调不动它** ——
+        // `capabilities/default.json` 里**故意没有** `notification:*`（见 `notify` 的模块文档）。
+        // 只有 Rust 侧的 `notify::SystemNotifier` 能发。
+        .plugin(tauri_plugin_notification::init())
         .manage(Arc::clone(&store))
         .manage(Arc::clone(&runtime))
         // ⚠️ 服务端进程：`Option` 是因为二进制可能找不到（那时客户端照常能连别的服务端）。
@@ -254,6 +270,10 @@ fn main() {
             let store = Arc::clone(&store);
             let runtime = Arc::clone(&runtime);
             move |app| {
+                // ⚠️★ **第一件做的事**：把窗口句柄接给通知器（见上面 `notifier` 那段）。
+                // 接晚了不会错，但那段窗口里的通知会**被丢掉**并打一行日志 ——
+                // 而它可能正是「默认房间连不上」那张最该被看到的通知。
+                notifier.attach(app.handle().clone());
                 tray::install(app.handle(), &store, &runtime)
                     .map_err(|err| Box::new(err) as Box<dyn std::error::Error>)?;
                 // ⚠️ 把配置里的自启意图**落到系统上**（幂等）。系统里那份可能被用户在

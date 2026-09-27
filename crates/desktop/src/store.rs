@@ -792,6 +792,32 @@ impl Store {
         inner.touch();
     }
 
+    /// 换「剪贴板上那两个系统通知开关」（**只有桌面端会用**）。
+    ///
+    /// ⚠️★ 它和 [`Store::set_local_server`] 属于同一类：这两个开关**不在快照里**
+    ///（界面是从 `settings_view` 那条命令读它们的 —— 那是「打开设置时读一次」的东西，
+    /// 而快照是每 700ms 无条件走一遍的）。所以这里**故意不 `touch`**：
+    /// 前进一格只会让整屏白重绘一次，而界面上**什么都看不出来**。
+    ///
+    /// ⚠️★ 而「没有 `touch`」有一个前提：**它们真的不在快照里**。
+    /// 哪天有人把 `notifyUpload` 加进 `SettingsView` 之外的地方（比如画到主界面上），
+    /// 这条就必须变成 [`Store::set_autostart`] 那样（前进）。测试
+    /// `the_notification_switches_reach_the_config_without_a_repaint` 钉着这一条。
+    ///
+    /// ⚠️ 读它们的地方只有一处：`runtime` 要发通知时现读 `self.store.config()`
+    ///（两条纯判据 `notify_upload` / `notify_download`）。也就是说**写进配置 = 立刻生效**，
+    /// 不需要通知谁 —— 少了这一句，界面上的勾就是「存下去了但完全不生效」，
+    /// 而那是这个项目最忌讳的一类。
+    pub fn set_notify(&self, upload: Option<bool>, download: Option<bool>) {
+        let mut inner = self.lock();
+        if let Some(value) = upload {
+            inner.config.notify_upload = value;
+        }
+        if let Some(value) = download {
+            inner.config.notify_download = value;
+        }
+    }
+
     /// 换整份房间清单（界面上加 / 删 / 改房间）。
     ///
     /// ⚠️★ **房间清单和本机状态是按下标对齐的**（`Inner.rooms[i]` 属于
@@ -2377,6 +2403,37 @@ mod tests {
                 store.set_rooms(channels).expect("换同一份清单");
             },
         );
+    }
+
+    /// ⚠️★ 通知那两个开关**必须真的落进配置** —— 少了这一步，界面上的勾就是
+    /// 「存下去了但完全不生效」，而那是这个项目最忌讳的一类。
+    ///
+    /// ⚠️ 顺带把「**故意不前进**」也钉住：它们不在快照里（界面从 `settings_view` 读），
+    /// 前进一格只是白重绘。⚠️ 这条断言的价值在于**它是会咬人的** ——
+    /// 哪天有人把 `notifyUpload` 画到主界面上（也就是加进了快照），
+    /// 这条会红，逼他去 `set_notify` 里补 `touch`；
+    /// 没有它的话，症状是「界面上那个勾不亮」，而**不会有任何报错**。
+    #[test]
+    fn the_notification_switches_reach_the_config_without_a_repaint() {
+        let (_dir, store) = temp_store();
+        let before = store.snapshot().version;
+
+        store.set_notify(Some(false), Some(false));
+        let config = store.config();
+        assert!(!config.notify_upload, "上行那个开关没落进配置");
+        assert!(!config.notify_download, "下行那个开关没落进配置");
+        assert_eq!(
+            store.snapshot().version,
+            before,
+            "它不在快照里，前进一格是白重绘（见 `set_notify` 的注释）"
+        );
+
+        // ⚠️ `None` = **不改**（`SettingsPatch` 每个字段都是可选的）——
+        // 顺手把另一项写回默认值，用户看到的是「改 A 把 B 改回去了」。
+        store.set_notify(Some(true), None);
+        let config = store.config();
+        assert!(config.notify_upload);
+        assert!(!config.notify_download, "`None` 不该把另一项顺手改回去");
     }
 
     /// ⚠️★ **下载全局只能一个**：给第二个房间开下载，第一个**自动关掉**。

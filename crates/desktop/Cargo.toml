@@ -11,6 +11,14 @@ tauri-build = { version = "2.0", features = [] }
 # ⚠️ `tray-icon` + `image-png` 是**托盘菜单**要的（§7 第 5 条）：
 # 前者的图标在 macOS 上要从 PNG 解出来，所以两者得一起开。
 tauri = { version = "2.11", features = ["tray-icon", "image-png"] }
+# ⚠️ 系统通知（「本机剪贴板没发出去」「房间的内容写进剪贴板了」）走官方插件 ——
+# 与自启同一个判据：自己写要三套（macOS 的 `NSUserNotification` / Linux 的
+# `notify-send` / Windows 的 toast），而这三套的细节都会变。
+# ⚠️★ 但**能力文件里不给页面这条权限**（`capabilities/default.json` 里故意没有
+# `notification:*`）：页面仍然一行都调不到它，只有 Rust 侧的 `notify::SystemNotifier`
+# 能发（理由见 `notify.rs` 的模块文档）。插件会给页面注入一段 JS，那是它自带的；
+# **能不能调**由 ACL 决定，而我们没开。
+tauri-plugin-notification = "2"
 # ⚠️★ 单实例。**必须在 `main.rs` 里第一个注册**（官方文档明写）—— 它要在别的插件
 # 有机会插手之前处理掉「已经有一个实例在跑」。
 # ⚠️ 没有它的后果**不是**「多开一个窗口」那么轻：`Debouncer` 是**进程内**的，

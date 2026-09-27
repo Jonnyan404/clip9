@@ -12,22 +12,31 @@
 //!    下行写剪贴板前要 `prime` 指纹来防回环，而「谁记得上一次是什么」只能有一处；
 //! 4. **配置变了要重启**（房间开关换了 → 下行得重连；**↑ 全关 → 监听线程要停**）。
 //!
+//! 另外，**系统通知也从这里发**：两个方向各有一条判据（[`notify_upload`] /
+//! [`notify_download`]），真正发的那一下交给注入进来的 [`Notifier`]。
+//!
 //! # 为什么这个文件里没有 `tauri`
 //!
 //! 与 `store` 同一个理由：这些是**要测的接线**，而接线错的表现往往是
 //! 「连上了但不写剪贴板」这种**静默**的坏。tokio 的 `Handle` 由上层传进来
 //! （`main.rs` 从 Tauri 的运行时拿），所以这里既不依赖 Tauri、也不自己建运行时。
+//!
+//! ⚠️★ 通知那件事也是靠这一条撑住的：发通知要 `tauri`（[`crate::notify`]），
+//! 但**「发不发、发什么」留在本文件**（两条纯函数），注入的是一个 `dyn Notifier`。
+//! 否则这条最需要被测的判据（发一条 vs 发一万条）就只能靠手点界面验。
 
 use std::sync::{Arc, Mutex};
 
 use clip9_client::receiver::fetch_history;
 use clip9_client::uploader::{build_client, now};
 use clip9_client::{
-    ClipboardContent, ClipboardEvent, ClipboardSink, Debouncer, ReceiverHandle, SystemClipboard,
-    WatchConfig, WatchHandle, prime_from_current, shared_debouncer, spawn_receiver, spawn_watcher,
-    upload_event, upload_explicit,
+    ClipboardContent, ClipboardEvent, ClipboardSink, Debouncer, ReceiverEvent, ReceiverHandle,
+    ReceiverUpdate, SystemClipboard, WatchConfig, WatchHandle, prime_from_current,
+    shared_debouncer, spawn_receiver, spawn_watcher, upload_event, upload_explicit,
 };
+use clip9_protocol::ReceiveHolder;
 
+use crate::notify::Notifier;
 use crate::store::Store;
 
 /// 客户端运行时。
@@ -42,11 +51,22 @@ pub struct Runtime {
     http: reqwest::Client,
     /// tokio 的句柄（监控线程要靠它把事件丢进异步任务）。
     tokio: tokio::runtime::Handle,
+    /// 发系统通知的那一下。⚠️ 判据**不在这里**（见 [`notify_upload`] / [`notify_download`]），
+    /// 这里只把它递出去 —— 所以类型是 `dyn Notifier`，本文件见不到 `tauri`。
+    notifier: Arc<dyn Notifier>,
 }
 
 impl Runtime {
     /// 造一个运行时。`http` 建不出来就是**启动失败**（没有它连历史都取不到）。
-    pub fn new(store: Arc<Store>, tokio: tokio::runtime::Handle) -> Result<Arc<Self>, String> {
+    ///
+    /// ⚠️★ **通知是注入进来的**（不是内部 new 一个）：真实那份要 `tauri` 的窗口句柄，
+    /// 而本文件不许依赖 `tauri`（见模块文档）。`main.rs` 传 [`crate::notify::SystemNotifier`]，
+    /// 测试传一个记录用的假实现 —— 于是「什么情况下不该弹」这件事**能被测**。
+    pub fn with_notifier(
+        store: Arc<Store>,
+        tokio: tokio::runtime::Handle,
+        notifier: Arc<dyn Notifier>,
+    ) -> Result<Arc<Self>, String> {
         let http = build_client()?;
         Ok(Arc::new(Self {
             store,
@@ -55,6 +75,7 @@ impl Runtime {
             receiver: Mutex::new(None),
             http,
             tokio,
+            notifier,
         }))
     }
 
@@ -217,12 +238,32 @@ impl Runtime {
         drop(guard);
         *self.receiver.lock().unwrap_or_else(|e| e.into_inner()) = Some(handle);
 
-        let store = Arc::clone(&self.store);
+        let this = Arc::clone(self);
         self.tokio.spawn(async move {
             while let Some(update) = stream.recv().await {
-                store.apply_update(update);
+                this.apply_update(update);
             }
         });
+    }
+
+    /// 从下行搬一条更新进 [`Store`] —— **并在剪贴板真被写到时发一条系统通知**。
+    ///
+    /// ⚠️★ 通知在这里发，**不在 `store` 里**：`store` 那个分支是**有意为空**的
+    ///（它只摆列表，`WroteToClipboard` 的注释里写着为什么），而「要不要弹」
+    /// 要读配置、要碰壳 —— 那都是运行时的活。
+    ///
+    /// ⚠️★ 「真的写进了剪贴板吗」这一问**不在这里判**：`clip9-client` 只在
+    /// `apply_entry` 回 `Ok(true)`（真写成功）时才发这条事件
+    ///（空正文那种 `Ok(false)` 不算）。这里再判一遍就是**第二份定义**，
+    /// 而两份一定会漂 —— 漂的方向是「通知说写进去了、其实没写」。
+    ///
+    /// ⚠️ **先弹再摆列表**：这条更新可能因为房间刚被删掉而在 `store` 里被丢掉，
+    /// 但剪贴板**是真的写了** —— 那种情况下通知照样该弹。
+    fn apply_update(self: &Arc<Self>, update: ReceiverUpdate) {
+        if let ReceiverEvent::WroteToClipboard(entry) = &update.event {
+            notify_download(self.notifier.as_ref(), &self.store.config(), entry);
+        }
+        self.store.apply_update(update);
     }
 
     /// 全部停掉（退出 / 换配置时）。
@@ -279,6 +320,138 @@ fn watch_config(config: &clip9_client::ClientConfig) -> WatchConfig {
     }
 }
 
+/// 一次上行**怎么了** —— 界面那一格的颜色 / 系统通知发不发，都看它。
+///
+/// ⚠️★ 用枚举而不是直接带着 `"ok"` / `"err"` / `"skip"` 三个字符串走：
+/// 「成功不弹通知」这条判据要比较它，而**字符串比错了不会报错** ——
+/// 打错一个字母的表现是「成功也弹」，用户很快就把这软件的通知关掉了
+///（于是真正要紧的那条也没人看）。[`Outcome::kind`] 是那三个字面量**唯一**的出处。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Outcome {
+    /// 真的送达了（至少一个房间）。
+    Ok,
+    /// 有失败。
+    Err,
+    /// 被开关跳过了（卡在哪一道由 `report.summary()` 自己说）。
+    Skip,
+}
+
+impl Outcome {
+    /// 给界面那一格用的分类（`store::Notice` 的 `kind`）。
+    ///
+    /// ⚠️ 语义与页面的 `.notice.ok / .err / .skip` 三套颜色一一对应 ——
+    /// 改这里等于改界面，两边一起看（`ui/index.html` 的 `.notice` 样式）。
+    fn kind(self) -> &'static str {
+        match self {
+            Self::Ok => "ok",
+            Self::Err => "err",
+            Self::Skip => "skip",
+        }
+    }
+}
+
+/// 上行的**剪贴板那条**结果要不要弹系统通知 —— 要就发给 `notifier`。
+///
+/// ⚠️★ **只有「没发出去」才弹**（[`Outcome::Ok`] 不弹）。两个极端都是**静默**的坏：
+/// · 成功也弹 → 本机剪贴板每变一次弹一条「已发送」→ 用户第一件事就是去系统设置里
+///   把这软件的通知关掉 → 于是**真正要紧的那条**（没发出去）也一起没了；
+/// · 该弹的不弹 → 东西没发出去而用户不知道。他只知道「我在手机上看不到」，
+///   而这两件事之间没有任何线索把它们连起来。
+///
+/// ⚠️★ 判据抽出来、而且**收一个 `&dyn Notifier`**（不是返回一个 `Option` 让调用方去发）：
+/// 这样测试能拿一个记录用的假实现，**连「有没有真的调 send」一起验**
+/// ——「发什么」对了但「根本没发」是另一类错，而它同样不报错。
+///
+/// ⚠️ 标题是**主动语态的一句结果**（「剪贴板没发出去」），不是「提示」这种名词：
+/// 系统通知的标题要在锁屏 / 通知中心一眼看懂，而那时正文可能被折叠。
+fn notify_upload(
+    notifier: &dyn Notifier,
+    config: &clip9_client::ClientConfig,
+    outcome: Outcome,
+    text: &str,
+) {
+    if !config.notify_upload || outcome == Outcome::Ok {
+        return;
+    }
+    notifier.send("剪贴板没发出去", text);
+}
+
+/// 下行的结果（房间的内容**真的写进了**本机剪贴板）要不要弹系统通知。
+///
+/// ⚠️★ 「真的写进了」这一问**不在这里判**：`clip9-client` 只在 `apply_entry`
+/// 回 `Ok(true)` 时才发 [`ReceiverEvent::WroteToClipboard`]（空正文那种
+/// `Ok(false)` 不算 —— 它什么都没写）。这里再判一遍就是**第二份定义**。
+///
+/// ⚠️ 与上行相反，这一条**成功才弹**：写剪贴板这件事用户看不见（除非他正好在粘贴），
+/// 而它又是一件「本机被改动过」的事 —— 不说的话，用户会以为剪贴板里的东西
+/// 是自己之前复制的（然后粘到一个错误的地方）。它也可能是**误写**
+///（别人的房间开着 ↓ 而自己没注意），弹一条才说得清。
+fn notify_download(
+    notifier: &dyn Notifier,
+    config: &clip9_client::ClientConfig,
+    entry: &ReceiveHolder,
+) {
+    if !config.notify_download {
+        return;
+    }
+    notifier.send("已写入剪贴板", &entry_preview(entry));
+}
+
+/// 一条条目在通知里怎么被说成**一行**。
+///
+/// ⚠️ 只取**第一行**正文：通知那一行放不下多行文本，而**从中间截断**会让人以为
+/// 原文就是这样（用户报过「长消息看着被砍了」那类误会）。
+///
+/// ⚠️★ 按**字符**截、不按字节 —— 中文按字节切会切出半个字
+///（`model.rs` 的 `preview_of` 踩过同一个坑）。
+fn entry_preview(entry: &ReceiveHolder) -> String {
+    /// 通知正文最多显示多少个**字符**（不是字节）。
+    const PREVIEW_CHARS: usize = 60;
+
+    match entry {
+        ReceiveHolder::Text(text) => {
+            let line = text.content.lines().next().unwrap_or("").trim();
+            if line.is_empty() {
+                // ⚠️ 空正文照实说。给一个空字符串的话，系统通知会弹出一条
+                // 只有标题、下面空白的卡片 —— 看起来像我们坏了。
+                return "（空文本）".to_owned();
+            }
+            let mut out: String = line.chars().take(PREVIEW_CHARS).collect();
+            if line.chars().count() > PREVIEW_CHARS {
+                out.push('…');
+            }
+            out
+        }
+        // ⚠️ 文件条目**没有正文**（`FileReceive` 的注释），能说的只有名字与大小。
+        ReceiveHolder::File(file) => match size_label(file.size) {
+            // ⚠️ 大小服务端可以不给（`0`）—— 那时**不写**「0 B」，
+            // 那是个具体的谎（文件当然不是 0 字节）。
+            None => file.name.clone(),
+            Some(size) => format!("{}（{size}）", file.name),
+        },
+    }
+}
+
+/// 字节数 → 人能读的一句。`None` = **不知道**（负数 / 0，服务端可以不给大小）。
+///
+/// ⚠️ 它和页面上的 `sizeLabel`（`ui/app.js`）说的是同一件事，但**不能共用**：
+/// 一个在 Rust 里、一个在页面里（那份界面没有构建步骤，互相 import 不了）。
+/// 两边的分档与小数位要保持一致 —— 改一处顺手看一眼另一处。
+fn size_label(bytes: i64) -> Option<String> {
+    if bytes <= 0 {
+        return None;
+    }
+    const KB: f64 = 1024.0;
+    let bytes_f = bytes as f64;
+    Some(if bytes < 1024 {
+        format!("{bytes} B")
+    } else if bytes_f < KB * KB {
+        format!("{:.1} KB", bytes_f / KB)
+    } else {
+        format!("{:.1} MB", bytes_f / (KB * KB))
+    })
+}
+
 /// 一次上行**是谁发起的**。
 ///
 /// ⚠️★ 这个区分是**功能上的**，不是记账 —— 两条路走的是同一套材料化 / 凭据 / 多文件
@@ -317,48 +490,56 @@ impl Runtime {
         // 并带回一句带数字的话（`uploader` 的模块文档第 2 条）。
         let limits = self.store.limits();
         let config = self.store.config();
-        // ⚠️★ 这条提示**是关于哪个房间**的 —— 界面那一格是**按房间**的
-        //（`store` 里的 `Room::notice`）：只有**当前选中那个房间**的事才显示在那里。
-        //
-        // ⚠️ **剪贴板那条路不算「某个房间的事」**：它的目标是「所有开着 ↑ 的房间」，
-        // 可能同时是好几个，也可能一个都没有 —— 那种提示本来就不属于任何一个房间，
-        // 硬安一个上去反而是假话。所以这里只在**界面显式发送**那条路上写房间名
-        //（剪贴板那条路走系统通知，见 [`Runtime::report`]）。
-        let mut about: Option<(String, String)> = None;
-        let report = match source {
-            UploadSource::Clipboard => {
-                upload_event(&config, &event, limits, now(), &self.http).await
-            }
+        // ⚠️★ 「界面上发的」那条要先定下**发给谁**，而有房间才发得出去。
+        // 剪贴板那条**没有具体房间** —— 它的目标是「所有开着 ↑ 的房间」，
+        // 可能同时好几个、也可能一个都没有（见下面报告结果那段）。
+        let target = match source {
+            UploadSource::Clipboard => None,
             UploadSource::FromUi => {
                 // ⚠️★ **界面上的发送只发到「当前选中的那个房间」**，而且不判任何同步开关
                 //（理由见 `clip9_client::upload_explicit` 的文档）。
                 // 为什么是「选中的那个」：主区显示的就是它的时间线 —— 用户看到的那个房间
                 // 就是他以为在发过去的那个。发给「所有开着 ↑ 的房间」是另一回事，
                 // 而且 ↑ 默认全关，那条路装完就是**点了没反应**。
-                let Some(target) = self.store.selected_channel() else {
+                let Some(channel) = self.store.selected_channel() else {
                     // ⚠️ 一个房间都没配：**说出来**。静默吞掉的话，用户按了发送
                     // 只看到「什么都没发生」—— 那是这个项目最忌讳的一类。
                     self.store.notice("err", "没有房间可以发 —— 先在侧栏加一个");
                     return;
                 };
-                about = Some((target.server.clone(), target.room.clone()));
-                upload_explicit(&config, &target, &event, limits, now(), &self.http).await
+                Some(channel)
+            }
+        };
+        let report = match &target {
+            None => upload_event(&config, &event, limits, now(), &self.http).await,
+            Some(channel) => {
+                upload_explicit(&config, channel, &event, limits, now(), &self.http).await
             }
         };
         // ⚠️ 上传结果**要能被界面看到**，包括「因为开关关着而跳过」——
         // 「点了没反应」是这类客户端最难查的一类故障。
         // ⚠️ 跳过的**理由**由 `report.summary()` 自己说（`SkipReason`）——
         // 这里不许再拼一句「相关开关关着」那种要用户自己去认的话。
-        let (kind, text) = if !report.ok() {
-            ("err", report.summary())
+        let outcome = if !report.ok() {
+            Outcome::Err
         } else if report.skipped() || report.delivered == 0 {
-            ("skip", report.summary())
+            Outcome::Skip
         } else {
-            ("ok", report.summary())
+            Outcome::Ok
         };
-        match about {
-            Some((server, room)) => self.store.notice_in(&server, &room, kind, text),
-            None => self.store.notice(kind, text),
+        let text = report.summary();
+        match &target {
+            // ⚠️★ 剪贴板那条走**系统通知**，界面那一格**故意不写**。
+            // 理由：那一格长在「当前选中房间」的标题下面（`store` 的 `Room::notice`），
+            // 而这条路的目标是「**所有**开着 ↑ 的房间」—— 可能好几个、也可能一个都没有。
+            // 把「本机剪贴板没发出去」挂在某一个房间名下是**假话**（那个房间可能根本没开 ↑）。
+            // ⚠️ 还有一层更实在的理由：它发生时用户**多半不在这个窗口里**
+            //（他刚在别的程序里按了 ⌘C），而界面那一格只有他切回来才看得到 —— 那已经太晚。
+            None => notify_upload(self.notifier.as_ref(), &config, outcome, &text),
+            Some(channel) => {
+                self.store
+                    .notice_in(&channel.server, &channel.room, outcome.kind(), text)
+            }
         }
     }
 
@@ -538,5 +719,182 @@ mod tests {
             WatcherAction::Leave,
             "本来就不该跑，别去动那个空句柄"
         );
+    }
+
+    /// 记录用的假通知器。
+    ///
+    /// ⚠️★ 它存在的理由是「**有没有真的发**」也要能测：判据说「该弹」、
+    /// 但没人去调 `send`，那照样是**静默**的坏（用户以为会响，结果什么都没弹）。
+    /// 所以两条判据都收一个 `&dyn Notifier`，而不是返回一个 `Option` 让调用方去发。
+    #[derive(Default)]
+    struct RecordingNotifier {
+        sent: std::sync::Mutex<Vec<(String, String)>>,
+    }
+
+    impl RecordingNotifier {
+        fn sent(&self) -> Vec<(String, String)> {
+            self.sent.lock().unwrap_or_else(|e| e.into_inner()).clone()
+        }
+    }
+
+    impl Notifier for RecordingNotifier {
+        fn send(&self, title: &str, body: &str) {
+            self.sent
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .push((title.to_owned(), body.to_owned()));
+        }
+    }
+
+    fn text_entry(content: &str) -> ReceiveHolder {
+        ReceiveHolder::Text(clip9_protocol::TextReceive {
+            base: clip9_protocol::ReceiveBase::default(),
+            content: content.to_owned(),
+            ..clip9_protocol::TextReceive::default()
+        })
+    }
+
+    fn file_entry(name: &str, size: i64) -> ReceiveHolder {
+        ReceiveHolder::File(clip9_protocol::FileReceive {
+            base: clip9_protocol::ReceiveBase::default(),
+            name: name.to_owned(),
+            size,
+            ..clip9_protocol::FileReceive::default()
+        })
+    }
+
+    /// ⚠️★ 剪贴板上行的通知：**只有没发出去才响**。
+    ///
+    /// 三条都要测：只测「失败会弹」的话，「**成功也弹**」照样绿 ——
+    /// 而它的后果是本机剪贴板每变一次弹一条，用户第一件事就是去把通知关掉，
+    /// 于是**真正要紧的那条**（没发出去）也一起没了。
+    #[test]
+    fn a_clipboard_upload_only_speaks_up_when_it_did_not_go_out() {
+        let config = ClientConfig::default();
+        assert!(config.notify_upload, "前提：默认是开的（这条测试的地基）");
+
+        for (outcome, expected) in [(Outcome::Err, 1), (Outcome::Skip, 1), (Outcome::Ok, 0)] {
+            let notifier = RecordingNotifier::default();
+            notify_upload(&notifier, &config, outcome, "一句话");
+            assert_eq!(
+                notifier.sent().len(),
+                expected,
+                "{outcome:?} 该发 {expected} 条通知"
+            );
+        }
+
+        // 标题与正文也要对得上：正文就是 `report.summary()`（**理由在里面**，
+        // 那句「相关开关关着」被用户当假话就是这个原因）；
+        // 标题是一句结果 —— 锁屏 / 通知中心里正文可能被折叠，标题得自己说得清。
+        let notifier = RecordingNotifier::default();
+        notify_upload(
+            &notifier,
+            &config,
+            Outcome::Err,
+            "3 个载荷里有 1 处失败：连接超时",
+        );
+        assert_eq!(
+            notifier.sent(),
+            vec![(
+                "剪贴板没发出去".to_owned(),
+                "3 个载荷里有 1 处失败：连接超时".to_owned()
+            )]
+        );
+    }
+
+    /// 关掉那个开关 → **一条都不许发**（包括失败那条）。「配了不生效」的反面。
+    #[test]
+    fn the_upload_notification_switch_silences_everything() {
+        let config = ClientConfig {
+            notify_upload: false,
+            ..ClientConfig::default()
+        };
+        for outcome in [Outcome::Err, Outcome::Skip, Outcome::Ok] {
+            let notifier = RecordingNotifier::default();
+            notify_upload(&notifier, &config, outcome, "一句话");
+            assert!(notifier.sent().is_empty(), "{outcome:?}：开关关着还发了");
+        }
+    }
+
+    /// ⚠️★ 下行：**真的写进剪贴板了才说**，开关关着就不说。
+    ///
+    /// 「真的写进了」那一半由 `clip9-client` 保证（`WroteToClipboard` 只在
+    /// `apply_entry` 回 `Ok(true)` 时发），这里只钉「开关」与「正文形状」。
+    #[test]
+    fn writing_to_the_clipboard_is_announced_only_when_asked() {
+        let on = ClientConfig::default();
+        assert!(on.notify_download, "前提：默认是开的（这条测试的地基）");
+
+        let notifier = RecordingNotifier::default();
+        notify_download(&notifier, &on, &text_entry("你好"));
+        assert_eq!(
+            notifier.sent(),
+            vec![("已写入剪贴板".to_owned(), "你好".to_owned())]
+        );
+
+        let off = ClientConfig {
+            notify_download: false,
+            ..ClientConfig::default()
+        };
+        let notifier = RecordingNotifier::default();
+        notify_download(&notifier, &off, &text_entry("你好"));
+        assert!(notifier.sent().is_empty(), "开关关着还发了");
+    }
+
+    /// ⚠️★ 通知正文只取**第一行**，而且按**字符**截。
+    ///
+    /// 中文按字节切会切出半个字（`model.rs` 的 `preview_of` 踩过同一个坑），
+    /// 而通知正文里出现一个乱码方块，用户只会以为是我们坏了。
+    #[test]
+    fn the_notification_body_is_one_line_of_whole_characters() {
+        let config = ClientConfig::default();
+
+        // 多行 → 只留第一行。⚠️ 从中间截断会让人以为原文就是这样。
+        let notifier = RecordingNotifier::default();
+        notify_download(&notifier, &config, &text_entry("第一行\n第二行"));
+        assert_eq!(notifier.sent()[0].1, "第一行");
+
+        // 超长的一行 → 60 个字符 + 一个省略号（而且没切出半个字）。
+        let long = "汉".repeat(100);
+        let notifier = RecordingNotifier::default();
+        notify_download(&notifier, &config, &text_entry(&long));
+        let body = &notifier.sent()[0].1;
+        assert_eq!(body.chars().count(), 61, "60 个字符 + 一个省略号");
+        assert!(body.ends_with('…'));
+        assert!(
+            body.trim_end_matches('…').chars().all(|c| c == '汉'),
+            "切出了半个字：{:?}",
+            body.chars().last()
+        );
+
+        // 正好 60 个字符 → **不加**省略号（它没被截）。
+        let notifier = RecordingNotifier::default();
+        notify_download(&notifier, &config, &text_entry(&"汉".repeat(60)));
+        assert_eq!(notifier.sent()[0].1.chars().count(), 60);
+        assert!(!notifier.sent()[0].1.ends_with('…'));
+
+        // ⚠️ 空正文要**说出来**：给一个空字符串的话，系统通知会弹出一张
+        // 只有标题、下面空白的卡片 —— 看起来像我们坏了。
+        let notifier = RecordingNotifier::default();
+        notify_download(&notifier, &config, &text_entry("   \n第二行"));
+        assert_eq!(notifier.sent()[0].1, "（空文本）");
+    }
+
+    /// 文件条目**没有正文**，能说的只有名字与大小；服务端不给大小时**不写「0 B」**。
+    #[test]
+    fn a_file_notification_says_the_name_and_only_a_real_size() {
+        assert_eq!(
+            entry_preview(&file_entry("报告.pdf", 2048)),
+            "报告.pdf（2.0 KB）"
+        );
+        assert_eq!(
+            entry_preview(&file_entry("大图.png", 3 * 1024 * 1024)),
+            "大图.png（3.0 MB）"
+        );
+        assert_eq!(entry_preview(&file_entry("小.txt", 512)), "小.txt（512 B）");
+        // ⚠️ `0` = **服务端没给**（`FileReceive::size` 的注释），不是「0 字节」——
+        // 照着写「（0 B）」是一个具体的谎。
+        assert_eq!(entry_preview(&file_entry("未知.bin", 0)), "未知.bin");
+        assert_eq!(entry_preview(&file_entry("负数.bin", -1)), "负数.bin");
     }
 }
