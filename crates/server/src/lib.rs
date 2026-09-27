@@ -79,6 +79,19 @@ const UPLOAD_BODY_HARD_CAP: usize = 16 * 1024 * 1024;
 /// 不留的话「正好等于上限」的正文会被莫名其妙地拒掉。
 const BODY_LIMIT_SLACK: usize = 8 * 1024;
 
+// ⚠️★ 下面两条是**编译期**断言，不是测试：它们全是常量之间的比较。
+// ⚠️ 为什么值得钉：硬上限取小了，等于把「框架先拒（非契约形状）」换成
+// 「我们自己的闸先拒」—— 那**不是修复**，只是换了一种静默失效。这种事不该等到跑测试才发现。
+// （写这一条时 clippy 报了 `assertions_on_constants`，它是对的：常量比较就该在编译期。）
+const _: () = assert!(
+    TEXT_BODY_HARD_CAP > 2 * 1024 * 1024,
+    "正文硬上限比框架默认的 2 MiB 还小 —— 那是往回退，不是修"
+);
+const _: () = assert!(
+    UPLOAD_BODY_HARD_CAP > TEXT_BODY_HARD_CAP,
+    "单次上传的上限比 /text 还小 —— 它至少要装得下一个文件分片"
+);
+
 /// 组装路由。
 ///
 /// ⚠️ **前缀（`server.prefix`）在装配时施加**，不在每个 handler 里手写。
@@ -327,23 +340,18 @@ mod tests {
     ///
     /// ⚠️ 这条照 `handlers` 里 `hard_cap_leaves_the_default_deployment_alone` 的先例写：
     /// **硬上限与「用户配的那个值」是两件事，改一个要能在这里对账。**
+    /// ⚠️ 常量之间的比较（硬上限 vs 框架默认 2 MiB）在**编译期**就断了，见上面那两条
+    /// `const _` —— 这里只管「缺省配置」与硬上限的关系。
     #[test]
     fn the_body_caps_do_not_shrink_what_already_works() {
         // ⚠️ `text` / `file` 挂在 `Config` 上，不在 `ServerConfig` 里（`server` 只是它的一段）。
         let default = clip9_core::Config::default();
-        // 缺省部署一定不受影响。
         assert!(
             default.text.limit <= TEXT_BODY_HARD_CAP as i64,
             "缺省 text.limit 已经超过硬上限 —— 默认部署会开始收到框架层的 413（非契约形状）"
         );
-        // ⚠️ 框架默认是 2 MiB：硬上限**比它小**就等于把静默失效换成了另一种静默失效。
         assert!(
-            TEXT_BODY_HARD_CAP > 2 * 1024 * 1024,
-            "硬上限比框架默认的 2 MiB 还小 —— 那是往回退，不是修"
-        );
-        // 上传那条同理，而且它必须能装下至少一个分片（`file.chunk` 缺省 1 MiB）。
-        assert!(
-            default.file.chunk as usize > 0 && (default.file.chunk as usize) < UPLOAD_BODY_HARD_CAP,
+            default.file.chunk > 0 && (default.file.chunk as usize) < UPLOAD_BODY_HARD_CAP,
             "缺省分片大小装不进单次上传上限 —— 分片路径会整条走不通"
         );
         assert!(
