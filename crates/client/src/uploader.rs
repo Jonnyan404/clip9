@@ -59,12 +59,18 @@ const CHANNEL_TIMEOUT_SECS: u64 = 30;
 /// 建连接的超时（与整体超时分开：连不上的时候要**快**失败，而不是耗满 30 秒）。
 const CONNECT_TIMEOUT_SECS: u64 = 10;
 
-/// 服务端限额（`GET /server` 的 `text.limit` / `file.limit`）。
+/// 服务端限额（来自 **WS 握手 `config` 事件**的 `text` / `file` 段 ——
+/// ⚠️ **不是** `/server`，见模块文档里那段「限额从哪来」）。
 ///
 /// ⚠️ `0` = **不知道 / 不限**（服务端没给这个字段）。别把它当成「限额是 0」去拦东西。
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct ServerLimits {
-    /// `text.limit`（**字符**数，不是字节）。
+    /// `text.limit`（**字节**数，不是字符数）。
+    ///
+    /// ⚠️★ 这里**曾经写成「字符数，不是字节」**（2026-09-27 修正）。而服务端
+    ///（`handlers.rs` 的 `text.len()`）与 Go 基准判的都是**字节** ——
+    /// **照那句错注释去写客户端预检查，中文下会静默地与 Go 分歧**
+    ///（一个汉字 3 字节：同一个限额，中文能发的字数只有 ASCII 的 1/3）。
     pub text_limit: usize,
     /// `file.limit`（字节）。
     pub file_limit: u64,
