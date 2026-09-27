@@ -206,6 +206,31 @@ pub struct ClientConfig {
     #[serde(default)]
     pub device_name: String,
 
+    // ── 通知（只有桌面端会用）────────────────────────────────────────
+    /// 本机剪贴板**没发出去**时要不要发系统通知（失败了 / 被开关跳过）。
+    ///
+    /// ⚠️★ **成功不通知**（2026-09-27 定）。剪贴板那条上行是**自动**的 ——
+    /// 用户没按任何按钮，每复制一次弹一句「已发到 1 个房间」是纯噪音。
+    /// 值得打扰他的只有一件事：「你复制的这个东西**没到房间**」。
+    ///
+    /// ⚠️ 默认 **true**：这是「没发出去」唯一会说话的地方。界面那一格是**房间**的，
+    /// 而剪贴板这条路上行会同时发给**所有**开着 ↑ 的房间（可能是几个、也可能一个都没有）
+    /// —— 它不属于任何一个房间，不该挂在某个房间的标题下面（用户 2026-09-27 报的
+    /// 「提示串房间了」）。剪贴板的事走**系统通知**。
+    ///
+    /// ⚠️ 它只在**真有房间开着 ↑** 时才可能响：↑ 全关时监听线程根本不跑
+    ///（[`ClientConfig::watches_clipboard`]）。
+    #[serde(default = "default_true")]
+    pub notify_upload: bool,
+
+    /// 房间的内容**写进本机剪贴板**时要不要发系统通知。
+    ///
+    /// ⚠️ 它只在某个房间的 ↓ 开着、**并且**这一类内容的 ↓ 也开着时才可能响
+    ///（`receiver` 里那两道判据）—— 所以默认开也不会打扰一个没开下行的人；
+    /// 而开了下行的人想知道「东西什么时候到我手上」，那正是这条通知。
+    #[serde(default = "default_true")]
+    pub notify_download: bool,
+
     /// 开机自动启动。**只有桌面端会用**（Android / OpenWrt 那边忽略它）。
     ///
     /// ⚠️ 为什么它在**这个**配置里、而不是壳自己的文件里：**只留一个配置文件**。
@@ -271,6 +296,11 @@ impl Default for ClientConfig {
             poll_interval_ms: default_poll_interval_ms(),
             client_id: new_client_id(),
             device_name: String::new(),
+            // ⚠️ 两个都默认**开**：它们各自只在「用户真的开了那个方向」之后才可能响
+            //（↑ 全关时监听线程根本不跑；↓ 全关时没有东西会写剪贴板）。
+            // 见 `notify_upload` / `notify_download` 的字段注释。
+            notify_upload: true,
+            notify_download: true,
             // ⚠️ 默认关（理由见字段注释）—— 显式写出来，别靠 `Default` 的隐式值。
             enable_autostart: false,
             // ⚠️ 反过来：默认**开**（装完就该能用，见字段注释）。
@@ -324,6 +354,22 @@ impl ClientConfig {
     #[must_use]
     pub fn upload_channels(&self) -> Vec<&Channel> {
         self.channels.iter().filter(|c| c.enable_upload).collect()
+    }
+
+    /// 监听线程**该不该在跑**。
+    ///
+    /// ⚠️★ 唯一的判据是「**有没有任何一个房间开着 ↑**」（2026-09-27 Jonny 定的）：
+    /// 「上传全关就关闭监听，开一个就打开监听。下载应该不需要调用监听剪贴板」。
+    /// 原来那个独立的「剪贴板监听开关」（`enable_monitoring`）**早就删了**，
+    /// 所以这件事只能由 ↑ 反推。
+    ///
+    /// ⚠️★ 它**必须**从 [`ClientConfig::upload_channels`] 推出来，不许自己再写一遍
+    /// `any(enable_upload)`：那个函数是上行真正用的目标判据（空 = 一条都不发）。
+    /// 两处各写一遍的话，「线程在跑而一个目标都没有」（白耗电）与
+    /// 「有目标而线程没跑」（**静默不同步**，一条日志都没有）都会出现。
+    #[must_use]
+    pub fn watches_clipboard(&self) -> bool {
+        !self.upload_channels().is_empty()
     }
 
     /// 下行目标：**单数**。
@@ -690,9 +736,75 @@ mod tests {
         assert_eq!(cfg.upload_channels()[0].name, "a");
     }
 
+    /// ⚠️★ **监听线程只在「有房间开着 ↑」时才该跑**（2026-09-27 Jonny 定的）：
+    /// 「上传全关就关闭监听，开一个就打开监听。**下载应该不需要调用监听剪贴板**」。
+    ///
+    /// ⚠️★ 用例形状是刻意这样排的：**每一步只动一个字段**。四条断言里有两条
+    /// 是「不该跑」，如果一次改两个字段，「只看 ↑」「只看 ↓」这两种错写法
+    /// 都会在同一步里被满足 —— 那样这条测试就白写了（这个项目为此吃过一次亏）。
+    #[test]
+    fn the_watcher_runs_exactly_when_some_room_uploads() {
+        // ① 一个房间都没配 → 没东西可发，不该跑。
+        assert!(!ClientConfig::default().watches_clipboard());
+
+        // ② 有房间，但两个方向都关着 → 不该跑。
+        let mut cfg = ClientConfig {
+            channels: vec![ch("a", false)],
+            ..ClientConfig::default()
+        };
+        cfg.channels[0].enable_upload = false;
+        assert!(
+            !cfg.watches_clipboard(),
+            "↑ 全关就该停掉监听线程（用户报的就是这条）"
+        );
+
+        // ③ **只开 ↓** → 仍然不该跑。下载是「把收到的写进剪贴板」，
+        //    那是 `receiver` 干的活，跟「读本机剪贴板」这个轮询线程无关。
+        cfg.channels[0].enable_download = true;
+        assert!(
+            !cfg.watches_clipboard(),
+            "↓ 不是起监听的理由（Jonny 原话：下载应该不需要调用监听剪贴板）"
+        );
+
+        // ④ 开一个 ↑ → 该跑。
+        cfg.channels[0].enable_upload = true;
+        assert!(cfg.watches_clipboard());
+
+        // ⑤ 再加一个关着 ↑ 的房间 → 不影响（判据是「**有任何一个**开着」）。
+        cfg.channels.push(ch("b", false));
+        cfg.channels[1].enable_upload = false;
+        assert!(cfg.watches_clipboard(), "有一个开着就该继续跑");
+    }
+
+    /// ⚠️ 两个通知开关默认都**开**，而且**老配置里没有这两个键时也必须读出「开」**
+    ///（两条路漂了的话，「手写的配置」与「程序生成的配置」行为不一样，最难查）。
+    ///
+    /// ⚠️ 默认开的理由与 `enable_autostart`（默认关）**不冲突**：那个是往系统里
+    /// 塞东西、必须问过；这两个各自只在「用户已经开了那个方向」之后才可能响
+    /// —— 也就是说，**是用户自己先要求了同步，通知才有内容可说**。
+    #[test]
+    fn notifications_are_on_by_default_and_for_old_configs() {
+        let default = ClientConfig::default();
+        assert!(default.notify_upload, "默认开（理由见字段注释）");
+        assert!(default.notify_download, "默认开（理由见字段注释）");
+
+        let parsed: ClientConfig = serde_json::from_str("{}").expect("空对象也要能读出来");
+        assert!(parsed.notify_upload, "老配置读出来必须是开的");
+        assert!(parsed.notify_download, "老配置读出来必须是开的");
+
+        // ⚠️ 关掉之后要能**存下来**（不然用户关了、下次启动又开着 —— 那一类
+        // 「设了不生效」正是这个项目最忌讳的）。
+        let off = ClientConfig {
+            notify_upload: false,
+            ..ClientConfig::default()
+        };
+        let json = serde_json::to_string(&off).unwrap();
+        let back: ClientConfig = serde_json::from_str(&json).unwrap();
+        assert!(!back.notify_upload);
+    }
+
     /// ⚠️★ 开机自启**默认必须是关**的：装完就往系统里塞一个自启项，是**未经同意**
     /// 改用户的机器。这条钉的是**产品决定**，不是实现细节。
-    ///
     /// ⚠️ 顺带钉住「**老配置读出来也不能变成开着**」：配置文件里没有这个键时，
     /// `#[serde(default)]` 必须落到 `false` —— 那正是「加字段不能让已有用户的行为变掉」
     /// 这条规矩在这一处的样子（老用户升级上来，机器上不该多出一个自启项）。
