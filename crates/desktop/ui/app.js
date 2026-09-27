@@ -524,6 +524,13 @@ function render(state) {
   // ⚠️ 值里**不重复**「本机」：左边那一格的标签已经写着「本机保留」了。
   el('dg-max').textContent = state.maxEntries ? `最多留最近 ${state.maxEntries} 条` : '—';
 
+  // ⚠️★ 长文的**代价要看得见**：`dg-max` 说的是**条数**那道界，而真正的内存是
+  // 「条数 × 每条多大」，后者由服务端的 `text.limit` 决定。不显示的话，
+  // 「把上限调大」在用户眼里是**免费**的（而 §8.2 那节算过：10 万字符 × 200 条 = 几十 MB）。
+  // ⚠️ 数的是**选中那个房间**的条目正文（`text_bytes` 是**全文**字节数，不是快照里那份
+  // 预览的长度 —— 所以这个数与「快照现在有多小」是两件事，别混）。
+  el('dg-roombytes').textContent = room ? sizeLabel(room.textBytes) : '—';
+
   const problems = el('problems');
   if (state.problems.length) {
     problems.hidden = false;

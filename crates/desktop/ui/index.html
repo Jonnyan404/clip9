@@ -958,6 +958,12 @@ table.ra td input[type='checkbox'] { margin: 0; }
                              （`store.rs` 的 `MAX_ENTRIES_PER_ROOM` 注释里点名了这条要求）。
                              ⚠️ 它和「服务端留多少条历史」是**两件事**，别混（后者在服务端配置里）。 -->
                         <span class="k">本机保留</span><span class="v" id="dg-max">—</span>
+                        <!-- ⚠️★ 这一行是「上限调大之后本机到底多占了多少」的**量具**。
+                             `本机保留` 说的是**条数**那道界，而真正的内存是「条数 × 每条多大」
+                             —— 后者由服务端的 `text.limit` 决定（可配）。
+                             长文的代价必须看得见：看不见的话，「把上限调大」看起来是免费的。
+                             ⚠️ 数的是**选中那个房间**的条目正文（不是盘上文件的字节）。 -->
+                        <span class="k">本房间正文</span><span class="v" id="dg-roombytes">—</span>
                     </div>
                 </div>
             </div>
