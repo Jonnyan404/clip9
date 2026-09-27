@@ -52,6 +52,11 @@ pub fn apply_settings(
         // ⚠️ 房间清单变了 → **下行必须重连**：`spawn_receiver` 拿的是启动时那份
         // 配置的副本（`set_download` 那条命令的注释里写着同一件事）。
         runtime.restart_receiver();
+        // ⚠️★ 而**监听线程**也要跟着重判一次：这一批房间可能把 ↑ 全关了
+        //（用户删掉唯一开着 ↑ 的那个房间），也可能从零开了一个。
+        // 少了这一步，症状是「删掉最后一个开着 ↑ 的房间，线程还在读剪贴板」——
+        // 而**界面上什么都看不出来**（↑ 一个都不亮，但剪贴板照旧被轮询）。
+        runtime.sync_watcher();
     }
     if let Some(scope) = patch.sync {
         // ⚠️ 只有**真的变了**才重启监听线程：没变也重启的话，用户每点一次保存
@@ -490,6 +495,14 @@ pub fn select(
 }
 
 /// 上行开关（**可以多个房间同时开**，§4.1 第 1 条）。
+///
+/// ⚠️★ 它**同时决定监听线程的生死**（2026-09-27 用户定的）：↑ 全关 = 没人要本机
+/// 剪贴板 → 那个轮询线程**停掉**；开一个就起回来。所以这里必须跟着调
+/// [`Runtime::sync_watcher`] —— 少了这一步，界面上关了 ↑ 而线程照旧在每
+/// `poll_interval_ms` 读一次剪贴板，**而且没有任何提示**。
+///
+/// ⚠️ 为什么这件事挂在 ↑ 上而不是一个独立的开关：那个开关（`enable_monitoring`）
+/// 2026-09-26 已经被删了 —— 于是「要不要读本机剪贴板」只能由「有没有人收」反推。
 #[tauri::command]
 pub fn set_upload(
     store: State<'_, Arc<Store>>,
@@ -498,6 +511,7 @@ pub fn set_upload(
     on: bool,
 ) -> Result<(), String> {
     store.set_upload(index, on)?;
+    runtime.sync_watcher();
     runtime.persist();
     Ok(())
 }
