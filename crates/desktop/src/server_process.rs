@@ -36,6 +36,14 @@ use std::process::{Child, Command, Stdio};
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
+use clip9_client::Msg;
+
+// ⚠️★ 报错一律是 [`Msg`]（键 + 参数），**不是成文的中文** —— 与 `store` / `commands` 同一条规矩
+// （理由见 [`crate::commands`] 的模块文档）。这几条错误会走到界面上
+// （「起不来」「端口上是别人」都在 `catch` 里渲染），所以句子不能留在这一侧。
+// ⚠️ 唯一例外是 `default_binary` 那几条：它们现在只进 `eprintln!`（终端 / 系统日志），
+// 但**照样是键** —— 免得哪天有人把它们接到界面上时忘了翻（那正是这一类问题最典型的走法）。
+
 /// 本地服务端的默认端口。
 ///
 /// ⚠️ **刻意不用 9501**：那是用户自己那个实例的默认端口，撞上去的后果见模块文档。
@@ -145,19 +153,25 @@ impl ServerProcess {
     /// 显示的是**文件里的值** → 两处打架，而用户只会觉得「这个数字不对」。
     ///
     /// ⚠️ 只写**默认值 + 端口**，别的一个字不加：这份文件之后归用户（和「配置可视化」）改。
-    fn seed_config(&self, port: u16) -> Result<(), String> {
+    fn seed_config(&self, port: u16) -> Result<(), Msg> {
         let path = config_path(&self.data_dir);
         if path.exists() {
             return Ok(());
         }
-        std::fs::create_dir_all(&self.data_dir)
-            .map_err(|err| format!("建服务端数据目录失败（{}）：{err}", self.data_dir.display()))?;
+        std::fs::create_dir_all(&self.data_dir).map_err(|reason| {
+            Msg::key("configDirCreateFailed")
+                .param("path", self.data_dir.display())
+                .param("reason", reason)
+        })?;
         let mut config = clip9_core::Config::default();
         config.server.port = port;
         let text = serde_json::to_string_pretty(&config)
-            .map_err(|err| format!("序列化默认配置失败：{err}"))?;
-        std::fs::write(&path, format!("{text}\n"))
-            .map_err(|err| format!("写默认配置失败（{}）：{err}", path.display()))
+            .map_err(|reason| Msg::key("configSerializeFailed").param("reason", reason))?;
+        std::fs::write(&path, format!("{text}\n")).map_err(|reason| {
+            Msg::key("configWriteFailed")
+                .param("path", path.display())
+                .param("reason", reason)
+        })
     }
 
     /// 起一个，然后**等它真的答话**才返回。
@@ -167,7 +181,7 @@ impl ServerProcess {
     ///
     /// ⚠️ 已经在跑（不管是谁起的）就**直接返回成功**，不重复起：
     /// 重复起的后果是第二个进程 bind 失败、静默退出，而界面上「看起来起了」。
-    pub fn start(&self) -> Result<(), String> {
+    pub fn start(&self) -> Result<(), Msg> {
         // ⚠️★ 端口**每次现读配置**：用户在「服务端配置」里改完、点「保存并重启」，
         // 那一下必须真的换到新端口上（原来写死常量 → 改哪个都白改）。
         let port = self.port();
@@ -178,11 +192,14 @@ impl ServerProcess {
         // 端口是 9501 的，而它实际跑在我们这个端口上 —— 两处打架。
         self.seed_config(port)?;
         let log_path = log_path(&self.data_dir);
-        let log = std::fs::File::create(&log_path)
-            .map_err(|err| format!("建日志文件失败（{}）：{err}", log_path.display()))?;
+        let log = std::fs::File::create(&log_path).map_err(|reason| {
+            Msg::key("serverLogCreateFailed")
+                .param("path", log_path.display())
+                .param("reason", reason)
+        })?;
         let log2 = log
             .try_clone()
-            .map_err(|err| format!("复制日志句柄失败：{err}"))?;
+            .map_err(|reason| Msg::key("serverLogCloneFailed").param("reason", reason))?;
 
         let child = Command::new(&self.binary)
             // ⚠️ 显式给 `-port`：与刚写下的那份配置**同一个值**（`port` 是上面读出来的）。
@@ -201,7 +218,11 @@ impl ServerProcess {
             .stdout(Stdio::from(log2))
             .stderr(Stdio::from(log))
             .spawn()
-            .map_err(|err| format!("起不了本地服务端（{}）：{err}", self.binary.display()))?;
+            .map_err(|reason| {
+                Msg::key("serverSpawnFailed")
+                    .param("path", self.binary.display())
+                    .param("reason", reason)
+            })?;
         *self.child.lock().unwrap_or_else(|e| e.into_inner()) = Some(child);
 
         let deadline = Instant::now() + START_TIMEOUT;
@@ -225,24 +246,21 @@ impl ServerProcess {
     /// ⚠️ 用 `kill()`（SIGKILL）而不是优雅退出：redb 的写是事务性的、崩溃安全，
     /// 而「优雅退出」要跨平台发信号（`libc` / Windows 控制台事件），
     /// 为一个「用户点停止」的动作引入那套不划算。见 `ARCHITECTURE.md` 的崩溃安全那条。
-    pub fn stop(&self) -> Result<(), String> {
+    pub fn stop(&self) -> Result<(), Msg> {
         let taken = self.child.lock().unwrap_or_else(|e| e.into_inner()).take();
         // ⚠️ 时刻要跟着一起清：不清的话「停了之后」界面还会显示「运行时长 2 小时」。
         *self.started_at.lock().unwrap_or_else(|e| e.into_inner()) = None;
         let Some(mut child) = taken else {
             // 没起过 —— 但要**说清**是「我们没起过」，而不是「已经停好了」。
             return if self.is_running() {
-                Err(
-                    "这个端口上有一个服务端在跑，但**不是这个客户端起的**，所以不替你停它。"
-                        .to_owned(),
-                )
+                Err(Msg::key("foreignServerNotStopped").param("port", self.port()))
             } else {
                 Ok(())
             };
         };
         child
             .kill()
-            .map_err(|err| format!("停本地服务端失败：{err}"))?;
+            .map_err(|reason| Msg::key("serverStopFailed").param("reason", reason))?;
         // ⚠️ 收尸：不 `wait` 的话会留下僵尸进程（在 Linux 上看得见）。
         let _ = child.wait();
         Ok(())
@@ -282,11 +300,12 @@ pub fn probe(port: u16) -> bool {
 /// ⚠️ 打包后它就在旁边（W4 要把 `clip9-server` 放进 bundle）；开发时
 /// `target/debug/` 里两个都在 —— **同一条规则两边都成立**，所以这里不用写平台分支
 /// 或者「debug 走这条、release 走那条」。
-pub fn default_binary() -> Result<PathBuf, String> {
-    let exe = std::env::current_exe().map_err(|err| format!("取不到自己的路径：{err}"))?;
+pub fn default_binary() -> Result<PathBuf, Msg> {
+    let exe = std::env::current_exe()
+        .map_err(|reason| Msg::key("binaryPathUnavailable").param("reason", reason))?;
     let dir = exe
         .parent()
-        .ok_or_else(|| format!("{} 没有父目录", exe.display()))?;
+        .ok_or_else(|| Msg::key("binaryNoParent").param("path", exe.display()))?;
     let name = if cfg!(windows) {
         "clip9-server.exe"
     } else {
@@ -294,10 +313,7 @@ pub fn default_binary() -> Result<PathBuf, String> {
     };
     let path = dir.join(name);
     if !path.is_file() {
-        return Err(format!(
-            "找不到本地服务端：{}（它应该和客户端放在一起）",
-            path.display()
-        ));
+        return Err(Msg::key("binaryNotFound").param("path", path.display()));
     }
     Ok(path)
 }
@@ -346,7 +362,11 @@ pub fn log_path(data_dir: &Path) -> PathBuf {
 ///
 /// ⚠️ 日志是 `File::create` 打开的（每次起服务端都会**截断重写**），所以最后一行
 /// 就是**这一次**失败的原因 —— 不会串到上一次去。
-fn start_failure(log_path: &Path, port: u16) -> String {
+///
+/// ⚠️★ **两条键**（有日志 / 一行都没写）而不是一句模板塞个空值：那两件事不一样
+/// （「写了日志但没起来」与「连一行都没写出来就死了」），而后者恰恰是「二进制根本起不来」
+/// 的样子 —— 用同一句模板加个空参数，用户看到的是「日志最后一行：」后面什么都没有。
+fn start_failure(log_path: &Path, port: u16) -> Msg {
     let reason = std::fs::read_to_string(log_path).ok().and_then(|text| {
         text.lines()
             .rev()
@@ -355,19 +375,17 @@ fn start_failure(log_path: &Path, port: u16) -> String {
             .map(str::to_owned)
     });
     match reason {
-        Some(reason) => format!(
-            "本地服务端 {} 秒内没有答话（端口 {port}）。日志最后一行：{reason}\
-             \n完整日志：{}",
-            START_TIMEOUT.as_secs(),
-            log_path.display()
-        ),
-        // ⚠️ 日志是空的也要说清是**空的** —— 那说明它连一行都没写出来就死了
-        //（比如二进制根本起不来），与「写了日志但没起来」是两件事。
-        None => format!(
-            "本地服务端 {} 秒内没有答话（端口 {port}），而且它一行日志都没写。日志：{}",
-            START_TIMEOUT.as_secs(),
-            log_path.display()
-        ),
+        // ⚠️ 日志里那一行是**服务端写的原文**（不是我们的话）—— 但它作为一个**参数**
+        // 进来，参数天生就是原样插入的，所以不需要 `Msg::verbatim` 再多包一层。
+        Some(reason) => Msg::key("serverStartTimeout")
+            .param("seconds", START_TIMEOUT.as_secs())
+            .param("port", port)
+            .param("reason", reason)
+            .param("log", log_path.display()),
+        None => Msg::key("serverStartTimeoutNoLog")
+            .param("seconds", START_TIMEOUT.as_secs())
+            .param("port", port)
+            .param("log", log_path.display()),
     }
 }
 
@@ -704,9 +722,19 @@ mod tests {
         // B 是另一个句柄（没起过任何东西），它不该去停 A。
         let b = ServerProcess::new(binary, dir.path().join("b"), port);
         let err = b.stop().expect_err("没起过就不该停");
-        assert!(
-            err.contains("不是这个客户端起的"),
-            "要说清为什么不停：{err}"
+        // ⚠️★ 只钉**键**（与 `store` / `client` 的测试同一条规矩）：
+        // 那句话现在住在 `ui/i18n.js` 的 `foreignServerNotStopped` 那一条里，
+        // 服务端这边只负责说「是这件事、端口是这个」。改文案不该让这条测试红。
+        assert_eq!(
+            err.key, "foreignServerNotStopped",
+            "要说清为什么不停：{err:?}"
+        );
+        assert_eq!(
+            err.params
+                .get("port")
+                .and_then(clip9_client::ParamValue::as_str),
+            Some(port.to_string().as_str()),
+            "要说清是哪个端口：{err:?}"
         );
         assert!(a.is_running(), "A 必须还活着");
 

@@ -15,6 +15,11 @@
 //! 另外，**系统通知也从这里发**：两个方向各有一条判据（[`notify_upload`] /
 //! [`notify_download`]），真正发的那一下交给注入进来的 [`Notifier`]。
 //!
+//! ⚠️★ 2026-09-28 之后那两条判据递出去的**不是成文的句子，是 [`Msg`]（键 + 参数）**——
+//! 系统通知由**操作系统**画，页面渲染不了它，所以成文那一步只能由壳来做
+//! （`shell_text::ShellText`，字典是页面推过来的）。⚠️ 判据本身一个字没改：
+//! 「什么时候该弹」仍然只在这里判，而这里仍然看得见 `tauri`。
+//!
 //! # 为什么这个文件里没有 `tauri`
 //!
 //! 与 `store` 同一个理由：这些是**要测的接线**，而接线错的表现往往是
@@ -30,7 +35,7 @@ use std::sync::{Arc, Mutex};
 use clip9_client::receiver::fetch_history;
 use clip9_client::uploader::{build_client, now};
 use clip9_client::{
-    ClipboardContent, ClipboardEvent, ClipboardSink, Debouncer, ReceiverEvent, ReceiverHandle,
+    ClipboardContent, ClipboardEvent, ClipboardSink, Debouncer, Msg, ReceiverEvent, ReceiverHandle,
     ReceiverUpdate, SystemClipboard, WatchConfig, WatchHandle, prime_from_current,
     shared_debouncer, spawn_receiver, spawn_watcher, upload_event, upload_explicit,
 };
@@ -66,7 +71,7 @@ impl Runtime {
         store: Arc<Store>,
         tokio: tokio::runtime::Handle,
         notifier: Arc<dyn Notifier>,
-    ) -> Result<Arc<Self>, String> {
+    ) -> Result<Arc<Self>, Msg> {
         let http = build_client()?;
         Ok(Arc::new(Self {
             store,
@@ -364,16 +369,19 @@ impl Outcome {
 ///
 /// ⚠️ 标题是**主动语态的一句结果**（「剪贴板没发出去」），不是「提示」这种名词：
 /// 系统通知的标题要在锁屏 / 通知中心一眼看懂，而那时正文可能被折叠。
+///
+/// ⚠️★ 两个都是 [`Msg`]（标题是 `notifyUploadFailed`，正文就是 `report.summary()`）。
+/// 成文那一步在 [`crate::notify`] 里 —— 它手里有页面推过来的字典。
 fn notify_upload(
     notifier: &dyn Notifier,
     config: &clip9_client::ClientConfig,
     outcome: Outcome,
-    text: &str,
+    text: &Msg,
 ) {
     if !config.notify_upload || outcome == Outcome::Ok {
         return;
     }
-    notifier.send("剪贴板没发出去", text);
+    notifier.send(&Msg::key("notifyUploadFailed"), text);
 }
 
 /// 下行的结果（房间的内容**真的写进了**本机剪贴板）要不要弹系统通知。
@@ -394,7 +402,7 @@ fn notify_download(
     if !config.notify_download {
         return;
     }
-    notifier.send("已写入剪贴板", &entry_preview(entry));
+    notifier.send(&Msg::key("notifyWroteToClipboard"), &entry_preview(entry));
 }
 
 /// 一条条目在通知里怎么被说成**一行**。
@@ -404,7 +412,13 @@ fn notify_download(
 ///
 /// ⚠️★ 按**字符**截、不按字节 —— 中文按字节切会切出半个字
 ///（`model.rs` 的 `preview_of` 踩过同一个坑）。
-fn entry_preview(entry: &ReceiveHolder) -> String {
+///
+/// ⚠️★ 结果还是 [`Msg`]（2026-09-28），因为这一句里有两处**是语言的一部分**：
+/// 「（空文本）」这个兜底，以及「名字（大小）」里那对**全角括号** ——
+/// 英文那边是 `name (2.0 KB)`。所以这里给的是**模板 + 参数**，
+/// 拼是 [`crate::shell_text`] 的事。⚠️ 正文本身走 [`Msg::verbatim`]：
+/// 那是**用户的东西**，不是我们的话，翻不了也不该翻。
+fn entry_preview(entry: &ReceiveHolder) -> Msg {
     /// 通知正文最多显示多少个**字符**（不是字节）。
     const PREVIEW_CHARS: usize = 60;
 
@@ -414,20 +428,23 @@ fn entry_preview(entry: &ReceiveHolder) -> String {
             if line.is_empty() {
                 // ⚠️ 空正文照实说。给一个空字符串的话，系统通知会弹出一条
                 // 只有标题、下面空白的卡片 —— 看起来像我们坏了。
-                return "（空文本）".to_owned();
+                return Msg::key("notifyEmptyText");
             }
             let mut out: String = line.chars().take(PREVIEW_CHARS).collect();
             if line.chars().count() > PREVIEW_CHARS {
                 out.push('…');
             }
-            out
+            Msg::verbatim(out)
         }
         // ⚠️ 文件条目**没有正文**（`FileReceive` 的注释），能说的只有名字与大小。
         ReceiveHolder::File(file) => match size_label(file.size) {
             // ⚠️ 大小服务端可以不给（`0`）—— 那时**不写**「0 B」，
-            // 那是个具体的谎（文件当然不是 0 字节）。
-            None => file.name.clone(),
-            Some(size) => format!("{}（{size}）", file.name),
+            // 那是个具体的谎（文件当然不是 0 字节）。而且**连括号一起省掉**，
+            // 不是留一对空括号。
+            None => Msg::verbatim(&file.name),
+            Some(size) => Msg::key("notifyFilePreview")
+                .param("name", &file.name)
+                .param("size", size),
         },
     }
 }
@@ -504,7 +521,7 @@ impl Runtime {
                 let Some(channel) = self.store.selected_channel() else {
                     // ⚠️ 一个房间都没配：**说出来**。静默吞掉的话，用户按了发送
                     // 只看到「什么都没发生」—— 那是这个项目最忌讳的一类。
-                    self.store.notice("err", "没有房间可以发 —— 先在侧栏加一个");
+                    self.store.notice("err", Msg::key("noRoomToSend"));
                     return;
                 };
                 Some(channel)
@@ -617,9 +634,7 @@ impl Runtime {
         match self.store.entry_text(id) {
             Some(text) => self.copy_to_clipboard(&text),
             // ⚠️ 找不到要**说出来**：静默什么都不做的话，用户以为复制好了。
-            None => self
-                .store
-                .notice("skip", "这条已经不在列表里了，复制不了。"),
+            None => self.store.notice("skip", Msg::key("entryGoneCannotCopy")),
         }
     }
 
@@ -629,7 +644,7 @@ impl Runtime {
     /// 而界面可以选中任何一个房间。
     pub fn refresh_history(self: &Arc<Self>) {
         let Some(channel) = self.store.selected_channel() else {
-            self.store.notice("err", "配置里一个房间都没有");
+            self.store.notice("err", Msg::key("noRoomsConfigured"));
             return;
         };
         let this = Arc::clone(self);
@@ -651,10 +666,9 @@ impl Runtime {
                 // 认的是 (服务端, 房间) 那一对，所以它会落进**它自己那个房间**的格子里
                 //（`store` 的 `Room::notice`），等用户切过去才显示 —— 而那正是
                 // 「这个房间的历史取不到、所以列表是空的」最该被说出来的时刻。
-                Err(reason) => {
-                    this.store
-                        .notice_in(&server, &room, "err", format!("取历史失败：{reason}"))
-                }
+                // ⚠️ `reason` 整句话递过去（`historyFailed` 那条 `Msg` 本来就带
+                // 「取历史失败」+ 底层原因），**不在这里 `format!` 拼**。
+                Err(reason) => this.store.notice_in(&server, &room, "err", reason),
             }
         });
     }
@@ -663,7 +677,10 @@ impl Runtime {
     /// 下次启动又变回来，而用户会以为没生效）。
     pub fn persist(&self) {
         if let Err(reason) = self.store.save() {
-            self.store.notice("err", format!("配置没存上：{reason}"));
+            self.store.notice(
+                "err",
+                Msg::key("configNotSaved").param_msg("reason", reason),
+            );
         }
     }
 }
@@ -728,22 +745,35 @@ mod tests {
     /// 所以两条判据都收一个 `&dyn Notifier`，而不是返回一个 `Option` 让调用方去发。
     #[derive(Default)]
     struct RecordingNotifier {
-        sent: std::sync::Mutex<Vec<(String, String)>>,
+        sent: std::sync::Mutex<Vec<(Msg, Msg)>>,
     }
 
     impl RecordingNotifier {
-        fn sent(&self) -> Vec<(String, String)> {
+        fn sent(&self) -> Vec<(Msg, Msg)> {
             self.sent.lock().unwrap_or_else(|e| e.into_inner()).clone()
         }
     }
 
     impl Notifier for RecordingNotifier {
-        fn send(&self, title: &str, body: &str) {
+        // ⚠️ 记的是 [`Msg`]（键 + 参数），**不是渲染好的文本** ——
+        // 渲染要字典，而字典是页面推给 `crate::notify` 的；这一层只该证明
+        // 「该弹的时候真的调了 send，而且递的是哪句话」。
+        fn send(&self, title: &Msg, body: &Msg) {
             self.sent
                 .lock()
                 .unwrap_or_else(|e| e.into_inner())
-                .push((title.to_owned(), body.to_owned()));
+                .push((title.clone(), body.clone()));
         }
+    }
+
+    /// 「原样带出来的那句正文」里的文本（通知正文走这条路：那是用户的东西）。
+    fn preview_text(msg: &Msg) -> String {
+        assert_eq!(msg.key, "verbatim", "这条该是原样带出来的：{msg:?}");
+        msg.params
+            .get("text")
+            .and_then(clip9_client::ParamValue::as_str)
+            .expect("`verbatim` 那句话里必须有 `text`")
+            .to_owned()
     }
 
     fn text_entry(content: &str) -> ReceiveHolder {
@@ -773,9 +803,12 @@ mod tests {
         let config = ClientConfig::default();
         assert!(config.notify_upload, "前提：默认是开的（这条测试的地基）");
 
+        let body = Msg::key("uploadSomeFailed")
+            .param("payloads", 3)
+            .param("failed", 1);
         for (outcome, expected) in [(Outcome::Err, 1), (Outcome::Skip, 1), (Outcome::Ok, 0)] {
             let notifier = RecordingNotifier::default();
-            notify_upload(&notifier, &config, outcome, "一句话");
+            notify_upload(&notifier, &config, outcome, &body);
             assert_eq!(
                 notifier.sent().len(),
                 expected,
@@ -786,19 +819,15 @@ mod tests {
         // 标题与正文也要对得上：正文就是 `report.summary()`（**理由在里面**，
         // 那句「相关开关关着」被用户当假话就是这个原因）；
         // 标题是一句结果 —— 锁屏 / 通知中心里正文可能被折叠，标题得自己说得清。
+        //
+        // ⚠️★ 断言的是**两句 `Msg`**，不是两句成文的话（2026-09-28 改）：
+        // 成文那一步在 `notify` 里，而它要的字典在页面手里 —— 这一层只该钉
+        // 「递的是哪句话、参数对不对」。
         let notifier = RecordingNotifier::default();
-        notify_upload(
-            &notifier,
-            &config,
-            Outcome::Err,
-            "3 个载荷里有 1 处失败：连接超时",
-        );
+        notify_upload(&notifier, &config, Outcome::Err, &body);
         assert_eq!(
             notifier.sent(),
-            vec![(
-                "剪贴板没发出去".to_owned(),
-                "3 个载荷里有 1 处失败：连接超时".to_owned()
-            )]
+            vec![(Msg::key("notifyUploadFailed"), body)]
         );
     }
 
@@ -811,7 +840,7 @@ mod tests {
         };
         for outcome in [Outcome::Err, Outcome::Skip, Outcome::Ok] {
             let notifier = RecordingNotifier::default();
-            notify_upload(&notifier, &config, outcome, "一句话");
+            notify_upload(&notifier, &config, outcome, &Msg::key("uploadNothingSent"));
             assert!(notifier.sent().is_empty(), "{outcome:?}：开关关着还发了");
         }
     }
@@ -829,7 +858,7 @@ mod tests {
         notify_download(&notifier, &on, &text_entry("你好"));
         assert_eq!(
             notifier.sent(),
-            vec![("已写入剪贴板".to_owned(), "你好".to_owned())]
+            vec![(Msg::key("notifyWroteToClipboard"), Msg::verbatim("你好"))]
         );
 
         let off = ClientConfig {
@@ -850,15 +879,15 @@ mod tests {
         let config = ClientConfig::default();
 
         // 多行 → 只留第一行。⚠️ 从中间截断会让人以为原文就是这样。
-        let notifier = RecordingNotifier::default();
-        notify_download(&notifier, &config, &text_entry("第一行\n第二行"));
-        assert_eq!(notifier.sent()[0].1, "第一行");
+        // ⚠️ 截断发生在**参数值**上，所以从 `verbatim` 那句话的 `text` 里看。
+        assert_eq!(
+            preview_text(&entry_preview(&text_entry("第一行\n第二行"))),
+            "第一行"
+        );
 
         // 超长的一行 → 60 个字符 + 一个省略号（而且没切出半个字）。
         let long = "汉".repeat(100);
-        let notifier = RecordingNotifier::default();
-        notify_download(&notifier, &config, &text_entry(&long));
-        let body = &notifier.sent()[0].1;
+        let body = preview_text(&entry_preview(&text_entry(&long)));
         assert_eq!(body.chars().count(), 61, "60 个字符 + 一个省略号");
         assert!(body.ends_with('…'));
         assert!(
@@ -868,33 +897,56 @@ mod tests {
         );
 
         // 正好 60 个字符 → **不加**省略号（它没被截）。
-        let notifier = RecordingNotifier::default();
-        notify_download(&notifier, &config, &text_entry(&"汉".repeat(60)));
-        assert_eq!(notifier.sent()[0].1.chars().count(), 60);
-        assert!(!notifier.sent()[0].1.ends_with('…'));
+        let body = preview_text(&entry_preview(&text_entry(&"汉".repeat(60))));
+        assert_eq!(body.chars().count(), 60);
+        assert!(!body.ends_with('…'));
 
         // ⚠️ 空正文要**说出来**：给一个空字符串的话，系统通知会弹出一张
         // 只有标题、下面空白的卡片 —— 看起来像我们坏了。
+        // ⚠️ 而那句话现在是**字典里的一条**（`notifyEmptyText`）——
+        // 它的括号是全角的，英文那边不是，所以它不能留在 Rust 里。
         let notifier = RecordingNotifier::default();
         notify_download(&notifier, &config, &text_entry("   \n第二行"));
-        assert_eq!(notifier.sent()[0].1, "（空文本）");
+        assert_eq!(notifier.sent()[0].1, Msg::key("notifyEmptyText"));
     }
 
     /// 文件条目**没有正文**，能说的只有名字与大小；服务端不给大小时**不写「0 B」**。
     #[test]
     fn a_file_notification_says_the_name_and_only_a_real_size() {
+        // ⚠️ 名字与大小是**两个参数**，「（…）」那对括号在字典里
+        //（英文那边是半角 + 前面一个空格）—— 这条测试只看参数对不对。
+        let with_size = |name: &str, size: i64| {
+            let msg = entry_preview(&file_entry(name, size));
+            assert_eq!(msg.key, "notifyFilePreview", "{msg:?}");
+            let param = |key: &str| {
+                msg.params
+                    .get(key)
+                    .and_then(clip9_client::ParamValue::as_str)
+                    .unwrap_or_else(|| panic!("少了 `{key}`：{msg:?}"))
+                    .to_owned()
+            };
+            (param("name"), param("size"))
+        };
         assert_eq!(
-            entry_preview(&file_entry("报告.pdf", 2048)),
-            "报告.pdf（2.0 KB）"
+            with_size("报告.pdf", 2048),
+            ("报告.pdf".into(), "2.0 KB".into())
         );
         assert_eq!(
-            entry_preview(&file_entry("大图.png", 3 * 1024 * 1024)),
-            "大图.png（3.0 MB）"
+            with_size("大图.png", 3 * 1024 * 1024),
+            ("大图.png".into(), "3.0 MB".into())
         );
-        assert_eq!(entry_preview(&file_entry("小.txt", 512)), "小.txt（512 B）");
+        assert_eq!(with_size("小.txt", 512), ("小.txt".into(), "512 B".into()));
+
         // ⚠️ `0` = **服务端没给**（`FileReceive::size` 的注释），不是「0 字节」——
-        // 照着写「（0 B）」是一个具体的谎。
-        assert_eq!(entry_preview(&file_entry("未知.bin", 0)), "未知.bin");
-        assert_eq!(entry_preview(&file_entry("负数.bin", -1)), "负数.bin");
+        // 照着写「（0 B）」是一个具体的谎。⚠️ 这条路上**连括号一起省掉**：
+        // 那是「名字」这一整句，而名字不是我们的话 → `verbatim`。
+        assert_eq!(
+            entry_preview(&file_entry("未知.bin", 0)),
+            Msg::verbatim("未知.bin")
+        );
+        assert_eq!(
+            entry_preview(&file_entry("负数.bin", -1)),
+            Msg::verbatim("负数.bin")
+        );
     }
 }

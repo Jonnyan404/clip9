@@ -17,7 +17,8 @@ use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
 use clip9_client::{
-    ClientConfig, Latency, PeerDevice, ReceiverEvent, ReceiverStatus, ReceiverUpdate, ServerLimits,
+    ClientConfig, Latency, Msg, PeerDevice, ReceiverEvent, ReceiverStatus, ReceiverUpdate,
+    ServerLimits,
 };
 use clip9_protocol::ReceiveHolder;
 use serde::{Deserialize, Serialize};
@@ -138,7 +139,8 @@ pub struct RoomView {
 pub struct ConnectionView {
     /// `off`（没连上 / 还没开始）/ `wait`（正在连）/ `on`（连上了）/ `warn`（老服务端）。
     pub kind: &'static str,
-    pub text: String,
+    /// ⚠️★ [`Msg`]（键 + 参数），**不是成文的句子** —— 见 [`StatusView::text`] 的注释。
+    pub text: Msg,
     /// 边界水印（`None` = 还不知道）。
     pub latest_id: Option<i32>,
     /// 这条连接的往返延迟（§4.3）。
@@ -151,7 +153,9 @@ impl Default for ConnectionView {
     fn default() -> Self {
         Self {
             kind: "off",
-            text: "还没开始连".to_owned(),
+            // ⚠️ 用 SPA 那一句（`notConnectedToServer`，`web-vue3/src/locales/zh.json`）——
+            // 「还没开始连」与「连不上」对用户是同一件事，没必要两句话。
+            text: Msg::key("notConnectedToServer"),
             latest_id: None,
             latency: Latency::Unknown.into(),
             devices: Vec::new(),
@@ -169,11 +173,13 @@ impl Default for ConnectionView {
 /// 现在的做法是**每个房间各有一格**（[`Room::notice`]），界面那一格显示的就是
 /// **当前选中房间**那一条，于是「串房间」从**表示法上**不可能发生 ——
 /// 不需要靠一句标签去补救（Jonny 2026-09-27：「房间的提示归每个房间」）。
+///
+/// ⚠️★ `text` 是 [`Msg`]，**不是成文的句子**（2026-09-28 改，理由见 `model` 那边）。
 #[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Notice {
     pub kind: &'static str,
-    pub text: String,
+    pub text: Msg,
 }
 
 /// 界面上要渲染的**完整**一份状态（IPC 一次给全，省得页面自己拼出半份状态）。
@@ -191,7 +197,10 @@ pub struct Snapshot {
     /// 给的是同一套值。上行拿它当提示（超限由服务端自己拒，见 `uploader` 的模块文档）。
     pub limits: ServerLimitsView,
     /// 配置里的毛病（`ClientConfig::problems`）—— **摆出来，而不是自己在内部悄悄修正**。
-    pub problems: Vec<String>,
+    ///
+    /// ⚠️★ 每一项是 [`Msg`]（键 + 参数），**不是成文的中文**（2026-09-28 改）——
+    /// 见 `clip9_client::msg` 的模块文档。
+    pub problems: Vec<Msg>,
     /// 开机自启 —— ⚠️ 这是**配置里的意图**，不是系统里的真相。
     /// 真相要问 `autostart::is_enabled`（那要 `AppHandle`，而 `Store` 里**不许有 `tauri`**）。
     /// 界面要画真相时走命令，别拿这个字段当「现在到底开没开」。
@@ -521,12 +530,13 @@ impl Store {
     ///
     /// ⚠️★ **是「某个房间」的事就走 [`Store::notice_in`]** —— 那一条会落进那个房间
     /// 自己那一格（[`Room::notice`]），只有**当前显示它的那个房间**看得到。
-    pub fn notice(&self, kind: &'static str, text: impl Into<String>) {
+    ///
+    /// ⚠️ `text` 收 [`Msg`]（键 + 参数），**不是成文的中文**（2026-09-28 改）。
+    /// ⚠️★ 签名就是 `Msg`（不是 `impl Into<Msg>`）—— 于是调用点必须明确写出
+    /// `Msg::key("…")`，键**看得见、也抠得出来**（`tools/desktop-ui-smoke.mjs` 判据 17）。
+    pub fn notice(&self, kind: &'static str, text: Msg) {
         let mut inner = self.lock();
-        let next = Notice {
-            kind,
-            text: text.into(),
-        };
+        let next = Notice { kind, text };
         if inner.app_notice.as_ref() != Some(&next) {
             inner.app_notice = Some(next);
             inner.touch();
@@ -542,13 +552,17 @@ impl Store {
     /// ⚠️★ 认不出这一对时**退到与房间无关的那一格，并带上房间标识** ——
     /// 而不是丢掉。这种情况只有一种来路：提示回来的时候那个房间已经被删掉 / 改名了。
     /// 静默丢掉的话，用户刚删完房间时那条失败就**一个字都看不到**了。
-    pub fn notice_in(&self, server: &str, room: &str, kind: &'static str, text: impl Into<String>) {
-        let text = text.into();
+    ///
+    /// ⚠️★ 那个「带上房间标识」是**嵌一句话**（[`Msg::param_msg`]），不是字符串拼接 ——
+    /// 见 [`clip9_client::ParamValue::Msg`]。
+    pub fn notice_in(&self, server: &str, room: &str, kind: &'static str, text: Msg) {
         let mut inner = self.lock();
         let Some(index) = inner.room_index(server, room) else {
             let next = Notice {
                 kind,
-                text: format!("{room}：{text}"),
+                text: Msg::key("noticeForMissingRoom")
+                    .param("room", room)
+                    .param_msg("text", text),
             };
             if inner.app_notice.as_ref() != Some(&next) {
                 inner.app_notice = Some(next);
@@ -586,11 +600,14 @@ impl Store {
     }
 
     /// 切房间。越界**报错**而不是静默夹住 —— 页面传错下标时要说清是哪里错了。
-    pub fn select(&self, index: usize) -> Result<(), String> {
+    ///
+    /// ⚠️ 越界那句现在是 [`Msg`]（`noSuchRoom`，带 `{index}` 与 `{count}`）——
+    /// 三个入口（切房间、开 ↑、开 ↓）**共用同一个键**，免得同一件事有三种说法。
+    pub fn select(&self, index: usize) -> Result<(), Msg> {
         let mut inner = self.lock();
         let count = inner.rooms.len();
         if index >= count {
-            return Err(format!("没有第 {index} 个房间（共 {count} 个）"));
+            return Err(no_such_room(index, count));
         }
         // ⚠️ 低频繁的用户动作 → **直接前进**（前进规则见 [`Inner::touch`]）。
         inner.selected = index;
@@ -739,12 +756,13 @@ impl Store {
 
 impl Store {
     /// 换上行开关（**可以多个房间同时开**，§4.1 第 1 条）。
-    pub fn set_upload(&self, index: usize, on: bool) -> Result<(), String> {
+    pub fn set_upload(&self, index: usize, on: bool) -> Result<(), Msg> {
         let mut inner = self.lock();
         // ⚠️ 先把「有没有这个房间」判掉**再**改 —— 原来用的是 `get_mut(..).ok_or_else(..)`，
         // 但那样借出去的 `&mut channel` 会活到语句结束，后面就没法 `inner.touch()` 了。
-        if inner.config.channels.get(index).is_none() {
-            return Err(format!("没有第 {index} 个房间"));
+        let count = inner.config.channels.len();
+        if index >= count {
+            return Err(no_such_room(index, count));
         }
         // ⚠️ 低频繁的用户动作 → 直接前进（前进规则见 `Inner::touch`）。
         inner.config.channels[index].enable_upload = on;
@@ -761,7 +779,7 @@ impl Store {
     /// 那个写法在用户开了两个的时候**静默只认第一个** —— 第二个开关点了没反应，
     /// 而那正是这个项目最忌讳的一类（配了不生效）。
     /// 手改过的配置（真的开了两个）由 [`ClientConfig::problems`] **报出来**，不是悄悄挑一个。
-    pub fn set_download(&self, index: Option<usize>) -> Result<(), String> {
+    pub fn set_download(&self, index: Option<usize>) -> Result<(), Msg> {
         let mut inner = self.lock();
         let count = inner.config.channels.len();
         // ⚠️ 越界在这里**一次性**判掉，然后才进循环 —— 把判断写在循环里的话，
@@ -769,7 +787,7 @@ impl Store {
         if let Some(target) = index
             && target >= count
         {
-            return Err(format!("没有第 {target} 个房间（共 {count} 个）"));
+            return Err(no_such_room(target, count));
         }
         for (position, channel) in inner.config.channels.iter_mut().enumerate() {
             channel.enable_download = index == Some(position);
@@ -842,7 +860,11 @@ impl Store {
     ///
     /// ⚠️ 认不出来的当**新房间**（空状态、`history_loaded = false`）——
     /// 于是界面会显示「还没加载这个房间的历史」而不是一个骗人的空列表。
-    pub fn set_rooms(&self, channels: Vec<clip9_client::Channel>) -> Result<(), String> {
+    /// ⚠️★ 它**不收 `Result`**（2026-09-28 改的）：这个函数里没有任何一条失败路径，
+    /// 而原来那个 `Result<(), String>` 让每个调用点都写一个 `.unwrap()` / `?` ——
+    /// 那东西在读者眼里是「这里可能会失败」，于是真正的失败路径**更难被注意到**。
+    /// 与 `set_sync_scope` / `set_autostart` 那几个同一条规矩（它们也是 `()`）。
+    pub fn set_rooms(&self, channels: Vec<clip9_client::Channel>) {
         let mut inner = self.lock();
         // ⚠️ 先把「房间名」收出来，**再** `drain` —— 两个字段同属 `inner`，
         // 一边不可变借用 `config`、一边可变借用 `rooms` 会撞上借用检查。
@@ -865,7 +887,6 @@ impl Store {
         // ⚠️ 无条件前进：换清单是用户动作（低频），而它改动的东西**横跨整个快照**
         //（房间名、上下行开关、`problems` 都可能变）—— 逐字段比对的代码比一次重绘贵。
         inner.touch();
-        Ok(())
     }
 
     /// 换同步范围 / 轮询间隔 / 下载目录（「设置」里那些不带房间的项）。
@@ -952,7 +973,7 @@ impl Store {
     /// ⚠️⚠️ 必须**原子写**（临时文件 + rename）：这个项目为「半截 JSON」付过代价
     /// （并发写 30 轮里 13 轮写出损坏的文件，见 `desktop-client.md` §3.5.2）。
     /// 而配置文件一旦是半截的，用户下次启动就同步不了 —— 界面怎么画都救不回来。
-    pub fn save(&self) -> Result<(), String> {
+    pub fn save(&self) -> Result<(), Msg> {
         let config = self.lock().config.clone();
         save_config(&self.config_path, &config)
     }
@@ -1010,19 +1031,21 @@ impl Inner {
         room.connection.status = Some(match status {
             ReceiverStatus::Connecting { room: name, .. } => StatusView {
                 kind: "wait",
-                text: format!("连接 {name} …"),
+                text: Msg::key("connectingTo").param("room", &name),
                 latest_id: None,
                 room: Some(name),
             },
             ReceiverStatus::Connected { latest_id, .. } => StatusView {
                 kind: "on",
-                text: "已连接".to_owned(),
+                // ⚠️ 与服务端那边同一个键的语义（SPA 用 `connected`）——
+                // 「连上了」这件事没必要两种说法。
+                text: Msg::key("connected"),
                 latest_id: Some(latest_id),
                 room: None,
             },
             ReceiverStatus::NoWatermark => StatusView {
                 kind: "warn",
-                text: "服务端版本太旧：边界说不清，已暂停写剪贴板".to_owned(),
+                text: Msg::key("serverTooOldNoWatermark"),
                 latest_id: None,
                 room: None,
             },
@@ -1031,13 +1054,15 @@ impl Inner {
             //（见 `connection_view` 的 `live`），所以设备行与延迟照常显示 —— 这是对的。
             ReceiverStatus::HistoryUnavailable { latest_id, reason } => StatusView {
                 kind: "warn",
-                text: format!("已连接，但历史取不到：{reason}"),
+                // ⚠️★ `reason` 本身是一条 `Msg` —— 走 `param_msg` **嵌进去**，
+                // 不是拼成字符串（那个「：」是中文全角冒号，英文句子里很突兀）。
+                text: Msg::key("connectedButHistoryFailed").param_msg("reason", reason),
                 latest_id: Some(latest_id),
                 room: None,
             },
             ReceiverStatus::Disconnected { reason } => StatusView {
                 kind: "off",
-                text: format!("已断开：{reason}"),
+                text: Msg::key("disconnectedWithReason").param_msg("reason", reason),
                 latest_id: None,
                 room: None,
             },
@@ -1128,21 +1153,22 @@ pub fn load_config(
     config_path: &Path,
     data_dir: &Path,
     default_server: &str,
-) -> Result<ClientConfig, String> {
+) -> Result<ClientConfig, Msg> {
     let raw = match std::fs::read_to_string(config_path) {
         Ok(raw) => Some(raw),
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => None,
         Err(err) => {
-            return Err(format!("读配置失败（{}）：{err}", config_path.display()));
+            return Err(Msg::key("configUnreadable")
+                .param("path", config_path.display())
+                .param("reason", err));
         }
     };
 
     let mut config = match raw {
         Some(raw) => serde_json::from_str::<ClientConfig>(&raw).map_err(|err| {
-            format!(
-                "配置是坏的（{}）：{err}\n    这个文件**没被动过** —— 改好或者挪走它，客户端才能起来。",
-                config_path.display()
-            )
+            Msg::key("configFileBroken")
+                .param("path", config_path.display())
+                .param("reason", err)
         })?,
         None => {
             // ⚠️ 用结构体更新语法而不是「先 default 再逐字段赋值」—— 后者会触发
@@ -1163,6 +1189,8 @@ pub fn load_config(
             // 但这次它有一个说得清的界面（上面那条状态），而不是「连接中…」。
             // 两件事都记在 `desktop-client.md` §4.1 第 3 条，改之前先读那一条。
             let config = ClientConfig {
+                // 房间名**不随界面语言变**（切语种时它不该跟着变，它已经落盘了）。
+                // i18n-ok: 它是**数据**不是文案 —— 与「用户自己起的名字」同类
                 channels: vec![clip9_client::Channel::new("默认", default_server)],
                 ..ClientConfig::default()
             };
@@ -1182,28 +1210,40 @@ pub fn load_config(
 ///
 /// ⚠️ 为什么必须原子：配置文件写坏了 = 用户下次启动连不上，而界面画得再对也救不回来
 /// （这个项目为「半截 JSON」付过代价，见上面 `Store::save` 的注释）。
-pub fn save_config(path: &Path, config: &ClientConfig) -> Result<(), String> {
+pub fn save_config(path: &Path, config: &ClientConfig) -> Result<(), Msg> {
     if let Some(parent) = path.parent()
         && !parent.as_os_str().is_empty()
     {
-        std::fs::create_dir_all(parent)
-            .map_err(|err| format!("建目录失败（{}）：{err}", parent.display()))?;
+        std::fs::create_dir_all(parent).map_err(|reason| {
+            Msg::key("configDirCreateFailed")
+                .param("path", parent.display())
+                .param("reason", reason)
+        })?;
     }
-    let json =
-        serde_json::to_string_pretty(config).map_err(|err| format!("配置序列化失败：{err}"))?;
+    let json = serde_json::to_string_pretty(config)
+        .map_err(|reason| Msg::key("configSerializeFailed").param("reason", reason))?;
 
     // ⚠️ 临时名**带进程 id**：两个进程同时保存时（例如开了两个窗口）不会互相踩掉对方的临时文件。
     let tmp = path.with_extension(format!("{}.tmp", std::process::id()));
-    std::fs::write(&tmp, json.as_bytes())
-        .map_err(|err| format!("写临时文件失败（{}）：{err}", tmp.display()))?;
+    std::fs::write(&tmp, json.as_bytes()).map_err(|reason| {
+        Msg::key("configTempWriteFailed")
+            .param("path", tmp.display())
+            .param("reason", reason)
+    })?;
     // ⚠️ `rename` 在同一个文件系统内是原子的 —— 这正是「临时文件与目标同目录」的意义。
-    std::fs::rename(&tmp, path).map_err(|err| {
-        format!(
-            "覆盖配置失败（{} → {}）：{err}",
-            tmp.display(),
-            path.display()
-        )
+    std::fs::rename(&tmp, path).map_err(|reason| {
+        Msg::key("configRenameFailed")
+            .param("from", tmp.display())
+            .param("to", path.display())
+            .param("reason", reason)
     })
+}
+
+/// 「没有第 N 个房间」—— 三个入口共用（见 [`Store::select`] 的注释）。
+fn no_such_room(index: usize, count: usize) -> Msg {
+    Msg::key("noSuchRoom")
+        .param("index", index)
+        .param("count", count)
 }
 
 /// 数据/配置目录 —— macOS 用 `Application Support`，其余按 XDG 规范。
@@ -1249,7 +1289,7 @@ fn xdg_config_home() -> Option<PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use clip9_client::Channel;
+    use clip9_client::{Channel, ParamValue};
     use clip9_protocol::{FileReceive, ReceiveBase, TextReceive};
 
     fn text(id: i32, room: &str, content: &str) -> ReceiveHolder {
@@ -1469,14 +1509,16 @@ mod tests {
         other.name = "Cf".to_owned();
         other.server = "https://cf.example".to_owned();
         channels.push(other);
-        store.set_rooms(channels).unwrap();
+        store.set_rooms(channels);
 
         // 远端那条报 401，本地那条报已连接。
         store.apply_update(ReceiverUpdate {
             server: "https://cf.example".to_owned(),
             room: "default".to_owned(),
             event: ReceiverEvent::Status(ReceiverStatus::Disconnected {
-                reason: "HTTP 401：需要认证令牌".to_owned(),
+                // ⚠️ 测试里的「服务端说的那句话」用 `verbatim` 造 —— 与
+                // `receiver::apply_entry` 真遇到 401 时的形状一样（那是外来文本，不翻）。
+                reason: Msg::verbatim("HTTP 401：需要认证令牌"),
             }),
         });
         store.apply_update(ReceiverUpdate {
@@ -1531,10 +1573,15 @@ mod tests {
         other.name = "Cf".to_owned();
         other.server = "https://cf.example".to_owned();
         channels.push(other);
-        store.set_rooms(channels).unwrap();
+        store.set_rooms(channels);
 
         // 给**远端那个**房间挂一条。
-        store.notice_in("https://cf.example", "default", "err", "取历史失败：401");
+        store.notice_in(
+            "https://cf.example",
+            "default",
+            "err",
+            Msg::key("historyFailed").param("reason", "401"),
+        );
 
         // ① 选中本地那个 `default`（下标 0）—— 它**不该看到**别人家的事。
         assert!(
@@ -1546,7 +1593,16 @@ mod tests {
         store.select(2).unwrap();
         let notice = store.snapshot().notice.expect("它自己的房间该看得到");
         assert_eq!(notice.kind, "err");
-        assert_eq!(notice.text, "取历史失败：401");
+        assert_eq!(notice.text.key, "historyFailed");
+        assert_eq!(
+            notice
+                .text
+                .params
+                .get("reason")
+                .and_then(ParamValue::as_str),
+            Some("401"),
+            "服务端给的理由要带上"
+        );
 
         // ③ 切到「工作」→ 也不是它的。
         store.select(1).unwrap();
@@ -1561,18 +1617,18 @@ mod tests {
         assert!(store.snapshot().notice.is_some(), "还没显示过就被吃掉了");
 
         // ⑤ **两条同时待着时房间那条优先**：界面那一格就长在那个房间标题下面。
-        store.notice("err", "配置没存上");
+        store.notice("err", Msg::key("configSaveFailed"));
         assert_eq!(
-            store.snapshot().notice.expect("提示该在").text,
-            "取历史失败：401",
+            store.snapshot().notice.expect("提示该在").text.key,
+            "historyFailed",
             "与房间无关的那条把房间那条顶掉了"
         );
 
         // ⑥ 与房间无关的那些**在哪个房间都看得到**（它不是任何房间的事）。
         store.select(0).unwrap();
         assert_eq!(
-            store.snapshot().notice.expect("提示该在").text,
-            "配置没存上"
+            store.snapshot().notice.expect("提示该在").text.key,
+            "configSaveFailed"
         );
 
         // ⑦ 而它**被看到之后要真的清掉**（页面显示完会调 `clear_notice`）。
@@ -1591,22 +1647,42 @@ mod tests {
     ///
     /// 只有一条来路：提示回来的时候那个房间已经被删掉 / 改名了。那时**静默丢掉**
     /// 等于「用户刚删完房间，那条失败一个字都看不到」—— 正是这个项目最忌讳的一类。
+    ///
+    /// ⚠️★ 「带上房间标识」是**嵌一句话**，不是字符串拼接（2026-09-28 改）——
+    /// 所以这里要断言的是「外层是那个包裹键、里层那句话原样没动」。
     #[test]
     fn a_notice_for_a_room_that_is_gone_falls_back_instead_of_vanishing() {
         let (_dir, store) = temp_store();
-        store.notice_in("https://谁也不是", "room-x", "err", "取历史失败：x");
+        store.notice_in(
+            "https://谁也不是",
+            "room-x",
+            "err",
+            Msg::key("historyFailed").param("reason", "x"),
+        );
 
         let notice = store.snapshot().notice.expect("一声不响地丢掉了");
-        assert!(
-            notice.text.contains("room-x"),
-            "至少要让用户认得出是哪个房间：{}",
+        assert_eq!(
+            notice.text.key, "noticeForMissingRoom",
+            "该包一层「某房间：那句话」"
+        );
+        assert_eq!(
+            notice.text.params.get("room").and_then(ParamValue::as_str),
+            Some("room-x"),
+            "至少要让用户认得出是哪个房间：{:?}",
             notice.text
         );
-        assert!(
-            notice.text.contains("取历史失败：x"),
-            "原文不许被改掉：{}",
-            notice.text
-        );
+        // ⚠️★ 原文**一个字都不许动** —— 拼接会把它变成一个字符串，而那样
+        // 「服务端给的理由」这一层就再也翻不了了。
+        match notice.text.params.get("text") {
+            Some(ParamValue::Msg(inner)) => {
+                assert_eq!(inner.key, "historyFailed", "原文不许被改掉：{inner:?}");
+                assert_eq!(
+                    inner.params.get("reason").and_then(ParamValue::as_str),
+                    Some("x")
+                );
+            }
+            other => panic!("里层该是**另一句话**（不是拼好的字符串）：{other:?}"),
+        }
     }
 
     /// ⚠️★ 提示**跟着房间走**：房间清单变了（加 / 删 / 挪位置）时，
@@ -1617,14 +1693,14 @@ mod tests {
     #[test]
     fn a_room_notice_follows_the_room_across_a_room_list_edit() {
         let (_dir, store) = temp_store();
-        store.notice_in(FIXTURE_SERVER, "work", "err", "取历史失败：500");
+        store.notice_in(FIXTURE_SERVER, "work", "err", Msg::key("historyFailed"));
         store.select(1).unwrap();
         assert!(store.snapshot().notice.is_some(), "先确认它挂上去了");
 
         // 在**前面**插一个新房间 —— `work` 的下标从 1 变成 2。
         let mut channels = store.config().channels;
         channels.insert(0, Channel::new("新加的", "http://127.0.0.1:7000"));
-        store.set_rooms(channels).unwrap();
+        store.set_rooms(channels);
         store.select(2).unwrap();
 
         assert!(
@@ -1720,7 +1796,7 @@ mod tests {
 
         store.apply_update(from_work(ReceiverEvent::Status(
             ReceiverStatus::Disconnected {
-                reason: "断了".to_owned(),
+                reason: Msg::verbatim("断了"),
             },
         )));
         assert!(
@@ -1750,7 +1826,7 @@ mod tests {
 
         store.apply_update(from_work(ReceiverEvent::Status(
             ReceiverStatus::Disconnected {
-                reason: "断了".to_owned(),
+                reason: Msg::verbatim("断了"),
             },
         )));
         assert_eq!(
@@ -1782,9 +1858,9 @@ mod tests {
         )));
         let snapshot = store.snapshot();
         assert_eq!(snapshot.rooms[1].connection.kind, "warn");
-        assert!(
-            snapshot.rooms[1].connection.text.contains("太旧"),
-            "要说清是「服务端版本太旧」：{}",
+        assert_eq!(
+            snapshot.rooms[1].connection.text.key, "serverTooOldNoWatermark",
+            "要说清是「服务端版本太旧」，而不是「已连接」：{:?}",
             snapshot.rooms[1].connection.text
         );
     }
@@ -1809,17 +1885,33 @@ mod tests {
         store.apply_update(from_work(ReceiverEvent::Status(
             ReceiverStatus::HistoryUnavailable {
                 latest_id: 7,
-                reason: "HTTP 401：需要认证令牌".to_owned(),
+                // ⚠️ 测试里的「服务端说的那句话」用 `verbatim` 造 —— 与
+                // `receiver::apply_entry` 真遇到 401 时的形状一样（那是外来文本，不翻）。
+                reason: Msg::verbatim("HTTP 401：需要认证令牌"),
             },
         )));
 
         let connection = connection(&store, 1);
         assert_eq!(connection.kind, "warn", "取不到历史不许说成「已断开」");
-        assert!(
-            connection.text.contains("401"),
-            "服务端给的理由要露出来：{}",
+        assert_eq!(
+            connection.text.key, "connectedButHistoryFailed",
+            "要说得不一样（不是「已连接」也不是「已断开」）：{:?}",
             connection.text
         );
+        // ⚠️★ 服务端给的理由要**原样**露出来（那是用户唯一能拿去搜的东西）——
+        // ⚠️ 它是**嵌进去的一句话**（`param_msg`），不是拼好的字符串：
+        // 那个「：」得由**句子**决定，所以这里拆到最里层看那句 `verbatim` 的原文。
+        match connection.text.params.get("reason") {
+            Some(ParamValue::Msg(inner)) => {
+                assert_eq!(inner.key, "verbatim", "{inner:?}");
+                assert_eq!(
+                    inner.params.get("text").and_then(ParamValue::as_str),
+                    Some("HTTP 401：需要认证令牌"),
+                    "服务端给的理由要露出来：{inner:?}"
+                );
+            }
+            other => panic!("理由该是一句话，而不是 {other:?}"),
+        }
         assert_eq!(
             connection.latest_id,
             Some(7),
@@ -1838,16 +1930,27 @@ mod tests {
         let (_dir, store) = temp_store();
         store.apply_update(from_work(ReceiverEvent::Status(
             ReceiverStatus::Disconnected {
-                reason: "未授权".to_owned(),
+                reason: Msg::verbatim("未授权"),
             },
         )));
         let snapshot = store.snapshot();
         assert_eq!(snapshot.rooms[1].connection.kind, "off");
-        assert!(
-            snapshot.rooms[1].connection.text.contains("未授权"),
-            "{}",
-            snapshot.rooms[1].connection.text
-        );
+        // ⚠️★ 那条原因是**嵌进去的一句话**（`param_msg`），不是拼好的字符串 ——
+        // 所以这里逐层拆开看，而不是 `text.contains(…)`（那正是这一层要消灭的写法）。
+        let text = &snapshot.rooms[1].connection.text;
+        assert_eq!(text.key, "disconnectedWithReason", "{text:?}");
+        let reason = text.params.get("reason").expect("要带上原因");
+        match reason {
+            ParamValue::Msg(inner) => {
+                assert_eq!(inner.key, "verbatim", "{inner:?}");
+                assert_eq!(
+                    inner.params.get("text").and_then(ParamValue::as_str),
+                    Some("未授权"),
+                    "原因要原样带出来（那是服务端说的）：{inner:?}"
+                );
+            }
+            other => panic!("原因该是一句话，而不是 {other:?}"),
+        }
     }
 
     /// 实时条目进列表；**同 id 原地替换**（`update` 事件与 `receive` 走同一条路）。
@@ -2170,11 +2273,17 @@ mod tests {
     /// 那几条**不改动别的任何字段**，所以漏掉就是彻底看不见。
     #[test]
     fn a_notice_bumps_the_version() {
-        assert_bumps("notice", |_| {}, |store| store.notice("err", "上传失败"));
+        assert_bumps(
+            "notice",
+            |_| {},
+            |store| {
+                store.notice("err", Msg::key("uploadFailed"));
+            },
+        );
         assert_quiet(
             "notice（同一条再来一次）",
-            |store| store.notice("err", "上传失败"),
-            |store| store.notice("err", "上传失败"),
+            |store| store.notice("err", Msg::key("uploadFailed")),
+            |store| store.notice("err", Msg::key("uploadFailed")),
         );
     }
 
@@ -2182,7 +2291,7 @@ mod tests {
     fn clearing_a_notice_bumps_the_version() {
         assert_bumps(
             "clear_notice",
-            |store| store.notice("err", "x"),
+            |store| store.notice("err", Msg::key("x")),
             |store| store.clear_notice(),
         );
         assert_quiet(
@@ -2333,7 +2442,7 @@ mod tests {
         };
         let disconnected = || {
             ReceiverEvent::Status(ReceiverStatus::Disconnected {
-                reason: "测试".to_owned(),
+                reason: Msg::verbatim("测试"),
             })
         };
         assert_bumps(
@@ -2412,7 +2521,7 @@ mod tests {
             |_| {},
             |store| {
                 let channels = store.config().channels;
-                store.set_rooms(channels).expect("换同一份清单");
+                store.set_rooms(channels);
             },
         );
     }
@@ -2560,7 +2669,14 @@ mod tests {
         std::fs::write(&path, "{ 这不是 JSON").unwrap();
 
         let err = load_config(&path, dir.path(), "http://127.0.0.1:9501").unwrap_err();
-        assert!(err.contains("client.json"), "要说清是哪个文件：{err}");
+        assert_eq!(err.key, "configFileBroken", "要说清是读不出来：{err:?}");
+        assert!(
+            err.params
+                .get("path")
+                .and_then(|v| v.as_str())
+                .is_some_and(|p| p.ends_with("client.json")),
+            "要说清是哪个文件：{err:?}"
+        );
         assert_eq!(
             std::fs::read_to_string(&path).unwrap(),
             "{ 这不是 JSON",
@@ -2684,7 +2800,7 @@ mod tests {
         // 删掉第一个（default）→ 现在 `work` 排到了下标 0。
         let mut channels = store.config().channels;
         channels.remove(0);
-        store.set_rooms(channels).unwrap();
+        store.set_rooms(channels);
 
         let snapshot = store.snapshot();
         assert_eq!(snapshot.rooms.len(), 1);
@@ -2705,7 +2821,7 @@ mod tests {
         store.select(1).unwrap();
         let mut channels = store.config().channels;
         channels.truncate(1);
-        store.set_rooms(channels).unwrap();
+        store.set_rooms(channels);
         assert_eq!(store.snapshot().selected, 0, "夹回最后一个合法下标");
     }
 
@@ -2716,7 +2832,7 @@ mod tests {
         let (_dir, store) = temp_store();
         let mut channels = store.config().channels;
         channels.push(Channel::new("新的", "http://127.0.0.1:9502"));
-        store.set_rooms(channels).unwrap();
+        store.set_rooms(channels);
         let snapshot = store.snapshot();
         assert_eq!(snapshot.rooms.len(), 3);
         assert_eq!(snapshot.rooms[2].count, 0);

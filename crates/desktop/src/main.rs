@@ -10,7 +10,9 @@
 //! |---|---|---|
 //! | [`store`] | 状态机 + 配置落盘 | ❌（所以能测） |
 //! | [`runtime`] | 线程 / 任务 / 句柄的接线 | ❌（所以能测） |
+//! | [`shell_text`] | 壳自己要说的那几句话（查表 + 填参数） | ❌（所以能测） |
 //! | [`commands`] | 转发 | ✅ |
+//! | [`tray`] | 托盘菜单 | ✅ |
 //! | [`notify`] | 系统通知那一下（判据在 `runtime`） | ✅ |
 //! | 这里 | 参数、启动、退出 | ✅ |
 //!
@@ -31,6 +33,9 @@ mod notify;
 mod runtime;
 mod server_config;
 mod server_process;
+// ⚠️ `shell_text` 里**没有** `tauri`：它是「壳自己要说的那几句话」的字典 +
+// 填参数规则，纯查表，所以它能被 `cargo test` 钉住（见那个模块的文档）。
+mod shell_text;
 mod store;
 mod tray;
 
@@ -75,6 +80,7 @@ fn parse_args() -> Result<Option<Args>, String> {
             inline
                 .clone()
                 .or_else(|| argv.next())
+                // i18n-ok: **命令行（终端）文案** —— 与 `clip9-server` 那份一个脾气，窗口里不出现
                 .ok_or_else(|| format!("{name} 后面要跟一个值"))
         };
         match name.trim_start_matches('-') {
@@ -93,6 +99,7 @@ fn parse_args() -> Result<Option<Args>, String> {
             }
             "data" => data_dir = Some(PathBuf::from(value()?)),
             "server" => server = value()?,
+            // i18n-ok: 同上，命令行（终端）文案
             other => return Err(format!("不认识的参数：{other}（用 -h 看全部）")),
         }
     }
@@ -126,7 +133,10 @@ fn main() {
         Err(reason) => {
             // ⚠️ 配置坏了就**别起来**：宁可不启动，也不要带着一份默认配置
             // 去连用户的服务器（那会覆盖掉他的地址、房间与方向开关）。
-            eprintln!("{reason}");
+            // ⚠️ `{reason:?}` 而不是 `{reason}`：那是一条 `Msg`（键 + 参数），
+            // 它**故意没有 `Display`**（见 `clip9_client::Msg` 的模块文档第 3 条）——
+            // 终端里看到键与参数就够定位了，而句子该由页面渲染。
+            eprintln!("{reason:?}");
             std::process::exit(1);
         }
     };
@@ -151,12 +161,20 @@ fn main() {
     // ⚠️★ 通知器**先造、后接窗口**：`AppHandle` 只有 `setup` 里才有，而运行时必须在
     // `tauri::Builder` 之前造出来（上面那段注释）。所以这里交一个**空壳**进去，
     // 到了 `setup` 再 `attach`（理由与「丢掉了会怎样」见 `notify` 的模块文档）。
-    let notifier = std::sync::Arc::new(notify::SystemNotifier::new());
+    //
+    // ⚠️★ 它还要一份 [`shell_text::ShellText`]：系统通知是**操作系统画的**，
+    // 页面渲染不了那两句话（`capabilities/default.json` 里故意没有 `notification:*`），
+    // 所以壳得自己查字典。那个字典由页面推过来（`set_shell_messages`），
+    // 而这里造的是一份**还没有字典**的 —— 页面一起来就填上了（取舍见那个模块的文档）。
+    // ⚠️ **一份、共享**：通知器、托盘、文件对话框标题用的是同一个 `Arc`。
+    // 各造一份的话，「换了语言」只会更新其中一处。
+    let shell = std::sync::Arc::new(shell_text::ShellText::new());
+    let notifier = std::sync::Arc::new(notify::SystemNotifier::new(std::sync::Arc::clone(&shell)));
     let runtime =
         match runtime::Runtime::with_notifier(Arc::clone(&store), tokio_handle, notifier.clone()) {
             Ok(runtime) => runtime,
             Err(reason) => {
-                eprintln!("起不来：{reason}");
+                eprintln!("起不来：{reason:?}");
                 std::process::exit(1);
             }
         };
@@ -178,12 +196,14 @@ fn main() {
             // 「连别人的服务端（本机不起）」就别起它。⚠️ 句柄照样留着 ——
             // 那一档随时可以切回来（`commands::set_local_server`）。
             if local_server && let Err(reason) = process.start() {
-                eprintln!("{reason}");
+                // ⚠️ 只进日志（`{reason:?}` —— `Msg` 没有 `Display`）。
+                // 用户在界面上看到的是「起不来」那条命令错误，与这里是同一句话的两个听众。
+                eprintln!("{reason:?}");
             }
             Some(process)
         }
         Err(reason) => {
-            eprintln!("{reason}");
+            eprintln!("找不到本地服务端：{reason:?}");
             None
         }
     };
@@ -225,6 +245,12 @@ fn main() {
         .plugin(tauri_plugin_notification::init())
         .manage(Arc::clone(&store))
         .manage(Arc::clone(&runtime))
+        // ⚠️★ 壳要说的那几句话的字典（页面推过来的那份）。
+        // `pick_files` 的对话框标题、托盘的菜单项、系统通知都要它，
+        // 而 `set_shell_messages` 是**页面往里填**的那条命令 —— 所以它必须在 state 里。
+        // ⚠️ 注册的**晚于** `setup` 也没关系：Tauri 的 `state` 在 `build()` 之前就装好了，
+        // 而 `setup` 跑在 `build` 内部（`tray::install` 要读它）。
+        .manage(Arc::clone(&shell))
         // ⚠️ 服务端进程：`Option` 是因为二进制可能找不到（那时客户端照常能连别的服务端）。
         // 命令（重启 / 看状态）要它，所以放进 Tauri 的 state。
         .manage(server.clone())
@@ -263,18 +289,23 @@ fn main() {
             commands::set_local_server,
             commands::server_stop,
             commands::server_restart,
+            // ⚠️★ 页面把**壳要说的那几句话**推过来（启动一次 + 每次换语种一次）。
+            // 少注册这一个的表现是：菜单 / 通知 / 文件对话框永远停在键上
+            // （页面会 `catch` 到一个「命令不存在」，但它自己那边看不出问题）。
+            commands::set_shell_messages,
         ])
         // ⚠️ 托盘在 `setup` 里建：那时 `app` 已经能建菜单了，而**晚于** `build` 就来不及
         // （窗口可能已经显示出来，用户会先看到「没有入口」）。见 `tray` 的模块文档。
         .setup({
             let store = Arc::clone(&store);
             let runtime = Arc::clone(&runtime);
+            let shell = Arc::clone(&shell);
             move |app| {
                 // ⚠️★ **第一件做的事**：把窗口句柄接给通知器（见上面 `notifier` 那段）。
                 // 接晚了不会错，但那段窗口里的通知会**被丢掉**并打一行日志 ——
                 // 而它可能正是「默认房间连不上」那张最该被看到的通知。
                 notifier.attach(app.handle().clone());
-                tray::install(app.handle(), &store, &runtime)
+                tray::install(app.handle(), &store, &runtime, &shell)
                     .map_err(|err| Box::new(err) as Box<dyn std::error::Error>)?;
                 // ⚠️ 把配置里的自启意图**落到系统上**（幂等）。系统里那份可能被用户在
                 // 系统设置里删掉，而界面上还勾着 —— 不补的话就是「界面说一套、实际做另一套」。

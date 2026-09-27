@@ -8,15 +8,27 @@
 //!
 //! ⚠️ 这样分的收益是**能测**：页面点一下就走的那条路（开关 → 落盘 → 界面更新），
 //! 在 `store` 的测试里是**普通函数调用**，不用起窗口、不用手点。
+//!
+//! # ⚠️★ 报错一律是 [`Msg`]（键 + 参数），不是成文的中文
+//!
+//! 2026-09-28 改。命令的 `Err` 类型从 `String` 换成了 [`Msg`]：
+//! Tauri 对命令的错误类型只要求 `Serialize`（`impl<T: Serialize> From<T> for InvokeError`），
+//! 所以页面 `catch` 到的是**那个对象**（`{key, params}`），拿 `I18N.say` 一渲染就是
+//! 当前语种的那句话。理由与整个 3b 那一轮一样：**壳不知道用户选了哪个语种**。
+//! ⚠️ 这不是「顺手换个类型」：原来那些句子是硬编码的中文，切到英文界面时
+//! 它们**一个字都不变**，而且不报错 —— 这个项目最忌讳的那一类。
 
 use std::path::Path;
 use std::sync::Arc;
 
-use tauri::State;
+use clip9_client::Msg;
+// ⚠️ `Manager` 是为了 `app.state::<…>()`（`pick_files` 从 `app` 上取字典，见那条注释）。
+use tauri::{Manager, State};
 
 use crate::runtime::Runtime;
 use crate::server_config::ServerConfigFile;
 use crate::server_process::ServerProcess;
+use crate::shell_text::ShellText;
 use crate::store::{Snapshot, Store};
 
 // ── 「设置」窗口（客户端自己的配置）──────────────────────────────────
@@ -55,9 +67,9 @@ pub fn apply_settings(
     store: State<'_, Arc<Store>>,
     runtime: State<'_, Arc<Runtime>>,
     patch: SettingsPatch,
-) -> Result<(), String> {
+) -> Result<(), Msg> {
     if let Some(rooms) = patch.rooms {
-        store.set_rooms(rooms)?;
+        store.set_rooms(rooms);
         // ⚠️ 房间清单变了 → **下行必须重连**：`spawn_receiver` 拿的是启动时那份
         // 配置的副本（`set_download` 那条命令的注释里写着同一件事）。
         runtime.restart_receiver();
@@ -193,7 +205,7 @@ pub struct ServerConfigView {
 
 /// 读服务端的**原始**配置（给那个表单；不认识的键也会原样带出来）。
 #[tauri::command]
-pub fn server_config(config: State<'_, ServerConfigFile>) -> Result<ServerConfigView, String> {
+pub fn server_config(config: State<'_, ServerConfigFile>) -> Result<ServerConfigView, Msg> {
     Ok(ServerConfigView {
         path: config.path().display().to_string(),
         value: config.read()?,
@@ -210,7 +222,7 @@ pub fn server_config(config: State<'_, ServerConfigFile>) -> Result<ServerConfig
 pub fn server_config_save(
     config: State<'_, ServerConfigFile>,
     patch: serde_json::Value,
-) -> Result<serde_json::Value, String> {
+) -> Result<serde_json::Value, Msg> {
     config.patch(&patch)
 }
 
@@ -228,20 +240,25 @@ pub struct ServerLogView {
 ///
 /// ⚠️ 文件不存在**不是错误**：服务端还没起过就是这样，界面上说「还没有日志」即可 ——
 /// 报一句「文件不存在」会让用户以为坏了。
+/// ⚠️★ 日志**内容**是数据（不是文案），而这个 `text` 字段就是它 —— 一个字都不翻。
+/// 翻的是**读不出来时那一句**，它走命令的 `Err`（[`Msg`]）。
 #[tauri::command]
-pub fn server_log(path: State<'_, std::path::PathBuf>) -> ServerLogView {
+pub fn server_log(path: State<'_, std::path::PathBuf>) -> Result<ServerLogView, Msg> {
     const TAIL_BYTES: u64 = 256 * 1024;
     let view = |text: String| ServerLogView {
         path: path.display().to_string(),
         text,
     };
     let Ok(meta) = std::fs::metadata(path.inner()) else {
-        return view(String::new());
+        // ⚠️ 日志文件还没生成是**正常状态**（服务端没起过），不是错误：
+        // 报一句「文件不存在」会让用户以为坏了。
+        return Ok(view(String::new()));
     };
-    let mut file = match std::fs::File::open(path.inner()) {
-        Ok(file) => file,
-        Err(err) => return view(format!("打不开日志（{}）：{err}", path.display())),
-    };
+    let mut file = std::fs::File::open(path.inner()).map_err(|reason| {
+        Msg::key("logUnreadable")
+            .param("path", path.display())
+            .param("reason", reason)
+    })?;
     let truncated = meta.len() > TAIL_BYTES;
     if truncated {
         use std::io::Seek;
@@ -249,12 +266,14 @@ pub fn server_log(path: State<'_, std::path::PathBuf>) -> ServerLogView {
             .seek(std::io::SeekFrom::End(-(TAIL_BYTES as i64)))
             .is_err()
         {
-            return view(format!("读日志失败（{}）", path.display()));
+            return Err(Msg::key("logSeekFailed").param("path", path.display()));
         }
     }
     let mut raw = Vec::new();
-    if let Err(err) = std::io::Read::read_to_end(&mut file, &mut raw) {
-        return view(format!("读日志失败（{}）：{err}", path.display()));
+    if let Err(reason) = std::io::Read::read_to_end(&mut file, &mut raw) {
+        return Err(Msg::key("logReadFailed")
+            .param("path", path.display())
+            .param("reason", reason));
     }
     let text = String::from_utf8_lossy(&raw).into_owned();
     // ⚠️ 截断过的话第一行多半是半行 —— 丢掉，免得用户以为日志写坏了。
@@ -265,12 +284,17 @@ pub fn server_log(path: State<'_, std::path::PathBuf>) -> ServerLogView {
     } else {
         text
     };
-    view(text)
+    Ok(view(text))
 }
 
-/// 「这个客户端没有自带服务端」—— ⚠️ 这句话**只写一遍**：四条命令各写一遍迟早会漂，
-/// 而漂了的表现是同一个状况在界面上有三句不同的说法。
-const NO_BUNDLED_SERVER: &str = "这个客户端没有自带服务端（找不到 clip9-server），没法替你起停它。";
+// ⚠️★ 「这个客户端没有自带服务端」那个键**不再是一个 `const`**（2026-09-28 改的）。
+//
+// 原来这里写着 `const NO_BUNDLED_SERVER: &str = "noBundledServer";`，四处用它。
+// 那个写法看着更 D.R.Y.，但它让这个键**绕过了判据 17 的扫描**：那条检查抠的是
+// `Msg::key("…")` 这个**明确的样子**，而一个 `Msg::key(常量)` 抠不出来 ——
+// 于是「常量本身打错了一个字母」（`noBundledSever`）会一路绿到界面上才发现。
+// 现在三处各写一遍字面量：句子仍然只有一份（`ui/i18n.js` 里按这个键查一次），
+// 而**打错字会被判据 17 抓住**。少打几个字换一条会瞎的静态检查，不划算。
 
 /// 「本地服务端」那一块要的**全部**信息 —— ⚠️★ **逐行对着界面稿 2 的 `.win.srv`**
 ///（`docs/specs/desktop-client-settings-mockup.html` 的「本地服务端」那张卡）。
@@ -352,13 +376,26 @@ fn local_server_url(server: &ServerProcess, config_path: &Path) -> String {
 /// 同步命令会把界面**整个卡住** —— Jonny 2026-09-26 报的
 /// 「**点保存并重启就卡死**」就是这个：窗口十几秒不响应。
 /// 丢进 `spawn_blocking` 之后，等待发生在别的线程上，界面照常能动。
+///
+/// ⚠️★ `label` 收的是**一句 `Msg`** 而不是一个 `&str` 键（2026-09-28 改的）：
+/// 收裸字符串的话，调用点会写 `run_server_blocking("serverStop", …)` ——
+/// 那个键**拐了一道弯**，判据 17（抠 `Msg::key("…")` 那个形态）就抠不到它，
+/// 打错字会一路绿到界面上印出 `serverStoped` 才发现。
+/// 收 `Msg` 之后调用点变成 `Msg::key("serverStop")`，形状统一、扫得到。
 async fn run_server_blocking(
-    label: &str,
-    work: impl FnOnce() -> Result<(), String> + Send + 'static,
-) -> Result<(), String> {
+    label: Msg,
+    work: impl FnOnce() -> Result<(), Msg> + Send + 'static,
+) -> Result<(), Msg> {
+    // ⚠️★ 里面那趟活儿自己的失败**原样上去**（不裹一层）—— 它已经是成句的 `Msg`
+    //（「这个端口上有一个服务端在跑，但不是这个客户端起的」那种）。
+    // 这一层只管**线程池**本身的失败（任务 panic 了）。
     tauri::async_runtime::spawn_blocking(work)
         .await
-        .map_err(|err| format!("{label}的任务没跑起来：{err}"))?
+        .map_err(|reason| {
+            Msg::key("serverTaskFailed")
+                .param_msg("label", label)
+                .param("reason", reason)
+        })?
 }
 
 /// `server_status` 里**阻塞的那一半**：读文件、起一次进程问版本、连本机问 `/rooms`。
@@ -420,7 +457,7 @@ pub async fn server_status(
     store: State<'_, Arc<Store>>,
     server: State<'_, Option<Arc<ServerProcess>>>,
     config: State<'_, ServerConfigFile>,
-) -> Result<ServerStatusView, String> {
+) -> Result<ServerStatusView, Msg> {
     let local_server = store.config().enable_local_server;
     let data_dir =
         crate::server_process::data_dir_under(std::path::Path::new(&store.snapshot().data_dir))
@@ -432,7 +469,7 @@ pub async fn server_status(
         server_status_now(local_server, data_dir, process, &config_path)
     })
     .await
-    .map_err(|err| format!("读本地服务端状态的任务没跑起来：{err}"))
+    .map_err(|reason| Msg::key("serverStatusTaskFailed").param("reason", reason))
 }
 
 /// 换「运行方式」（界面稿里那两选一）：`true` = 随客户端启动，`false` = 本机不起。
@@ -449,10 +486,10 @@ pub async fn set_local_server(
     runtime: State<'_, Arc<Runtime>>,
     server: State<'_, Option<Arc<ServerProcess>>>,
     on: bool,
-) -> Result<(), String> {
+) -> Result<(), Msg> {
     let process = server.as_ref().cloned();
     if !on && let Some(process) = process.clone() {
-        run_server_blocking("停服务端", move || process.stop()).await?;
+        run_server_blocking(Msg::key("serverStop"), move || process.stop()).await?;
     }
     store.set_local_server(on);
     runtime.persist();
@@ -460,7 +497,7 @@ pub async fn set_local_server(
     // 「模式选好了、服务端还是没在跑」，还得再去点一次别的地方 —— 而界面稿里
     // 这一页**没有「启动」按钮**（只有重启 / 停止）。所以这一下就是那个「启动」。
     if on && let Some(process) = process {
-        run_server_blocking("起服务端", move || process.start()).await?;
+        run_server_blocking(Msg::key("serverStart"), move || process.start()).await?;
     }
     Ok(())
 }
@@ -471,11 +508,11 @@ pub async fn set_local_server(
 /// [`ServerProcess::stop`] 会**拒绝并说清为什么**（那个可能正连着他的手机）。
 /// 那条拒绝原样给界面看，不在这里改写。
 #[tauri::command]
-pub async fn server_stop(server: State<'_, Option<Arc<ServerProcess>>>) -> Result<(), String> {
+pub async fn server_stop(server: State<'_, Option<Arc<ServerProcess>>>) -> Result<(), Msg> {
     let Some(server) = server.as_ref().cloned() else {
-        return Err(NO_BUNDLED_SERVER.to_owned());
+        return Err(Msg::key("noBundledServer"));
     };
-    run_server_blocking("停服务端", move || server.stop()).await
+    run_server_blocking(Msg::key("serverStop"), move || server.stop()).await
 }
 
 /// 重启本地服务端（「保存并重启」那条路）。
@@ -483,11 +520,11 @@ pub async fn server_stop(server: State<'_, Option<Arc<ServerProcess>>>) -> Resul
 /// ⚠️ 只在**自带服务端**时做得到：找不到二进制就**报错**，
 /// 而不是画一个点了没反应的按钮（§3.5.2 ② 第 3 条）。
 #[tauri::command]
-pub async fn server_restart(server: State<'_, Option<Arc<ServerProcess>>>) -> Result<(), String> {
+pub async fn server_restart(server: State<'_, Option<Arc<ServerProcess>>>) -> Result<(), Msg> {
     let Some(server) = server.as_ref().cloned() else {
-        return Err(NO_BUNDLED_SERVER.to_owned());
+        return Err(Msg::key("noBundledServer"));
     };
-    run_server_blocking("重启服务端", move || {
+    run_server_blocking(Msg::key("serverRestart"), move || {
         server.stop()?;
         server.start()
     })
@@ -519,7 +556,7 @@ pub fn select(
     store: State<'_, Arc<Store>>,
     runtime: State<'_, Arc<Runtime>>,
     index: usize,
-) -> Result<(), String> {
+) -> Result<(), Msg> {
     store.select(index)?;
     runtime.refresh_history();
     Ok(())
@@ -540,7 +577,7 @@ pub fn set_upload(
     runtime: State<'_, Arc<Runtime>>,
     index: usize,
     on: bool,
-) -> Result<(), String> {
+) -> Result<(), Msg> {
     store.set_upload(index, on)?;
     runtime.sync_watcher();
     runtime.persist();
@@ -561,7 +598,7 @@ pub fn set_download(
     store: State<'_, Arc<Store>>,
     runtime: State<'_, Arc<Runtime>>,
     index: Option<usize>,
-) -> Result<(), String> {
+) -> Result<(), Msg> {
     store.set_download(index)?;
     runtime.persist();
     runtime.restart_receiver();
@@ -608,10 +645,8 @@ pub fn copy_to_clipboard(runtime: State<'_, Arc<Runtime>>, text: String) {
 /// 而「长文被挤掉之后点展开」正是这条命令最容易遇到的场景。只说「不在列表里」，
 /// 用户会以为是我们坏了。
 #[tauri::command]
-pub fn entry_text(store: State<'_, Arc<Store>>, id: i32) -> Result<String, String> {
-    store.entry_text(id).ok_or_else(|| {
-        "这条已经不在本机列表里了（换过房间，或者它被本机保留上限挤掉了）。".to_owned()
-    })
+pub fn entry_text(store: State<'_, Arc<Store>>, id: i32) -> Result<String, Msg> {
+    store.entry_text(id).ok_or_else(|| Msg::key("entryGone"))
 }
 
 /// 「复制内容」（时间线右键菜单）—— ⚠️ 走壳，**不让页面把自己那份传回来**。
@@ -636,22 +671,30 @@ pub fn copy_entry(runtime: State<'_, Arc<Runtime>>, id: i32) {
 ///
 /// ⚠️ 取消（用户按了「取消」/ 直接关掉）**不是错误**：返回一个空数组，
 /// 页面什么都不做。报一句「取消失败」是这类界面里最烦人的一种假错误。
+/// ⚠️★ 对话框的标题与过滤器名是**操作系统画的**（和系统通知、托盘菜单同一类）——
+/// 页面渲染不了它们，所以这里要一份 [`ShellText`] 自己查表。
 #[tauri::command]
 pub async fn pick_files(app: tauri::AppHandle, images_only: bool) -> Vec<String> {
     use tauri_plugin_dialog::DialogExt;
 
+    // ⚠️★ 字典从 `app` 上取，**不走命令参数**：Tauri 要求「async 命令里带引用型入参」
+    // 必须返回 `Result`（`AsyncCommandMustReturnResult`），而这一条**没有任何真正的失败路径**
+    //（取消不是错误 —— 见函数头）。为了满足那个宏而编一个 `Err` 分支，
+    // 比多写一行 `app.state()` 坏得多。
+    let shell = app.state::<Arc<ShellText>>();
     let (tx, rx) = tokio::sync::oneshot::channel();
-    let mut builder = app.dialog().file().set_title(if images_only {
-        "选图片"
+    let title = if images_only {
+        shell.say(&Msg::key("pickImagesTitle"))
     } else {
-        "选文件"
-    });
+        shell.say(&Msg::key("pickFilesTitle"))
+    };
+    let mut builder = app.dialog().file().set_title(title);
     if images_only {
         // ⚠️ 过滤只是**方便**，不是保证：用户能把过滤器切到「所有文件」。
         // 真正的判断在 `clip9-client` 那边（图片按文件那条路上行，见 `UploadKind`），
         // 所以这里不必（也不该）再判一次。
         builder = builder.add_filter(
-            "图片",
+            shell.say(&Msg::key("imageFilterName")),
             &["png", "jpg", "jpeg", "gif", "webp", "bmp", "heic"],
         );
     }
@@ -692,9 +735,9 @@ pub fn send_files(runtime: State<'_, Arc<Runtime>>, paths: Vec<String>) {
 pub async fn open_web(
     server: State<'_, Option<Arc<ServerProcess>>>,
     config: State<'_, ServerConfigFile>,
-) -> Result<(), String> {
+) -> Result<(), Msg> {
     let Some(server) = server.as_ref().cloned() else {
-        return Err(NO_BUNDLED_SERVER.to_owned());
+        return Err(Msg::key("noBundledServer"));
     };
     let config_path = config.path().to_path_buf();
     // ⚠️ 也丢进线程池：探测（最多 800ms）+ 起 `open` 进程都是阻塞的，
@@ -707,15 +750,13 @@ pub async fn open_web(
         if !server.is_running() {
             // ⚠️ 说清**怎么办**：这一页上没有「启动」按钮（界面稿里只有重启 / 停止），
             // 所以回去的路是下面那两选一。
-            return Err(
-                "本地服务端没在跑 —— 在「运行方式」里选「随客户端启动」，或点「重启」。".to_owned(),
-            );
+            return Err(Msg::key("localServerNotRunning"));
         }
         let url = openable_url(&local_server_url(&server, &config_path))?;
         open_in_system_browser(&url)
     })
     .await
-    .map_err(|err| format!("打开网页版的任务没跑起来：{err}"))?
+    .map_err(|reason| Msg::key("openWebTaskFailed").param("reason", reason))?
 }
 
 /// 交给系统 opener 之前的**最后一道**校验：只放行 `http(s)`。
@@ -725,15 +766,13 @@ pub async fn open_web(
 /// 那个不变量：这个字符串最后交给 `open`（macOS）/ `start`（Windows），
 /// 而它们会把它当 URL 解释 —— `file://` / `javascript:` 进来就是另一类事了。
 /// 一行校验，比一条「记得只拼 http」的口头约定靠得住。
-fn openable_url(url: &str) -> Result<String, String> {
+fn openable_url(url: &str) -> Result<String, Msg> {
     let trimmed = url.trim();
     if trimmed.is_empty() {
-        return Err("服务端地址是空的".to_owned());
+        return Err(Msg::key("serverUrlEmpty"));
     }
     if !(trimmed.starts_with("http://") || trimmed.starts_with("https://")) {
-        return Err(format!(
-            "「{trimmed}」不是 http(s) 地址，不能拿它打开网页版"
-        ));
+        return Err(Msg::key("serverUrlNotHttp").param("url", trimmed));
     }
     Ok(trimmed.trim_end_matches('/').to_owned())
 }
@@ -742,7 +781,7 @@ fn openable_url(url: &str) -> Result<String, String> {
 ///
 /// ⚠️ 参数**逐个传**（不拼成一条命令字符串）：拼字符串 = 过一遍 shell，
 /// 而这里的地址来自用户的配置文件。
-fn open_in_system_browser(url: &str) -> Result<(), String> {
+fn open_in_system_browser(url: &str) -> Result<(), Msg> {
     #[cfg(target_os = "macos")]
     let mut command = {
         let mut command = std::process::Command::new("open");
@@ -762,10 +801,31 @@ fn open_in_system_browser(url: &str) -> Result<(), String> {
         command.arg(url);
         command
     };
-    command
-        .spawn()
-        .map(|_| ())
-        .map_err(|err| format!("打不开系统浏览器（{url}）：{err}"))
+    command.spawn().map(|_| ()).map_err(|reason| {
+        Msg::key("openBrowserFailed")
+            .param("url", url)
+            .param("reason", reason)
+    })
+}
+
+/// 页面把字典推过来 —— **壳自己要说的那几句话**（系统通知、托盘菜单、文件对话框标题）。
+///
+/// ⚠️★ 为什么是「推」而不是壳自己去读 `ui/i18n.js`：那是 JS，壳读不了
+///（理由与取舍见 [`crate::shell_text`] 的模块文档）。页面在**启动时**推一次、
+/// **每次换语种**再推一次 —— 所以这里顺带把托盘菜单重建一遍。
+///
+/// ⚠️ 字典**整份**过来（两种语种都在里面）：壳那边三级回落的第二级要用源语言那一份。
+#[tauri::command]
+pub fn set_shell_messages(
+    app: tauri::AppHandle,
+    shell: State<'_, Arc<ShellText>>,
+    locale: String,
+    dicts: std::collections::BTreeMap<String, std::collections::BTreeMap<String, String>>,
+) {
+    shell.set(&locale, dicts);
+    // ⚠️ 托盘那几项的语言**跟着这里变**：菜单是建出来的一棵固定树，
+    // 不重建的话它永远停在启动时那一份（页面起来之前 = 源语言）。
+    crate::tray::retranslate(&app, &shell);
 }
 
 #[cfg(test)]

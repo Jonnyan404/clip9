@@ -3,8 +3,12 @@
 //
 // 用法：
 //   node tools/desktop-ui-smoke.mjs                       # 在 clip9/ 下跑
-//   node tools/desktop-ui-smoke.mjs <app.js> <index.html> [commands.rs] [capabilities.json] [boot.js] [client-config.rs] [i18n.js]
+//   node tools/desktop-ui-smoke.mjs <app.js> <index.html> [commands.rs] [capabilities.json] [boot.js] [client-config.rs] [i18n.js] [rust 源码目录] [say 夹具]
 //                                                         # 用别的夹具跑（变异验证 / 临时排查）
+//   ⚠️ 位置参数写 `-` 就是「这一项用默认值」（变异验证常常只想换**其中一个**，
+//      而默认值只在实参是 `undefined` 时才生效 —— 空串不是 `undefined`）。
+//   ⚠️ 第 8 个参数是**冒号分隔的目录表**（判据 16 / 17 要扫一整个目录，不是一个文件），
+//      第 9 个参数是**两份渲染器共用的夹具**（判据 18）。两个都给了默认值。
 //
 // # ⚠️ 为什么要有它
 //
@@ -18,7 +22,7 @@
 // `cloud-clip/tools/page-smoke.mjs`，**只有手写 UI 这一侧是裸奔的**
 //（见 `docs/specs/desktop-client.md` §1.1 缺口 C）。
 //
-// # 判据（**第 1、2、4、5、6、7、8、9、10、11、12、13、14、15 条算失败**）
+// # 判据（**第 1、2、4、5、6、7、8、9、10、11、12、13、14、15、16、17、18 条算失败**）
 //
 // 1. `app.js` 引用到的每一个 id，`index.html` 里必须存在 —— 不通过 = 退出码 1；
 // 2. `index.html` 真的加载了**每一个**该加载的脚本（`boot.js` / `i18n.js` / `app.js`）；
@@ -46,6 +50,12 @@
 // 13. **脚本往 `<html>` 上写的属性，样式表要真的读它** —— 不通过 = 退出码 1。理由见下。
 // 14. **文案字典要盖住界面用到的每一个键，两种键各有各的规矩** —— 不通过 = 退出码 1。理由见下。
 // 15. **`index.html` 里不许留下没挂 key 的中文 / 脚本里不许留中文串** —— 不通过 = 退出码 1。理由见下。
+// 16. **壳（Rust）那一侧不许自己拼界面文案**（含汉字的字面量只许出现在日志、断言、
+//     `panic!`，或者带 `// i18n-ok:` 标记的行上）—— 不通过 = 退出码 1。理由见下。
+// 17. **壳发出去的每一个键都得在字典里真的有**（`Msg::key("…")` 与 `ui/i18n.js` 对账）
+//     —— 不通过 = 退出码 1。理由见下。
+// 18. **两份渲染器（壳 / 页面）读同一份夹具、逐字一致**（`say-cases.json`）
+//     —— 不通过 = 退出码 1。理由见下。
 //
 // # ⚠️ 第 4 条为什么算失败，而不是「提一句」
 //
@@ -225,11 +235,14 @@
 // · **`boot.js` 不参与第 1 条**（id 引用）：它跑在 `<body>` 解析之前，本来就碰不到任何
 //   元素 —— 里面出现一个 `getElementById('x')` 才是错的。它只被第 10 条读（比对常量）。
 
-import { readFileSync } from 'node:fs';
+import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
+// ⚠️ `-` → `undefined`：位置参数只有实参是 `undefined` 时才走默认值，
+// 而变异验证常常只想换**其中一个**（写 8 个 `-` 比把前面 7 个路径全抄一遍清楚）。
+const cliArgs = process.argv.slice(2).map((value) => (value === '-' ? undefined : value));
 const [
   jsPath = join(root, 'crates/desktop/ui/app.js'),
   htmlPath = join(root, 'crates/desktop/ui/index.html'),
@@ -238,7 +251,31 @@ const [
   bootPath = join(root, 'crates/desktop/ui/boot.js'),
   clientPath = join(root, 'crates/client/src/config.rs'),
   i18nPath = join(root, 'crates/desktop/ui/i18n.js'),
-] = process.argv.slice(2);
+  /** ⚠️★ 判据 16 / 17 要扫的是**一整个目录**，不是一个文件（壳发出去的键散在
+   * `desktop/src/*.rs` 与 `client/src/*.rs` 里）。`:` 分隔几个目录。
+   * ⚠️ 为什么是这两颗 crate：它们是**桌面端会跑到**的那些句子（`desktop` 是壳本身，
+   * `client` 是它下面那一层，两边的 `Msg` 都会变成界面上的话）。
+   * `server` / `core` / `actions` / `store` **故意不在里面** —— 它们的中文是**服务端 API
+   * 的报错文案**（与 Go 版逐字对齐，随 `{"error":…}` 出去），这一版不翻它们
+   *（见 `docs/specs/desktop-client.md` §8.10 的边界）。 */
+  rustSrcArg = join(root, 'crates/desktop/src') + ':' + join(root, 'crates/client/src'),
+  /** ⚠️ 判据 18：两份渲染器（壳 / 页面）共用的那份夹具。 */
+  sayFixturePath = join(root, 'crates/desktop/tests/fixtures/say-cases.json'),
+] = cliArgs;
+
+/** `:` 分隔的目录表 → 里面所有 `.rs` 的绝对路径（**排序**：报告要稳定，变异验证要能逐条对）。 */
+function rustSources(spec) {
+  const found = [];
+  const walk = (dir) => {
+    for (const entry of readdirSync(dir).sort()) {
+      const path = join(dir, entry);
+      if (statSync(path).isDirectory()) walk(path);
+      else if (entry.endsWith('.rs')) found.push(path);
+    }
+  };
+  for (const dir of spec.split(':').filter(Boolean)) walk(dir);
+  return found;
+}
 
 const js = readFileSync(jsPath, 'utf8');
 const html = readFileSync(htmlPath, 'utf8');
@@ -844,16 +881,158 @@ function jsKeys(source) {
   return found;
 }
 
+/** ⚠️★ **Rust 源码** → 「代码骨架」+「字符串字面量清单」。
+ *
+ * 判据 16 / 17 要知道「含汉字的字面量长在哪」与「`Msg::key("…")` 的实参是什么」，
+ * 而这两件事都要求先分清**注释 / 字符串 / 代码**：这个仓库的注释里到处是中文，
+ * 而且 `Msg::key("historyFailed")` 这种例子**就写在文档注释里** ——
+ * 不剥的话一上来就是一堆假红（`stripJs` 的文件头记着 JS 那边同样的事）。
+ *
+ * ⚠️★ 不能复用 [`stripJs`]：Rust 的块注释**能嵌套**（一个块注释里面可以再开一个），
+ * 还有原始字符串（`r"…"` / `r#"…"#`）与字符字面量（`'{'`）——
+ * 拿 JS 那套扫 Rust，`r#"(?i)\bhttps?://…"#` 这种内置正则会当场把后面一大段吞掉
+ *（吞掉的后果是**漏报**，不报错）。
+ *
+ * ⚠️★ 返回的是**骨架**：注释与字面量正文都换成空格，**换行保留、长度不变**。
+ * 于是「这个字面量前面是什么」直接 `slice` 就能看，而 `{}` 计数也不会被
+ * 模板里的 `{reason}` 干扰（`'{'` 这种字符字面量本来就不平衡，也会被剥掉）。
+ * ⚠️ 引号本身**留着** —— 查找「这个位置是不是一个字符串」靠的就是引号的位置。
+ */
+function scanRust(source) {
+  const blanked = source.split('');
+  const literals = [];
+  const blank = (from, to) => {
+    for (let k = Math.max(0, from); k < to && k < blanked.length; k++) {
+      if (source[k] !== '\n') blanked[k] = ' ';
+    }
+  };
+  const n = source.length;
+  let i = 0;
+  while (i < n) {
+    const c = source[i];
+    const next = source[i + 1];
+    if (c === '/' && next === '/') {
+      const end = source.indexOf('\n', i);
+      const to = end < 0 ? n : end;
+      blank(i, to);
+      i = to;
+      continue;
+    }
+    if (c === '/' && next === '*') {
+      // ⚠️ 嵌套：数到配对的那一层为止（`/* /* */ */` 是一个注释）
+      let depth = 1;
+      let j = i + 2;
+      while (j < n && depth > 0) {
+        if (source[j] === '/' && source[j + 1] === '*') {
+          depth++;
+          j += 2;
+          continue;
+        }
+        if (source[j] === '*' && source[j + 1] === '/') {
+          depth--;
+          j += 2;
+          continue;
+        }
+        j++;
+      }
+      blank(i, j);
+      i = j;
+      continue;
+    }
+    // 原始字符串：`r"…"` / `r#"…"#`（`#` 的个数要配对才收）
+    const raw = /^r(#*)"/.exec(source.slice(i, i + 8));
+    if (raw) {
+      const hashes = raw[1];
+      const bodyStart = i + raw[0].length;
+      const close = source.indexOf('"' + hashes, bodyStart);
+      const end = close < 0 ? n : close + 1 + hashes.length;
+      literals.push({ start: i, end, body: source.slice(bodyStart, close < 0 ? n : close) });
+      blank(bodyStart, end);
+      i = end;
+      continue;
+    }
+    if (c === '"') {
+      let j = i + 1;
+      while (j < n) {
+        if (source[j] === '\\') {
+          j += 2;
+          continue;
+        }
+        if (source[j] === '"') break;
+        j++;
+      }
+      literals.push({ start: i, end: j + 1, body: source.slice(i + 1, j) });
+      blank(i + 1, j);
+      i = j + 1;
+      continue;
+    }
+    // 字符字面量（`'{'` / `'\n'` / `'\u{7f}'`）—— ⚠️ 与生命周期（`'a`）分得开：
+    // 只认**三件套**那个形状（`'X'` 或 `'\x'`），配不上的当生命周期。
+    // ⚠️ 漏判一个字符字面量无害：它里面放不下汉字，只可能让后面的 `{}` 计数偏一点。
+    const chr = /^'(?:\\u\{[0-9a-fA-F]+\}|\\[\s\S]|[^'\\\n])'/.exec(source.slice(i, i + 14));
+    if (chr) {
+      blank(i + 1, i + chr[0].length - 1);
+      i += chr[0].length;
+      continue;
+    }
+    i++;
+  }
+  return { blanked: blanked.join(''), literals };
+}
+
+/** ⚠️ `#[cfg(test)] mod tests { … }` 盖住的范围（起止下标，左闭右开）。
+ *
+ * ⚠️★ 判据 16 / 17 **都必须跳过测试**，两边的理由不一样：
+ *   · 16：测试里的中文是**断言消息**（`assert_eq!(a, b, "…")` —— 它恰恰应该写中文）；
+ *   · 17：测试里的 `Msg::key("…")` 是**测试自己编的例子**（`Msg::key("x")`），
+ *     要求字典里有它等于逼人编字典。
+ * ⚠️ 只按行首找 `#[cfg(test)]` 不够：得从那个 `{` 数到配对的那个 `}`
+ *（在**骨架**上数，所以字符串 / 注释里的括号不算）。
+ */
+function rustTestRanges(blanked) {
+  const ranges = [];
+  for (const match of blanked.matchAll(/#\[cfg\(test\)\]\s*mod\s+[A-Za-z_]\w*\s*\{/g)) {
+    let depth = 0;
+    let j = blanked.indexOf('{', match.index);
+    for (; j < blanked.length; j++) {
+      if (blanked[j] === '{') depth++;
+      else if (blanked[j] === '}') {
+        depth--;
+        if (depth === 0) break;
+      }
+    }
+    ranges.push([match.index, j + 1]);
+  }
+  return ranges;
+}
+
+/** 「这个字面量长在哪个宏的参数里」—— 从**上一个语句边界**（`;` `{` `}`）截到它。
+ *
+ * ⚠️★ 为什么不能只看**那一行**：日志宏经常写成好几行
+ *（`tracing::warn!(dropped = …, "有些历史条目读不进来，已跳过")` 里的中文落在**最后一行**），
+ * 只看行会把这些日志误判成界面文案 —— 第一版就是这么错的。
+ * ⚠️ 截到语句边界而不是「往前数 N 行」：N 是个魔法数，而边界是语法。
+ */
+function statementWindow(blanked, pos) {
+  let from = pos;
+  while (from > 0 && !';{}'.includes(blanked[from - 1])) from--;
+  return blanked.slice(from, pos);
+}
+
+
 if (i18nSource) {
   // ⚠️ 字典是**跑一遍** `i18n.js` 拿到的，不是正则抠的：正则抠不出
   // 「少一个引号 / 两个语种键集合不一致」这些事，而它们都会让译文悄悄失效。
-  // ⚠️ 只给一个假 `window`：这份文件在**加载时**不碰 `document` / `localStorage`
-  //（它俩只在函数体里用）—— 所以这里不需要 DOM。
+  // ⚠️ 给它两样假宿主：`window`（它把 `I18N` 挂在这上面）与 `document`
+  //（`locale()` 读 `document.documentElement.dataset.locale`）—— 都是**判据 18** 要用的：
+  // 那条判据要**在两种语种下**各渲染一遍夹具。⚠️ 这份文件在**加载时**不碰它们
+  //（只在函数体里用），所以给个假的就够，不需要真 DOM。
   let dicts = null;
   let loadError = null;
+  const win = {};
+  const fakeDocument = { documentElement: { dataset: {}, lang: '' } };
   try {
-    const win = {};
-    new Function('window', i18nSource)(win);
+    new Function('window', 'document', i18nSource)(win, fakeDocument);
     dicts = (win.I18N && win.I18N.DICTS) || null;
   } catch (error) {
     loadError = error;
@@ -984,6 +1163,12 @@ if (i18nSource) {
       const before = stripped.slice(0, match.index).replace(/\s+$/, '');
       // `t(` / `I18N.t(` / `I18N.html(` 都算（`showNotice(kind, t(…))` 这种也在里面）
       if (/(?:I18N\.)?(?:t|html)\($/.test(before)) continue;
+      // ⚠️★ `console.*(…)` 的实参**不算**：那一行永远不上屏（打包后没有 devtools），
+      // 它不是界面文案。⚠️ 与壳那一侧同一条规矩（判据 16 明写放行 `eprintln!` /
+      // `tracing::warn!` 那种**中文日志**）—— 这里只认 `t()` 的话，等于逼日志写英文，
+      // 而「界面文案必须能翻、日志不必」这条线两边就各划各的了。
+      // ⚠️ 它**放不出真正的漏抽**：上不了屏的字符串不可能是「切语种时不变的那句话」。
+      if (/console\.(?:log|info|warn|error|debug)\($/.test(before)) continue;
       bare.push(match[1]);
     }
     if (bare.length) {
@@ -995,6 +1180,184 @@ if (i18nSource) {
       console.error('  ⚠️ 注释里的中文**不算**（这个仓库的注释就是中文）—— 这里剥过注释了。');
       console.error('  ⚠️ 但**壳（Rust）下发的**句子不归这里管：它们的 key 在 `i18n.js` 里，');
       console.error('    由判据 14 的「符号键两边都要有译文」兜着。');
+      console.error('  ⚠️ `console.*(…)` 的实参也不归这里管（日志不是界面文案 —— 判据 16 放行 Rust 日志是同一条）。');
+    }
+  }
+
+  // ── 判据 16 / 17：**壳那一侧**（Rust）────────────────────────────────────
+  //
+  // ⚠️★ 这一段是上两段的**镜像**：判据 14 / 15 管**页面**（`ui/*.js` + `index.html`），
+  //    这两条管**壳**。少了它们，「界面支持英文」只覆盖了一半 —— 而恰好是用户最常
+  //    看到的那一半（连接状态、一次性提示、命令报错、托盘菜单、系统通知都从壳里出来）。
+  //
+  // ⚠️ 判据 16：壳里**不许再自己拼界面文案**（含汉字的字面量）。
+  //    症状是「切了语言，壳递过来那几十句一个字都没变」—— 而且**不报错**：
+  //    多语言之前它们就是 `String`（`crates/client/src/msg.rs` 的文件头记着这件事）。
+  //    ⚠️★ 放行**开发者面**的东西：日志宏 / 断言 / `panic!` / `expect(`。它们上不了屏，
+  //    而且这个仓库的日志**就是中文**（改英文只是噪声）—— 页面那边同一条规矩
+  //    （判据 15 放行 `console.*(…)` 的实参）。
+  //    ⚠️ 剩下真的不该翻的（命令行文案、落盘的数据、`tauri::Error` 收 `String` 那种塞不进
+  //    `Msg` 的地方）走**显式标记**：`// i18n-ok: 理由`。打了标记的**每次都会印出来**
+  //    （不失败，但一直看得见）—— 静默的例外清单是会长大的。
+  //
+  // ⚠️ 判据 17：壳发出去的**每一个键**都得在字典里真的有。
+  //    症状：屏幕上印出一个像变量的词（`serverStartTimeoutNoLog`）—— 连一级回落都没有，
+  //    因为键打错字时源语言那条也查不到。⚠️ 它靠的是「壳里每个键都长成 `Msg::key("…")`」
+  //    这个**形态**（`Msg` 上故意没有 `From<&str>`、`ShellText` 也没有收裸键的入口，
+  //    两处都是为了让这条静态检查看得见）。拼出来的键（`Msg::key(some_var)`）它看不见 ——
+  //    所以下面会把这种地方**数出来印一遍**（有它的那天要人工过一眼）。
+  //
+  // ⚠️ 范围（`crates/desktop/src` + `crates/client/src`，以及**为什么不含** server/core/…）
+  //    写在文件头第 8 个参数那段注释里。
+  const rustFiles = rustSources(rustSrcArg);
+  if (!rustFiles.length) {
+    failed = true;
+    console.error('✗ 判据 16/17 跑不了：`' + rustSrcArg + '` 里一个 `.rs` 都没有 —— 这条自检要跟着仓库结构改。');
+  } else {
+    /** 开发者面的宏 —— ⚠️ 只看**语句窗口**里有没有它，不看那一行（日志宏常常分好几行写）。 */
+    const LOG_MACRO =
+      /(?:\b(?:eprintln|println|eprint|print|panic|unreachable|todo|unimplemented|assert|assert_eq|assert_ne|debug_assert|debug_assert_eq|debug_assert_ne|dbg)\s*!|tracing::\w+\s*!|log::\w+\s*!|\.expect(?:_err)?\s*\()/;
+    const I18N_OK = /\/\/ i18n-ok:/;
+    const bareCjk = [];
+    const markedCjk = [];
+    const shellKeys = new Map(); // 键 -> 第一处「文件:行」
+    const dynamicKeys = [];
+    for (const file of rustFiles) {
+      const source = readFileSync(file, 'utf8');
+      const { blanked, literals } = scanRust(source);
+      const tests = rustTestRanges(blanked);
+      const inTest = (pos) => tests.some(([from, to]) => from <= pos && pos < to);
+      const lines = source.split('\n');
+      const lineAt = (pos) => source.slice(0, pos).split('\n').length;
+      const literalAt = new Map(literals.map((lit) => [lit.start, lit]));
+      // ⚠️ 仓库里的文件用相对路径报（好读），传进来的别的目录（变异验证）用绝对路径 ——
+      // 一律按 `root` 截会截出一串没有开头的怪路径。
+      const where = (pos) =>
+        (file.startsWith(root) ? file.slice(root.length + 1) : file) + ':' + lineAt(pos);
+
+      // 16：含汉字的字面量（**非测试**）
+      for (const lit of literals) {
+        if (inTest(lit.start) || !IDEOGRAPH.test(lit.body)) continue;
+        if (LOG_MACRO.test(statementWindow(blanked, lit.start))) continue;
+        // ⚠️ 字面量可能跨行（命令行那段用法就是）：把盖到的行 + 前一行整段取出来找标记
+        const span = lines.slice(Math.max(0, lineAt(lit.start) - 2), lineAt(lit.end) + 1).join('\n');
+        if (I18N_OK.test(span)) markedCjk.push([where(lit.start), lit.body]);
+        else bareCjk.push([where(lit.start), lit.body]);
+      }
+
+      // 17：`Msg::key("…")` 的实参（**非测试**）
+      for (const match of blanked.matchAll(/Msg::key\(\s*/g)) {
+        const at = match.index + match[0].length;
+        if (inTest(at)) continue;
+        const lit = literalAt.get(at);
+        // ⚠️ 拼出来的键（`Msg::key(name)`）这条看不见 —— 记下来，最后印一遍
+        if (!lit) dynamicKeys.push(where(at));
+        else if (!shellKeys.has(lit.body)) shellKeys.set(lit.body, where(at));
+      }
+    }
+
+    if (bareCjk.length) {
+      failed = true;
+      console.error('✗ 判据 16：壳（Rust）里有 ' + bareCjk.length + ' 处**界面文案**没走 `Msg`'
+        + '（切到别的语种时它们一个字都不会变）：');
+      for (const [at, body] of bareCjk.slice(0, 15)) {
+        console.error('    ' + at + '  ' + JSON.stringify(body.slice(0, 50)));
+      }
+      if (bareCjk.length > 15) console.error('    …还有 ' + (bareCjk.length - 15) + ' 处');
+      console.error('  ⚠️ 修法：`Msg::key("…")` + 参数（`param` / `param_list` / `param_msg`），译文写进 `ui/i18n.js`。');
+      console.error('  ⚠️ 日志 / 断言 / `panic!` / `expect(` **放行**（它们上不了屏）——判据 15 对 `console.*` 是同一条。');
+      console.error('  ⚠️ 真的不该翻的（命令行文案、落盘的数据）→ **紧邻的那一行**写 `// i18n-ok: 理由`。');
+    }
+    if (markedCjk.length) {
+      console.log('· 有 ' + markedCjk.length + ' 处中文串打了 `i18n-ok`（**不算失败**，只是每次印出来提醒）：');
+      for (const [at, body] of markedCjk) {
+        console.log('    ' + at + '  ' + JSON.stringify(body.slice(0, 50)));
+      }
+    }
+
+    // ⚠️ 分类与判据 14 **同一条**：键里有汉字 ⇒ 「原文即键」，`zh` 那份不用自己再有一条。
+    // ⚠️★ 按下标（键）归组再报：一个键在**两种语种**里都缺时，那**是同一个漏**——
+    // 按 (键, 语种) 数出来的「2 个键」会让人以为有两处（变异验证时就看出来了）。
+    const missingKeys = new Map(); // 键 -> { at, locales: [] }
+    for (const [key, at] of shellKeys) {
+      const lost = [];
+      for (const locale of isSourceKey(key) ? ['en'] : ['zh', 'en']) {
+        if (!(key in (dicts[locale] ?? {}))) lost.push(locale);
+      }
+      if (lost.length) missingKeys.set(key, { at, locales: lost });
+    }
+    if (missingKeys.size) {
+      failed = true;
+      console.error('✗ 判据 17：壳发出去的 ' + missingKeys.size + ' 个键在字典里没有（屏幕上会印出键本身）：');
+      for (const [key, { at, locales }] of missingKeys) {
+        console.error('    ' + key + '   （`' + locales.join('` / `') + '` 缺；' + at + ' 发出来的）');
+      }
+      console.error('  ⚠️ 症状：界面上顶着一句 `serverStartTimeoutNoLog` 这样的词 —— 难看，但正是要它难看。');
+    } else {
+      console.log('· 判据 17：壳发出去的 ' + shellKeys.size + ' 个键都在字典里（两种语种都有）。');
+    }
+    if (dynamicKeys.length) {
+      console.warn('⚠ 有 ' + dynamicKeys.length + ' 处 `Msg::key(…)` 不是字面量（这条检查看不见它们），人工过一眼：');
+      for (const at of dynamicKeys) console.warn('    ' + at);
+    }
+
+    // ── 判据 18：**同一份夹具**，两份渲染器逐字一致 ──────────────────────
+    //
+    // ⚠️★ 为什么要它：壳与页面**各有一份渲染器**（`ShellText::say` / `I18N.say`）——
+    //    因为系统通知 / 托盘菜单 / 文件对话框是**操作系统画的**，页面碰不到它们。
+    //    两份实现一定会漂，而症状是最坏的一类：「同一条通知，系统通知里是一个说法、
+    //    切回界面看是另一个说法」，**没人会同时看两处**。
+    //    ⚠️ 钉住它们的不是「两边代码看起来一样」，而是这份**输入输出表**
+    //    （`crates/desktop/tests/fixtures/say-cases.json`，Rust 那一半在
+    //    `shell_text.rs` 的 `the_fixture_renders_the_same_on_this_side`）。
+    //
+    // ⚠️★ 顺序要紧：这一条会**就地换掉 `DICTS` 的内容**（见下），所以它必须排在
+    //    判据 14 / 17 之后 —— 那两条要的是 `ui/i18n.js` 里**真的**那份字典。
+    let fixture = null;
+    try {
+      fixture = JSON.parse(readFileSync(sayFixturePath, 'utf8'));
+    } catch (error) {
+      failed = true;
+      console.error('✗ 判据 18 跑不了：读不了 / 解析不了 `sayFixturePath`（' + error.message + '）'
+        + ' —— 那条路径来自文件头第 9 个参数。');
+      console.error('    ' + sayFixturePath);
+    }
+    if (fixture) {
+      // ⚠️ `say` / `t` 闭包引用的是**同一个对象**，所以只能就地换内容（换引用没用）。
+      // 这么做是为了让两边吃**同一份字典**：壳测 A 字典、页面测 B 字典的话，
+      // 「两份渲染器一致」这句话什么都证明不了。
+      for (const key of Object.keys(win.I18N.DICTS)) delete win.I18N.DICTS[key];
+      for (const [locale, table] of Object.entries(fixture.dicts ?? {})) win.I18N.DICTS[locale] = table;
+      const drift = [];
+      const locales = Object.keys(fixture.dicts ?? {});
+      for (const testCase of fixture.cases ?? []) {
+        for (const locale of locales) {
+          const want = testCase.expect?.[locale];
+          if (typeof want !== 'string') {
+            failed = true;
+            console.error('✗ 判据 18：夹具里用例「' + testCase.name + '」缺 `' + locale + '` 那一列期望值。');
+            continue;
+          }
+          fakeDocument.documentElement.dataset.locale = locale;
+          const got = win.I18N.say(testCase.msg);
+          if (got !== want) drift.push([testCase.name, locale, got, want]);
+        }
+      }
+      if (drift.length) {
+        failed = true;
+        console.error('✗ 判据 18：**页面这一侧的渲染器和夹具对不上**（漂了 ' + drift.length + ' 处）：');
+        for (const [name, locale, got, want] of drift) {
+          console.error('    用例「' + name + '」@' + locale);
+          console.error('      页面渲染出：' + JSON.stringify(got));
+          console.error('      夹具要求是：' + JSON.stringify(want));
+        }
+        console.error('  ⚠️ 修法：让 `ui/i18n.js` 的 `say` / `renderParam` / `fill` 与夹具一致 ——');
+        console.error('     **不是**改夹具去迁就它（夹具是两份渲染器的**共同**约定）。');
+      } else {
+        const count = (fixture.cases ?? []).length * locales.length;
+        console.log(`· 判据 18：${(fixture.cases ?? []).length} 条夹具用例 × ${locales.length} 种语种`
+          + `（共 ${count} 次渲染）在**页面这一侧**逐字对上。`);
+      }
     }
   }
 }

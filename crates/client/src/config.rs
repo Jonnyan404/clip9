@@ -43,6 +43,7 @@ use serde::{Deserialize, Serialize};
 use url::Url;
 
 use crate::event::UploadKind;
+use crate::msg::Msg;
 
 fn default_true() -> bool {
     true
@@ -428,14 +429,16 @@ impl ClientConfig {
     /// ⚠️ 返回 `Result` 而不是 `PathBuf`：`download_dir` 是相对的、而 `base_dir` 又没设时，
     /// **没有任何正确答案** —— 按 cwd 解析就是 §5 点名禁止的那件事。
     /// 与其悄悄按 cwd 走，不如在这里说不出来。
-    pub fn download_dir(&self) -> Result<PathBuf, String> {
+    ///
+    /// ⚠️★ 错误是 [`Msg`]（键 + 参数），**不是成句的中文**（2026-09-28 改）——
+    /// 那句话说清「为什么不能按 cwd 走」，而它会被界面原样显示。
+    pub fn download_dir(&self) -> Result<PathBuf, Msg> {
         match (&self.base_dir, self.download_dir.is_absolute()) {
             (_, true) => Ok(self.download_dir.clone()),
             (Some(base), false) => Ok(Self::resolve(base, &self.download_dir)),
-            (None, false) => Err(format!(
-                "下载目录是相对路径（{}），但没有设置数据目录 —— 相对路径必须相对数据目录解析，不能相对 cwd",
-                self.download_dir.display()
-            )),
+            (None, false) => {
+                Err(Msg::key("downloadDirNeedsDataDir").param("path", self.download_dir.display()))
+            }
         }
     }
 
@@ -514,18 +517,25 @@ impl ClientConfig {
     ///
     /// ⚠️ 这张清单存在的理由就是模块文档第 4 条：**「配了不生效」是这个项目最忌讳的一类**。
     /// 所以「开了两个下行」不是「悄悄挑一个」，而是要**能被告知**。
+    ///
+    /// ⚠️★ 每一项是 [`Msg`]（键 + 参数），**不是成文的中文**（2026-09-28 改）。
+    /// 原来这里 `format!` 出一句中文 —— 于是界面切到英文时，这几十句**一个字都不变**，
+    /// 而且不报错。现在这一层只说「是哪一类毛病、涉及谁」，
+    /// 「怎么说」在 `crates/desktop/ui/i18n.js` 的两个字典里（见 `msg` 的模块文档）。
+    ///
+    /// ⚠️ 房间名清单**整份**递过去（`{rooms}` 是个数组），**不在这里 `join`** ——
+    /// 分隔符（中文的「、」还是英文的「, 」）由语言决定，不是这一层能定的。
     #[must_use]
-    pub fn problems(&self) -> Vec<String> {
+    pub fn problems(&self) -> Vec<Msg> {
         let mut out = Vec::new();
 
         let downloads: Vec<&Channel> = self.channels.iter().filter(|c| c.enable_download).collect();
         if downloads.len() > 1 {
-            let names: Vec<&str> = downloads.iter().map(|c| c.name.as_str()).collect();
-            out.push(format!(
-                "有 {} 个房间开着「同步到本地」（{}）—— 只能有一个：两个房间会抢着写本机剪贴板，用户看到的是随机内容",
-                downloads.len(),
-                names.join("、")
-            ));
+            out.push(
+                Msg::key("configMultipleDownloads")
+                    .param("count", downloads.len())
+                    .param_list("rooms", downloads.iter().map(|c| c.name.clone())),
+            );
         }
 
         for ch in &self.channels {
@@ -533,30 +543,34 @@ impl ClientConfig {
             //「我填的那个没了」（`resolve_emojis` 会当成没填、另挑一个），
             // 而**没有一句解释**。这正是「静默修正」那一类。
             if !ch.emoji.trim().is_empty() && clean_emoji(&ch.emoji).is_none() {
-                out.push(format!(
-                    "房间「{}」的图标只收 1–2 个非 ASCII 字符（填的是「{}」）—— 已经按「自动」处理",
-                    ch.name,
-                    ch.emoji.trim()
-                ));
+                out.push(
+                    Msg::key("configRoomEmojiIgnored")
+                        .param("room", &ch.name)
+                        .param("emoji", ch.emoji.trim()),
+                );
             }
             let server = ch.server.trim();
             if server.is_empty() {
-                out.push(format!("房间「{}」没填服务端地址", ch.name));
+                out.push(Msg::key("configRoomNoServer").param("room", &ch.name));
                 continue;
             }
             match Url::parse(server) {
                 Ok(url) if url.scheme() == "http" || url.scheme() == "https" => {}
-                Ok(url) => out.push(format!(
-                    "房间「{}」的服务端地址协议不对（{}）—— 只认 http / https",
-                    ch.name,
-                    url.scheme()
-                )),
-                Err(e) => out.push(format!("房间「{}」的服务端地址无法解析：{e}", ch.name)),
+                Ok(url) => out.push(
+                    Msg::key("configRoomBadScheme")
+                        .param("room", &ch.name)
+                        .param("scheme", url.scheme()),
+                ),
+                Err(err) => out.push(
+                    Msg::key("configRoomBadServer")
+                        .param("room", &ch.name)
+                        .param("reason", err),
+                ),
             }
         }
 
         if self.channels.is_empty() {
-            out.push("一个房间都没配".to_owned());
+            out.push(Msg::key("configNoRooms"));
         }
 
         out
@@ -579,6 +593,7 @@ impl ClientConfig {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::msg::ParamValue;
 
     /// 一个开着**上行**的房间（`download` 单独给）。
     ///
@@ -662,6 +677,10 @@ mod tests {
     }
 
     /// 手改出来的「两个下行」要被**报出来**，不是悄悄挑一个。
+    ///
+    /// ⚠️★ 断言的是**键 + 参数**，不是「中文里有没有某个词」（2026-09-28 改）。
+    /// 按中文子串断言的话，这句文案一改（或者翻译）测试就假红/假绿 ——
+    /// 而它真正要钉住的是「这类毛病被报出来了、涉及哪几个房间」。
     #[test]
     fn two_download_channels_are_reported_not_silently_picked() {
         let cfg = ClientConfig {
@@ -669,9 +688,22 @@ mod tests {
             ..ClientConfig::default()
         };
         let problems = cfg.problems();
-        assert!(
-            problems.iter().any(|p| p.contains("只能有一个")),
-            "开了两个下行必须被报出来，实际：{problems:?}"
+        let first = problems.first().expect("开了两个下行必须被报出来");
+        assert_eq!(first.key, "configMultipleDownloads", "实际：{problems:?}");
+        assert_eq!(
+            first.params.get("count").and_then(ParamValue::as_str),
+            Some("2"),
+            "要说清有几个"
+        );
+        // ⚠️★ 房间名是**一整份列表**过去，不是在这里拼好的字符串 ——
+        // 拼接的分隔符由语言决定（中文「、」/ 英文「, 」），见 `msg` 的模块文档第 2 条。
+        assert_eq!(
+            first.params.get("rooms"),
+            Some(&ParamValue::Many(vec![
+                ParamValue::One("a".to_owned()),
+                ParamValue::One("b".to_owned()),
+            ])),
+            "要**点名**是哪两个房间，而且不许在这里拼"
         );
         // 单数访问器仍然给一个确定答案（第一个）—— 但那是错配置，上面的提示才是正解。
         assert_eq!(cfg.download_channel().unwrap().name, "a");
@@ -698,9 +730,17 @@ mod tests {
             ..ClientConfig::default()
         };
         let problems = cfg.problems();
-        assert!(problems.iter().any(|p| p.contains("没填服务端地址")));
-        assert!(problems.iter().any(|p| p.contains("协议不对")));
-        assert!(problems.iter().any(|p| p.contains("无法解析")));
+        let keys: Vec<&str> = problems.iter().map(|m| m.key.as_str()).collect();
+        assert!(keys.contains(&"configRoomNoServer"), "实际：{problems:?}");
+        assert!(keys.contains(&"configRoomBadScheme"), "实际：{problems:?}");
+        assert!(keys.contains(&"configRoomBadServer"), "实际：{problems:?}");
+
+        // ⚠️ 三条各带自己的房间名 —— 不然用户不知道去改哪一个。
+        let rooms: Vec<Option<&str>> = problems
+            .iter()
+            .map(|m| m.params.get("room").and_then(ParamValue::as_str))
+            .collect();
+        assert_eq!(rooms, vec![Some("缺地址"), Some("协议错"), Some("乱填")]);
     }
 
     /// ⚠️★ **一个房间都没开 ↑ = 上行是空的**，而且**下行不受影响**。
@@ -772,7 +812,16 @@ mod tests {
             ..ClientConfig::default()
         };
         let err = cfg.download_dir().expect_err("必须报错");
-        assert!(err.contains("cwd"), "错误信息要说清为什么不行：{err}");
+        // ⚠️ 「错误信息要说清为什么不行」现在**分两半**：这一半钉「报的是哪一条 +
+        // 带上了哪个目录」（要能指出是哪个路径说的），另一半是字典里那句解释
+        // （`downloadDirNeedsDataDir`，中文要说清「相对路径没有基准，不会按 cwd 猜」）
+        // —— 那一半在 `ui/i18n.js` 里，`tools/desktop-ui-smoke.mjs` 会去看。
+        assert_eq!(err.key, "downloadDirNeedsDataDir");
+        assert_eq!(
+            err.params.get("path").and_then(ParamValue::as_str),
+            Some("downloads"),
+            "要说清是哪个目录：{err:?}"
+        );
 
         // 绝对路径不需要数据目录。
         let abs = ClientConfig {
@@ -1138,7 +1187,7 @@ mod tests {
         };
         let problems = cfg.problems();
         assert!(
-            problems.iter().any(|problem| problem.contains("图标")),
+            problems.iter().any(|m| m.key == "configRoomEmojiIgnored"),
             "填了个画不出来的图标必须被报出来，实际：{problems:?}"
         );
         // ⚠️ 反过来：**合法的**图标（包括留空）都不该产生任何提示 ——
@@ -1157,7 +1206,7 @@ mod tests {
             !clean
                 .problems()
                 .iter()
-                .any(|problem| problem.contains("图标")),
+                .any(|m| m.key == "configRoomEmojiIgnored"),
             "合法的图标与留空都不该报：{:?}",
             clean.problems()
         );

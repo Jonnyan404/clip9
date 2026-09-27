@@ -58,6 +58,7 @@ use crate::debounce::Debouncer;
 use crate::download;
 use crate::endpoint;
 use crate::event::{ClipboardContent, UploadKind};
+use crate::msg::Msg;
 use crate::sink::ClipboardSink;
 use crate::uploader::{ServerLimits, build_client, parse_api_error};
 
@@ -432,9 +433,9 @@ pub enum ReceiverStatus {
     /// 而**连接明明是好的** —— 实时照常在收。界面于是画成「已断开」，用户看到「已断开」
     /// 却还在收消息；`load_history` 的文档注释本来就写着「失败不算致命…不该让整个下行断掉」，
     /// 那条注释与当时的实现是**相反**的（2026-09-27 修）。
-    HistoryUnavailable { latest_id: i32, reason: String },
+    HistoryUnavailable { latest_id: i32, reason: Msg },
     /// 断了（附原因），`retrying` = 会不会自动重连。
-    Disconnected { reason: String },
+    Disconnected { reason: Msg },
 }
 
 /// 房间的**往返延迟**（设计稿 `desktop-client.md` §4.3）。
@@ -607,16 +608,16 @@ const FALLBACK_HISTORY: usize = 50;
 /// 建 WS 握手请求（**可测**：它不碰网络）。
 ///
 /// ⚠️★ **凭据走请求头**，不进 URL：进了 URL 就会进服务端访问日志、进反代日志。
-pub fn ws_request(server: &str, room: &str, token: Option<&str>) -> Result<Request<()>, String> {
+pub fn ws_request(server: &str, room: &str, token: Option<&str>) -> Result<Request<()>, Msg> {
     let url = endpoint::ws_url(server, room)?;
     let mut request = url
         .as_str()
         .into_client_request()
-        .map_err(|e| format!("构造 WebSocket 握手失败：{e}"))?;
+        .map_err(|err| Msg::key("wsHandshakeBuildFailed").param("reason", err))?;
 
     if let Some(token) = token.map(str::trim).filter(|t| !t.is_empty()) {
         let value = HeaderValue::from_str(&format!("Bearer {token}"))
-            .map_err(|e| format!("凭据里有非法字符，放不进请求头：{e}"))?;
+            .map_err(|err| Msg::key("credentialHeaderInvalid").param("reason", err))?;
         request.headers_mut().insert(AUTHORIZATION, value);
     }
     Ok(request)
@@ -629,7 +630,7 @@ pub async fn fetch_history(
     client: &reqwest::Client,
     channel: &Channel,
     limit: usize,
-) -> Result<Vec<ReceiveHolder>, String> {
+) -> Result<Vec<ReceiveHolder>, Msg> {
     let url = endpoint::history_url(&channel.server, &channel.room, limit)?;
     let mut request = client.get(url);
     if let Some(token) = channel.auth_token.as_deref().map(str::trim)
@@ -641,11 +642,11 @@ pub async fn fetch_history(
     let response = request
         .send()
         .await
-        .map_err(|e| format!("取历史失败：{e}"))?;
+        .map_err(|err| Msg::key("historyFailed").param("reason", err))?;
     let status = response.status().as_u16();
     let body = response.text().await.unwrap_or_default();
     if !(200..300).contains(&status) {
-        return Err(parse_api_error(status, &body));
+        return Err(Msg::verbatim(parse_api_error(status, &body)));
     }
     parse_history_body(&body)
 }
@@ -669,14 +670,14 @@ pub async fn fetch_history(
 ///（用户 2026-09-27 报的「重启客户端也没有历史」就是这个），而且**没有一个字报错** ——
 /// 因为下面那句「一条坏条目不该让整份历史都看不见」把失败全 `ok()` 掉了。
 /// ⚠️ 所以这次顺手把**丢掉的条数**打进日志：没有这一句，同样的事还能再藏几个月。
-fn parse_history_body(body: &str) -> Result<Vec<ReceiveHolder>, String> {
+fn parse_history_body(body: &str) -> Result<Vec<ReceiveHolder>, Msg> {
     #[derive(serde::Deserialize)]
     struct Envelope {
         #[serde(default)]
         messages: Vec<Value>,
     }
-    let envelope: Envelope =
-        serde_json::from_str(body).map_err(|e| format!("历史不是 JSON：{e}"))?;
+    let envelope: Envelope = serde_json::from_str(body)
+        .map_err(|err| Msg::key("historyNotJson").param("reason", err))?;
 
     let total = envelope.messages.len();
     let mut reasons: Vec<String> = Vec::new();
@@ -814,11 +815,16 @@ async fn run_room(
         updates,
     };
 
-    let Ok(client) = build_client() else {
-        updates.send(ReceiverEvent::Status(ReceiverStatus::Disconnected {
-            reason: "建 HTTP 客户端失败".to_owned(),
-        }));
-        return;
+    // ⚠️ 把 `build_client()` 那**一整句话**原样递上去（它自己就是一条 `Msg`）——
+    //    在这里另写一句「建 HTTP 客户端失败」就是第二份定义，两份一定会漂。
+    let client = match build_client() {
+        Ok(client) => client,
+        Err(reason) => {
+            updates.send(ReceiverEvent::Status(ReceiverStatus::Disconnected {
+                reason,
+            }));
+            return;
+        }
     };
 
     // ⚠️ 边界（水印）**每个房间各一份** —— 它是「这个房间里哪些是历史」的判据，
@@ -875,9 +881,9 @@ async fn run_room(
 ///
 /// ⚠️ 文案里**不要写 Markdown 的 `**`**：界面那边是 `textContent`（见 `ui/app.js`
 /// 的 `h()`），星号会**原样显示**给用户。要强调就用「」把它包起来。
-fn handshake_error(err: WsError) -> String {
+fn handshake_error(err: WsError) -> Msg {
     let WsError::Http(response) = &err else {
-        return format!("连接失败：{err}");
+        return Msg::key("connectFailed").param("reason", err);
     };
     let status = response.status().as_u16();
     let body = response
@@ -887,9 +893,9 @@ fn handshake_error(err: WsError) -> String {
         .unwrap_or_default();
     let detail = parse_api_error(status, &body);
     if status == 401 || status == 403 {
-        return format!("{detail} —— 这个房间要凭据：去「设置 → 房间」的「凭据」那一列填上");
+        return Msg::key("connectNeedsCredentials").param("detail", detail);
     }
-    format!("连接被拒：{detail}")
+    Msg::key("connectRejected").param("detail", detail)
 }
 
 /// 一条连接的生命周期：握手 → 取历史 → 收实时。
@@ -901,7 +907,7 @@ async fn connect_once(
     debouncer: &Arc<Mutex<Debouncer>>,
     boundary: &mut Boundary,
     updates: &RoomSink,
-) -> Result<(), String> {
+) -> Result<(), Msg> {
     let request = ws_request(
         &channel.server,
         &channel.room,
@@ -955,7 +961,9 @@ async fn connect_once(
                 last_frame = Instant::now();
                 match frame {
                     None => return Ok(()), // 对端正常关闭
-                    Some(Err(e)) => return Err(format!("读 WebSocket 出错：{e}")),
+                    Some(Err(err)) => {
+                        return Err(Msg::key("wsReadFailed").param("reason", err));
+                    }
                     Some(Ok(message)) => message,
                 }
             }
@@ -967,7 +975,7 @@ async fn connect_once(
                 if !latency.waiting() {
                     let payload = json!({ "event": "ping", "data": now_ms });
                     if ws_out.send(Message::Text(payload.to_string().into())).await.is_err() {
-                        return Err("发 ping 失败".to_owned());
+                        return Err(Msg::key("wsPingFailed"));
                     }
                     latency.on_sent(now_ms);
                 }
@@ -979,10 +987,9 @@ async fn connect_once(
 
             _ = idle.tick() => {
                 if last_frame.elapsed() >= IDLE_TIMEOUT {
-                    return Err(format!(
-                        "{} 秒没有任何帧，判定连接已断",
-                        IDLE_TIMEOUT.as_secs()
-                    ));
+                    return Err(
+                        Msg::key("wsIdleTimeout").param("seconds", IDLE_TIMEOUT.as_secs()),
+                    );
                 }
                 continue;
             }
@@ -1113,7 +1120,9 @@ async fn load_history(
     let entries = match fetch_history(client, channel, limit).await {
         Ok(entries) => entries,
         Err(reason) => {
-            tracing::warn!(%reason, "取历史失败；实时仍然可用");
+            // ⚠️ `?reason` 而不是 `%reason`：`Msg` **故意没有 `Display`**
+            //（见 `msg` 的模块文档第 3 条），日志里用 `Debug`。
+            tracing::warn!(reason = ?reason, "取历史失败；实时仍然可用");
             // ⚠️ `latest_id` 是 `None`（老服务端）时**什么都不发**：那种情况下调用方
             // 刚发过 `NoWatermark`，而那条**更重要**（它说明「一行剪贴板都不写」）——
             // 拿一条「历史取不到」去把它盖掉，等于把更要紧的警告藏起来。
@@ -1154,7 +1163,12 @@ async fn apply_entry(
     entry: &ReceiveHolder,
     sink: &dyn ClipboardSink,
     debouncer: &Arc<Mutex<Debouncer>>,
-) -> Result<bool, String> {
+) -> Result<bool, Msg> {
+    // ⚠️ 写剪贴板本身的失败（`sink` 那句）走的是 `ClipboardSink` 自己的 [`Msg`]
+    // —— 那两句话是**我们说的**（「写剪贴板文本失败」），所以不裹 `verbatim`。
+    // 它下面只进日志，不进界面。
+    let wrote = |r: Result<(), Msg>| r.map(|()| true);
+
     let result = match entry {
         ReceiveHolder::Text(text) => {
             if text.content.is_empty() {
@@ -1163,12 +1177,12 @@ async fn apply_entry(
                 return Ok(false);
             }
             prime(debouncer, &ClipboardContent::Text(text.content.clone()));
-            sink.set_text(&text.content).map(|()| true)
+            wrote(sink.set_text(&text.content))
         }
         ReceiveHolder::File(file) => match download_file(client, channel, cfg, file).await {
             Ok(path) => {
                 prime(debouncer, &ClipboardContent::Files(vec![path.clone()]));
-                sink.set_files(&[path]).map(|()| true)
+                wrote(sink.set_files(&[path]))
             }
             Err(reason) => Err(reason),
         },
@@ -1176,7 +1190,8 @@ async fn apply_entry(
 
     if let Err(reason) = &result {
         // ⚠️ 只记日志：写剪贴板失败（比如别的程序占着）不该把连接断掉。
-        tracing::warn!(%reason, "把收到的内容写进剪贴板失败");
+        // ⚠️ `?reason`（Display）故意用不了 —— `Msg` 没有 `Display`，见 `msg.rs` 的类型级注释。
+        tracing::warn!(reason = ?reason, "把收到的内容写进剪贴板失败");
     }
     result
 }
@@ -1195,9 +1210,9 @@ async fn download_file(
     channel: &Channel,
     cfg: &ClientConfig,
     file: &clip9_protocol::FileReceive,
-) -> Result<PathBuf, String> {
+) -> Result<PathBuf, Msg> {
     if file.cache.is_empty() {
-        return Err("这条文件条目没有 cache（服务端没给 uuid）".to_owned());
+        return Err(Msg::key("fileEntryNoCache"));
     }
     let url = endpoint::download_url(&channel.server, &file.cache, &file.name)?;
 
@@ -1207,34 +1222,57 @@ async fn download_file(
     {
         request = request.header(AUTHORIZATION, format!("Bearer {token}"));
     }
-    let response = request.send().await.map_err(|e| format!("下载失败：{e}"))?;
+    let response = request
+        .send()
+        .await
+        .map_err(|err| Msg::key("downloadFailed").param("reason", err))?;
     let status = response.status().as_u16();
     if !(200..300).contains(&status) {
         let body = response.text().await.unwrap_or_default();
-        return Err(parse_api_error(status, &body));
+        return Err(Msg::verbatim(parse_api_error(status, &body)));
     }
     let bytes = response
         .bytes()
         .await
-        .map_err(|e| format!("读取下载内容失败：{e}"))?;
+        .map_err(|err| Msg::key("downloadReadFailed").param("reason", err))?;
 
     let dir = cfg.download_dir()?;
-    tokio::fs::create_dir_all(&dir)
-        .await
-        .map_err(|e| format!("建不了下载目录 {}：{e}", dir.display()))?;
+    tokio::fs::create_dir_all(&dir).await.map_err(|err| {
+        Msg::key("downloadDirCreateFailed")
+            .param("path", dir.display())
+            .param("reason", err)
+    })?;
 
     let name = download::local_file_name(&file.name, &file.url);
     let path = download::unique_path(&dir, &name, |candidate| candidate.exists());
-    tokio::fs::write(&path, &bytes)
-        .await
-        .map_err(|e| format!("写不了 {}：{e}", path.display()))?;
+    tokio::fs::write(&path, &bytes).await.map_err(|err| {
+        Msg::key("downloadWriteFailed")
+            .param("path", path.display())
+            .param("reason", err)
+    })?;
     Ok(path)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::msg::ParamValue;
     use serde_json::json;
+
+    /// 取那条消息上**唯一**的字符串参数。
+    ///
+    /// ⚠️ 写成「唯一」而不是「按名字取」是刻意的：这几条消息的参数都只有一个，
+    /// 而参数名换了（`reason` / `detail`）正是**判据不在名字上**的意思 ——
+    /// 我们只关心「底层那句原话有没有被原样带出来」。
+    fn detail_of(msg: &Msg) -> String {
+        assert_eq!(msg.params.len(), 1, "这几条消息只该带一个参数：{msg:?}");
+        msg.params
+            .values()
+            .next()
+            .and_then(ParamValue::as_str)
+            .unwrap_or_else(|| panic!("那个参数不是字符串：{msg:?}"))
+            .to_owned()
+    }
 
     fn config_with(latest: Option<i32>) -> Handshake {
         Handshake {
@@ -1558,9 +1596,13 @@ mod tests {
     /// ① 服务端 body 里那句理由要**照抄出来**（契约 JSON 的 `message`）；
     /// ② 401 / 403 上要**说清去哪儿填凭据**；
     /// ③ 别的状态码上**不许**提凭据 —— 那会把人引到错的地方去。
+    ///
+    /// ⚠️ 2026-09-28 之后「说清去哪儿」由**键本身**表达（两个键两条路），
+    /// 而「①照抄」由 `detail` 这个参数表达。判据不是没变严，是**换了地方住**：
+    /// 那句人话（「去凭据那一列填」）在 `ui/i18n.js` 里，由 `tools/desktop-ui-smoke.mjs` 看。
     #[test]
     fn a_refused_handshake_says_what_to_do() {
-        fn refused(status: u16, body: &str) -> String {
+        fn refused(status: u16, body: &str) -> Msg {
             let response = tokio_tungstenite::tungstenite::http::Response::builder()
                 .status(status)
                 .body(Some(body.as_bytes().to_vec()))
@@ -1568,47 +1610,48 @@ mod tests {
             handshake_error(WsError::Http(Box::new(response)))
         }
 
-        let text = refused(401, r#"{"error":"unauthorized","message":"需要认证令牌"}"#);
+        let m = refused(401, r#"{"error":"unauthorized","message":"需要认证令牌"}"#);
+        assert_eq!(m.key, "connectNeedsCredentials", "401 要说清去哪儿填凭据");
+        let detail = detail_of(&m);
         assert!(
-            text.contains("需要认证令牌"),
-            "服务端给的理由被丢了：{text}"
+            detail.contains("需要认证令牌"),
+            "服务端给的理由被丢了：{detail}"
         );
-        assert!(text.contains("401"), "状态码还是要有：{text}");
-        assert!(text.contains("凭据"), "401 要说清去哪儿填凭据：{text}");
+        assert!(detail.contains("401"), "状态码还是要有：{detail}");
 
         // 403（密码对但没这个房间的权限）走同一条补救路径。
-        let text = refused(403, "");
-        assert!(text.contains("403"), "{text}");
-        assert!(text.contains("凭据"), "403 同样要指到凭据那一列：{text}");
+        let m = refused(403, "");
+        assert_eq!(m.key, "connectNeedsCredentials", "403 同样要指到凭据那一列");
+        assert!(detail_of(&m).contains("403"), "{}", detail_of(&m));
 
         // ⚠️ 别的状态码上提「凭据」是**误导**：500 是服务端坏了，填什么凭据都没用。
-        let text = refused(500, "<html>boom</html>");
-        assert!(text.contains("500"), "{text}");
+        let m = refused(500, "<html>boom</html>");
+        assert_eq!(m.key, "connectRejected", "500 不是凭据问题，别把人引歪");
+        let detail = detail_of(&m);
+        assert!(detail.contains("500"), "{detail}");
         assert!(
-            !text.contains("凭据"),
-            "500 不是凭据问题，别把人引歪：{text}"
+            !detail.contains("凭据"),
+            "这条路里只有服务端自己说的话 + 状态码，我们一个字的补救都没加：{detail}"
         );
-
-        // ⚠️ 界面是 `textContent`，Markdown 的 `**` 会原样显示 —— 别写进来。
-        for text in [
-            refused(401, ""),
-            refused(403, ""),
-            refused(500, ""),
-            handshake_error(network_reset()),
-        ] {
-            assert!(
-                !text.contains("**"),
-                "界面不认 Markdown，星号会露出来：{text}"
-            );
-        }
     }
 
-    /// 不是 HTTP 拒绝的（网络断）走原来那句，别硬塞状态码进去。
+    /// ⚠️ 不是 HTTP 拒绝的（网络断）走原来那句，别硬塞状态码进去。
     #[test]
     fn a_handshake_failure_that_is_not_http_keeps_the_raw_reason() {
-        let text = handshake_error(network_reset());
-        assert!(text.starts_with("连接失败："), "{text}");
-        assert!(!text.contains("凭据"), "这跟凭据没关系：{text}");
+        let m = handshake_error(network_reset());
+        assert_eq!(
+            m.key, "connectFailed",
+            "没连上就是没连上 —— 不是被服务端拒的"
+        );
+        // ⚠️ ★ 「原样保留底层那句」要能验：`WsError::Io` 的 `Display` 是我们没动过的
+        // 那串字（`ConnectionReset`），一个字都不许被我们洗掉。
+        let reason = detail_of(&m);
+        assert!(
+            reason.contains("对端把连接掐了"),
+            "底层的原话要原样带出来：{reason}"
+        );
+        assert!(!reason.contains("凭据"), "这跟凭据没关系：{reason}");
+        assert!(!reason.contains("**"), "界面是 textContent，星号会露出来");
     }
 
     // ── 「到底写没写进剪贴板」──────────────────────────────────
@@ -1733,7 +1776,19 @@ mod tests {
         match update.event {
             ReceiverEvent::Status(ReceiverStatus::HistoryUnavailable { latest_id, reason }) => {
                 assert_eq!(latest_id, 7, "边界要带上 —— 界面拿它显示进度");
-                assert!(!reason.is_empty(), "空理由等于没说");
+                // ⚠️ 「理由不能为空」这条在 `Msg` 上**自动成立**（最差也是键本身），
+                // 所以判据必须**更强**才有牙：要说得出**卡在哪一步**。
+                // 这里的地址是「不是地址」（见 `unreachable_channel`），
+                // 卡的就是「地址解析」那一步 —— 报成泛泛的「连接失败」等于没说。
+                assert_eq!(
+                    reason.key, "serverAddressUnparsable",
+                    "地址都拼不出来，就得报这一步：{reason:?}"
+                );
+                assert_eq!(
+                    reason.params.get("url").and_then(ParamValue::as_str),
+                    Some("不是地址"),
+                    "要说清是哪个地址：{reason:?}"
+                );
             }
             other => panic!("历史取不到被报成了 {other:?} —— 界面会画成「已断开」"),
         }

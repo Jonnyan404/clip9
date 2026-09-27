@@ -58,6 +58,7 @@ pub mod debounce;
 pub mod download;
 pub mod endpoint;
 pub mod event;
+pub mod msg;
 pub mod receiver;
 pub mod sink;
 pub mod source;
@@ -67,6 +68,7 @@ pub mod watcher;
 pub use config::{Channel, ClientConfig, EMOJI_POOL, clean_emoji, resolve_emojis, same_endpoint};
 pub use debounce::{Debouncer, Fingerprints};
 pub use event::{ClipboardContent, ClipboardEvent, TextSubtype, UploadKind};
+pub use msg::{Msg, ParamValue};
 pub use receiver::{
     Boundary, Handshake, Latency, PeerDevice, ReceiverEvent, ReceiverHandle, ReceiverStatus,
     ReceiverUpdate, Verdict, parse_event, parse_handshake, spawn_receiver,
