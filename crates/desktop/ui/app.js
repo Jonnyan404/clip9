@@ -129,6 +129,54 @@ for (const id of ['settings-overlay', 'server-overlay']) {
   });
 }
 
+/* ── 主题（浅色 / 深色）─────────────────────────────────────────────
+ *
+ * ⚠️★ **只有两个取值，没有「跟随系统」**（Jonny 2026-09-28：「深浅模式切换支持，
+ * 图标放在侧栏顶部，**不要跟随系统选项**，本地要记住选择」）。所以这里既不读
+ * `prefers-color-scheme`，也不留「跟随系统」那一档 —— 「手动选完之后系统变了要不要跟」
+ * 是一个没有正确答案的问题，别把它引进来。
+ *
+ * ⚠️★ 启动那一次**不在这里**：`boot.js` 是**同步**的，在第一次绘制之前就把
+ * `data-theme` 贴上去了（晚一步就是「深色用户每次启动先闪一下白屏」）。这里只管
+ * 「点一下」和「点了之后那颗按钮画成什么样」。
+ *
+ * ⚠️ 存储键在这个文件里**又写了一遍**（`boot.js` 里有一份）：那一份要在这个文件
+ * 之前跑，读不到这里的常量。两处的**值**由 `tools/desktop-ui-smoke.mjs` 比对。
+ */
+const THEME_KEY = 'theme';
+
+/** 现在是什么主题。
+ *
+ * ⚠️★ **以 DOM 为准**，不以 `localStorage` 为准：启动那一下是 `boot.js` 贴的，
+ * 而「上次选了什么」只有它知道。在这里再读一遍存储，就等于给「谁说了算」立第二份定义 ——
+ * 两份漂了的表现是「存的是深色、界面是浅色」，而且不报错。
+ */
+const currentTheme = () => (document.documentElement.dataset.theme === 'dark' ? 'dark' : 'light');
+
+/** 换主题：贴到 DOM + 存下来 + 把那个按钮画成新的样子。 */
+function setTheme(theme) {
+  document.documentElement.dataset.theme = theme;
+  try {
+    localStorage.setItem(THEME_KEY, theme);
+  } catch (error) {
+    // ⚠️ 存不上**照样换**：这一次点的就得生效，只是下次启动记不住。
+    // 也不弹提示 —— 界面偏好记不住不值得打断用户，而且它没有「怎么办」可给。
+  }
+  const button = el('btn-theme');
+  // ⚠️★ 图标画的是**点下去会变成什么**，不是现在是什么（浅色时画 🌙）。
+  // 画「现在」的话，那颗月亮看起来像在说「你已经在深色里了」——
+  // 而按钮上的图标，用户默认当**动作**读。
+  button.textContent = theme === 'dark' ? '☀️' : '🌙';
+  button.title = theme === 'dark' ? '切到浅色模式' : '切到深色模式';
+}
+
+// 启动时先对一次：`boot.js` 贴的是存储里的值，而按钮的图标 / 悬停提示得跟它一致
+// （不一致的表现是「界面是深色、按钮上画着月亮」）。
+setTheme(currentTheme());
+el('btn-theme').addEventListener('click', () => {
+  setTheme(currentTheme() === 'dark' ? 'light' : 'dark');
+});
+
 /** 主界面顶部那条**一次性**提示（发不出去 / 存不上 / 配置有毛病）。
  *
  * ⚠️ 抽出来是因为同一段三行已经抄了三四遍 —— 而抄的时候最容易漏掉
