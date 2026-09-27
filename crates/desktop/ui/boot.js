@@ -4,9 +4,13 @@
   # 为什么要有这个文件（而不是写在 app.js 里）
 
   主题是 `data-theme` 上的一对 CSS 令牌（`index.html` 里那两段 `:root[data-theme=…]`），
-  所以晚一步贴就晚一步生效 —— 表现是**深色用户每次启动都先闪一下白屏**。
+  **侧栏收没收起**是 `data-sidebar`（`index.html` 里那段 `:root[data-sidebar='narrow']`）——
+  两个都是「晚一步贴就晚一步生效」。
   `app.js` 带 `defer`（解析完才跑），那一拍已经可能画过了；而 `boot.js` 是**同步**的，
   它跑的时候 `<body>` 还没解析出来，绘制一定还没开始。
+  ⚠️ 两个的表现不同但都难看：主题晚了是**闪一下白屏**（深色用户每次启动），
+  侧栏晚了是**先画一条 208px 的宽栏再跳成 56px**。两个都不报错 ——
+  所以宁可在这里多读一个键。
 
   # ⚠️ 为什么不写成 `<head>` 里的内联 `<script>`
 
@@ -28,6 +32,12 @@
   `localStorage` 在「不允许存储」的上下文里会**抛异常**（隐私模式 / 被策略挡）。
   那种情况下退回默认值照常跑，**不报错也不打断** —— 这只是界面偏好，
   为它挡住整个窗口不值得。
+
+  # ⚠️ 这份脚本**只往 `<html>` 上写属性**，不碰任何元素
+
+  它跑在 `<body>` 解析之前，`getElementById` 在这时候一定拿不到东西。
+  所以「侧栏收起」在这里也只是 `data-sidebar` 那个属性，样式由 CSS 读
+  （那个属性**只有** `index.html` 里那段读，判据 13 钉着「写了没人读」那半边）。
 */
 
 /* ⚠️★ 里面的常量**必须写在 IIFE 里**，不能摆在文件顶层。
@@ -41,12 +51,16 @@
    所以放进 IIFE 不影响它 —— 它比的是「两处的值一不一样」，不是「在哪个作用域里」。 */
 (() => {
   const THEME_KEY = 'theme';
+  const SIDEBAR_KEY = 'sidebar';
   const root = document.documentElement;
   try {
     const theme = localStorage.getItem(THEME_KEY);
     // ⚠️ 只认这两个值：别的值（手改过 / 以后改过名）**不贴** ——
     // 贴一个没定义过的 `data-theme` 会让两套令牌**都不匹配**，整页变成无样式的黑字白底。
     if (theme === 'dark' || theme === 'light') root.dataset.theme = theme;
+    // ⚠️ 侧栏只认 `'narrow'` 这一个值：**读不到、值不认得、存的是 `'wide'`** 一律当宽的。
+    // 所以这里**不需要**写 `'wide'`（`app.js` 那边会显式写，是为了让「点了一下」在 DOM 上看得见）。
+    if (localStorage.getItem(SIDEBAR_KEY) === 'narrow') root.dataset.sidebar = 'narrow';
   } catch (error) {
     // 读不到就用 `index.html` 里写死的默认值 —— 这不是错误，不值得打断启动。
   }

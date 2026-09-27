@@ -177,6 +177,39 @@ el('btn-theme').addEventListener('click', () => {
   setTheme(currentTheme() === 'dark' ? 'light' : 'dark');
 });
 
+const SIDEBAR_KEY = 'sidebar';
+
+/** 侧栏收起了没有。
+ *
+ * ⚠️★ 与主题同一个规矩：**以 DOM 为准**（`boot.js` 在第一次绘制之前就贴好了，
+ * 而「上次收没收起」只有它知道）。再读一遍存储就等于立第二份定义。
+ */
+const sidebarNarrow = () => document.documentElement.dataset.sidebar === 'narrow';
+
+/** 收起 / 展开侧栏：贴属性 + 存下来 + 把那个按钮画成新的样子。
+ *
+ * ⚠️★ **宽的时候也显式写 `'wide'`**（不是删掉属性）：CSS 里两者同义，但显式写出来之后
+ * 「点了一下」在 DOM 上**看得见**—— 排查时能分清「事件没挂上」和「样式没生效」。
+ */
+function setSidebar(narrow) {
+  document.documentElement.dataset.sidebar = narrow ? 'narrow' : 'wide';
+  try {
+    localStorage.setItem(SIDEBAR_KEY, narrow ? 'narrow' : 'wide');
+  } catch (error) {
+    // ⚠️ 与主题同一条：存不上**照样收**（这一次点的就得生效），只是下次启动记不住。
+  }
+  const button = el('btn-sidebar');
+  // ⚠️ 与主题那颗图标同一条规矩：画的是**点下去会变成什么**（宽的时候画「收起」）。
+  // ⚠️ 而它的 `title` 是收回来的**唯一**线索之一 —— 收起之后这一行还在，全靠它把人劝回来。
+  button.textContent = narrow ? '▶' : '◀';
+  button.title = narrow ? '展开侧栏' : '收起侧栏';
+}
+
+setSidebar(sidebarNarrow());
+el('btn-sidebar').addEventListener('click', () => {
+  setSidebar(!sidebarNarrow());
+});
+
 /** 主界面顶部那条**一次性**提示（发不出去 / 存不上 / 配置有毛病）。
  *
  * ⚠️ 抽出来是因为同一段三行已经抄了三四遍 —— 而抄的时候最容易漏掉
@@ -454,9 +487,21 @@ function renderRooms(state) {
     down.title = '获取远程房间最新消息写入本地剪贴板';
     down.dataset.action = 'download';
     down.dataset.index = String(index);
+    // ⚠️ 延迟那个胶囊**留住引用**：下面那句 `title` 要读它的文字（见那段注释）。
+    const latency = renderLatency(room.connection?.latency);
     const dirs = h('span', 'dirs');
-    dirs.append(up, down, renderLatency(room.connection?.latency));
+    dirs.append(up, down, latency);
     node.append(dirs);
+
+    // ⚠️★ 收起侧栏之后，这一行的**名字 / 条数 / 延迟都不画了**（见 `index.html` 里
+    // `[data-sidebar='narrow']` 那一段）—— 所以这个 `title` 不是「可有可无的悬停提示」，
+    // 它是那三样在收起状态下的**唯一出口**。
+    // ⚠️ 延迟那一句**直接取那个胶囊的文字**（`latency.textContent`）：
+    // 不在这里另写一遍「多少 ms / 超时 / —」—— 那就是第二份「延迟怎么显示」的定义，
+    // 而它一定会在某次改动里漂（`超时` 那条最容易被漏掉）。
+    // ⚠️ 宽栏里这个 `title` 也在（同一个属性、不分模式）：要「只在收起时设」就得让
+    // `renderRooms` 去读 DOM 状态，而**多一个会漂的状态**比多一个冗余的悬停提示更贵。
+    node.title = `${room.name} · ${room.count} 条 · 延迟 ${latency.textContent}`;
 
     node.dataset.index = String(index);
     host.append(node);
@@ -631,12 +676,17 @@ function render(state) {
   el('dg-roombytes').textContent = room ? sizeLabel(room.textBytes) : '—';
 
   const problems = el('problems');
-  if (state.problems.length) {
-    problems.hidden = false;
-    problems.textContent = `配置有毛病：${state.problems.join('；')}`;
-  } else {
-    problems.hidden = true;
-  }
+  // ⚠️★ 全文**同时**挂到那一块的 `title` 上：侧栏收起时它只画一个 `⚠`
+  //（56px 放不下这句话），悬停读得到 —— 「收起来就看不见了」是静默失败，不能那么干。
+  // ⚠️ 这里两个出口写的是**同一个字符串**（不是两句同义的话）：一处是画出来的正文，
+  // 一处是它的悬停提示。所以「有毛病 / 没毛病」也只需要判一次。
+  const problemText = state.problems.length
+    ? `配置有毛病：${state.problems.join('；')}`
+    : '';
+  problems.hidden = problemText === '';
+  problems.title = problemText;
+  // ⚠️ 只写那一格 `span`，不写 `problems` 本身 —— 它里面还有一个收起来时才画的 `⚠`。
+  el('problems-text').textContent = problemText;
 
   // ⚠️★ 壳里那条提示**走同一条显示路径**（`showNotice`）—— 见它的注释：
   // 原来这里直接写进 DOM，而 `clear_notice` 会让**下一拍**的重绘把它抹掉，

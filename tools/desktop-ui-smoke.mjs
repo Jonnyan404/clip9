@@ -18,7 +18,7 @@
 // `cloud-clip/tools/page-smoke.mjs`，**只有手写 UI 这一侧是裸奔的**
 //（见 `docs/specs/desktop-client.md` §1.1 缺口 C）。
 //
-// # 判据（**第 1、2、4、5、6、7、8、9、10、11、12 条算失败**）
+// # 判据（**第 1、2、4、5、6、7、8、9、10、11、12、13 条算失败**）
 //
 // 1. `app.js` 引用到的每一个 id，`index.html` 里必须存在 —— 不通过 = 退出码 1；
 // 2. `index.html` 真的加载了**每一个**该加载的脚本（`boot.js` / `app.js`）；
@@ -43,6 +43,7 @@
 // 11. **两份脚本合起来要能过一遍解析** —— 不通过 = 退出码 1。理由见下。
 // 12. **房间清单里每个 `Channel` 字段，界面都得发得回去**（`addRoomRow` 与保存那两处）
 //    —— 不通过 = 退出码 1。理由见下。
+// 13. **脚本往 `<html>` 上写的属性，样式表要真的读它** —— 不通过 = 退出码 1。理由见下。
 //
 // # ⚠️ 第 4 条为什么算失败，而不是「提一句」
 //
@@ -183,6 +184,28 @@
 //
 // ⚠️ 判据是**从 `client/src/config.rs` 里数出来的**（不手写清单）：
 // 写死的话，下次给 `Channel` 加字段时这条自检照样绿 —— 而它绿的时候看起来一切正常。
+//
+// # ⚠️ 第 13 条为什么算失败（写了 `<html>` 上的属性，样式表要有人读）
+//
+// 2026-09-28 长出了**第二条**这样的属性（`data-sidebar`，在那之前只有 `data-theme`）。
+// 两个都是「界面偏好」：**脚本往 `<html>` 上贴一个属性，CSS 按它换一套样式**。
+//
+// ⚠️★ 这个接缝的坏法**只有一半会报错**：
+//   · 属性写了、样式没人读 → 那个开关点下去**什么都不发生**（不是崩，是「没反应」）。
+//     用户会再点一次、再看一眼，还是没反应 —— 而控制台里干干净净。
+//   · 属性没人写、样式里有选择器 → 那个状态**永远进不去**（一条死样式）。
+// 两种都不会让任何东西变红 —— 只有把两侧放在一起比才看得见。
+//
+// ⚠️ 所以两个方向都看，但**重量不同**（和判据 3 一个道理）：
+//   · 「写了没人读」→ **算失败**：那是**已经做出来的功能不生效**；
+//   · 「有人读没人写」→ **只提示**：它可能是写在 HTML 标记上的（`<div data-pane="rooms">`
+//     那种不走 `dataset`，脚本当然不写它），也可能是功能删干净之后留下的死样式。
+//
+// ⚠️★ 只认**两种写法**：`document.documentElement.dataset.X = …` 与 `root.dataset.X = …`
+//（`boot.js` 里那个 `root` 是它自己的局部名）。全文匹配 `dataset.X =` 会把
+// `up.dataset.action = 'upload'` 那一大批**元素上的**属性也算进来 —— 那些不归这条管。
+// ⚠️ 判「样式读到了没有」用的是**剥掉注释之后的 `<style>`**：注释里写一句
+// `[data-sidebar='narrow']` 不算读过（判据 8 就在这上面栽过，见那段注释）。
 //
 // # ⚠️ 三条「看不见」的地方（写在这里，免得下次以为是漏检）
 //
@@ -609,6 +632,46 @@ if (clientReadError) {
         console.error('    少 `emoji` → 用户挑的图标全变回「自动」。两者都**不报错**。');
       }
     }
+  }
+}
+
+// ── 判据 13：往 `<html>` 上写的属性，样式表要有人读（理由见文件头）──────────────
+// ⚠️★ 先剥掉注释：注释里出现一句 `[data-sidebar='narrow']` **不算**样式表读了它
+//（判据 8 就是被注释喂饱的，见那段注释）。
+const styleText = [...html.matchAll(/<style[^>]*>([\s\S]*?)<\/style>/gi)]
+  .map((match) => match[1].replace(/\/\*[\s\S]*?\*\//g, ''))
+  .join('\n');
+
+// ⚠️ `(?!=)`：不加的话 `dataset.theme === 'dark'` 那种**读**也会被当成**写**。
+const HTML_ATTR_WRITE = /(?:documentElement|\broot)\.dataset\.(\w+)\s*=(?!=)/g;
+const writtenAttrs = new Set();
+for (const source of [js, boot ?? '']) {
+  for (const match of source.matchAll(HTML_ATTR_WRITE)) writtenAttrs.add(match[1]);
+}
+
+if (!writtenAttrs.size) {
+  failed = true;
+  console.error('✗ 判据 13 在两份脚本里一个 `<html>` 上的属性都没找到 —— 这条自检要跟着代码改：');
+  console.error('    它找的是 `document.documentElement.dataset.X = …` / `root.dataset.X = …`。');
+} else {
+  for (const name of writtenAttrs) {
+    if (!styleText.includes(`[data-${name}`)) {
+      failed = true;
+      console.error(`✗ 脚本往 <html> 上写了 \`data-${name}\`，而样式表里没有一条选择器读它：`);
+      console.error('  ⚠️ 症状：那个开关点下去**什么都不发生** —— 属性真的变了、样式没人理，');
+      console.error(`    不报错，再点一次还是没反应。要么在 index.html 里补一条 \`:root[data-${name}=…]\`,`);
+      console.error('    要么就别写这个属性。');
+    }
+  }
+  // ⚠️ 反方向**只提示**（理由见文件头）—— 它可能压根不是 `dataset` 写的。
+  const cssAttrs = new Set(
+    [...styleText.matchAll(/\[data-(\w+)/g)].map((match) => match[1]),
+  );
+  const neverWritten = [...cssAttrs].filter((name) => !writtenAttrs.has(name));
+  if (neverWritten.length) {
+    console.warn(`⚠ 样式表读了 ${neverWritten.length} 个**没有脚本会写**的属性：${neverWritten.join('、')}`);
+    console.warn('  ⚠️ 只是提醒，不算失败 —— 它可能是写死在 HTML 标记上的（那种不走 `dataset`），');
+    console.warn('    也可能是某条已经删掉的功能留下的死样式（§8.1 第 6 条那一类）。');
   }
 }
 
