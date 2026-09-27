@@ -10,7 +10,7 @@
 //! 2. **起下行**：[`spawn_receiver`]，读它的更新通道搬进 [`Store`]；
 //! 3. ⚠️★ 两者**共享同一个 [`Debouncer`]**（[`shared_debouncer`]）—— 这**不是优化，是功能前提**：
 //!    下行写剪贴板前要 `prime` 指纹来防回环，而「谁记得上一次是什么」只能有一处；
-//! 4. **配置变了要重启**（房间开关换了 → 下行得重连；监听开关换了 → 线程得起停）。
+//! 4. **配置变了要重启**（房间开关换了 → 下行得重连；**↑ 全关 → 监听线程要停**）。
 //!
 //! # 为什么这个文件里没有 `tauri`
 //!
@@ -62,7 +62,7 @@ impl Runtime {
     /// 之后该做的事，所以这里做成幂等的。
     pub fn start(self: &Arc<Self>) {
         self.stop();
-        self.start_watcher();
+        self.sync_watcher();
         self.start_receiver();
     }
 
@@ -80,14 +80,53 @@ impl Runtime {
         self.start_receiver();
     }
 
-    /// 只重启剪贴板监听。
+    /// 按配置决定剪贴板监听线程**该不该在跑** —— 唯一的判据是
+    /// [`clip9_client::ClientConfig::watches_clipboard`]（有任何房间开着 ↑）。
+    ///
+    /// ⚠️★ 2026-09-27 用户定的：「上传全关就关闭监听，开一个就打开监听。
+    /// 下载应该不需要调用监听剪贴板」。那个独立的「剪贴板监听开关」早就删了
+    ///（`config.rs` 模块文档第 5 条），所以这件事只能由 ↑ 反推 ——
+    /// 而**判据只有一处**（`watches_clipboard`，它又从 `upload_channels` 推出来），
+    /// 这里只是把它接到线程的生命周期上。
+    ///
+    /// ⚠️★ 为什么必须**真的停掉**，而不是「让它空转、反正 `upload_channels()` 会筛成空」：
+    /// ① 空转就是每 `poll_interval_ms` 读一次系统剪贴板 —— 一个用户什么都没开、
+    ///    却一直在读剪贴板的后台进程，是这个项目从第一天起就不想要的那类东西；
+    /// ② 更要紧的是**语义**：↑ 全关时监听线程什么都做不了，留着它只会让
+    ///    「为什么它还在读我的剪贴板」变成一个没法回答的问题。
+    ///
+    /// ⚠️ **↓ 不是理由**：下载是「把收到的写进剪贴板」，那是 `receiver` 干的活
+    ///（`apply_entry` 里那个 `sink`），跟这个轮询线程一点关系都没有。
+    ///
+    /// ⚠️ 只在该起 / 该停的时候才动句柄：每次调用都「先停再起」会让
+    /// `upload_channels` 的每次变动都白丢一个轮询间隔（`stop()` 会 join 线程），
+    /// 而那段窗口里的剪贴板变化是**真丢**。
+    pub fn sync_watcher(self: &Arc<Self>) {
+        let should_run = self.store.config().watches_clipboard();
+        let running = self
+            .watcher
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .is_some();
+        match watcher_action(should_run, running) {
+            WatcherAction::Start => self.start_watcher(),
+            WatcherAction::Stop => self.stop_watcher(),
+            WatcherAction::Leave => {}
+        }
+    }
+
+    /// 只重启剪贴板监听（配置里与它有关的东西变了：轮询间隔）。
     ///
     /// ⚠️ 轮询间隔变了要**重启线程**才生效 —— 那个间隔是 `spawn_watcher` 时读进
     /// `WatchConfig` 的（见 [`watch_config`]），改配置不会影响一个已经在跑的线程。
     /// 不重启的话症状是「设置里改了间隔，实际没变」—— 又一例「配了不生效」。
+    ///
+    /// ⚠️★ 收尾走 [`Runtime::sync_watcher`] 而**不是** `start_watcher`：
+    /// ↑ 全关时用户改间隔，不该顺手把线程起回来（那正是「配了不生效」的反面：
+    /// 配了个没人要的东西，然后它跑起来了）。
     pub fn restart_watcher(self: &Arc<Self>) {
         self.stop_watcher();
-        self.start_watcher();
+        self.sync_watcher();
     }
 
     fn stop_watcher(&self) {
@@ -103,13 +142,11 @@ impl Runtime {
         }
     }
 
-    /// 起剪贴板监听。
+    /// 起剪贴板监听（**调用方必须先确认它该跑** —— 见 [`Runtime::sync_watcher`]）。
     ///
-    /// ⚠️★ **它没有开关了**（2026-09-26）：原来这里开头判 `enable_monitoring`，
-    /// 那个字段已经删掉 —— 要不要发出去只看每个房间的 ↑（`config.rs` 模块文档第 5 条）。
-    /// 所以一个房间都没开 ↑ 时，这个线程**照样在跑**，只是每次都被
-    /// `upload_channels()` 筛成空。代价是那点空转，换来的是「开关」与
-    /// 「线程生命周期」不再绑在一起（§4.7 刚解开的那团结，别再打回去）。
+    /// ⚠️★ 这里**不做那个判断**（原来这里判过 `enable_monitoring`，那个字段已经删了）：
+    /// 判断在 `sync_watcher` 里一处，这里只管起。两处都判的话，
+    /// 「该跑却起不来」和「不该跑却起了」会各有一半概率发生，而且都不报错。
     fn start_watcher(self: &Arc<Self>) {
         if self
             .watcher
@@ -192,6 +229,37 @@ impl Runtime {
     pub fn stop(&self) {
         self.stop_watcher();
         self.stop_receiver();
+    }
+}
+
+/// 监听线程**该怎么动**（[`Runtime::sync_watcher`] 的判据）。
+///
+/// ⚠️★ 抽成纯函数是为了能测 —— 与 [`watch_config`] 同一个理由：这条接线错了
+/// **不会有任何报错**，只会「剪贴板明明在变，房间一条都没收到」或者反过来
+/// 「什么都没开却在读剪贴板」。而它的两个输入（配置、线程在不在）都要真起
+/// 一个运行时才拿得到，所以把**判断**与**动作**分开。
+///
+/// ⚠️★ `(true, true)` 与 `(false, false)` 必须是 [`WatcherAction::Leave`]，
+/// 不能写成「先停再起」：`stop_watcher()` 会 **join** 那个线程（最多等一个轮询间隔），
+/// 于是每次 `sync_watcher()`（用户每点一下 ↑）都会白丢一个间隔 ——
+/// 而**那段窗口里复制的东西是真的没发出去**，且不会有任何提示。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum WatcherAction {
+    /// 该跑而没跑 → 起。
+    Start,
+    /// 不该跑而在跑 → 停。
+    Stop,
+    /// 状态已经对了 → **什么都别做**（尤其是别重启）。
+    Leave,
+}
+
+/// 「该不该跑」+「现在跑没跑」→ 该怎么办。
+fn watcher_action(should_run: bool, running: bool) -> WatcherAction {
+    match (should_run, running) {
+        (true, false) => WatcherAction::Start,
+        (false, true) => WatcherAction::Stop,
+        // ⚠️ 这两条是**同一件事的两面**：状态已经对了，别动它。
+        (true, true) | (false, false) => WatcherAction::Leave,
     }
 }
 
@@ -448,6 +516,27 @@ mod tests {
         assert_eq!(
             watch_config(&config).poll_interval,
             std::time::Duration::from_millis(1)
+        );
+    }
+
+    /// ⚠️★ 四条组合都要钉：两个方向各一次「该动」，两次「**别动**」。
+    ///
+    /// 只测「该起 / 该停」的话，「每次都先停再起」这种写法照样绿 ——
+    /// 而它每点一下 ↑ 都会白丢一个轮询间隔（`stop` 要 join 线程），
+    /// 那段窗口里复制的东西**真的没发出去**，而且没有任何提示。
+    #[test]
+    fn the_watcher_only_moves_when_it_has_to() {
+        assert_eq!(watcher_action(true, false), WatcherAction::Start);
+        assert_eq!(watcher_action(false, true), WatcherAction::Stop);
+        assert_eq!(
+            watcher_action(true, true),
+            WatcherAction::Leave,
+            "已经起着的别再起 —— 停一下再起会白丢一个轮询间隔"
+        );
+        assert_eq!(
+            watcher_action(false, false),
+            WatcherAction::Leave,
+            "本来就不该跑，别去动那个空句柄"
         );
     }
 }
