@@ -178,11 +178,51 @@ impl Default for ServerConfig {
     }
 }
 
+/// `text.limit` **有意义的上限**（字节）。
+///
+/// ⚠️★ 这不是一个「口味」上的建议，而是**能不能生效**的分界线：
+/// `/text` 的请求体在 HTTP 层还有一道**绝对**上限（`clip9-server` 的
+/// `TEXT_BODY_HARD_CAP`，取的就是这个数）。配得比它大，超出那一截就**永远到不了**
+/// 我们自己的检查 —— 而框架层拒绝时返回的 body **不是契约形状**
+/// （客户端只能吐一句没有数字的错，见 `uploader` 的模块文档）。
+///
+/// 也就是说：把 `text.limit` 配成 16 MiB，得到的**不是**「上限变成了 16 MiB」，
+/// 而是「上限**看起来**是 16 MiB，实际上 8 MiB 以上一律以另一种方式失败」。
+/// 这正是本项目最忌讳的那类问题（**配了不生效**），所以保存时必须挡住它。
+///
+/// ⚠️ 为什么放在 `core` 而不是某一端：**「配置能配出什么」是这个类型自己的事**，
+/// 而要用它的是两边 —— 服务端拿它设那道闸、桌面端拿它校验表单。
+/// 在两处各写一个 `8 * 1024 * 1024` 就是「第二份定义」，而两份一定会漂
+/// （`crates/desktop` 的 `Cargo.toml` 里那条注释写的就是同一个道理）。
+///
+/// ⚠️ 别顺手把它调大来「支持长文」：主流 IM 的单条正文上限是 2k–4k 字符
+/// （`docs/specs/desktop-client.md` §8.3 ①），长内容该走**文件**（`/upload` + 分片）。
+/// 这个数只保证「配出来的值都是真的」，
+/// 8 MiB 本身已经比缺省的 4096 大三个数量级。
+pub const TEXT_LIMIT_MAX: i64 = 8 * 1024 * 1024;
+
+/// `text.limit` 的配置。
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct TextConfig {
     /// 单条正文上限。默认 4096 —— ⚠️ 内容变换类功能因此一律放在前端做（走网络纯亏）。
+    ///
+    /// ⚠️ 判的是**字节**（`handlers` 里用的是 `len()`），不是字符 ——
+    /// 一个汉字 3 字节，所以 4096 时中文大约只能发 1365 个字。
+    /// 上限见 [`TEXT_LIMIT_MAX`]；`0` = **不限**。
     pub limit: i64,
+}
+
+impl TextConfig {
+    /// 这个上限配得**能生效**吗（见 [`TEXT_LIMIT_MAX`]）。
+    ///
+    /// ⚠️ `0` 是合法的，而且语义是**不限**（服务端判的是 `limit > 0`）——
+    /// 别把它当成「没设」。负数一律拒绝：它与 `0` 等效，却又看起来像笔误，
+    /// 而「看着像笔误、行为却是个别的意思」正是最容易积下来的一类坑。
+    #[must_use]
+    pub fn is_effective(&self) -> bool {
+        (0..=TEXT_LIMIT_MAX).contains(&self.limit)
+    }
 }
 
 impl Default for TextConfig {
@@ -348,6 +388,35 @@ fn normalize_auth_json_value(v: &serde_json::Value) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// `text.limit` 能不能生效 —— 这个判定是**保存时的闸**，
+    /// 判错的后果是「用户配了一个看起来更大、其实更坏的上限」（见 `TEXT_LIMIT_MAX` 的注释）。
+    #[test]
+    fn text_limit_effectiveness_boundary() {
+        let with = |limit: i64| TextConfig { limit };
+
+        // 缺省在范围内 —— 否则默认部署就带病
+        assert!(TextConfig::default().is_effective(), "缺省 4096");
+
+        // 边界：正好等于上限**合法**（它是「不超过」，不是「小于」）
+        assert!(with(TEXT_LIMIT_MAX).is_effective(), "正好等于上限");
+        assert!(
+            !with(TEXT_LIMIT_MAX + 1).is_effective(),
+            "比上限多 1 字节就不可达"
+        );
+
+        // ⚠️ `0` 合法且语义是**不限**（服务端判的是 `limit > 0`）—— 别当成「没设」
+        assert!(with(0).is_effective(), "0 = 不限，是合法值");
+        // 负数与 0 等效却看着像笔误 → 拒绝
+        assert!(!with(-1).is_effective(), "负数要拒");
+        assert!(!with(i64::MIN).is_effective(), "极端负数也不能 panic/溢出");
+
+        // ⚠️ 上限必须**远大于**缺省：小的话「加上限」就变成「砍掉现有能力」
+        assert!(
+            TEXT_LIMIT_MAX > TextConfig::default().limit,
+            "上限比缺省还小 —— 那是往回退"
+        );
+    }
 
     #[test]
     fn auth_value_normalizes_like_go() {

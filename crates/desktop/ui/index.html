@@ -1018,9 +1018,13 @@ table.ra td input[type='checkbox'] { margin: 0; }
                      一个汉字 3 字节，所以 4096 时中文大约只能发 1365 个字。
                      不写的话，用户填了 4096 会以为能发 4096 个字，然后被服务端拒掉
                     （`docs/specs/desktop-client.md` §8.2 第 4 条）。
-                     ⚠️ 将来给服务端请求体加了**显式硬上限**之后（同文件 S1 那一项），
-                     这个 input 要补 `max=`，并把真实天花板也写进来 —— 现在不能写，因为还没有。 -->
-                <p class="sub" style="margin:6px 0 0">⚠️ 按<b>字节</b>判：一个汉字 3 字节，所以填 4096 时中文大约只能发 1365 个字。填 <b>0</b> = <b>不限</b>（服务端就不判了）。</p>
+                     ⚠️ S1 给服务端请求体加了**显式硬上限**之后，这里补上了真实天花板
+                     （`#cfg-textlimit-max` 的那个数来自 `clip9-core` 的 `TEXT_LIMIT_MAX`，
+                      不在页面里写死 —— 写死就是第二份定义，两份一定会漂）。
+                     ⚠️ `input` 上的 `max` **拦不住手输的值**（这个表单没有 form 校验），
+                     真正拦住它的是保存时那条 Rust 侧校验（`server_config.rs::patch`）。
+                     所以这两处都要有：`max` 是提示，校验才是闸。 -->
+                <p class="sub" style="margin:6px 0 0">⚠️ 按<b>字节</b>判：一个汉字 3 字节，所以填 4096 时中文大约只能发 1365 个字。填 <b>0</b> = <b>不限</b>（服务端就不判了）。能生效的最大值：<b id="cfg-textlimit-max">—</b>，比它大的正文在服务端<b>收不到</b>（超出的部分不是「被拒」，而是<b>根本到不了</b>那条判定）。</p>
                 <div class="row2">
                     <div class="field"><label>文件过期（秒）</label><input class="inp" id="cfg-fileexpire" type="number" min="0" /></div>
                     <div class="field"><label>分片大小（字节）</label><input class="inp" id="cfg-filechunk" type="number" min="0" /></div>
