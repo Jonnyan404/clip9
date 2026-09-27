@@ -340,6 +340,24 @@ pub struct ClientConfig {
     #[serde(default)]
     pub enable_autostart: bool,
 
+    /// **要不要占住那条全局快捷键**（显示 / 隐藏主窗口，默认 `⌘⇧V`）。
+    ///
+    /// ⚠️ **只有桌面端会用**（Android / OpenWrt 那边忽略它）—— 与 `enable_autostart` 同一个理由。
+    ///
+    /// ⚠️★ 默认 **true**，这一点与 `enable_autostart`（默认关）**相反**，理由是两者的
+    /// 「默认不生效」代价不一样：
+    ///   · 自启默认开 = **往用户的机器里塞东西**（未经同意），所以必须先问；
+    ///   · 快捷键默认关 = 一个**纯客户端内部**的功能不生效，而它恰恰是
+    ///     「窗口被关掉（= 藏起来）之后唯一的回头路」之一 —— 用户按了没反应时
+    ///     根本不会想到「它默认是关的」。
+    /// 它**不占**任何系统资源，也不需要权限（只是一个本进程的键盘钩子）。
+    ///
+    /// ⚠️ 落地方式**随平台不同**（macOS 的 `RegisterEventHotKey` / Windows 的
+    /// `RegisterHotKey` / Linux 的 X11 grab），由桌面壳负责 —— 这个 crate **不碰**
+    /// （它连 `tauri` 都不许出现，见 `desktop-client.md` §2）。
+    #[serde(default = "default_true")]
+    pub enable_hotkey: bool,
+
     /// **要不要连本机那个自带的服务端**（= 起它、并把它当成一个可连的服务端）。
     ///
     /// ⚠️ **只有桌面端会用**（Android / OpenWrt 那边忽略它）—— 与 `enable_autostart` 同一个理由。
@@ -396,6 +414,8 @@ impl Default for ClientConfig {
             notify_download: true,
             // ⚠️ 默认关（理由见字段注释）—— 显式写出来，别靠 `Default` 的隐式值。
             enable_autostart: false,
+            // ⚠️ 反过来：默认**开**（装完就该能用，见字段注释）。
+            enable_hotkey: true,
             // ⚠️ 反过来：默认**开**（装完就该能用，见字段注释）。
             enable_local_server: true,
             base_dir: None,
@@ -970,6 +990,32 @@ mod tests {
             !parsed.enable_autostart,
             "老配置里没有这个键，读出来必须是关的"
         );
+    }
+
+    /// ⚠️★ **全局快捷键默认是开**的 —— 与 `enable_autostart`（默认关）**故意相反**，
+    /// 两边都别记反：那一个是「往用户机器里塞东西」，必须先问；这一个只是
+    /// 「本进程占一个组合键」，而它默认关的样子是「按了没反应」——
+    /// 用户不会想到「它默认是关的」。
+    ///
+    /// ⚠️ 顺带钉住「老配置读出来也不能变成关着」（文件里没有这个键时
+    /// `#[serde(default = "default_true")]` 必须落到 `true`），
+    /// 以及「关掉之后要能存下来」（设了不生效是同一类病）。
+    #[test]
+    fn the_hotkey_is_on_by_default_and_for_old_configs() {
+        assert!(
+            ClientConfig::default().enable_hotkey,
+            "默认要开（理由见字段注释）"
+        );
+        let parsed: ClientConfig = serde_json::from_str("{}").expect("空对象也要能读出来");
+        assert!(parsed.enable_hotkey, "老配置里没有这个键，读出来必须是开的");
+
+        let off = ClientConfig {
+            enable_hotkey: false,
+            ..ClientConfig::default()
+        };
+        let json = serde_json::to_string(&off).unwrap();
+        let back: ClientConfig = serde_json::from_str(&json).unwrap();
+        assert!(!back.enable_hotkey, "关掉之后必须存得下来");
     }
 
     /// ⚠️★ **「随客户端启动」默认开着** —— 与 `enable_autostart` 正好相反，两边都别记反。

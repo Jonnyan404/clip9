@@ -211,6 +211,13 @@
       'openWebTaskFailed': '打开网页版失败：{reason}',
       'openBrowserFailed': '用系统浏览器打开 {url} 失败：{reason}',
       'noBundledServer': '这个客户端没有自带服务端（找不到 clip9-server）',
+      // ── 桌面行为：全局快捷键（`crates/desktop/src/hotkeys.rs`）──
+      //    ⚠️★ 这三条只在**注册 / 撤销那一下**发出来，落到提示区（`Store::notice`）。
+      //    用户看到的症状是「按了没反应」，而原因在这里 —— 所以文案要说**为什么**，
+      //    不能只说「失败了」（他会去查别的程序、去重启客户端）。
+      'hotkeyRegisterFailed': '占不住 {shortcut}（多半是别的程序占着它）：{reason}',
+      'hotkeyUnregisterFailed': '撤掉那条全局快捷键失败：{reason}',
+      'hotkeyUnparsable': '快捷键 {shortcut} 写错了，认不出来：{reason}',
       'logUnreadable': '读日志失败（{path}）：{reason}',
       'logSeekFailed': '日志太长了，跳到结尾那段失败（{path}）',
       'logReadFailed': '读日志失败（{path}）：{reason}',
@@ -253,7 +260,7 @@
       '桌面': 'Desktop',
       '🖥 窗口与托盘': '🖥 Window & tray',
       '⌨ 快捷键': '⌨ Hotkeys',
-      '🔔 通知与主题': '🔔 Notifications & theme',
+      '🔔 通知': '🔔 Notifications',
       '本机': 'This machine',
       '🗄 本地服务端': '🗄 Local server',
       '⚙ 服务端配置': '⚙ Server config',
@@ -331,12 +338,25 @@
       '藏起来': 'hides it',
       '—— 同步照常跑，要退出得走托盘。': ' — syncing keeps running; quitting goes through the tray.',
 
-      // ── 页：快捷键（item 1 之前只有一句占位）────────────────────
+      // ── 页：快捷键 ──────────────────────────────────────────────
+      // ⚠️ 中间那一行被 `<b id="sc-hotkey-key">` 拆成两片（那个组合键的写法**由壳算**），
+      //   所以**空白带在片内**：英文拼起来是 `Press ⌘⇧V to show / …`（少一个空格就是 `Press⌘⇧V`）。
       '快捷键': 'Hotkeys',
-      '还没做。': 'Not built yet.',
+      '按一下': 'Press ',
+      '显示 / 隐藏主窗口 —— 再按一下换回来。':
+        ' to show / hide the main window — press again to switch back.',
+      '全局快捷键': 'Global shortcut',
+      '关掉就不占这个组合键': 'off = the combination is released',
+      // ⚠️ 下面两条是**系统里的真相**那一行的两个分支（`refreshHotkeyState`）——
+      //   它们说的是「现在这个键按下去有没有用」，所以都带「现在」。
+      '占上了 —— 现在按这个键有效。': 'Held — the key works right now.',
+      '⚠️ 没占上（多半是别的程序占着它）—— 现在按这个键没反应。':
+        '⚠️ Not held (another program probably owns it) — pressing the key does nothing right now.',
+      '⚠️ 问不到系统里的快捷键状态：{error}':
+        '⚠️ Could not ask the system about the shortcut: {error}',
 
-      // ── 页：通知与主题 ──────────────────────────────────────────
-      '通知与主题': 'Notifications & theme',
+      // ── 页：通知 ────────────────────────────────────────────────
+      '通知': 'Notifications',
       '剪贴板上那两件事发生时你多半不在这个窗口里，所以走':
         'When either clipboard event happens you are probably not looking at this window, so these go through ',
       '系统通知。': 'system notifications.',
@@ -352,11 +372,6 @@
       '响（「已发送」是噪音）；第二条': ' ("sent" is noise); the second ',
       '每次写成都': 'rings on every write',
       '响（剪贴板被改你看不见）。': ' (you cannot see your clipboard being changed).',
-      '主题': 'Theme',
-      '还没做': 'not built',
-      '：界面稿里明暗两套令牌都画好了，但':
-        ': both the light and the dark token set are drawn in the mockups, but ',
-      '没有地方切。': 'there is nowhere to switch it.',
 
       // ── 页：本地服务端 ──────────────────────────────────────────
       '本地服务端': 'Local server',
@@ -657,6 +672,9 @@
       'openWebTaskFailed': 'Could not open the web UI: {reason}',
       'openBrowserFailed': 'Could not open {url} in the system browser: {reason}',
       'noBundledServer': 'This client has no bundled server (clip9-server not found)',
+      'hotkeyRegisterFailed': 'Could not grab {shortcut} (another program probably holds it): {reason}',
+      'hotkeyUnregisterFailed': 'Could not release the global shortcut: {reason}',
+      'hotkeyUnparsable': 'The shortcut {shortcut} cannot be parsed: {reason}',
       'logUnreadable': 'Could not read the log ({path}): {reason}',
       'logSeekFailed': 'The log is too long and seeking to its tail failed ({path})',
       'logReadFailed': 'Could not read the log ({path}): {reason}',

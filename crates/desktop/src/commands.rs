@@ -58,6 +58,12 @@ pub struct SettingsPatch {
     pub notify_upload: Option<bool>,
     /// 「房间的内容**写进本机剪贴板**时发系统通知」。
     pub notify_download: Option<bool>,
+    /// 「占住那条全局快捷键」（显示 / 隐藏主窗口，`hotkeys::TOGGLE_WINDOW`）。
+    ///
+    /// ⚠️ 与上面两个同一个位置（平级、不带分组）：它是**桌面行为**，与「同步范围」无关。
+    /// ⚠️★ 它落地时要**真的去注册 / 撤销**（`hotkeys::apply`）——只改配置的话，
+    /// 用户勾了、界面勾着、键却没占上，就是「配了不生效」。
+    pub hotkey_enabled: Option<bool>,
 }
 
 /// 保存「设置」窗口。
@@ -106,6 +112,19 @@ pub fn apply_settings(
     if patch.notify_upload.is_some() || patch.notify_download.is_some() {
         store.set_notify(patch.notify_upload, patch.notify_download);
     }
+    if let Some(on) = patch.hotkey_enabled {
+        store.set_hotkey(on);
+        // ⚠️★ 与自启同一条：改配置 + 落到系统上（注册 / 撤销那个全局键）。
+        // ⚠️★ 而它**失败不许把这整次保存判死** —— 别的设置已经存下去了，
+        // 为一个组合键没抢到就说「没保存」，用户会以为什么都没成。
+        // 所以这里只**说出来**（日志 + 提示区），返回值照旧是 `Ok`。
+        // ⚠️ 提示区那一条会被下一个动作顶掉 —— 所以设置那页另有一行
+        // 「系统里的真相」（`hotkey_registered`），那个一直在。
+        if let Err(problem) = crate::hotkeys::apply(&app, on) {
+            eprintln!("{problem:?}");
+            store.notice("err", problem);
+        }
+    }
     runtime.persist();
     Ok(())
 }
@@ -117,6 +136,17 @@ pub fn apply_settings(
 #[tauri::command]
 pub fn autostart_enabled(app: tauri::AppHandle) -> bool {
     crate::autostart::initial_checked(&app)
+}
+
+/// 那条全局快捷键**现在到底占到了没有**（问系统，不是问配置）。
+///
+/// ⚠️★ 与 [`autostart_enabled`] 同一个套路，而且这里**更需要**它：
+/// 自启那个勾本身就是真相，而快捷键那一格画的是**配置里的意图** ——
+/// 组合键被别的程序占着时，界面上的勾照旧是勾，唯一的区别就在这一行
+///（`hotkeys::is_registered`）。少了它，用户看到的是「按了没反应」。
+#[tauri::command]
+pub fn hotkey_registered(app: tauri::AppHandle) -> bool {
+    crate::hotkeys::is_registered(&app)
 }
 
 /// 「设置」窗口要读的那一份。
@@ -152,6 +182,16 @@ pub struct SettingsView {
     pub notify_download: bool,
     /// ⚠️ **系统里的真相**（启动项在不在），不是配置里的意图。
     pub autostart: bool,
+    /// ⚠️ **配置里的意图**（要不要占那条全局快捷键）—— 与 `autostart` 不一样，
+    /// 它没有「系统里的真相」这一说：真相是另一条命令（`hotkey_registered`）。
+    /// 两件事分开是因为它们**会不一致**（组合键被别人占着），而那时用户要能看出来。
+    pub hotkey_enabled: bool,
+    /// 那条快捷键**给界面看的写法**（macOS `⌘⇧V` / 别处 `Ctrl+Shift+V`）。
+    ///
+    /// ⚠️★ 由壳算好递过来，界面**不许**自己拼一个 `⌘⇧V`：那是把「真正注册的是哪个键」
+    /// 抄第二遍，而两份一定会漂 —— 漂了的表现是界面显示一个**不生效**的键。
+    /// 算法只有一处（`hotkeys::display_toggle_window`）。
+    pub hotkey_toggle_window: String,
     pub data_dir: String,
     pub config_path: String,
 }
@@ -172,6 +212,10 @@ pub fn settings_view(app: tauri::AppHandle, store: State<'_, Arc<Store>>) -> Set
         notify_upload: config.notify_upload,
         notify_download: config.notify_download,
         autostart: crate::autostart::initial_checked(&app),
+        hotkey_enabled: config.enable_hotkey,
+        // ⚠️ 给界面看的写法由壳算（`hotkeys::display_toggle_window`）——
+        // 算法只有一处，否则界面会显示一个已经不生效的键。
+        hotkey_toggle_window: crate::hotkeys::display_toggle_window(),
         data_dir: snapshot.data_dir,
         config_path: snapshot.config_path,
     }

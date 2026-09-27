@@ -1514,6 +1514,34 @@ function showPane(name) {
   }
 }
 
+/** 那条全局快捷键**现在到底占上了没有**（问系统，不是问配置）。
+ *
+ * ⚠️★ 为什么这一行非要有：勾选框画的是**配置里的意图**，而组合键被别的程序占着时
+ * 勾照旧亮着 —— 用户看到的是「按了没反应」，而他会去查别的程序、去重启客户端。
+ * 这一行是唯一能看出「它没占上」的地方。提示区那条会被下一个动作顶掉，这一行不会。
+ * （自启那个勾是同一条规矩的另一半：那边**勾本身就是真相**，所以它不用这一行。）
+ *
+ * ⚠️ **关着的时候它不说话**：「关掉就不占这个组合键」那句就在勾选框旁边，再说一遍是噪音。
+ * ⚠️ 只在两处刷：打开设置（读到配置之后）与保存成功之后 —— 那正是配置与系统
+ * 可能不一致的两个时刻。⚠️ **勾选框本身被点的时候不刷**：那一刻草稿已经跑到配置前面，
+ * 此时画出来的「没占上」会被读成「被别的程序占了」，而真正的原因是「你还没点保存」。
+ */
+async function refreshHotkeyState() {
+  const state = el('sc-hotkey-state');
+  if (!sqGet('sc-hotkey')) {
+    state.textContent = '';
+    return;
+  }
+  try {
+    // ⚠️ 两个分支都是 `t(…)` 的**整句**（不是拼出来的）：中文的破折号在英文里是别的写法。
+    state.textContent = (await invoke('hotkey_registered'))
+      ? t('占上了 —— 现在按这个键有效。')
+      : t('⚠️ 没占上（多半是别的程序占着它）—— 现在按这个键没反应。');
+  } catch (error) {
+    state.textContent = t('⚠️ 问不到系统里的快捷键状态：{error}', { error: errorText(error) });
+  }
+}
+
 async function openSettings() {
   el('settings-msg').textContent = '';
   el('settings-overlay').hidden = false;
@@ -1542,6 +1570,16 @@ async function openSettings() {
     // 它们没有「系统里的真相」这一说：发不发通知只有我们自己知道。
     sqSet('sc-notify-up', view.notifyUpload);
     sqSet('sc-notify-dl', view.notifyDownload);
+    // ⚠️★ 这一格画的是**配置里的意图**（与自启那个勾**不一样**）——「系统里的真相」
+    // 在它下面那一行（`refreshHotkeyState`）。两者**会**不一致（那个组合键被别的程序
+    // 占着），而那时用户要能看出来，所以它们分开画、各有各的来源。
+    sqSet('sc-hotkey', view.hotkeyEnabled);
+    // ⚠️★ 那个组合键的写法**由壳算好递过来**（`hotkeys::display_toggle_window`）——
+    // 界面里再写一份「⌘⇧V」的话，另一台机器上那一份就是错的（macOS 是 ⌘、别处是 Ctrl），
+    // 而错的那一份**看起来一样正常**。算法只有一处。
+    el('sc-hotkey-key').textContent = view.hotkeyToggleWindow;
+    // ⚠️ 顺序要紧：它读的是**上面那句刚画上去的**勾（`sqGet('sc-hotkey')`）。
+    await refreshHotkeyState();
     el('dg-data').textContent = view.dataDir;
     el('dg-config').textContent = view.configPath;
   } catch (error) {
@@ -1574,6 +1612,9 @@ el('settings-nav').addEventListener('click', (event) => {
   showPane(item.dataset.pane);
   // ⚠️ 日志只在**切到那一页**时读一次：它可能很大，打开设置就读是白读。
   if (item.dataset.pane === 'log') refreshLog();
+  // ⚠️ 快捷键那一页的最后一行是**问系统要的**（`hotkey_registered`）：每次切过来重问 ——
+  // 用户可能刚在别处关掉了它，或者那个组合键被新装的程序占走了。
+  if (item.dataset.pane === 'hotkeys') refreshHotkeyState();
 });
 /** 往草稿里加一个空房间。
  *
@@ -1650,10 +1691,18 @@ el('settings-save').addEventListener('click', async () => {
     // 它们是「通知」的事，与「同步范围」无关 —— 放进 `sync` 会让那个分组名开始说谎。
     notifyUpload: sqGet('sc-notify-up'),
     notifyDownload: sqGet('sc-notify-dl'),
+    // ⚠️★ 这一项与上面几个**不一样**：它落地时要**真的去注册 / 撤销**那个全局键
+    //（`hotkeys::apply`）—— 只改配置的话，用户勾了、界面勾着、键却没占上，
+    // 那就是「配了不生效」。⚠️ 它失败了**不会**让这次保存整个失败（别的设置已经存下去了），
+    // 失败只走提示区 + 快捷键那一页的「系统里的真相」那一行。
+    hotkeyEnabled: sqGet('sc-hotkey'),
   };
   try {
     await invoke('apply_settings', { patch });
     el('settings-msg').textContent = t('已保存');
+    // ⚠️ 保存会**真的去注册 / 撤销**那个全局键 —— 重新问一次系统。
+    // 不重问的话，「没抢到」这件事只留在提示区里，而它一闪就过去了。
+    await refreshHotkeyState();
   } catch (error) {
     // ⚠️ 失败要**留在界面上**：设置没存上而界面看着像存了，用户下次启动会发现白改。
     el('settings-msg').textContent = t('没保存：{error}', { error: errorText(error) });
