@@ -27,12 +27,10 @@
 
 use std::collections::{HashMap, HashSet};
 use std::io::IsTerminal;
-use std::net::{SocketAddr, ToSocketAddrs};
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 use clip9_core::{AuthValue, Config};
-use clip9_server::{AppState, router};
-use clip9_store::{Limits, Store};
+use clip9_server::paths::Paths;
 
 /// 参数表：`(名字, 是否取值, 说明)`。**与 Go 版逐一对应**（`cloud-clip/lib/flags.go`）。
 ///
@@ -149,59 +147,24 @@ async fn main() -> anyhow::Result<()> {
 
     // 配置：`-config` 默认 `config.json`（与 Go 的 flag 默认值一致）。
     //
-    // ⚠️★ **文件不存在就写一份默认配置出来，然后照常启动** —— 与 Go 的 `load_config`
-    // 一样（它读不到就 `os.WriteFile` 一份 `defaultConfig()`）。这一条同时给了两个东西：
-    // 「零配置启动」和「一份可以照着改的配置模板」。Jonny 2026-09-25 要的就是这两样。
-    //
-    // ⚠️ 但**解析失败是致命错误**，这一条**刻意与 Go 不同**：Go 会打一行日志然后用默认值
-    // 继续跑 —— 那意味着一个拼错的配置会让服务**不带密码**地起来，而用户以为自己配过了。
-    // 「启动失败」比「静默降级」安全，这是这个项目一贯的取舍。
+    // ⚠️★ 「读不到就写一份默认配置出来，然后照常启动」+「解析失败是致命错误」这两条
+    // **不在这个文件里** —— 它们在 `clip9_server::config_file`（一处定义，
+    // `crates/android` 走同一个）。那边的模块文档写了为什么解析失败要致命。
     let config_path = args
         .get("config")
         .unwrap_or_else(|| "config.json".to_owned());
-    let mut config = match std::fs::read_to_string(&config_path) {
-        Ok(raw) => serde_json::from_str::<Config>(&raw)
-            .map_err(|e| anyhow::anyhow!("配置文件 {config_path} 解析失败：{e}"))?,
-        Err(read_err) => {
-            let default = Config::default();
-            // ⚠️ 写不出来**不是**致命错误（只读挂载 / 容器里的只读层）—— 照样用默认值跑，
-            // 但要**说出来**，否则用户以为配置已经保存了。
-            match serde_json::to_string_pretty(&default) {
-                Ok(text) => match std::fs::write(&config_path, format!("{text}\n")) {
-                    Ok(()) => tracing::info!(
-                        path = %config_path,
-                        "配置文件不存在，已写入一份默认配置（照着改，改完重启生效）"
-                    ),
-                    Err(write_err) => tracing::warn!(
-                        path = %config_path,
-                        error = %write_err,
-                        "写默认配置失败，用内存里的默认值继续跑"
-                    ),
-                },
-                Err(e) => tracing::warn!(error = %e, "序列化默认配置失败"),
-            }
-            tracing::info!(path = %config_path, error = %read_err, "用默认配置启动");
-            default
-        }
-    };
+    let mut config = clip9_server::config_file::load_or_create(std::path::Path::new(&config_path))?;
 
     apply_flags(&mut config, &args)?;
 
-    // 路径（数据目录 / 库文件 / 上传目录）由**共用的一份**算出来 —— 见 `resolve_paths`。
-    // ⚠️ `migrate` 子命令用的是同一个函数：两边各写一份的话，会出现「服务端按配置里的
-    // dbPath 找库、而迁移写到了别处」—— 用户以为迁完了，其实服务读的是另一个文件，
+    // 数据目录 → 实际路径 → 打开库：**共用的一份**（见 `clip9_server::paths::open_store`）。
+    // ⚠️ `migrate` 子命令用的是同一个 `resolve_paths`：两边各写一份的话，会出现「服务端按
+    // 配置里的 dbPath 找库、而迁移写到了别处」—— 用户以为迁完了，其实服务读的是另一个文件，
     // 而且**两边都不报错**。
-    let paths = resolve_paths(&args, &mut config);
-    if let Some(parent) = paths.db.parent()
-        && !parent.as_os_str().is_empty()
-    {
-        std::fs::create_dir_all(parent)
-            .map_err(|e| anyhow::anyhow!("无法创建库文件所在目录 {}：{e}", parent.display()))?;
-    }
-    let store = Store::open_with(&paths.db, Limits::default())?;
+    // ⚠️★ 而「建目录 + 开库」也一起放进去了：`uploads/` 忘了建**不会在这里报错**，
+    // 只会在第一次上传时 500（`crates/android` 抄这段时正是漏了它）。
+    let (paths, store) = clip9_server::paths::open_store(&data_dir_from(&args), &mut config)?;
     tracing::info!(db = %paths.db.display(), "存储已打开");
-    std::fs::create_dir_all(&paths.uploads)
-        .map_err(|e| anyhow::anyhow!("无法创建文件存储目录 {}：{e}", paths.uploads.display()))?;
     tracing::info!(dir = %paths.uploads.display(), "文件存储目录");
 
     // 前端产物：**默认是编进二进制的那一份**（`rust/crates/server/static/`，见 `rust/crates/server/build.rs`），
@@ -235,66 +198,11 @@ async fn main() -> anyhow::Result<()> {
         None => tracing::info!("前端产物：用编进二进制的那一份（rust/crates/server/static）"),
     }
 
-    let addrs = resolve_hosts(&config.server.host, config.server.port)?;
-    let tls = tls_paths(&config)?;
-
-    let state = AppState::new(config.clone(), store, static_dir);
-    // ⚠️ `into_make_service_with_connect_info` 是必须的：`client_ip` 要拿对端地址兜底
-    // （没有 `X-Forwarded-For` / `X-Real-IP` 时）。漏了它，直连场景下 `senderIP` 会是空的。
-    // ⚠️ HTTPS 那条路也要带上它，否则**只有 TLS 部署**会丢 `senderIP` ——
-    // 那是「只在某些部署下出现」的 bug，最难查。所以两条路共用同一个 make-service。
-    let app = router(state).into_make_service_with_connect_info::<SocketAddr>();
-
-    // ⚠️ 多个监听地址时**全都跑起来**，然后等**第一个结束**（正常情况永不结束；
-    // 某个地址起不来或中途出错时就是它先结束，我们把它报出来并退出）。
-    let mut handles = Vec::new();
-    for addr in &addrs {
-        match &tls {
-            Some((cert, key)) => {
-                let tls_config = axum_server::tls_rustls::RustlsConfig::from_pem_file(cert, key)
-                    .await
-                    .map_err(|e| {
-                        anyhow::anyhow!("读证书/私钥失败（cert={cert}，key={key}）：{e}")
-                    })?;
-                // `axum_server::from_tcp_rustls` 要一个**已绑定**的 std listener。
-                let listener = std::net::TcpListener::bind(addr)
-                    .map_err(|e| anyhow::anyhow!("无法监听 {addr}（端口被占用？）：{e}"))?;
-                // ⚠️★ 必须设成**非阻塞**：`TcpListener::bind` 出来的是阻塞 socket，
-                // 而 tokio 拒绝把阻塞 fd 注册进运行时 —— 不设的话会在
-                // `from_tcp_rustls` 里 **panic**（`Registering a blocking socket with the
-                // tokio runtime is unsupported`），而不是返回一个能读的错误。
-                listener
-                    .set_nonblocking(true)
-                    .map_err(|e| anyhow::anyhow!("把监听 socket 设成非阻塞失败：{e}"))?;
-                tracing::info!("clip9-server 监听 https://{addr}");
-                let app = app.clone();
-                handles.push(tokio::spawn(async move {
-                    // ⚠️ `from_tcp_rustls` 返回 `Result`（它要先建 acceptor），别忘了 `?`。
-                    axum_server::from_tcp_rustls(listener, tls_config)
-                        .map_err(|e| anyhow::anyhow!("初始化 HTTPS 失败：{e}"))?
-                        .serve(app)
-                        .await
-                        .map_err(|e| anyhow::anyhow!("HTTPS 服务出错：{e}"))
-                }));
-            }
-            None => {
-                let listener = tokio::net::TcpListener::bind(addr)
-                    .await
-                    .map_err(|e| anyhow::anyhow!("无法监听 {addr}（端口被占用？）：{e}"))?;
-                tracing::info!("clip9-server 监听 http://{addr}");
-                let app = app.clone();
-                handles.push(tokio::spawn(async move {
-                    axum::serve(listener, app)
-                        .await
-                        .map_err(|e| anyhow::anyhow!("HTTP 服务出错：{e}"))
-                }));
-            }
-        }
-    }
-
-    let (first, _idx, _rest) = futures_util::future::select_all(handles).await;
-    first.map_err(|e| anyhow::anyhow!("服务任务异常结束：{e}"))??;
-    Ok(())
+    // ⚠️★ 「绑定端口 + 起服务」那一段**不在这个文件里** —— 它在 `clip9_server::serve`。
+    // 抽出去的理由是**一处定义**：它里面那句 `into_make_service_with_connect_info` 漏了
+    // 会让直连场景的 `senderIP` 为空（不报错），而 Android 那侧也要起同一个服务端。
+    // 见 `crates/server/src/serve.rs` 的模块文档。
+    clip9_server::serve::serve_until_first_error(config, store, static_dir).await
 }
 
 /// 取一个**字符串**参数：**非空才算给了**。
@@ -363,63 +271,13 @@ fn positive(args: &Args, name: &str) -> anyhow::Result<Option<i64>> {
     Ok(args.number(name)?.filter(|n| *n > 0))
 }
 
-/// 要不要起 HTTPS。返回 `Some((cert, key))` 表示要。
-///
-/// ⚠️ 两个必须**一起**给：Go 的 `ListenAndServeTLS(cert, key)` 只给一个也会报错，
-/// 这里同样报错而不是「忽略那个只给了一个的」。
-fn tls_paths(config: &Config) -> anyhow::Result<Option<(String, String)>> {
-    match (config.server.cert.as_str(), config.server.key.as_str()) {
-        ("", "") => Ok(None),
-        ("", _) | (_, "") => anyhow::bail!("cert 与 key 必须**一起**给（只给一个没法起 TLS）"),
-        (cert, key) => Ok(Some((cert.to_owned(), key.to_owned()))),
-    }
-}
+// ⚠️★ `tls_paths` 与 `resolve_hosts` 原来在这个文件里，2026-09-28 搬去了
+// `clip9_server::serve`（`crates/server/src/serve.rs`）—— 因为 Android 的 cdylib 也要起
+// 同一个服务端，而「地址怎么归一、TLS 要不要起」重写一遍就会漂。
+// 搬的**理由**与那一段一起写在那儿了，这里只留指针。
 
-/// 把配置里的 `host` 归一成一组监听地址。
-///
-/// Go 侧 `server.host` 允许 `"0.0.0.0"` **或** `["0.0.0.0","::"]` 两种写法，
-/// `-host` 还允许**逗号分隔** —— 所以 `ServerConfig.host` 是 `serde_json::Value`，三种都收。
-fn resolve_hosts(value: &serde_json::Value, port: u16) -> anyhow::Result<Vec<SocketAddr>> {
-    let mut raw: Vec<String> = Vec::new();
-    match value {
-        serde_json::Value::String(s) => raw.extend(s.split(',').map(|x| x.trim().to_owned())),
-        serde_json::Value::Array(items) => {
-            for item in items {
-                if let Some(s) = item.as_str() {
-                    raw.extend(s.split(',').map(|x| x.trim().to_owned()));
-                }
-            }
-        }
-        _ => {}
-    }
-    raw.retain(|x| !x.is_empty());
-    if raw.is_empty() {
-        raw.push("0.0.0.0".to_owned());
-    }
-
-    let mut out: Vec<SocketAddr> = Vec::new();
-    for host in raw {
-        // ⚠️ 用 `to_socket_addrs` 而不是自己解析 IP 字面量：Go 的
-        // `net.Listen("tcp", "host:port")` **会解析域名**，所以 `-host localhost`
-        // 在 Go 上是能用的 —— 这里也必须能用。
-        let addrs = (host.as_str(), port)
-            .to_socket_addrs()
-            .map_err(|e| anyhow::anyhow!("host 里的 {host:?} 解析不出地址：{e}"))?;
-        for addr in addrs {
-            if !out.contains(&addr) {
-                out.push(addr);
-            }
-        }
-    }
-    Ok(out)
-}
-
-/// 三样路径：数据目录、库文件、上传目录。
-#[derive(Debug)]
-struct Paths {
-    db: PathBuf,
-    uploads: PathBuf,
-}
+// ⚠️★ `Paths`（数据目录 / 库文件 / 上传目录）原来定义在这个文件里，
+// 2026-09-28 跟着解析规则一起搬去了 `clip9_server::paths` —— Android 也要算同一组路径。
 
 /// 算「库在哪、上传文件存哪」，并把结果**写回 config**（服务端后面读的是 `config.server.*`）。
 ///
@@ -434,48 +292,23 @@ struct Paths {
 /// 这一版之前用的是「**值等于默认值就当没写**」的隐式魔法，配出来的效果是
 /// **配置文件里写的路径 ≠ 实际用的路径**（配置里是未解析的默认值、日志里是解析值）——
 /// 那正是「名字说的和实际做的不一样」，Jonny 2026-09-25 把它换掉了。
-fn resolve_paths(args: &Args, config: &mut Config) -> Paths {
-    // ⚠️ `-data` 是**本实现独有的**（Go 不用数据库，没有「数据目录」这个概念）。
-    let data_dir = args
-        .get("data")
+/// 数据目录。⚠️ `-data` 是**本实现独有的**（Go 不用数据库，没有「数据目录」这个概念）。
+fn data_dir_from(args: &Args) -> PathBuf {
+    args.get("data")
         .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from("./data"));
-
-    let db = resolve_against(&data_dir, &config.server.db_path, "clip9.redb");
-    let uploads = resolve_against(&data_dir, &config.server.storage_dir, "uploads");
-
-    // 写回去：服务端读的是 config 里这两个字段（`files.rs` 用 `storage_dir`）。
-    // ⚠️ 写的是**解析后的实际路径** —— 后面再有谁读它们，看到的和日志里一致
-    // （上一版写回去的是「未解析的默认值」，于是配置与日志对不上，那是个坑）。
-    config.server.db_path = db.to_string_lossy().into_owned();
-    config.server.storage_dir = uploads.to_string_lossy().into_owned();
-
-    Paths { db, uploads }
+        .unwrap_or_else(|| PathBuf::from("./data"))
 }
 
-/// 把配置里那个路径解析成实际路径。
+/// 解析出 `Paths`（**不建目录、不开库**）—— 只有 `migrate` 用。
 ///
-/// - **绝对路径** → 原样（`-data` 不再影响它；这是「我就是要放这儿」的表达）；
-/// - **相对路径** → 相对**数据目录**（`-data`，默认 `./data`）；
-/// - **空串** → 用 `default_name`（免得显式写了 `""` 时把库落到目录本身）。
+/// ⚠️★ 主程序走的是 `clip9_server::paths::open_store`（它内部会调 `resolve_into`）
+/// 而不是这个函数：主程序还要建目录、开库，那三件事**必须一起**（见 `open_store` 的注释）。
+/// `migrate` 则相反 —— 它要自己决定建不建目录（`-dry-run` 的承诺是「什么都不写」）。
 ///
-/// ⚠️★ 相对**数据目录**，不是相对 **cwd**（Go 是后者）。理由：服务端可能从任何地方启动
-/// （systemd / Docker / OpenWrt procd），**cwd 没人能预测** —— 同一份配置在不同启动方式下
-/// 会落到不同地方，而症状是「上传的文件重启后找不到了」。数据目录是显式给的，相对它解析
-/// 唯一且可预测。Jonny 2026-09-25 拍的板（原话：Go 那个 `./` 很难理解和不好用）。
-fn resolve_against(data_dir: &Path, configured: &str, default_name: &str) -> PathBuf {
-    let configured = configured.trim();
-    let configured = if configured.is_empty() {
-        default_name
-    } else {
-        configured
-    };
-    let path = PathBuf::from(configured);
-    if path.is_absolute() {
-        path
-    } else {
-        data_dir.join(path)
-    }
+/// ⚠️★ 解析规则**不在这里** —— 它在 `clip9_server::paths`（一处定义，
+/// Android 与这个二进制共用）。见那个模块的文档：相对**数据目录**而不是 cwd。
+fn resolve_paths(args: &Args, config: &mut Config) -> Paths {
+    clip9_server::paths::resolve_into(&data_dir_from(args), config)
 }
 
 /// 解析出来的命令行参数。

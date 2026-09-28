@@ -19,6 +19,9 @@
 //! | [`share_card`] | 分享落地页的 OG 卡片内容（纯函数，好测） |
 //! | [`spa_shell`] | 外壳的 `<base>` / OG 标签**注入**（纯字符串，好测；读取在 [`static_files`]） |
 //! | [`static_files`] | 前端产物：外部目录 `-static` > **内嵌**，一份实现（含 Go 的 `wantsHTML` 闸） |
+//! | [`serve`] | 「起一个服务端」的**唯一**实现（绑定端口 + TLS 分支 + 多地址）—— `bin` 与 `crates/android` 共用 |
+//! | [`config_file`] | 读配置文件（读不到就写一份默认的）—— `bin` 与 `crates/android` 共用 |
+//! | [`paths`] | 数据目录 → 实际路径 → 打开库 —— `bin` 与 `crates/android` 共用 |
 //! | [`text_body`] | `/text` 的三种请求体形态 + UTF-16 嗅探 |
 //! | [`user_agent`] | UA → 设备信息（⚠️ 近似实现，见模块注释） |
 //! | [`state`] | 共享状态 + 广播出口 |
@@ -27,13 +30,16 @@ pub mod auth_gate;
 pub mod auth_token;
 pub mod automation;
 pub mod automation_page;
+pub mod config_file;
 pub mod cors;
 pub mod error;
 pub mod files;
 pub mod handlers;
 pub mod migrate;
+pub mod paths;
 pub mod room_cleanup;
 pub mod scheduler;
+pub mod serve;
 pub mod share;
 pub mod share_card;
 pub mod spa_shell;

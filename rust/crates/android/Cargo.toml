@@ -1,0 +1,42 @@
+[package]
+name = "clip9-android"
+description = "clip9 Android 外壳的 JNI 桥：把 clip9-server 的 lib 暴露给 Kotlin。"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[lib]
+name = "clip9_android"
+# ⚠️★ `cdylib` 是**必须的**：产物是 `libclip9_android.so`，Kotlin 那边靠
+# `System.loadLibrary("clip9_android")` 把它加载进应用进程。
+#
+# ⚠️ 这个名字（`clip9_android`）是**契约**：它同时决定了
+#   ① 产物文件名 `libclip9_android.so`（要放进 `app/src/main/jniLibs/<abi>/`）
+#   ② Kotlin 里 `System.loadLibrary` 的那个参数
+#   ③ 下面每个 `Java_…` 符号名的前缀
+crate-type = ["cdylib"]
+
+[dependencies]
+# ⚠️ 用 `path` 直引，与 `crates/desktop` 一致 —— `clip9-server` / `clip9-client`
+# 没有进 `[workspace.dependencies]`（那边只列了 protocol / core / actions / store）。
+#
+# ⚠️★ 只需要 `clip9-server` 一个：读配置、算路径、开库、起服务**四件事都在它里面**
+# （`config_file` / `paths` / `serve`）。⚠️ 别在这儿把 `clip9-store` 也列上 ——
+# 那意味着 android 自己也要决定「库开在哪里、目录建没建出来」，
+# 而这个 crate 的第一版手抄了一遍那段，抄漏了 `uploads/`（见 `paths::open_store`）。
+clip9-server = { path = "../server" }
+
+anyhow = { workspace = true }
+serde_json = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }
+
+# JNI 绑定。⚠️ 它只在 android 目标上有用，但 **不 gate 掉** ——
+# 理由见 `src/lib.rs` 的模块文档「为什么它也能在桌面上编」。
+jni = "0.21"
+
+[dev-dependencies]
+# 状态机的用例要一组临时目录（配置文件 + 数据目录都从**不存在**开始）——
+# 与 `crates/server` 的端到端测试同一套做法。
+tempfile = "3"
