@@ -108,7 +108,8 @@ jobs:
             | jq -r --arg n "$DB_NAME" '.[] | select(.name == $n) | .uuid' \
             | head -1 || true)
           if [ -z "$d1_id" ] || [ "$d1_id" = "null" ]; then
-            echo "没有现成的 $DB_NAME，创建它"
+            # ⚠️ `{}` 不能省：`$DB_NAME，` 里那个全角逗号会被 bash 当成变量名的一部分。
+            echo "没有现成的 ${DB_NAME}，创建它"
             create_out=$(wrangler d1 create "$DB_NAME")
             d1_id=$(printf '%s' "$create_out" | grep -o 'database_id = "[^"]*"' | cut -d'"' -f2 || true)
           fi
