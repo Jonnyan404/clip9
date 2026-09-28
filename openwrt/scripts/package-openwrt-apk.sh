@@ -109,7 +109,7 @@ echo "APK包架构: $PACKAGE_ARCH"
 
 if [ ! -f "$BINARY" ]; then
     echo "错误: 找不到二进制文件 $BINARY"
-    echo "请先运行 build.sh 生成它（./scripts/build.sh $VERSION）"
+    echo "请先运行 build.sh 生成它（./scripts/build.sh ${VERSION}）"
     exit 1
 fi
 

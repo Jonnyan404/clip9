@@ -80,7 +80,7 @@ build_one() {
     # cherri 的输出文件名由源码里的 #define name 决定，-o 参数不生效，且会静默覆盖同名文件。
     name="$(awk '/^#define name /{print $3; exit}' "$src")"
     if [ -z "$name" ]; then
-        echo "跳过 $src：没有 #define name" >&2
+        echo "跳过 ${src}：没有 #define name" >&2
         return 0
     fi
 
