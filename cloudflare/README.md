@@ -1,6 +1,6 @@
 # Cloudflare 部署文档
 
-本文档说明如何将 Cloud Clipboard 部署到 Cloudflare Workers（一体化部署：SPA 静态前端 + API/WebSocket 后端 + D1 数据库 + R2 存储桶）。
+本文档说明如何将 clip9 部署到 Cloudflare Workers（一体化部署：SPA 静态前端 + API/WebSocket 后端 + D1 数据库 + R2 存储桶）。
 
 ---
 
@@ -108,7 +108,7 @@ ROOM_AUTH_JSON = "{\"finance\":{\"password\":\"finance-pass\",\"fileExpire\":0},
 - 部署脚本/CI 会自动执行远程迁移。如需单独手动执行迁移：
   ```bash
   cd cloudflare/workers
-  wrangler d1 execute cloud-clipboard-db --file=../d1/schema.sql --remote
+  wrangler d1 execute clip9-db --file=../d1/schema.sql --remote
   ```
 
 ---

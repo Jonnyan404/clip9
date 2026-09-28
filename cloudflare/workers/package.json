@@ -1,7 +1,7 @@
 {
-  "name": "cloud-clipboard-worker",
+  "name": "clip9-worker",
   "version": "1.0.0",
-  "description": "Cloud Clipboard Cloudflare Worker",
+  "description": "clip9 Cloudflare Worker",
   "main": "src/index.js",
   "scripts": {
     "dev": "wrangler dev",

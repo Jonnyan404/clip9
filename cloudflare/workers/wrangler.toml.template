@@ -1,4 +1,4 @@
-name = "cloud-clipboard-worker"
+name = "clip9-worker"
 main = "src/index.js"
 compatibility_date = "2025-08-01"
 compatibility_flags = ["nodejs_compat"]
@@ -53,19 +53,19 @@ FILE_EXPIRE = "3600"
 # D1 数据库绑定 (将被自动更新)
 [[d1_databases]]
 binding = "DB"
-database_name = "cloud-clipboard-db"
+database_name = "clip9-db"
 database_id = "your-d1-database-id"
 
 # R2 存储绑定
 [[r2_buckets]]
 binding = "R2_BUCKET"
-bucket_name = "cloud-clipboard-files"
+bucket_name = "clip9-files"
 
 # Durable Objects
 [[durable_objects.bindings]]
 name = "WEBSOCKET_ROOM"
 class_name = "WebSocketRoom"
-script_name = "cloud-clipboard-worker"
+script_name = "clip9-worker"
 
 # Durable Objects 迁移
 [[migrations]]

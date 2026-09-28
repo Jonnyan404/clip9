@@ -286,7 +286,7 @@ export async function ensureRoomAccess(request, env, room, tokenOverride) {
 
 async function getRoomSessionSigningKey(env) {
   const material = [];
-  material.push('cloud-clipboard-room-session-v1');
+  material.push('clip9-room-session-v1');
   
   const globalPassword = normalizeAuthValue(env.AUTH_PASSWORD);
   if (globalPassword) {

@@ -3,11 +3,17 @@
 这个目录放**不属于任何一种语言**的契约数据：字段名与形状、动作行为、cron 语义、
 模板求值、分享令牌的字节。它入库，因为它是 Rust 侧那些契约测试的**输入**。
 
-## ⚠️★ 这些是**冻结的输入**，本仓库不重新生成它们
+## ⚠️★ 这些是**冻结的输入**，本仓库一般不重新生成它们
 
 它们**由 Go 实现导出**（生成器在那个仓库里：`cloud-clip/lib/*_fixture_test.go`，
 `UPDATE_FIXTURES=1 go test ./lib -run TestXxxFixtures`）。拆库时它们被一起带了过来，
 从此在本仓库里是**只读的期望值**。
+
+⚠️ **一个例外：`share/` 那份现在归本仓库所有。** 分享令牌的密钥派生标签在 clip9 换成了
+自己的 `clip9-share-v1`（见 `rust/crates/core/src/share.rs`），而 Go 那边是旧标签、也在退役，
+没法再替我们生成。重算方式：
+`cd rust && UPDATE_FIXTURES=1 cargo test -p clip9-core --test share_tokens` ——
+它只重算 `keyHex` / `token` 两个**派生值**，输入（配置与 claims）逐字节不动。
 
 ### 为什么 Go 仓库里那份也得留着（两边角色不同）
 
@@ -18,7 +24,7 @@
 | | 角色 | 会变吗 |
 |---|---|---|
 | Go 仓库的 `cases/` | Go **当前输出**的校验基准 | 会 —— Go 一改结构体它就跟着变（或者变红） |
-| 本仓库的 `cases/` | Rust 对着写的**冻结契约** | 只有人**手动同步**时才变 |
+| 本仓库的 `cases/` | Rust 对着写的**冻结契约** | 只有人**手动同步**时才变（`share/` 除外，它跟着密钥派生标签走） |
 
 拆库前它们是**同一份文件**，所以「不可能漂」；现在**会漂**。
 
@@ -53,8 +59,13 @@ Go 默认开 HTML 转义（`<` → `\u003c`），serde_json 不转义；以及 k
 
 ## share/ —— 从 Go 导出的分享令牌 fixture
 
-**谁生成**：Go 侧的 `share_fixture_test.go`。每组用例是「固定的配置 + 固定的 claims」，
-它把**派生出的签名密钥**（`keyHex`）和**签出来的 token** 一起导出。
+**谁生成**：原先由 Go 侧的 `share_fixture_test.go` 导出（「固定的配置 + 固定的 claims」这个形状沿用
+至今）；拆库后**改由本仓库自己重算** —— `rust/crates/core/tests/share_tokens.rs` 带
+`UPDATE_FIXTURES=1` 时会把 `keyHex` 与 `token` 两个派生值重算写回，输入一个字不动。
+
+⚠️ 换密钥标签那次（`cloud-clipboard-share-v1` → `clip9-share-v1`）就是用它重算的，而且
+**先做了对照**：把标签临时改回旧值跑一遍重算，产物与当时那份夹具**逐字节相同** ——
+证明这条重算路径和原来导出它的那套实现等价，然后才敢换标签重算。
 
 **谁消费**：`rust/crates/core/tests/share_tokens.rs` —— 逐字节复现密钥与 token，
 并把 token 解析回同一份 claims。

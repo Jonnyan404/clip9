@@ -9,7 +9,7 @@ else
     SED_INPLACE=(-i)
 fi
 
-echo "=== 部署 Cloud Clipboard 到 Cloudflare ==="
+echo "=== 部署 clip9 到 Cloudflare ==="
 echo ""
 echo "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!"
 echo "!!! 部署前请先检查并修改 workers/wrangler.toml.template !!!"
@@ -74,13 +74,13 @@ migrate_senderClientID_col() {
 
     info "检查 senderClientID 列 ($scope)..."
     local has_col
-    has_col=$(wrangler d1 execute cloud-clipboard-db $flags \
+    has_col=$(wrangler d1 execute clip9-db $flags \
       --command "SELECT count(*) AS c FROM pragma_table_info('messages') WHERE name='senderClientID';" 2>/dev/null \
       | grep -oE '"c"[[:space:]]*:[[:space:]]*[01]' | grep -oE '[01]' | head -1)
 
     if [ "$has_col" != "1" ]; then
         info "为 messages 表添加 senderClientID 列 ($scope)..."
-        wrangler d1 execute cloud-clipboard-db $flags --yes \
+        wrangler d1 execute clip9-db $flags --yes \
           --command "ALTER TABLE messages ADD COLUMN senderClientID TEXT;" \
           || warn "添加 senderClientID 列失败 ($scope)，请手动执行迁移"
     else
@@ -117,7 +117,7 @@ create_d1_database() {
     
     # 尝试创建数据库
     info "创建 D1 数据库..."
-    DB_OUTPUT=$(wrangler d1 create cloud-clipboard-db 2>&1 || echo "database may exist")
+    DB_OUTPUT=$(wrangler d1 create clip9-db 2>&1 || echo "database may exist")
     
     # 提取数据库 ID
     if echo "$DB_OUTPUT" | grep -q "database_id"; then
@@ -127,8 +127,8 @@ create_d1_database() {
         # 如果创建失败，尝试获取现有数据库 ID
         warn "数据库可能已存在，尝试获取现有数据库信息..."
         LIST_OUTPUT=$(wrangler d1 list 2>&1)
-        if echo "$LIST_OUTPUT" | grep -q "cloud-clipboard-db"; then
-            D1_DATABASE_ID=$(echo "$LIST_OUTPUT" | grep "cloud-clipboard-db" | awk '{print $2}' | head -1)
+        if echo "$LIST_OUTPUT" | grep -q "clip9-db"; then
+            D1_DATABASE_ID=$(echo "$LIST_OUTPUT" | grep "clip9-db" | awk '{print $2}' | head -1)
             info "找到现有数据库，ID: $D1_DATABASE_ID"
         else
             error "无法获取数据库 ID，请手动检查"
@@ -147,7 +147,7 @@ create_d1_database() {
 create_r2_bucket() {
     info "=== 步骤 2: 创建 R2 存储桶 ==="
     
-    wrangler r2 bucket create cloud-clipboard-files || warn "存储桶可能已存在"
+    wrangler r2 bucket create clip9-files || warn "存储桶可能已存在"
 }
 
 # 步骤 3: 更新 Worker 配置并部署
@@ -166,7 +166,7 @@ deploy_worker() {
     
     # 执行数据库迁移（远程生产数据库）
     info "执行远程数据库迁移..."
-    wrangler d1 execute cloud-clipboard-db --file=../d1/schema.sql --remote
+    wrangler d1 execute clip9-db --file=../d1/schema.sql --remote
     
     # 幂等补齐旧库缺失的 senderClientID 列（每次部署都安全执行）
     migrate_senderClientID_col "remote"
@@ -174,7 +174,7 @@ deploy_worker() {
     # 可选：同时迁移本地数据库用于开发
     if should_run_local_d1; then
         info "执行本地数据库迁移..."
-        wrangler d1 execute cloud-clipboard-db --file=../d1/schema.sql --local
+        wrangler d1 execute clip9-db --file=../d1/schema.sql --local
         migrate_senderClientID_col "local"
     else
         info "已跳过本地数据库迁移，不影响远程部署。"

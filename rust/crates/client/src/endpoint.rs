@@ -13,7 +13,7 @@
 //!    `http://host` 里的 `//` 吃成一个 `/`，结果是 `http:/host/text` —— 请求直接打不出去，
 //!    而错误信息只会说「连接失败」。这里一律走 [`url::Url`] 的 `set_path`，
 //!    它按 URL 语法改路径，不做「猜你想去哪」的清洗。
-//! 2. **子路径前缀**：服务端可以部署在 `/cloud-clipboard` 这种子路径下
+//! 2. **子路径前缀**：服务端可以部署在 `/clip9` 这种子路径下
 //!    （`docs/api.md` §1.1），所以拼的时候必须**保留** `server` 里已有的路径前缀。
 //!    丢了它，表现是「主页能开、接口全 404」。
 //! 3. **凭据**：房间密码 / 会话令牌一律走 `Authorization: Bearer` 请求头。
@@ -142,16 +142,16 @@ mod tests {
     #[test]
     fn keeps_the_sub_path_prefix() {
         assert_eq!(
-            api_url("http://host:9501/cloud-clipboard", "/text", &[])
+            api_url("http://host:9501/clip9", "/text", &[])
                 .unwrap()
                 .as_str(),
-            "http://host:9501/cloud-clipboard/text"
+            "http://host:9501/clip9/text"
         );
         assert_eq!(
-            api_url("http://host:9501/cloud-clipboard/", "/text", &[])
+            api_url("http://host:9501/clip9/", "/text", &[])
                 .unwrap()
                 .as_str(),
-            "http://host:9501/cloud-clipboard/text"
+            "http://host:9501/clip9/text"
         );
         assert_eq!(
             api_url("http://host:9501", "/text", &[]).unwrap().as_str(),
