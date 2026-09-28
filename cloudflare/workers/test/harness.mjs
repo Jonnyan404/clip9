@@ -9,7 +9,7 @@ export const SHELL_FIXTURE = `<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
 <meta charset="utf-8">
-<title>Cloud Clipboard</title>
+<title>clip9</title>
 <script type="module" crossorigin src="./assets/index-DyTrt7K.js"></script>
 <link rel="stylesheet" crossorigin href="./assets/index-Bkjgy8nt.css">
 </head>

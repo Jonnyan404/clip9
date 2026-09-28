@@ -14,7 +14,7 @@
 //! 4. 这里**不计数**（抓取程序会反复访问，统计只认分享页的上报，见 `POST /share/visit`）。
 
 /// 卡片上的站点名。
-pub const SITE_NAME: &str = "Cloud Clipboard";
+pub const SITE_NAME: &str = "clip9";
 /// 标题最多几个字符（超了截断 + 省略号）。
 const TITLE_LIMIT: usize = 80;
 /// 描述最多几个字符。
@@ -330,10 +330,7 @@ mod tests {
     #[test]
     fn meta_drops_empty_parts() {
         assert_eq!(join_meta(&["文件", "", "  ", "1.0MB"]), "文件 · 1.0MB");
-        assert_eq!(
-            join_meta(&["", "  "]),
-            "通过 Cloud Clipboard 分享，打开即可查看。"
-        );
+        assert_eq!(join_meta(&["", "  "]), "通过 clip9 分享，打开即可查看。");
     }
 
     #[test]

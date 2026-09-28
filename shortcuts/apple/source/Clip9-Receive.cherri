@@ -1,15 +1,9 @@
-// 接收**指定 ID** 的那一条（不是最新一条）。
-//
-// 用途：发送成功的通知里会显示 ID（`已发送 <ID>`），想精确取回某一条时用这个。
-// 与「接收最新」的区别只有一处：请求的 URL 是 /content/<ID> 而不是 /content/latest。
-//
-// ID 有两个来源：
-//   1. 导入时填在「消息 ID」问答里 —— 适合固定取某一条
-//   2. 留空则每次运行时弹框询问 —— 适合临时取
-#define name Cloud-Clipboard-Receive-By-ID
+#define name Clip9-Receive
 #define color green
 #define version 26
-// 与「接收最新」相同的入口：菜单栏 + Spotlight + 快捷指令搜索 + Apple Watch。
+// Receive 不需要输入（它是"拉取"），所以不要 sharesheet / quickactions——那两个是给带输入的发送用的。
+// 需要的是"随手能唤起"的入口：macOS 菜单栏 + Spotlight 搜索 + 快捷指令搜索 + Apple Watch。
+// 不声明的话 WFWorkflowTypes 只有 Watch 和 ShowInSearch，等于没有可用入口。
 #define from menubar,spotlight,search,watch
 
 #include 'actions/web'
@@ -18,10 +12,10 @@
 #include 'actions/documents'
 #include 'actions/device'
 
+// 导入时填写配置（也可之后在快捷指令顶部"文本"动作中修改）
 #question qServerURL "服务器地址，例如 https://clip.example.com 或 http://127.0.0.1:9501" "http://127.0.0.1:9501"
 #question qRoomName "房间名，与发送端一致；默认填 default" "default"
 #question qRoomPassword "全局访问密码或房间密码；未设密码则留空" ""
-#question qMessageID "要接收的消息 ID（发送成功时的通知里有）。留空则每次运行时弹框询问" ""
 
 @rawEndpoint = text(qServerURL)
 @endpoint = getText(@rawEndpoint)
@@ -37,21 +31,8 @@ if !@endpoint {
     stop()
 }
 @encodedRoom = urlEncode(@room)
-
-// 消息 ID：问答里填了就用，没填就当场问
-@rawID = text(qMessageID)
-@messageID = replaceText('^\s+|\s+$', '', @rawID, true, true)
-if !@messageID {
-    @asked = prompt("要接收哪一条？填消息 ID（发送成功时的通知里有）", "Text")
-    @messageID = replaceText('^\s+|\s+$', '', @asked, true, true)
-}
-if !@messageID {
-    alert("没有填消息 ID。")
-    stop()
-}
-
 @authorization = "Bearer {@password}"
-@response = downloadURL("{@endpoint}/content/{@messageID}?room={@encodedRoom}&format=json", {"Authorization":"{@authorization}", "Accept":"application/json", "Cache-Control":"no-cache"})
+@response = downloadURL("{@endpoint}/content/latest?room={@encodedRoom}&format=json", {"Authorization":"{@authorization}", "Accept":"application/json", "Cache-Control":"no-cache"})
 @record = getDictionary(@response)
 @error = getValue(@record, "error")
 if @error {
@@ -75,14 +56,19 @@ if @uuid {
         if @msgType == "image" {
             @picture = getFirstItem(@download)
             setClipboard(@picture, true)
+            // vibrate() 是 iOS 专属动作，macOS 上不可用。此前只写了 iOS 分支，
+            // 导致 macOS 拉取图片时毫无反馈。补一条通知作为等价提示。
             if @model == "Mac" {
-                showNotification("已接收图片，已复制到剪贴板", "Cloud Clipboard", false)
+                showNotification("已接收图片，已复制到剪贴板", "clip9", false)
             }
             if @model != "Mac" {
                 vibrate()
             }
         } else {
-            // 保存位置只能每次询问（Shortcuts 的文件夹选择器够不到任意本地绝对路径，见 NOTES.md）
+            // 保存位置只能每次询问。Shortcuts 的文件夹选择器作用域限于文件提供者命名空间
+            // （iCloud 云盘 / 我的 Mac），够不到任意本地绝对路径，因此「静默保存到指定目录」
+            // 做不到 —— 2026-09-16 实测：关掉「询问保存位置」后点选文件夹，文件落到了
+            // iCloud 云盘而不是所选的真实路径。故不再提供保存目录配置项。
             @named = setName(@download, @filename)
             @saved = saveFilePrompt(@named, false)
             if @model == "Mac" {
@@ -101,8 +87,9 @@ if !@content {
     stop()
 }
 setClipboard(@content, true)
+// 同上：macOS 没有 vibrate()，补一条通知，否则这条分支在 Mac 上完全静默。
 if @model == "Mac" {
-    showNotification("已接收文字，已复制到剪贴板", "Cloud Clipboard", false)
+    showNotification("已接收文字，已复制到剪贴板", "clip9", false)
 }
 if @model != "Mac" {
     vibrate()

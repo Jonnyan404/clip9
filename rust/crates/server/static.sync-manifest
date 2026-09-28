@@ -1,9 +1,9 @@
 # clip9 前端产物的同步清单 —— 由 tools/sync-web-assets.mjs 生成，别手改。
-source 996d5f3d0592cff0bef901ff942b133e692202ae73c0e62a1c88b1de0a40c6c9
+source 130e72237d806bd9dc948bde28bbed0c467471c00614f64928202f4a3e9d1e5b
 apple-touch-icon.png
-assets/ShareView-DInvW1Wn.js
-assets/ShareView-DInvW1Wn.js.br
-assets/ShareView-DInvW1Wn.js.gz
+assets/ShareView-CBsC67BU.js
+assets/ShareView-CBsC67BU.js.br
+assets/ShareView-CBsC67BU.js.gz
 assets/ShareView-DjLm0d4-.css
 assets/ShareView-DjLm0d4-.css.br
 assets/ShareView-DjLm0d4-.css.gz
@@ -13,12 +13,12 @@ assets/highlight-langs-Dt8YXhtn.js.gz
 assets/i18n-B2E8evwD.js
 assets/i18n-B2E8evwD.js.br
 assets/i18n-B2E8evwD.js.gz
-assets/index-BEx0IoVP.js
-assets/index-BEx0IoVP.js.br
-assets/index-BEx0IoVP.js.gz
-assets/index-uqYvuMGf.css
-assets/index-uqYvuMGf.css.br
-assets/index-uqYvuMGf.css.gz
+assets/index-CSUjk5eD.js
+assets/index-CSUjk5eD.js.br
+assets/index-CSUjk5eD.js.gz
+assets/index-DevW8FlX.css
+assets/index-DevW8FlX.css.br
+assets/index-DevW8FlX.css.gz
 assets/materialdesignicons-webfont-B7mPwVP_.ttf
 assets/materialdesignicons-webfont-CSr8KVlo.eot
 assets/materialdesignicons-webfont-Dp5v-WZN.woff2
@@ -54,10 +54,10 @@ pwa-512x512.png
 reward-alipay.png
 reward-wechat.png
 shortcuts/android/shortcuts.zip
-shortcuts/apple/Cloud-Clipboard-Receive-By-ID.shortcut
-shortcuts/apple/Cloud-Clipboard-Receive.shortcut
-shortcuts/apple/Cloud-Clipboard-Send-File.shortcut
-shortcuts/apple/Cloud-Clipboard-Send-Text.shortcut
+shortcuts/apple/Clip9-Receive-By-ID.shortcut
+shortcuts/apple/Clip9-Receive.shortcut
+shortcuts/apple/Clip9-Send-File.shortcut
+shortcuts/apple/Clip9-Send-Text.shortcut
 shortcuts/meta.json
 sw.js
 sw.js.br

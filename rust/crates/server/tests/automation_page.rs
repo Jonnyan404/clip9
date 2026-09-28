@@ -35,7 +35,13 @@ fn go_page_path() -> Option<PathBuf> {
     candidates.into_iter().find(|p| p.exists())
 }
 
-/// ⚠️★ 这一页**必须与 Go 的那份逐字节相同**，靠 `[[.Prefix]]` / `[[.Room]]` 注入。
+/// 页面里的**产品名占位**。⚠️ 两边故意不同：Go 那份是 `Cloud Clipboard`，clip9 独立出来后
+/// 统一改成了 `clip9`。比之前把两边都换成这个标记 —— **除了名字，其余仍然逐字节比**。
+const NAME_MARK: &str = "\u{1}clip9-name\u{1}";
+const GO_NAME: &str = "Cloud Clipboard";
+const OUR_NAME: &str = "clip9";
+
+/// ⚠️★ 这一页与 Go 那份**除产品名外逐字节相同**，靠 `[[.Prefix]]` / `[[.Room]]` 注入。
 ///
 /// 理由不是省事，是**避免「靠人肉同步的第二份定义」**（`CONTRIBUTING.md` §6）：
 /// 两份文件相同 → `cmp` 就能发现漂移；不同就只能靠人眼对 1900 行。
@@ -43,10 +49,13 @@ fn go_page_path() -> Option<PathBuf> {
 /// 七条静态检查（`TestAutomationPageMessagesCoverActionKeys` 那一族）
 /// **在文件相同的前提下对这边同样成立** —— 这比把七条测试抄一遍便宜得多，也可靠得多。
 ///
+/// ⚠️ **唯一被允许的差异就是产品名**（2026-09-28 改）：clip9 不要求兼容旧项目，所以把
+/// `Cloud Clipboard` 换成了自己的名字。归一之后再比，防线对它以外的任何漂移照样有效。
+///
 /// ⚠️ **找不到 Go 仓库时这条会跳过** —— 那时这份就是唯一的源，没有「漂移」可言，
 /// 但防线也就没了。到那一步要补的是把 Go 那七条静态检查真正移植过来。
 #[test]
-fn page_matches_go_byte_for_byte() {
+fn page_matches_go_apart_from_the_product_name() {
     let Some(go) = go_page_path() else {
         println!(
             "跳过：找不到 Go 那份 automation_page.html（Go 仓库不在旁边时就该跳过）。\
@@ -55,17 +64,23 @@ fn page_matches_go_byte_for_byte() {
         );
         return;
     };
-    let expected = std::fs::read(&go).expect("文件刚 exists 过，读不出来就是权限问题");
-    let ours = include_bytes!("../src/automation_page.html");
+    let go_raw = std::fs::read_to_string(&go).expect("文件刚 exists 过，读不出来就是编码问题");
+    let ours_raw = std::str::from_utf8(include_bytes!("../src/automation_page.html"))
+        .expect("页面必须是 UTF-8");
+
+    let go_norm = go_raw.replace(GO_NAME, NAME_MARK);
+    let ours_norm = ours_raw.replace(OUR_NAME, NAME_MARK);
+
     assert_eq!(
-        ours.len(),
-        expected.len(),
-        "页面大小与 Go 那份不同 —— 有人只改了一边。刷新方式（从 Go 仓库）：\
-         `cp <Go 仓库>/cloud-clip/lib/automation_page.html rust/crates/server/src/`"
+        ours_norm.len(),
+        go_norm.len(),
+        "页面大小与 Go 那份不同（已把产品名归一）—— 有人只改了一边。刷新方式（从 Go 仓库）：\
+         `cp <Go 仓库>/cloud-clip/lib/automation_page.html rust/crates/server/src/`，\
+         然后把里面 {GO_NAME:?} 换成 {OUR_NAME:?}"
     );
     assert!(
-        ours == expected.as_slice(),
-        "页面内容与 Go 那份不同 —— 有人只改了一边（见上面的刷新方式）"
+        ours_norm == go_norm,
+        "页面内容与 Go 那份不同（已把产品名归一）—— 有人只改了一边（见上面的刷新方式）"
     );
 }
 

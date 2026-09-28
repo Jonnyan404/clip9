@@ -4,10 +4,10 @@
 
 | 捷径 | 作用 | 怎么唤起 |
 | :--- | :--- | :--- |
-| **Cloud-Clipboard-Send-Text** | 发送**文本** | iOS 分享菜单、macOS Finder 右键 →「快速操作」、菜单栏 |
-| **Cloud-Clipboard-Send-File** | 发送**文件 / 图片** | 同上 |
-| **Cloud-Clipboard-Receive** | 拉取**最新一条**，放进剪贴板（是文件则保存） | macOS 菜单栏、Spotlight 搜索、Apple Watch |
-| **Cloud-Clipboard-Receive-By-ID** | 拉取**指定 ID** 的那一条 | 同上 |
+| **Clip9-Send-Text** | 发送**文本** | iOS 分享菜单、macOS Finder 右键 →「快速操作」、菜单栏 |
+| **Clip9-Send-File** | 发送**文件 / 图片** | 同上 |
+| **Clip9-Receive** | 拉取**最新一条**，放进剪贴板（是文件则保存） | macOS 菜单栏、Spotlight 搜索、Apple Watch |
+| **Clip9-Receive-By-ID** | 拉取**指定 ID** 的那一条 | 同上 |
 
 > **发送为什么要分成两个？** 因为剪贴板条目的「类型」在客户端判不准——它的名字反映的是
 > **剪贴板格式**（带 HTML 味就变 `Clipboard <日期>.html`、图片变 `.png`、纯文本没后缀），
@@ -15,7 +15,7 @@
 
 ## 安装
 
-1. 下载本目录下的 `Cloud-Clipboard-Send-Text.shortcut`、`Cloud-Clipboard-Send-File.shortcut`、`Cloud-Clipboard-Receive.shortcut` 与 `Cloud-Clipboard-Receive-By-ID.shortcut`
+1. 下载本目录下的 `Clip9-Send-Text.shortcut`、`Clip9-Send-File.shortcut`、`Clip9-Receive.shortcut` 与 `Clip9-Receive-By-ID.shortcut`
 2. 双击导入「快捷指令」App
 3. 导入时会让你填几项：
    - **服务器地址** —— 如 `https://clip.example.com`，或局域网 `http://192.168.1.10:9501`
@@ -101,7 +101,7 @@
 | `verify.py` | 构建后断言，把踩过的坑变成检查项 |
 | `*.shortcut` | 签名产物（`--mode anyone`，iOS / macOS 均可导入） |
 
-当前产物规模：Receive **123** 动作 / Receive-By-ID **141** / Send-Text **83** / Send-File **81**。
+当前产物规模：Receive **123** 动作 / Receive-By-ID **141** / Send-Text **85** / Send-File **81**。
 `build.sh` 每次都会打印动作数、导入问答的 ActionIndex 与校验结果。
 
 依赖 [Cherri](https://github.com/electrikmilk/cherri)（**Go 写的，不是 Swift**）。

@@ -34,7 +34,7 @@ import { SHELL_BASE_HREF, escapeHtml, injectShellTags, readShellHtml } from './s
 //
 // 没有前端外壳可用时（资源层没绑定 / 取不到 index.html），退化成一张通用卡片：
 // 抓取程序要的就是标签，而真人那边本来也没有前端可以看。
-const SITE_NAME = 'Cloud Clipboard';
+const SITE_NAME = 'clip9';
 
 function summarySiteMeta(...parts) {
   return joinShareMeta(SITE_NAME, ...parts);
