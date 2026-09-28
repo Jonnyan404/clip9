@@ -40,17 +40,36 @@ env:
   PACKAGE: clip9-cli
 
 jobs:
-  # ── 命令行 / 服务端：一个静态二进制，四个平台 ────────────────────────────
+  # ── 命令行 / 服务端：一个静态二进制，五个平台 ────────────────────────────
   #
   # ⚠️★ 服务端**不需要系统库**：前端产物已编在二进制里，没有运行时要跟着走的资源 ——
   # 「一个文件丢过去就能跑」是真的。所以这里只出 `-p clip9-server`：它不拉 `crates/client`
   # 与 `crates/desktop`，那两条才要 GUI 库。
+  #
+  # ⚠️ armv7 是**硬浮点 musl**（`…musleabihf`）：armv7 的 Linux 设备实际上都是硬浮点
+  # （树莓派 2/3/4 的 32 位系统、各种 ARM 路由 / NAS）；软浮点那个变体装上去跑不起来。
+  # ⚠️ 这个三元组不是随手写的 —— 它和另外两个一样，**已在 `rust/rust-toolchain.toml` 的
+  # `targets` 里声明**（那份清单就是这条的对照物：名字写错的话 rustup 会在构建前试图安装并失败）。
+  #
+  # ⚠️★ 但 armv7 这一格**有已知风险**：服务端依赖 `aws-lc-sys`（`axum-server` 的 rustls 用它做
+  # TLS），而 AWS-LC 的「Platform Support」表里 armv7 **只列了 `armv7-unknown-linux-gnueabihf`
+  # （glibc）**，没有 armv7 + musl 这一格（32 位 ARM 的 musl 只列到 `arm-…-musleabihf`）。
+  # 也就是说第一次跑 Release 时，armv7 很可能挂在 `aws-lc-sys` 的构建上。
+  #
+  # 退路（代价从低到高）：
+  #   ① 换成 `armv7-unknown-linux-gnueabihf` —— AWS-LC 明确支持，`cross` 也有镜像；
+  #      代价是**动态链接**（设备上要有 glibc ≥ 2.31），「一个文件丢过去就能跑」这条就没了。
+  #   ② 把 TLS provider 从 `aws-lc-rs` 换成 `ring` —— 那是**全平台**的改动，要单独验。
+  # ⚠️ 真要动手时先**把失败信息读出来**再选，别照着这句话当成已经诊断好了。
   linux:
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
-        target: [x86_64-unknown-linux-musl, aarch64-unknown-linux-musl]
+        target:
+          - x86_64-unknown-linux-musl
+          - aarch64-unknown-linux-musl
+          - armv7-unknown-linux-musleabihf
     steps:
       - uses: actions/checkout@v4
 
