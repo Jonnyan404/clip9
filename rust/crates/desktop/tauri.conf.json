@@ -36,18 +36,18 @@
     ],
     "macOS": {
       "files": {
-        "binaries/clip9-server": "MacOS/clip9-server"
+        "MacOS/clip9-server": "binaries/clip9-server"
       }
     },
     "linux": {
       "deb": {
         "files": {
-          "binaries/clip9-server": "/usr/bin/clip9-server"
+          "/usr/bin/clip9-server": "binaries/clip9-server"
         }
       },
       "appimage": {
         "files": {
-          "binaries/clip9-server": "/usr/bin/clip9-server"
+          "/usr/bin/clip9-server": "binaries/clip9-server"
         }
       }
     }
