@@ -1,12 +1,23 @@
 name: Release
 
-# 打 `v*` 标签时出四个平台的 `clip9-server` 单文件二进制，附到 Release 上。
+# 打 `v*` 标签时构建发布产物并附到 Release 上；也可以手动跑（默认只构建、不建 Release）。
 #
-# ⚠️★ 服务端**不需要系统库**：前端产物已编在二进制里，没有运行时资源要跟着走 ——
-# 「一个文件丢过去就能跑」是真的。所以这里只出 `-p clip9-server`（它不拉 `crates/client`
-# 与 `crates/desktop`，那两条才要 GUI 库）。
+# 产物命名（2026-09-28 定）：
+#   clip9-cli-<target>.tar.gz        服务端二进制，**前端已编在里面**（一个文件丢过去就能跑）
+#   clip9-desktop-<target>.<ext>     桌面端（⚠️ 还没接进来）
+#   clip9-openwrt-…                  OpenWrt 包（⚠️ 还没接进来：clip9 里还没有 packaging/）
+#   clip9-android-…                  Android 包（⚠️ 还没接进来：clip9 里还没有 android 工程）
 #
-# 还没做的（`docs/ARCHITECTURE.md` §10 的 T4）：Docker 镜像、OpenWrt 的 .ipk、Android 外壳。
+# ⚠️★ 服务端**不需要系统库**：前端产物已编在二进制里，没有运行时要跟着走的资源 ——
+# 「一个文件丢过去就能跑」是真的。所以这里只出 `-p clip9-server`：它不拉 `crates/client`
+# 与 `crates/desktop`，那两条才要 GUI 库。
+#
+# ⚠️ 手动重跑同一个标签时，同名资产是**替换**而不是报「已存在」—— 见 `overwrite_files`。
+#
+# ⚠️ 包里的二进制**仍叫 `clip9-server`**，别跟着改成 clip9-cli：
+# `crates/desktop/src/server_process.rs` 的 `default_binary()` 就按这个名字在
+# **桌面可执行文件的同目录**里找它（那是「桌面端含服务端」的实现方式）。
+# 改名的只有发布出去的**压缩包**。
 
 on:
   push:
@@ -24,6 +35,8 @@ permissions:
 env:
   CARGO_TERM_COLOR: always
   BIN: clip9-server
+  # 发布出去的包名。⚠️ 与 `BIN` 故意不同，见文件头。
+  PACKAGE: clip9-cli
 
 jobs:
   linux:
@@ -53,8 +66,9 @@ jobs:
         working-directory: rust
         run: |
           set -euo pipefail
-          name="$BIN-${{ matrix.target }}"
+          name="$PACKAGE-${{ matrix.target }}"
           mkdir -p "dist/$name"
+          # ⚠️ 二进制本身不改名（见文件头）。
           cp "target/${{ matrix.target }}/release/$BIN" "dist/$name/"
           cp ../LICENSE ../README.md "dist/$name/"
           tar -C dist -czf "dist/$name.tar.gz" "$name"
@@ -62,7 +76,7 @@ jobs:
 
       - uses: actions/upload-artifact@v4
         with:
-          name: ${{ env.BIN }}-${{ matrix.target }}
+          name: ${{ env.PACKAGE }}-${{ matrix.target }}
           path: |
             rust/dist/*.tar.gz
             rust/dist/*.sha256
@@ -93,7 +107,7 @@ jobs:
         working-directory: rust
         run: |
           set -euo pipefail
-          name="$BIN-${{ matrix.target }}"
+          name="$PACKAGE-${{ matrix.target }}"
           mkdir -p "dist/$name"
           cp "target/${{ matrix.target }}/release/$BIN" "dist/$name/"
           cp ../LICENSE ../README.md "dist/$name/"
@@ -102,7 +116,7 @@ jobs:
 
       - uses: actions/upload-artifact@v4
         with:
-          name: ${{ env.BIN }}-${{ matrix.target }}
+          name: ${{ env.PACKAGE }}-${{ matrix.target }}
           path: |
             rust/dist/*.tar.gz
             rust/dist/*.sha256
@@ -123,3 +137,5 @@ jobs:
         with:
           files: artifacts/*
           generate_release_notes: true
+          # ⚠️ 手动重跑同一标签时**替换**同名资产（而不是失败在「已存在」上）。
+          overwrite_files: true
