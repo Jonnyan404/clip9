@@ -33,6 +33,13 @@
 //! ⚠️ **路径也在这里写死了**（`com.clip9.app.ServerBridge`）—— 改包名/类名要一起改这里，
 //! 否则 Kotlin 那边是 `UnsatisfiedLinkError`。设计见 `docs/specs/android-client.md` §5。
 //!
+//! ⚠️★ 下面每个函数的第二个参数是 [`JObject`]（**不是 `JClass`**）：
+//! Kotlin 侧写的是 `object ServerBridge { external fun … }`，那是**实例方法**，
+//! JNI 给的就是 `jobject`（那个单例）。我们从不使用它，但类型要写对 —— 免得下一个人
+//! 照着「静态方法」的模子去改。⚠️ 反过来说，改成 `companion object` + `@JvmStatic`
+//! 会变成静态方法（第二参变 `jclass`），两种在 ABI 上都是指针、都不会崩，
+//! 所以**没有测试能替你发现这件事** —— 只能靠这行注释。
+//!
 //! # 线程
 //!
 //! ⚠️★ Kotlin 侧**不要在 UI 线程调** `nativeStart` / `nativeStop`：两者都是阻塞的
@@ -49,7 +56,7 @@ use std::time::Duration;
 
 use clip9_server::{config_file, paths, serve};
 use jni::JNIEnv;
-use jni::objects::{JClass, JString};
+use jni::objects::{JObject, JString};
 use jni::sys::{jint, jstring};
 use tokio::runtime::Runtime;
 use tokio::sync::watch;
@@ -163,7 +170,7 @@ fn java_string_or_null(env: &mut JNIEnv, value: Option<&str>) -> jstring {
 #[unsafe(no_mangle)]
 pub extern "system" fn Java_com_clip9_app_ServerBridge_nativeVersion(
     env: JNIEnv,
-    _class: JClass,
+    _this: JObject,
 ) -> jstring {
     env.new_string(env!("CARGO_PKG_VERSION"))
         .expect("建 Java 字符串不该失败")
@@ -190,7 +197,7 @@ pub extern "system" fn Java_com_clip9_app_ServerBridge_nativeVersion(
 #[unsafe(no_mangle)]
 pub extern "system" fn Java_com_clip9_app_ServerBridge_nativeStart(
     mut env: JNIEnv,
-    _class: JClass,
+    _this: JObject,
     config_path: JString,
     data_dir: JString,
     host: JString,
@@ -213,7 +220,7 @@ pub extern "system" fn Java_com_clip9_app_ServerBridge_nativeStart(
 #[unsafe(no_mangle)]
 pub extern "system" fn Java_com_clip9_app_ServerBridge_nativeStop(
     mut env: JNIEnv,
-    _class: JClass,
+    _this: JObject,
 ) -> jstring {
     let error = stop();
     java_string_or_null(&mut env, error.as_deref())
@@ -231,7 +238,7 @@ pub extern "system" fn Java_com_clip9_app_ServerBridge_nativeStop(
 #[unsafe(no_mangle)]
 pub extern "system" fn Java_com_clip9_app_ServerBridge_nativeStatus(
     _env: JNIEnv,
-    _class: JClass,
+    _this: JObject,
 ) -> jint {
     status()
 }
@@ -252,7 +259,7 @@ fn status() -> jint {
 #[unsafe(no_mangle)]
 pub extern "system" fn Java_com_clip9_app_ServerBridge_nativeLastError(
     mut env: JNIEnv,
-    _class: JClass,
+    _this: JObject,
 ) -> jstring {
     let text = bridge().last_error.clone();
     java_string_or_null(&mut env, text.as_deref())
