@@ -1,9 +1,9 @@
 # clip9 前端产物的同步清单 —— 由 tools/sync-web-assets.mjs 生成，别手改。
-source 2dac63acab33b60693ac842a6f22d9c676f68512b853ab93854bcf2b873fab5f
+source 76fa20b9321c09a42f5753d9419abca7989c598b699bd06efe5dfaaf2a1a5820
 apple-touch-icon.png
-assets/ShareView-CorCrsHm.js
-assets/ShareView-CorCrsHm.js.br
-assets/ShareView-CorCrsHm.js.gz
+assets/ShareView-CME69jjP.js
+assets/ShareView-CME69jjP.js.br
+assets/ShareView-CME69jjP.js.gz
 assets/ShareView-DjLm0d4-.css
 assets/ShareView-DjLm0d4-.css.br
 assets/ShareView-DjLm0d4-.css.gz
@@ -13,12 +13,12 @@ assets/highlight-langs-Dt8YXhtn.js.gz
 assets/i18n-B2E8evwD.js
 assets/i18n-B2E8evwD.js.br
 assets/i18n-B2E8evwD.js.gz
-assets/index-CnCDb44W.css
-assets/index-CnCDb44W.css.br
-assets/index-CnCDb44W.css.gz
-assets/index-DuZx72mf.js
-assets/index-DuZx72mf.js.br
-assets/index-DuZx72mf.js.gz
+assets/index-DgPaamLt.css
+assets/index-DgPaamLt.css.br
+assets/index-DgPaamLt.css.gz
+assets/index-amUmISUW.js
+assets/index-amUmISUW.js.br
+assets/index-amUmISUW.js.gz
 assets/materialdesignicons-webfont-B7mPwVP_.ttf
 assets/materialdesignicons-webfont-CSr8KVlo.eot
 assets/materialdesignicons-webfont-Dp5v-WZN.woff2
