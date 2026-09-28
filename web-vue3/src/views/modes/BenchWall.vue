@@ -13,7 +13,6 @@
 //
 // ⚠️ 这个模式**不改数据**。动作结果要落盘只能显式点「另存为新条目」（走现成的 POST /text）。
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
-import axios from 'axios';
 import { useAppStore } from '@/store/app';
 import { useWebSocketStore } from '@/store/websocket';
 import { useTheme } from 'vuetify';
@@ -21,6 +20,7 @@ import { useI18n } from 'vue-i18n';
 import PageToolbar from '@/components/PageToolbar.vue';
 import ActionChain from '@/components/bench/ActionChain.vue';
 import { decodeHtmlEntities, errorMessage, formatTimestamp } from '@/util.js';
+import { postText } from '@/send.js';
 import { toast } from '@/plugins/toast';
 
 const app = useAppStore();
@@ -135,11 +135,9 @@ async function saveAsNew(content) {
         return;
     }
     try {
-        await axios.post('text', body, {
-            params: new URLSearchParams([['room', ws.room]]),
-            // text/plain = 「整个 body 就是正文」那条分支（见服务端 POST /text 的 Content-Type 约定）
-            headers: { 'Content-Type': 'text/plain' },
-        });
+        // ⚠️ 这条 POST 的**唯一**定义在 `src/send.js`（外壳的分享桥走的是同一个函数）。
+        // 这里原来也是手写的一份、同样漏了 `?client=`。
+        await postText({ room: ws.room, text: body });
         toast(t('actionSaveAsNewDone'));
     } catch (err) {
         toast(errorMessage(err) || t('sendFailed'));

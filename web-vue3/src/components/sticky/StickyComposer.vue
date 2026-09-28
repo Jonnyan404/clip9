@@ -5,6 +5,7 @@ import { useWebSocketStore } from '@/store/websocket';
 import { useI18n } from 'vue-i18n';
 import { toast } from '@/plugins/toast';
 import { errorMessage, getClientId, prettyFileSize } from '@/util.js';
+import { postText } from '@/send.js';
 import ComposerSlashMenu from '@/components/ComposerSlashMenu.vue';
 import { SLASH_TEMPLATES, resolveSlashText, slashMenuShouldOpen, slashMenuShouldStay, slashPendingAt, stripTrailingSlash } from '@/slash-template.js';
 
@@ -216,16 +217,9 @@ async function sendText() {
     if (!app.send.text) {
         return;
     }
-    await axios.post(
-        'text',
-        app.send.text,
-        {
-            params: new URLSearchParams([['room', ws.room], ['client', clientId]]),
-            headers: {
-                'Content-Type': 'text/plain',
-            },
-        },
-    );
+    // ⚠️ 这条 POST 的**唯一**定义在 `src/send.js`（外壳的分享桥走的是同一个函数）。
+    // 别在这里再写一份 axios 调用 —— 两份一定会漂：标准模式那份就漏了 `?client=`。
+    await postText({ room: ws.room, text: app.send.text, client: clientId });
     app.send.text = '';
 }
 
