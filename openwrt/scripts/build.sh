@@ -160,15 +160,30 @@ done
 for entry in "${ARCH_MAP[@]}"; do
     arch="${entry%%:*}"
     target="${entry#*:}"
-    # ⚠️ 必须与上面那个 `CARGO_TARGET_DIR` 同源 —— 这是**同一处定义的第二次引用**。
-    src="$CROSS_TARGET_DIR_PREFIX$target/release/clip9-server"
+    # ⚠️★ 产物**别按写死的路径去取**：cargo 在 `--target` 模式下会在 target 目录里
+    #    **再套一层 `<triple>/`**，所以 `CARGO_TARGET_DIR` 底下真实位置是
+    #    `<triple>/release/clip9-server` —— cross 自己的 FAQ 示例里那两层也看得见
+    #    （`ls target/build/<triple>/<triple>/debug/`）。
+    #
+    #    ⚠️★ 2026-09-28 在 CI 上真红过，症状**极具欺骗性**：cross 明明编完了、
+    #    `Finished release profile [optimized] target(s) in 1m 57s` 也打出来了，
+    #    紧接着却报「找不到产物」—— 因为脚本拼的是 `.../$target/release/clip9-server`
+    #    （少一层）。当时第一反应是「cross 没把产物挂载回来」，**那是错的**：
+    #    cross 会无条件把宿主的 target 目录挂到容器 `/target`（`src/docker/local.rs`，
+    #    源里就一句 `-v {host_target}:/target`），产物一直都在宿主上。
+    #
+    #    改成在**该 target 自己的目录里找**，不再猜中间那几层；找不到时把目录里
+    #    有什么一并打出来（比一句「找不到」有用得多）。
+    src="$(find "$CROSS_TARGET_DIR_PREFIX$target" -type f -name clip9-server -path '*/release/*' -print -quit 2>/dev/null || true)"
     dst="$OUTPUT_DIR/clip9-server-$VERSION-$arch"
-    if [ ! -f "$src" ]; then
-        echo "错误: cross 跑完了但找不到 $src" >&2
+    if [ -z "$src" ]; then
+        echo "错误: cross 跑完了，但在 $CROSS_TARGET_DIR_PREFIX$target 下找不到 release 产物" >&2
+        echo "  这个 target 目录里实际的二进制（最多 20 条）：" >&2
+        find "$CROSS_TARGET_DIR_PREFIX$target" -type f -name 'clip9*' 2>/dev/null | head -20 >&2 || true
         exit 1
     fi
     cp "$src" "$dst"
-    echo "✓ $arch  ($(du -h "$dst" | cut -f1))"
+    echo "✓ $arch  ($(du -h "$dst" | cut -f1))  ← ${src#"$CROSS_TARGET_DIR_PREFIX"}"
 done
 
 echo

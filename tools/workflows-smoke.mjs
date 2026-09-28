@@ -535,31 +535,77 @@ const toolchain = read('rust/rust-toolchain.toml');
 // ⚠️★ 症状**指不到这里**：报的是某个依赖 crate 的 build script，像代码/依赖问题；
 //    而且**换一次顺序就换一个 target 倒**（2026-09-28：x86_64 与 armv7 都过，
 //    只挂在第三个 aarch64 上），更像「那个架构有问题」。
-// ⚠️ 这条判的是「**同一处定义**」：`CARGO_TARGET_DIR` 里那截前缀与第 4 步拼产物路径
-//    用的前缀必须逐字相同 —— 两边各写一份的话，改了其中一处就会去别处找二进制。
+// ⚠️★ 这条判据**换过一次形状**，别退回旧的那副 —— 旧的形态**拦不住真出的事**：
+//    · 旧形状 = 「`CARGO_TARGET_DIR` 里那截前缀与取产物处拼的前缀**逐字相同**」。
+//      2026-09-28 就是它当班时红的：两处**确实同源**，但取产物那处**少拼了一层**
+//      `<triple>/`（`--target` 模式下 cargo 在 target 目录里再套一层，产物在
+//      `…/$target/$target/release/`）。**同源 ≠ 写对了那一层** —— 比字符串这种形态
+//      天生看不见「被比的那一段之外」写错了什么。
+//    · 现在的形状 = 「取产物那一步**不许拼路径**，只能引用同一个前缀变量、在它指向的
+//      目录里找」。中间有几层根本不写进脚本 → 没得错。⚠️ 刻意不钉「必须用 `find`」
+//      这种写法：换成别的机制、只要不写死路径就都算合格。
+//
+// ⚠️ 那次红得**极具欺骗性**：cross 明明编完了、`Finished release profile
+//    [optimized] target(s) in 1m 57s` 也打出来了，紧接着报「找不到产物」。我第一反应
+//    是「cross 没把产物挂载回宿主」，**那是错的** —— cross 无条件把宿主 target 挂到
+//    容器 `/target`（`src/docker/local.rs` 里就一句 `-v {host_target}:/target`），
+//    产物一直在宿主上，只是路径里多一层 `<triple>`。
 {
   const label = 'openwrt 的 build.sh 给每个 target 单独的 target 目录（且取产物处同源）';
   const problems = [];
   if (buildSh === null) {
     problems.push('读不到 openwrt/scripts/build.sh');
   } else {
+    // ⚠️ 只看**代码行**，注释先剔掉：这段注释里专门写了各种「反面写法」当例子
+    //    （比如少一层 `<triple>` 的那个路径），拿全文去匹配会把例子当成真代码 ——
+    //    实测就是它把这条判据打红的（判据本身对了，扫到了注释）。
+    const code = buildSh
+      .split('\n')
+      .filter((line) => !/^\s*#/.test(line))
+      .join('\n');
     // ⚠️ 两种写法都认：前缀写成变量（`"$PREFIX$target"`）或直接写在引号里。
     //    这里比较的是**引号里 `$target` 之前的那一截**，所以两种写法比的是同一个东西。
-    const ctd = /CARGO_TARGET_DIR="([^"]*)\$target"/.exec(buildSh);
-    const src = /^[ \t]*src="([^"]*)\$target\/release\/clip9-server"/m.exec(buildSh);
+    // ⚠️ `CARGO_TARGET_DIR` 前面必须**不是标识符字符**：不锚边界的话，
+    //    `X_CARGO_TARGET_DIR="…"` 这种「换个名字等于没设」的写法会被当成命中
+    //    （变异验证抓到过 —— 判据本来在这条上是瞎的）。
+    const ctd = /(?<![A-Za-z0-9_])CARGO_TARGET_DIR="([^"]*)\$target"/m.exec(code);
+    // 取产物那一步有两副**合法**形状：在该 target 的目录里 `find`（首选，不猜中间层），
+    // 或写死成 `<前缀>$target/$target/release/clip9-server`（**两层** `<triple>`）。
+    const findSrc = /^[ \t]*src="\$\(find "([^"]*)\$target"/m.exec(code);
+    const fixedSrc = /^[ \t]*src="([^"]*)\$target\/\$target\/release\/clip9-server"/m.exec(code);
+    const got = findSrc ?? fixedSrc;
+
+    // 少一层的那种写法（`…$target/release/clip9-server`）单列一条：它是**真出过事**的形状。
+    // ⚠️ 判定必须**按行**做：合法的两层写法 `…$target/$target/release/…` 里面**也含**
+    //    子串 `$target/release/…` —— 拿一个裸正则去测整份代码会把两层写法一起判红
+    //    （实测过：判据自己错杀，看起来像「改错了」）。
+    const naiveLines = code
+      .split('\n')
+      .filter(
+        (line) =>
+          /\$target\/release\/clip9-server/.test(line) &&
+          !/\$target\/\$target\/release\/clip9-server/.test(line),
+      );
+    if (naiveLines.length) {
+      problems.push(
+        '取产物那步写成了 `…$target/release/clip9-server` —— **少一层 `<triple>`**：' +
+          '`--target` 模式下 cargo 的产物在 `…/$target/$target/release/`。' +
+          '改成 `find "$前缀$target" …` 更省心（不再猜中间那几层）。',
+      );
+    }
     if (!ctd) {
       problems.push(
         '没找到 `CARGO_TARGET_DIR="…$target"` —— 三个 target 共用 target/ 时，宿主构建脚本' +
           '会跨镜像复用，第二个 target 起就报 GLIBC not found（cross#724）',
       );
     }
-    if (!src) {
-      problems.push('没找到 `src="…$target/release/clip9-server"` —— 取产物那一步被改写了？');
+    if (!got && !problems.length) {
+      problems.push('没找到取产物那一步（`src="$(find "…$target"…)"` 或两层 `<triple>` 的写法）');
     }
-    if (ctd && src && ctd[1] !== src[1]) {
+    if (ctd && got && ctd[1] !== got[1]) {
       problems.push(
         `target 目录两处不是同一个值：CARGO_TARGET_DIR 那处是 ${JSON.stringify(ctd[1])}，` +
-          `取产物那处是 ${JSON.stringify(src[1])}`,
+          `取产物那处是 ${JSON.stringify(got[1])}`,
       );
     }
     if (!problems.length) ok(`${label} —— ${JSON.stringify(ctd[1])}<target>`);
