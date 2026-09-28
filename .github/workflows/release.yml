@@ -3,21 +3,14 @@ name: Release
 # 打 `v*` 标签时构建发布产物并附到 Release 上；也可以手动跑（默认只构建、不建 Release）。
 #
 # 产物命名（2026-09-28 定）：
-#   clip9-cli-<target>.tar.gz        服务端二进制，**前端已编在里面**（一个文件丢过去就能跑）
-#   clip9-desktop-<target>.<ext>     桌面端（⚠️ 还没接进来）
-#   clip9-openwrt-…                  OpenWrt 包（⚠️ 还没接进来：clip9 里还没有 packaging/）
-#   clip9-android-…                  Android 包（⚠️ 还没接进来：clip9 里还没有 android 工程）
+#   clip9-cli-<target>.tar.gz          服务端二进制，**前端已编在里面**（一个文件丢过去就能跑）
+#   clip9-desktop-<target>.<dmg|deb|AppImage>   桌面端，**含服务端**（见下）
+#   clip9-openwrt-…                    OpenWrt 包（⚠️ 还没接：clip9 里还没有 packaging/）
+#   clip9-android-…                    Android 包（⚠️ 还没接：Go 那边是 gomobile 的 .aar，
+#                                      Rust 这边要重做 cdylib + JNI 桥，是独立的一块）
 #
-# ⚠️★ 服务端**不需要系统库**：前端产物已编在二进制里，没有运行时要跟着走的资源 ——
-# 「一个文件丢过去就能跑」是真的。所以这里只出 `-p clip9-server`：它不拉 `crates/client`
-# 与 `crates/desktop`，那两条才要 GUI 库。
-#
-# ⚠️ 手动重跑同一个标签时，同名资产是**替换**而不是报「已存在」—— 见 `overwrite_files`。
-#
-# ⚠️ 包里的二进制**仍叫 `clip9-server`**，别跟着改成 clip9-cli：
-# `crates/desktop/src/server_process.rs` 的 `default_binary()` 就按这个名字在
-# **桌面可执行文件的同目录**里找它（那是「桌面端含服务端」的实现方式）。
-# 改名的只有发布出去的**压缩包**。
+# ⚠️★ 手动重跑同一个标签时，同名资产是**替换**而不是报「已存在」—— 见 `overwrite_files`。
+# ⚠️ 发 Release 只由最后那个 `publish` job 做：并行 job 各自建 Release 会互相打架。
 
 on:
   push:
@@ -35,10 +28,17 @@ permissions:
 env:
   CARGO_TERM_COLOR: always
   BIN: clip9-server
-  # 发布出去的包名。⚠️ 与 `BIN` 故意不同，见文件头。
+  # 发布出去的包名。⚠️ 与 `BIN` 故意不同：包里的二进制仍要叫 clip9-server，
+  # 因为 `crates/desktop/src/server_process.rs` 的 `default_binary()` 就按这个名字、
+  # 在**桌面主程序的同一个目录**里找它（那正是「桌面端含服务端」的实现方式）。
   PACKAGE: clip9-cli
 
 jobs:
+  # ── 命令行 / 服务端：一个静态二进制，四个平台 ────────────────────────────
+  #
+  # ⚠️★ 服务端**不需要系统库**：前端产物已编在二进制里，没有运行时要跟着走的资源 ——
+  # 「一个文件丢过去就能跑」是真的。所以这里只出 `-p clip9-server`：它不拉 `crates/client`
+  # 与 `crates/desktop`，那两条才要 GUI 库。
   linux:
     runs-on: ubuntu-latest
     strategy:
@@ -68,7 +68,6 @@ jobs:
           set -euo pipefail
           name="$PACKAGE-${{ matrix.target }}"
           mkdir -p "dist/$name"
-          # ⚠️ 二进制本身不改名（见文件头）。
           cp "target/${{ matrix.target }}/release/$BIN" "dist/$name/"
           cp ../LICENSE ../README.md "dist/$name/"
           tar -C dist -czf "dist/$name.tar.gz" "$name"
@@ -122,10 +121,93 @@ jobs:
             rust/dist/*.sha256
           if-no-files-found: error
 
+  # ── 桌面端：Tauri 安装包（macOS .app/.dmg、Linux .deb/AppImage）──────────
+  #
+  # ⚠️★ 桌面端「含服务端」靠的是把那个二进制放进包内**与主程序同一个目录**：
+  # `default_binary()` 就在那儿找 `clip9-server`。落位由 `tauri.conf.json` 的
+  # `bundle.macOS.files` / `bundle.linux.{deb,appimage}.files` 写死。
+  #
+  # ⚠️★ 刻意**不用** `bundle.externalBin`：它会把文件名加上 `-<target-triple>` 后缀，
+  # 那样 `default_binary()` 找的就是一个不存在的名字 —— 而且是**打包成功、运行时才报**。
+  #
+  # ⚠️ 所以这里是**两步**：先把服务端编出来、拷到配置里写死的那个暂存路径
+  # （`rust/crates/desktop/binaries/clip9-server`，已 gitignore），再让 tauri 打包。
+  desktop:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-latest
+            target: aarch64-apple-darwin
+            bundles: app,dmg
+          - os: macos-latest
+            target: x86_64-apple-darwin
+            bundles: app,dmg
+          - os: ubuntu-22.04
+            target: x86_64-unknown-linux-gnu
+            bundles: deb,appimage
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      # ⚠️ 缺 webkit2gtk 时 `tauri-build` 会直接失败，报错与「代码写错了」很像。
+      - name: Tauri 的系统依赖（Linux）
+        if: startsWith(matrix.os, 'ubuntu')
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libwebkit2gtk-4.1-dev libgtk-3-dev libsoup-3.0-dev \
+            librsvg2-dev libayatana-appindicator3-dev patchelf
+
+      - run: rustup target add ${{ matrix.target }}
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: rust
+          key: desktop-${{ matrix.target }}
+
+      # ① 服务端 → 配置里写死的那个暂存路径。
+      - name: 编服务端并暂存到 bundle 取件的位置
+        working-directory: rust
+        run: |
+          set -euo pipefail
+          cargo build --release -p clip9-server --target ${{ matrix.target }}
+          mkdir -p crates/desktop/binaries
+          cp "target/${{ matrix.target }}/release/clip9-server" crates/desktop/binaries/clip9-server
+
+      # ② 桌面端打包。⚠️ 不传任何 release 参数：发 Release 归下面那个唯一的 publish job。
+      - uses: tauri-apps/tauri-action@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          projectPath: rust/crates/desktop
+          args: --target ${{ matrix.target }} --bundles ${{ matrix.bundles }}
+
+      # ⚠️ 只收**能当 Release 资产的文件**：`.app` 是目录，当不了资产（它的内容在 dmg 里）。
+      - name: 给产物带上 clip9-desktop 前缀
+        run: |
+          set -euo pipefail
+          out="rust/target/desktop-release"
+          mkdir -p "$out"
+          base="rust/target/${{ matrix.target }}/release/bundle"
+          for f in "$base"/dmg/*.dmg "$base"/deb/*.deb "$base"/appimage/*.AppImage; do
+            [ -e "$f" ] || continue
+            cp "$f" "$out/clip9-desktop-${{ matrix.target }}.${f##*.}"
+          done
+          ls -l "$out"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: clip9-desktop-${{ matrix.target }}
+          path: rust/target/desktop-release/*
+          if-no-files-found: error
+
   # 收口到一个 job 发 Release：并行 job 各自建 Release 会互相打架。
   publish:
-    needs: [linux, macos]
-    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [linux, macos, desktop]
+    # ⚠️ 手动触发时 `dry_run` 默认是 **true** —— 只想构建就默认这样；
+    # 要真发 Release 得手动把它关掉。打标签那条路上没有这个 input，`!null` 为真，照常发。
+    if: startsWith(github.ref, 'refs/tags/v') && !inputs.dry_run
     runs-on: ubuntu-latest
     steps:
       - uses: actions/download-artifact@v4
