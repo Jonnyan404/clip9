@@ -59,6 +59,20 @@
 
 ## 二、怎么构建
 
+⚠️ **一条命令**（推荐 —— 它把下面 1–4 步串起来，并且在**编之前**就把「哪个 ABI 没装 target /
+NDK 里没有那个 clang / `.so` 没搬进 `jniLibs/`」说清楚）：
+
+```bash
+bash tools/build-android.sh               # 三个 ABI 的 .so → jniLibs/ → assembleDebug
+bash tools/build-android.sh --release     # 换成 assembleRelease
+bash tools/build-android.sh --abi arm64-v8a   # 只编一个 ABI 的冒烟
+bash tools/build-android.sh --print       # 只把要跑的命令打出来，先看一眼
+```
+
+⚠️★ **别在 WorkBuddy 的沙箱里跑**（见 §二.4 末尾那条）；在**普通终端**里跑。
+
+下面是手工的四步 —— 脚本出问题时按这个排查，也是「它在干什么」的说明。
+
 ### 1. 交叉编 `.so`
 
 ⚠️★ 三个环境变量必须与 `cargo` 在**同一条命令里**（每次 Bash 调用都是新 shell）：
@@ -112,12 +126,22 @@ node tools/sync-android-jni-libs.mjs --check    # 只比对不写，不一致退
 sdk.dir=/Users/<你>/Library/Android/sdk
 ```
 
+⚠️ 本机 `ANDROID_HOME` / `ANDROID_SDK_ROOT` **两个都没设**（`~/.zshrc` 里也没有），
+所以这个文件是**必须**的。已经写好了一个（内容就是上面那行），而被 `android/.gitignore`
+的 `/local.properties` 挡住 —— `git status` 里看不见它是正常的。
+
 ### 4. 构建
 
 ```bash
 cd android
 ./gradlew assembleDebug        # 或 assembleRelease
 ```
+
+⚠️★ **不带任务名跑 `./gradlew` 是没有意义的**：那跑的是默认的 `help` 任务，
+输出一串 `Welcome to Gradle 8.13` + `BUILD SUCCESSFUL`，看起来像「编过了」，
+其实**一个 Kotlin 文件都没过编译器、也没有 APK**（`app/build/` 根本不会出现）。
+那一趟只证明「构建脚本能被解析、AGP 与 Kotlin 插件能解析」。
+判断真的编了没有，看 `android/app/build/outputs/apk/` 里有没有文件。
 
 release 的签名材料也**不进仓库**，通过 `-P` 传（四个都给齐才会签名 —— 没给齐会出一个未签名的 APK，
 而不是报一句看不懂的配置错）：
@@ -143,9 +167,12 @@ wrapper 的发行版已经缓存在 `~/.gradle/wrapper/dists/gradle-8.13-bin`。
 
 这一节是**清单，不是免责声明** —— 接手的人先看这里，别把「文件齐了」当成「能跑」。
 
-- ⚠️★ **Gradle 构建从没在本机跑过**（见上面那条沙箱的原因）。
-  也就是说：`build.gradle.kts` / `settings.gradle.kts` / `AndroidManifest.xml` / 资源 是否真的能编过，
-  **没有验证**。
+- ✅ **构建脚本能配置**（2026-09-28，本机跑过一次）：不带任务名的 `./gradlew` 走到
+  `BUILD SUCCESSFUL in 25s`。⚠️ 但那只跑默认的 `help` 任务 —— 于是它**只**证明了
+  `settings.gradle.kts` 与两个 `build.gradle.kts` 能被求值、AGP 8.7.3 与 Kotlin 2.0.21
+  能被解析。**一个 Kotlin 文件都没过编译器，`AndroidManifest.xml` 与资源都没被解析，也没有 APK。**
+- ⚠️★ **`assembleDebug` / `assembleRelease` 从没跑过**（见上面那条沙箱的原因）。
+  所以「Kotlin 编不编得过、清单与资源合不合得成、R8 会不会动 `jniLibs`」**都没有验证**。
 - ⚠️★ **Kotlin 代码从未编译过**（`MainActivity` / `WebAppActivity` / `ServerService` /
   `ServerBridge` / `AppPrefs` / `ServerAddress` / `SharePayload`）。写的时候是逐行对着 API 与资源名核的
   （id / string / color / drawable 都逐个对过），但「对过名字」不等于「编得过」。
