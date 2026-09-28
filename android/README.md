@@ -31,8 +31,9 @@
 
 ⚠️ 上面这五处现在**逐条有判据**：`node tools/android-contract-smoke.mjs`（12 条，已接进 CI 的
 frontend job）。它管两组 —— 「ABI 名单在三处是否一致」与「库名 / JNI 符号名在六处是否一致」，
-外加「`jniLibs/<abi>/` 真的有占位」「`android/.gitignore` 有没有把产物目录整个忽略掉」
-「`.kt` 的块注释闭不闭合」。⚠️ 变异验证 18 组（详见脚本抬头）。
+外加「`jniLibs/<abi>/` 真的有占位」「构建产物路径（`app/build`、`build`、`.gradle`、`.kotlin`、
+`local.properties`）**逐条**真的被 `android/.gitignore` 忽略了」「`.kt` 的块注释闭不闭合」。
+⚠️ 变异验证 24 组（详见脚本抬头）。
 
 ⚠️ 它**抓不到**下面那段说的那件事（`JObject` vs `JClass`）—— 两种在 ABI 上都是指针、
 都不会崩，静态也看不出「该用哪个」。那条**仍然只能靠注释**。
