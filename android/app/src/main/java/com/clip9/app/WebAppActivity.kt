@@ -63,27 +63,32 @@ class WebAppActivity : AppCompatActivity() {
          * ⚠️ 这条比就绪那条宽：发一条文本要等一次 HTTP 往返 + 服务端落盘。
          */
         private const val RESULT_TIMEOUT_MS = 20_000L
+
+        /**
+         * 就绪探测。
+         *
+         * ⚠️ `onPageFinished` **不代表** SPA 挂载完了（Vue 挂载、WS 连上都在后面），
+         * 所以这里只能轮询 —— 这正是设计稿 §4 第 1 条要的那个东西。
+         *
+         * ⚠️★ 这两段 JS 必须待在 `companion object` 里：`const val` 只许出现在
+         * 顶层 / `object` / `companion object` 三处，写进类体是编不过的
+         * （`Const 'val' is only allowed on top level, in named objects, or in companion objects`）。
+         * 2026-09-28 真踩过 —— 它们当初是紧挨着下面那几个属性写的。
+         */
+        private const val PROBE_READY_JS =
+            "(function(){try{return !!(window.clip9Share&&typeof window.clip9Share.isReady==='function'&&window.clip9Share.isReady());}catch(e){return false;}})()"
+
+        /**
+         * 读回投递结果。
+         *
+         * ⚠️ `evaluateJavascript` **不能**等 Promise，所以结果是「写在一个全局变量上、
+         * 由这边轮询取走」。取走时就地清掉（`undefined`），免得下一轮读到旧结果。
+         * ⚠️ 返回的是**对象**（不是 JSON 字符串）：那样 WebView 回给我们的就是
+         * `{"ok":true}` 本身，不用再解一层字符串转义。
+         */
+        private const val READ_RESULT_JS =
+            "(function(){var v=window.__clip9ShareResult;if(v===undefined)return null;try{window.__clip9ShareResult=undefined;return JSON.parse(v);}catch(e){return null;}})()"
     }
-
-    /**
-     * 就绪探测。
-     *
-     * ⚠️ `onPageFinished` **不代表** SPA 挂载完了（Vue 挂载、WS 连上都在后面），
-     * 所以这里只能轮询 —— 这正是设计稿 §4 第 1 条要的那个东西。
-     */
-    private const val PROBE_READY_JS =
-        "(function(){try{return !!(window.clip9Share&&typeof window.clip9Share.isReady==='function'&&window.clip9Share.isReady());}catch(e){return false;}})()"
-
-    /**
-     * 读回投递结果。
-     *
-     * ⚠️ `evaluateJavascript` **不能**等 Promise，所以结果是「写在一个全局变量上、
-     * 由这边轮询取走」。取走时就地清掉（`undefined`），免得下一轮读到旧结果。
-     * ⚠️ 返回的是**对象**（不是 JSON 字符串）：那样 WebView 回给我们的就是
-     * `{"ok":true}` 本身，不用再解一层字符串转义。
-     */
-    private const val READ_RESULT_JS =
-        "(function(){var v=window.__clip9ShareResult;if(v===undefined)return null;try{window.__clip9ShareResult=undefined;return JSON.parse(v);}catch(e){return null;}})()"
 
     private lateinit var webView: WebView
     private lateinit var progress: ProgressBar
