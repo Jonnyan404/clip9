@@ -46,6 +46,14 @@ jobs:
         working-directory: web-vue3
         run: npm run build
 
+      # ⚠️★ 界面上的几条跨文件约定（输入框粘文件要拦默认粘贴、快捷指令时间轴的日期
+      # 清单、四份语言文件的键集合…）**两侧都没有测试运行器**。这个脚本一直存在，
+      # 但**根本跑不起来**（`util.js` 用了 `@/` 别名、还看着早已删掉的 `ChatWall.vue`）——
+      # 跑不起来的自检比没有更糟（看着像有保护）。修好之后接进门禁。
+      - name: 界面契约静态自检
+        working-directory: web-vue3
+        run: node scripts/check-display-semantics.mjs
+
       # ⚠️★ 唯一能提前问「前端源码改了但没同步进服务端」的地方。
       - name: 入库的前端产物与当前源码是否一致
         run: node tools/sync-web-assets.mjs --check
