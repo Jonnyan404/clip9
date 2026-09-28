@@ -1,24 +1,24 @@
 # clip9 前端产物的同步清单 —— 由 tools/sync-web-assets.mjs 生成，别手改。
-source f582f7d656e78d9b550cd95c18923790fff886dbf5ae700277a44b5ea34a603d
+source 2dac63acab33b60693ac842a6f22d9c676f68512b853ab93854bcf2b873fab5f
 apple-touch-icon.png
+assets/ShareView-CorCrsHm.js
+assets/ShareView-CorCrsHm.js.br
+assets/ShareView-CorCrsHm.js.gz
 assets/ShareView-DjLm0d4-.css
 assets/ShareView-DjLm0d4-.css.br
 assets/ShareView-DjLm0d4-.css.gz
-assets/ShareView-e8styMfS.js
-assets/ShareView-e8styMfS.js.br
-assets/ShareView-e8styMfS.js.gz
 assets/highlight-langs-Dt8YXhtn.js
 assets/highlight-langs-Dt8YXhtn.js.br
 assets/highlight-langs-Dt8YXhtn.js.gz
 assets/i18n-B2E8evwD.js
 assets/i18n-B2E8evwD.js.br
 assets/i18n-B2E8evwD.js.gz
-assets/index-BtzDb3Ej.js
-assets/index-BtzDb3Ej.js.br
-assets/index-BtzDb3Ej.js.gz
 assets/index-CnCDb44W.css
 assets/index-CnCDb44W.css.br
 assets/index-CnCDb44W.css.gz
+assets/index-DuZx72mf.js
+assets/index-DuZx72mf.js.br
+assets/index-DuZx72mf.js.gz
 assets/materialdesignicons-webfont-B7mPwVP_.ttf
 assets/materialdesignicons-webfont-CSr8KVlo.eot
 assets/materialdesignicons-webfont-Dp5v-WZN.woff2

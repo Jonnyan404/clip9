@@ -55,7 +55,9 @@ should_run_local_d1() {
     macos_version=$(sw_vers -productVersion)
 
     if version_lt "$macos_version" "13.5.0"; then
-        warn "检测到 macOS $macos_version，低于 workerd 本地运行要求的 13.5.0，跳过本地 D1 迁移。"
+        # ⚠️ `$macos_version` 后面那个全角逗号不写 `${}` 的话会被算进变量名 ——
+        # 这个函数没开 `set -u`，所以症状是**静默**的：版本号那一截直接没了。
+        warn "检测到 macOS ${macos_version}，低于 workerd 本地运行要求的 13.5.0，跳过本地 D1 迁移。"
         warn "如需强制跳过本地 D1，可在执行前设置 SKIP_LOCAL_D1=1。"
         return 1
     fi

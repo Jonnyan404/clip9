@@ -48,7 +48,7 @@ echo "包架构: $PACKAGE_ARCH"
 
 if [ ! -f "$BINARY" ]; then
     echo "错误: 找不到二进制文件 $BINARY"
-    echo "请先运行 build.sh 生成它（./scripts/build.sh $VERSION）"
+    echo "请先运行 build.sh 生成它（./scripts/build.sh ${VERSION}）"
     exit 1
 fi
 
@@ -98,7 +98,7 @@ for script in postinst prerm; do
         chmod 755 "$PKG_DIR/CONTROL/$script"
         echo "✓ 已复制 $script 脚本"
     else
-        echo "! 找不到 $script 脚本（$CONTROL_DIR/$script）"
+        echo "! 找不到 $script 脚本（$CONTROL_DIR/${script}）"
         exit 1
     fi
 done
