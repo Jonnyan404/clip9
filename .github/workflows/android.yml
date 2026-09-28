@@ -1,0 +1,248 @@
+name: Android APK
+
+# 一个 APK —— `app/build.gradle.kts` 的 `abiFilters` 列着三个 ABI，`jniLibs/` 里也打三个
+# 进去，所以**不按 ABI 拆包**（那个文件里写着为什么不许 `splits { abi { … } }`）。
+# ⚠️ 代价是包大：三个 `.so` 一起约 52 MB（arm64-v8a 17.6 + armeabi-v7a 15.1 + x86_64 18.7）。
+#    要拆成三个小包，得给 `abiFilters` 加一个 `-P` 覆盖并改那条判据 —— 那是**另一件事**，
+#    这里没有顺手做。
+#
+# 两个入口：
+#   · `workflow_call`     —— `release.yml` 发版时调它（**构建归这里，上传归 release.yml**）。
+#   · `workflow_dispatch` —— 单独手动跑。⚠️ 填了 tag 就**覆盖上传**
+#     `clip9-android-v<版本>.apk`（`overwrite_files: true`）。
+#
+# ⚠️★ 上传只有两处：**这里（仅手动触发时）** 与 `release.yml` 的 `publish-android`。
+# 下面那条 `if: github.event_name == 'workflow_dispatch'` 不是装饰。
+#
+# ⚠️★ 要四个 `SIGNING_*` secret（与 Go 版同一套名字）。**缺了就当场报红，不会闷出一个
+# 未签名的 APK** —— 那种包「编得过、看起来正常、装到手机上才失败」。
+# ⚠️ secret 是按**仓库**存的：从 `cloud-clipboard-go` 那边**不会跟过来**，
+#    要在 clip9 这个仓库里各加一份（`DOCKERHUB_*` 也是同一回事）。
+#
+# ⚠️★ **这一格从没在 CI 上跑过**（2026-09-28 写下来的时候）。本机跑过两次、两次都红，
+# 根因都在 Kotlin 而不是这里（注释写坏，见 `android/README.md` §三）。
+# 所以第一次 CI 红了**先看下面的「看清楚 SDK / NDK 在哪」那一步**，别先怀疑代码。
+
+on:
+  workflow_call:
+    inputs:
+      tag:
+        description: 这次在给哪个标签出包（用来算 versionName / versionCode）
+        required: true
+        type: string
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 要覆盖上传到哪个 Release（例如 v0.1.0-beta1）。留空 = 只构建，不上传。
+        required: false
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  # ── 版本号：`versionName` / `versionCode` 的换算**只在 tools/release-version.mjs** ──
+  version:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.v.outputs.version }}
+      version_code: ${{ steps.v.outputs.version_code }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - id: v
+        shell: bash
+        env:
+          TAG: ${{ inputs.tag }}
+        run: |
+          set -euo pipefail
+          # ⚠️ `versionCode` 必须是**单调递增的整数**（装新版要有更大的号），
+          #    换算规则与那个「预发布后缀不参与」的坑都在脚本抬头。
+          node tools/release-version.mjs --tag "$TAG" >> "$GITHUB_OUTPUT"
+          cat "$GITHUB_OUTPUT"
+
+  apk:
+    needs: version
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      # ── SDK / NDK：**先看清楚在哪，再往下走** ──────────────────────────────
+      #
+      # ⚠️★ `tools/build-android.sh` 找 NDK 的优先级是 `ANDROID_NDK_HOME` →
+      #    `ANDROID_NDK_ROOT` → `${ANDROID_SDK_ROOT}/ndk/*` → `${ANDROID_HOME}/ndk/*` →
+      #    两个 macOS 默认路径。Linux runner 上 `ANDROID_NDK_HOME` **没有设置**，
+      #    所以这里显式指一遍（走第一条，最确定），并把版本号打出来 ——
+      #    它决定了 `.so` 是哪个 NDK 编的，出问题时要对得上。
+      - name: 看清楚 Android SDK / NDK 在哪
+        shell: bash
+        run: |
+          set -euo pipefail
+          sdk="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-/usr/local/lib/android/sdk}}"
+          if [ ! -d "$sdk" ]; then
+            echo "::error::找不到 Android SDK。runner 上实际的："
+            ls -d /usr/local/lib/android/* 2>/dev/null || true
+            exit 1
+          fi
+          ndk="$(ls -d "$sdk"/ndk/* 2>/dev/null | sort | tail -1 || true)"
+          if [ -z "$ndk" ]; then
+            echo "::error::$sdk 下没有 ndk/ —— 没有 NDK 就编不出 .so，装出来的 APK 会在 System.loadLibrary 炸。"
+            ls -l "$sdk" || true
+            exit 1
+          fi
+          {
+            echo "ANDROID_SDK_ROOT=$sdk"
+            echo "ANDROID_NDK_HOME=$ndk"
+            # ⚠️ 刻意**不设** `ANDROID_HOME`：runner 镜像自己有，多设一处只是多一个会漂的地方。
+          } >> "$GITHUB_ENV"
+          echo "SDK  $sdk"
+          echo "NDK  $ndk"
+          echo "JDK  $(java -version 2>&1 | head -1)"
+
+      # ⚠️ 三个 android target 由 `rust/rust-toolchain.toml` 的 `targets` 列表决定，
+      #    rustup 会自动装齐（与 ci.yml 那种做法一致）。在 `rust/` 里问，
+      #    免得跑到别的工具链上去了。
+      - name: 装 Android 的 Rust target
+        working-directory: rust
+        run: |
+          set -euo pipefail
+          rustup show
+          rustup target list --installed
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: rust
+          key: android
+
+      - uses: gradle/actions/setup-gradle@v6
+
+      # ── 签名材料 ──────────────────────────────────────────────────────────
+      #
+      # ⚠️★ 四个 secret 齐、且 keystore **真的解得出来**，才往下走。
+      #    缺一个就在这里报红：少了它 AGP 会出一个 `app-release-unsigned.apk` ——
+      #    编得过、`ls` 看得见、装到手机上失败，**而且日志里没有任何一句说签名没了**。
+      - name: 准备签名材料
+        shell: bash
+        env:
+          KEYSTORE_B64: ${{ secrets.SIGNING_KEY_STORE_BASE64 }}
+          STORE_PASSWORD: ${{ secrets.SIGNING_KEY_STORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.SIGNING_KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.SIGNING_KEY_PASSWORD }}
+          KEYSTORE_PATH: ${{ runner.temp }}/clip9-release.jks
+        run: |
+          set -euo pipefail
+          missing=""
+          [ -n "$KEYSTORE_B64" ]  || missing="$missing SIGNING_KEY_STORE_BASE64"
+          [ -n "$STORE_PASSWORD" ] || missing="$missing SIGNING_KEY_STORE_PASSWORD"
+          [ -n "$KEY_ALIAS" ]      || missing="$missing SIGNING_KEY_ALIAS"
+          [ -n "$KEY_PASSWORD" ]   || missing="$missing SIGNING_KEY_PASSWORD"
+          if [ -n "$missing" ]; then
+            echo "::error::要出 Android 包，先给 clip9 这个仓库加上这几个 secret：${missing}"
+            echo "（从 cloud-clipboard-go 那边不会跟过来 —— 每个仓库各存一份）"
+            exit 1
+          fi
+          # ⚠️ base64 的换行：`--decode` 在 GNU 上默认就吃换行，但 secret 里常有
+          #    `\n` 被写成字面量，所以先 `tr -d` 掉所有空白再解。
+          printf '%s' "$KEYSTORE_B64" | tr -d ' \n\r\t' | base64 --decode > "$KEYSTORE_PATH"
+          [ -s "$KEYSTORE_PATH" ] || { echo "::error::keystore 解出来是空的（secret 内容不对）"; exit 1; }
+          # ⚠️ 只报大小，**不**报内容，也不 echo 任何密码。
+          ls -l "$KEYSTORE_PATH"
+
+      # ── 一条命令：三个 ABI 的 .so → jniLibs/ → assembleRelease ────────────
+      #
+      # ⚠️★ `--require-all` 是**必须的**：不加的话「某个 target 没装」只会被**跳过**，
+      #    而 Gradle 照样会编出一个缺那个 ABI 原生库的包（`abiFilters` 只过滤、
+      #    不检查 `jniLibs/`）—— 编得过、装得上、点得开，一调 `loadLibrary` 才炸。
+      #
+      # ⚠️ 密码走 `env:` 而不是写在 run 里，也不开 `set -x`：GitHub 会把 secret 打码，
+      #    但少一处会漏的地方总是好的。
+      - name: 编 .so 并打 release APK
+        shell: bash
+        env:
+          VERSION: ${{ needs.version.outputs.version }}
+          VERSION_CODE: ${{ needs.version.outputs.version_code }}
+          KEYSTORE_PATH: ${{ runner.temp }}/clip9-release.jks
+          STORE_PASSWORD: ${{ secrets.SIGNING_KEY_STORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.SIGNING_KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.SIGNING_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          bash tools/build-android.sh --release --require-all -- \
+            "-PversionName=${VERSION}" \
+            "-PversionCode=${VERSION_CODE}" \
+            "-Psigning.store.file=${KEYSTORE_PATH}" \
+            "-Psigning.store.password=${STORE_PASSWORD}" \
+            "-Psigning.key.alias=${KEY_ALIAS}" \
+            "-Psigning.key.password=${KEY_PASSWORD}"
+
+      # ── 收产物：改名 + **验签** ────────────────────────────────────────────
+      #
+      # ⚠️★ 名字里带不带 `unsigned` 是唯一能看出「签名没生效」的地方，所以这里不是只看
+      #    文件名就完事：找不到就报红并把实际有什么列出来，再用 `apksigner verify`
+      #    真的验一次 —— 那个才是「装到手机上会不会失败」的判据。
+      - name: 收 APK（并验签）
+        shell: bash
+        env:
+          VERSION: ${{ needs.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          # ⚠️★ 这里**不能**写 `SDK: ${{ env.ANDROID_SDK_ROOT }}`：`${{ env.* }}` 读的是
+          #    工作流里静态写的 env，而上面那一步是往 `$GITHUB_ENV` **运行时**追加的 ——
+          #    取到的是空串。`$GITHUB_ENV` 的东西在后续步骤里是**环境变量**，用 `$SDK` 取。
+          SDK="${ANDROID_SDK_ROOT:?上一步没把 ANDROID_SDK_ROOT 写进 GITHUB_ENV}"
+          apk="$(find android/app/build/outputs/apk/release -type f -name 'app-release.apk' | head -1 || true)"
+          if [ -z "$apk" ]; then
+            echo "::error::没找到已签名的 app-release.apk —— 签名材料齐了却拿不到，说明别处出了问题。"
+            echo "目录里实际有："
+            find android/app/build/outputs/apk -type f 2>/dev/null | sort || true
+            exit 1
+          fi
+          out="dist/clip9-android-v${VERSION}.apk"
+          mkdir -p dist
+          cp "$apk" "$out"
+
+          # ⚠️ 找不到 apksigner 就**报红**，不要跳过：跳过会给出一个「查过了」的假信号。
+          signer="$(find "$SDK/build-tools" -type f -name apksigner 2>/dev/null | sort | tail -1 || true)"
+          if [ -z "$signer" ]; then
+            echo "::error::$SDK/build-tools 下没有 apksigner —— 没法验签，别把一个没验过的包传上去"
+            ls -l "$SDK" || true
+            exit 1
+          fi
+          "$signer" verify --print-certs "$out"
+          ls -lh "$out"
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: android-apk
+          path: dist/*.apk
+          if-no-files-found: error
+
+  # ── 手动触发时：覆盖上传那个 APK ─────────────────────────────────────────
+  release:
+    needs: [version, apk]
+    runs-on: ubuntu-latest
+    if: github.event_name == 'workflow_dispatch' && inputs.tag != ''
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          name: android-apk
+          path: dist
+
+      - name: 待传清单
+        run: |
+          set -euo pipefail
+          ls -l dist
+          # ⚠️ 空的 `files` 匹配是**静默**的：会「成功地什么都没做」。
+          n="$(find dist -type f -name '*.apk' | wc -l)"
+          [ "$n" -gt 0 ] || { echo "::error::没取到 APK，别去动 Release"; exit 1; }
+
+      - uses: softprops/action-gh-release@v3
+        with:
+          tag_name: ${{ inputs.tag }}
+          files: dist/*.apk
+          overwrite_files: true

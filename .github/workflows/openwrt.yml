@@ -1,0 +1,292 @@
+name: OpenWrt Packages
+
+# OpenWrt 那批包：7 个架构的 ipk、8 个设备架构的 apk，外加一个与架构无关的 LuCI 界面包
+# （ipk / apk 各一份）。
+#
+# 两个入口：
+#   · `workflow_call`     —— `release.yml` 发版时调它（**构建归这里，上传归 release.yml**）。
+#   · `workflow_dispatch` —— 单独手动跑。⚠️ 填了 tag 就**覆盖上传**到那个 Release
+#     （`overwrite_files: true`）—— 这就是它存在的理由：补一个架构的包、或某个包要重打，
+#     不必再发一次版。
+#
+# ⚠️★ 上传只有两处：**这里（仅手动触发时）** 与 `release.yml` 的 `publish-openwrt`。
+# 下面那条 `if: github.event_name == 'workflow_dispatch'` 不是装饰 —— 被 release.yml
+# 调用时 `inputs.tag` 同样是填了的，少了这个条件两个 job 会同时往同一个 Release 传资产。
+#
+# 产物名（`release.yml` 的 `assets` job 会逐条核这几个名字；`openwrt/README.md` §1 也有）：
+#   clip9-server-openwrt-<架构>-v<版本>.ipk           7 个架构
+#   clip9-server-openwrt-apk-<设备架构>-v<版本>.apk    8 个设备架构
+#   clip9-luci-openwrt-all-v<版本>.ipk                 界面（与架构无关）
+#   clip9-luci-openwrt-apk-noarch-v<版本>.apk
+#
+# ⚠️★ **「二进制架构」与「包的架构」不是一回事**，本文件里有三套名字，别互相抄：
+#     ① 二进制架构（`build.sh` 摊平出来的 7 个）：`x86_64` / `arm_cortex-a9` / `aarch64` …
+#     ② ipk 的 `Architecture` 字段 = **设备**的架构名（`opkg print-architecture`）
+#     ③ apk 的 `arch` 字段 = **设备**的架构名（`cat /etc/apk/arch`），带 `_neon` / `_cortex-a53` 后缀
+#   ② ③ 只有 `x86_64` 与 `arm_cortex-a15_neon-vfpv4` 恰好与 ① 同名。理由与后果在
+#   `openwrt/README.md` §2 —— 猜错的后果**不是报错**，是装到一个架构不对的设备上。
+#
+# ⚠️★ **别给 `openwrt/luci-app-clip9/` 下任何文件加执行位**：`root/etc/uci-defaults/luci-clip9`
+# 在包里**必须是 644**（OpenWrt 官方文档的原话是 "Scripts should not be executable"，
+# 那个目录由 `/etc/init.d/boot` 以 **source** 方式执行，不看执行位）。
+# Go 那边的 workflow 里有一句 `find ... -exec chmod +x`，是给它们那套目录用的 ——
+# 照抄到这里就是**把对的改错**。打包脚本自己按需 chmod（init 脚本 755、uci-defaults 不动）。
+
+on:
+  workflow_call:
+    inputs:
+      tag:
+        description: 这次在给哪个标签出包（只用来算包名里的版本号）
+        required: true
+        type: string
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 要覆盖上传到哪个 Release（例如 v0.1.0-beta1）。留空 = 只构建，不上传。
+        required: false
+        type: string
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  # ── 先把版本号算出来（两个入口都要，且**只算一处**）────────────────────────
+  version:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.v.outputs.version }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - id: v
+        shell: bash
+        env:
+          TAG: ${{ inputs.tag }}
+        run: |
+          set -euo pipefail
+          # ⚠️ 包名里的版本号**不带 v** —— 脚本自己会在前面补一个（`…-v${VERSION}.ipk`）。
+          v="${TAG#v}"
+          if [ -z "$v" ]; then
+            # 与 `openwrt/scripts/build.sh` 不给参数时的取法一致：`[workspace.package]` 那一个
+            # （各成员的 `Cargo.toml` 写的是 `version.workspace = true`，所以只有这一处是真值）。
+            v="$(sed -n 's/^version = "\(.*\)"$/\1/p' rust/Cargo.toml | head -1)"
+            echo "::notice::没给 tag —— 版本号取 rust/Cargo.toml 的 ${v}（这一次只构建，不上传）"
+          fi
+          if [ -z "$v" ]; then
+            echo "::error::版本号取不到：既没给 tag，也没能在 rust/Cargo.toml 里找到 version"
+            exit 1
+          fi
+          echo "version=${v}" >> "$GITHUB_OUTPUT"
+          echo "这次用的版本号：${v}"
+
+  # ── 二进制：7 个架构，实际只跑 3 次 cross 构建 ────────────────────────────
+  #
+  # ⚠️ 5 个 arm 架构名共用一份 armv7 二进制（同一套 EABI 硬浮点 ABI，而**静态**链接的
+  #    二进制不跨 userland 的软/硬浮点边界），所以这里只编 3 次而不是 7 次。
+  binaries:
+    needs: version
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cross
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: rust
+          # ⚠️ 与 `release.yml` 的 linux job **分开缓存**：target 名字一样，但这边
+          #    `build.sh` 带着 `-C strip=symbols`，产物不同 —— 共用一个 key 会让两边
+          #    反复把对方的缓存判成失效。
+          key: openwrt
+
+      - name: 编 7 个架构的二进制
+        env:
+          VERSION: ${{ needs.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          # ⚠️ `--skip-web`：前端产物**已入库**（`rust/crates/server/static/`），这里只把
+          #    它编进二进制。⚠️ 但 `build.sh` 里那道 `sync-web-assets.mjs --check` 照样是
+          #    **硬闸** —— 它保证入库的那份与当前源码指纹一致（不同步的话编出来的是旧界面，
+          #    而编译与测试都不会红）。
+          # ⚠️ 不传 `--skip-web` 它会去跑 `npm run build`，而 runner 上
+          #    `web-vue3/node_modules` 不存在 → 那一步必挂。
+          ./openwrt/scripts/build.sh "$VERSION" --skip-web
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: openwrt-binaries
+          path: openwrt/build/clip9-server-*
+          if-no-files-found: error
+
+  # ── IPK（OpenWrt 24.10 及以下走这条）────────────────────────────────────
+  ipk:
+    needs: [version, binaries]
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # ⚠️ **二进制**架构名（上面 ① 那套），不是设备名。ipk 的 `Architecture` 字段
+        #    不传第三个参数时就是它 —— 那是「先本地把包打出来看结构」的那个口径；
+        #    要装到真机上，用户得自己按 `opkg print-architecture` 重打（README §2）。
+        arch:
+          - x86_64
+          - arm_cortex-a5
+          - arm_cortex-a7
+          - arm_cortex-a8
+          - arm_cortex-a9
+          - arm_cortex-a15_neon-vfpv4
+          - aarch64
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/download-artifact@v8
+        with:
+          name: openwrt-binaries
+          path: openwrt/build
+
+      - name: 打 IPK（${{ matrix.arch }}）
+        env:
+          VERSION: ${{ needs.version.outputs.version }}
+          ARCH: ${{ matrix.arch }}
+        run: |
+          set -euo pipefail
+          ./openwrt/scripts/package-openwrt.sh "$VERSION" "$ARCH"
+          ls -l "openwrt/build/clip9-server-openwrt-${ARCH}-v${VERSION}.ipk"
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: openwrt-pkg-ipk-${{ matrix.arch }}
+          path: openwrt/build/clip9-server-openwrt-*.ipk
+          if-no-files-found: error
+
+  # ── APK（OpenWrt 25.12 起用 apk 取代 opkg）──────────────────────────────
+  #
+  # ⚠️ 这一格**要 `docker`**：`apk mkpkg` 是 Alpine 的工具，runner 上没有 ——
+  #    脚本自己会探测（本机有 `apk` 就用本机的，否则 `docker run alpine:edge`），
+  #    所以这里**不用**再套一层 `docker run`（那样等于把脚本里的探测逻辑绕过去，
+  #    两份东西迟早会漂）。
+  apk:
+    needs: [version, binaries]
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # ⚠️★ 上面 ③ 那套设备架构名。**能自动推断的只有两个**（`x86_64`、
+        #    `arm_cortex-a15_neon-vfpv4` —— 名字两边恰好一样），其余必须显式给：
+        #    猜错的后果不是报错，是装到架构不对的设备上（ARM 之间能跑起来，但可能
+        #    踩到指令集差异，表现为设备上「莫名其妙 crash」）。
+        # ⚠️ 这份名单与 Go 版 `build-openwrt-ipk.yml` 的 apk 矩阵**对齐**（8 条）。
+        include:
+          - arch: x86_64
+            pkg_arch: x86_64
+          - arch: arm_cortex-a9
+            pkg_arch: arm_cortex-a9
+          - arch: arm_cortex-a9
+            pkg_arch: arm_cortex-a9_neon
+          - arch: arm_cortex-a15_neon-vfpv4
+            pkg_arch: arm_cortex-a15_neon-vfpv4
+          - arch: aarch64
+            pkg_arch: aarch64_generic
+          - arch: aarch64
+            pkg_arch: aarch64_cortex-a53
+          - arch: aarch64
+            pkg_arch: aarch64_cortex-a72
+          - arch: aarch64
+            pkg_arch: aarch64_cortex-a76
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/download-artifact@v8
+        with:
+          name: openwrt-binaries
+          path: openwrt/build
+
+      - name: 打 APK（${{ matrix.pkg_arch }}）
+        env:
+          VERSION: ${{ needs.version.outputs.version }}
+          ARCH: ${{ matrix.arch }}
+          PKG_ARCH: ${{ matrix.pkg_arch }}
+        run: |
+          set -euo pipefail
+          ./openwrt/scripts/package-openwrt-apk.sh "$VERSION" "$ARCH" "$PKG_ARCH"
+          ls -l "openwrt/build/clip9-server-openwrt-apk-${PKG_ARCH}-v${VERSION}.apk"
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: openwrt-pkg-apk-${{ matrix.pkg_arch }}
+          path: openwrt/build/clip9-server-openwrt-apk-*.apk
+          if-no-files-found: error
+
+  # ── LuCI 界面：与架构无关，一个 ipk 一个 apk ─────────────────────────────
+  luci:
+    needs: version
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      # ⚠️ 两个脚本都往 `openwrt/build/` 里写，而已入库的仓库里没有这个目录
+      #    （它整个是 gitignore 的）—— 不先建出来会在第一步挂。
+      - name: 建输出目录
+        run: mkdir -p openwrt/build
+
+      - name: 打 LuCI 的 IPK
+        env:
+          VERSION: ${{ needs.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          ./openwrt/scripts/package-luci-app.sh "$VERSION"
+
+      - name: 打 LuCI 的 APK
+        env:
+          VERSION: ${{ needs.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          ./openwrt/scripts/package-luci-app-apk.sh "$VERSION"
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: openwrt-pkg-luci
+          path: |
+            openwrt/build/clip9-luci-openwrt-all-*.ipk
+            openwrt/build/clip9-luci-openwrt-apk-noarch-*.apk
+          if-no-files-found: error
+
+  # ── 手动触发时：把这批包**覆盖**传到那个 Release ────────────────────────
+  #
+  # ⚠️ 那个 `if:` 是本文件的关键：`workflow_call`（release.yml 调的）**不能**走到这里，
+  #    否则它和 release.yml 的 publish-openwrt 会同时改同一个 Release。
+  # ⚠️ 复用 `version` job 的输出来判 tag 有没有填 —— 别直接写 `inputs.tag != ''`：
+  #    手动触发时它是空的，而这里要的是「这次到底有没有目标」。
+  release:
+    needs: [version, ipk, apk, luci]
+    runs-on: ubuntu-latest
+    if: github.event_name == 'workflow_dispatch' && inputs.tag != ''
+    steps:
+      # ⚠️ 只取 `openwrt-pkg-*`（不含 `openwrt-binaries`）：裸二进制不是 Release 资产。
+      - uses: actions/download-artifact@v8
+        with:
+          path: pkg
+          merge-multiple: true
+          pattern: openwrt-pkg-*
+
+      - name: 待传清单
+        run: |
+          set -euo pipefail
+          ls -l pkg
+          n="$(find pkg -type f | wc -l)"
+          echo "共 ${n} 个包"
+          # ⚠️ 一个都没取到就不要往下走：`action-gh-release` 的 `files` 匹配空是**静默**的，
+          #    会「成功地什么都没做」。
+          [ "$n" -gt 0 ] || { echo "::error::没取到任何包，别去动 Release"; exit 1; }
+
+      - uses: softprops/action-gh-release@v3
+        with:
+          tag_name: ${{ inputs.tag }}
+          files: pkg/*
+          # ⚠️ 这就是这个工作流的用途：重打同一个包时**替换**，而不是失败在「已存在」上。
+          overwrite_files: true
