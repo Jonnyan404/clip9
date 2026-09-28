@@ -1,0 +1,240 @@
+#!/usr/bin/env python3
+"""构建后校验：把已知的坑变成断言，避免"产物看着像对的、其实少了东西"。
+
+用法： verify.py <源码.cherri> <编译产物_unsigned.shortcut>
+
+硬失败（退出码 1）：
+  - 产物无法解析 / 没有 WFWorkflowActions
+  - 导入问答缺失、数量与 #question 不符、或缺 ActionIndex
+  - 条件里出现本地化类型名比较（原版 29 处那种写法，非中英文系统会静默走错分支）
+  - 平台专属动作（vibrate / file.reveal）没有被条件守卫
+  - multipart 表单里的「文件」字段没被 patch 成 WFItemType=5
+  - 扩展名动作缺显式 WFInput
+
+提示（不失败）：
+  - 用了 typeOf(getitemtype) / setName(setitemname)
+  - WFWorkflowTypes 未包含 macOS 的 QuickActions / MenuBar 入口
+"""
+
+import collections
+import plistlib
+import re
+import sys
+
+# 条件里出现这些字符串，说明又在用"本地化类型名"判断类型了。
+# 只收 CJK 词，避免把 `@room == "default"` 之类的正常比较误判。
+LOCALIZED_TYPE_NAMES = [
+    "图像", "图片", "照片", "文件", "文件夹", "视频", "影片", "音频", "压缩", "文本", "字符串",
+]
+
+# 一个条件里比较字符串 ≥ 此数量，基本就是"类型清单"链式比较。
+TYPE_LIST_THRESHOLD = 3
+
+MAC_ENTRY_TYPES = {"QuickActions", "MenuBar"}
+
+# 只在某一个平台存在的动作。不加 @model 守卫就调用，另一个平台跑到这里会直接失败——
+# Shortcuts 没有 try/catch，整条捷径会中断在最后一步，且**看起来像"什么都没发生"**。
+PLATFORM_ONLY_ACTIONS = {
+    "is.workflow.actions.vibrate": "仅 iOS/iPadOS",
+    "is.workflow.actions.file.reveal": "仅 macOS",
+}
+
+
+def unguarded_platform_actions(actions):
+    """找出没被条件包住的平台专属动作。
+
+    用 WFControlFlowMode 跟踪嵌套深度：conditional 的 mode 0 进入、mode 2 退出
+    （cherri 的 if 生成这两个动作，中间可能还夹一个 nothing 作为空分支）。
+    """
+    found = []
+    depth = 0
+    for a in actions:
+        aid = a.get("WFWorkflowActionIdentifier")
+        if aid == "is.workflow.actions.conditional":
+            mode = (a.get("WFWorkflowActionParameters") or {}).get("WFControlFlowMode")
+            if mode == 0:
+                depth += 1
+            elif mode == 2:
+                depth = max(0, depth - 1)
+            continue
+        if aid in PLATFORM_ONLY_ACTIONS and depth == 0:
+            found.append((aid, PLATFORM_ONLY_ACTIONS[aid]))
+    return found
+
+
+def collect_compared_strings(obj, out):
+    if isinstance(obj, dict):
+        if "WFConditionalActionString" in obj and isinstance(obj["WFConditionalActionString"], str):
+            out.append(obj["WFConditionalActionString"])
+        for v in obj.values():
+            collect_compared_strings(v, out)
+    elif isinstance(obj, list):
+        for v in obj:
+            collect_compared_strings(v, out)
+
+
+def compared_strings_by_conditional(actions):
+    """按「单个条件动作」分组收集比较字符串。
+
+    必须分组统计：若在整个动作列表上累加，几处正常的少量比较（如 `== "image"`、
+    `== "Mac"`）会被凑成大数字，误报成类型清单链式比较。
+    """
+    groups = []
+    for a in actions:
+        if a.get("WFWorkflowActionIdentifier") != "is.workflow.actions.conditional":
+            continue
+        found = []
+        collect_compared_strings(a.get("WFWorkflowActionParameters", {}), found)
+        if found:
+            groups.append(found)
+    return groups
+
+
+def main():
+    if len(sys.argv) != 3:
+        print(__doc__)
+        return 2
+    src_path, plist_path = sys.argv[1], sys.argv[2]
+
+    failures, notes = [], []
+
+    src = open(src_path, encoding="utf-8").read()
+    declared = re.findall(r'^#question\s+([A-Za-z0-9_]+)', src, re.M)
+
+    try:
+        data = plistlib.load(open(plist_path, "rb"))
+    except Exception as exc:
+        print(f"✗ 无法解析 {plist_path}: {exc}")
+        return 1
+
+    actions = data.get("WFWorkflowActions")
+    if not actions:
+        print(f"✗ {plist_path} 没有 WFWorkflowActions")
+        return 1
+
+    print(f"── 校验 {plist_path}")
+    print(f"   动作数: {len(actions)}")
+
+    # 1. 导入问答
+    questions = data.get("WFWorkflowImportQuestions", [])
+    if len(questions) != len(declared):
+        failures.append(
+            f"导入问答数量不符：源码声明 {len(declared)} 个 #question，产物里有 {len(questions)} 个"
+        )
+    missing_index = [i for i, q in enumerate(questions) if not isinstance(q.get("ActionIndex"), int)]
+    if missing_index:
+        failures.append(
+            f"导入问答缺 ActionIndex（第 {missing_index} 项）—— 说明 patcher 没跑或跑错了，"
+            "导入时配置面板不会生效"
+        )
+    if questions:
+        print(f"   导入问答: {len(questions)} 个，ActionIndex={[q.get('ActionIndex') for q in questions]}")
+
+    # 2. 本地化类型名比较
+    groups = compared_strings_by_conditional(actions)
+    flat = [s for g in groups for s in g]
+    bad_names = sorted({s for s in flat if s in LOCALIZED_TYPE_NAMES})
+    if bad_names:
+        failures.append(f"条件里出现本地化类型名比较：{bad_names}（非中英文系统会静默走错分支）")
+    heavy = sorted((g for g in groups if len(g) >= TYPE_LIST_THRESHOLD), key=len, reverse=True)
+    if heavy:
+        failures.append(
+            f"某个条件里比较了 {len(heavy[0])} 个字符串，疑似「类型清单」链式比较：{heavy[0][:8]}"
+        )
+    print(f"   条件比较: 共 {len(groups)} 处条件含比较，单处最多 {max((len(g) for g in groups), default=0)} 个字符串")
+
+    # 2.5 multipart 表单字段（Send 发「真文件」时用）
+    # 源码里用字面量 "PLACEHOLDER" 占位，构建后必须由 source/patch_shortcut.py 改成
+    # 「文件」类型（WFItemType=5）并指向文件变量。跳过 patcher 会产出坏产物：
+    # 字段被当成文本 → 请求体不是合法 multipart → 服务端报「无法解析表单数据」。
+    form_fields = []
+    for a in actions:
+        params = a.get("WFWorkflowActionParameters") or {}
+        if params.get("WFHTTPBodyType") != "Form":
+            continue
+        items = ((params.get("WFFormValues") or {}).get("Value") or {}).get(
+            "WFDictionaryFieldValueItems"
+        ) or []
+        form_fields.extend(items)
+
+    # 2.6 扩展名动作必须有显式输入
+    # 该动作没有输入参数、吃「上一个动作的输出」，实测紧跟条目之后仍拿不到扩展名（恒为空），
+    # 必须由 patch_shortcut.py 补上 WFInput。缺了它判型会整体退化成「都当文件」。
+    ext_actions = [a for a in actions
+                   if a.get("WFWorkflowActionIdentifier") == "is.workflow.actions.properties.files"]
+    if ext_actions:
+        if any("WFInput" not in (a.get("WFWorkflowActionParameters") or {}) for a in ext_actions):
+            failures.append(
+                "扩展名动作缺显式 WFInput —— patch_shortcut.py 没跑，扩展名会恒为空，"
+                "判型退化成「都当文件」"
+            )
+        ok_input = all("WFInput" in (a.get("WFWorkflowActionParameters") or {}) for a in ext_actions)
+        print(f"   扩展名动作: {len(ext_actions)} 个" + ("，均已带显式输入" if ok_input else ""))
+
+    # 2.7 平台专属动作必须被条件守卫
+    # 2026-09-17：Send 的反馈此前是裸的 showNotification，于是 iOS 拿不到它最自然的那个信号。
+    # 改成与 Receive 对齐的「macOS 通知 / iOS 振动」后，vibrate() 必须待在 if @model != "Mac" 里。
+    platform_actions = [a for a in actions
+                        if a.get("WFWorkflowActionIdentifier") in PLATFORM_ONLY_ACTIONS]
+    if platform_actions:
+        unguarded = unguarded_platform_actions(actions)
+        if unguarded:
+            detail = "、".join(f"{a}（{w}）" for a, w in unguarded)
+            failures.append(
+                f"平台专属动作没有被条件守卫：{detail} —— 另一个平台跑到这里会中断整条捷径，"
+                "而且表现为「什么都没发生」，极难排查"
+            )
+            print(f"   平台专属动作: {len(platform_actions)} 个，其中 {len(unguarded)} 个**未守卫**")
+        else:
+            print(f"   平台专属动作: {len(platform_actions)} 个，均已条件守卫")
+
+    if form_fields:
+        field_names = [((it.get("WFKey") or {}).get("Value") or {}).get("string") for it in form_fields]
+        if any(((it.get("WFValue") or {}).get("Value") or {}).get("string") == "PLACEHOLDER" for it in form_fields):
+            failures.append(
+                "表单里还有 PLACEHOLDER 占位符 —— patch_shortcut.py 没跑，"
+                "字段会被当成文本，服务端会报「无法解析表单数据」"
+            )
+        if any(it.get("WFItemType") != 5 for it in form_fields):
+            failures.append(
+                "表单字段的 WFItemType 不是 5（文件）—— 字段会被当成文本，服务端报「无法解析表单数据」"
+            )
+        if any((it.get("WFValue") or {}).get("WFSerializationType") != "WFTokenAttachmentParameterState"
+               for it in form_fields):
+            failures.append("表单文件字段的 WFValue 序列化类型不是 WFTokenAttachmentParameterState")
+        print(f"   表单字段: {len(form_fields)} 个，名称={field_names}")
+
+    # 3. 已知会出问题的动作
+    ids = collections.Counter(a.get("WFWorkflowActionIdentifier") for a in actions)
+    if ids.get("is.workflow.actions.getitemtype"):
+        notes.append(f"使用了 typeOf（{ids['is.workflow.actions.getitemtype']} 次）—— 本机实测会闪变，别拿它做唯一判据")
+    if ids.get("is.workflow.actions.setitemname"):
+        notes.append(f"使用了 setName（{ids['is.workflow.actions.setitemname']} 次）—— 确认是有意为之（本项目里用于给下载文件恢复原始文件名）")
+
+    # 4. 平台入口
+    types = data.get("WFWorkflowTypes", [])
+    print(f"   WFWorkflowTypes: {types}")
+    print(f"   WFQuickActionSurfaces: {data.get('WFQuickActionSurfaces', [])}")
+    print(f"   最低客户端版本: {data.get('WFWorkflowMinimumClientVersionString', '?')}")
+    if not (MAC_ENTRY_TYPES & set(types)):
+        notes.append(
+            "WFWorkflowTypes 未包含 QuickActions / MenuBar —— macOS 的 Finder 快速操作与菜单栏里不会出现这个捷径。"
+            "若需要，在源码里写 #define from sharesheet,quickactions,menubar"
+        )
+
+    # 5. 动作构成
+    print("   动作构成:")
+    for ident, count in ids.most_common():
+        print(f"     {count:>4}  {ident}")
+
+    for n in notes:
+        print(f"   ! {n}")
+    for f in failures:
+        print(f"   ✗ {f}")
+
+    print("   结果:", "失败" if failures else "通过")
+    return 1 if failures else 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
