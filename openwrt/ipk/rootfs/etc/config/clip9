@@ -1,0 +1,12 @@
+config clip9 'main'
+    option enabled '1'
+    option host '0.0.0.0'
+    option port '9501'
+    option auth ''
+    option config '/etc/clip9/config.json'
+    # ⚠️ `data` 是**本实现独有的** —— Go 版没有「数据目录」这个概念（那边历史是一个
+    # JSON 文件、上传目录单独一个键）。这边 redb 库与 uploads 都挂在数据目录下面，
+    # 由 `-data` 传给服务端；配置里写的相对路径（`dbPath` / `storageDir`）就是相对它解析。
+    option data '/etc/clip9/data'
+    option update_repo 'Jonnyan404/clip9'
+    option use_logread '1'

@@ -1,0 +1,41 @@
+{
+    "admin/services/clip9": {
+        "title": "Clip9",
+        "order": 90,
+        "action": {
+            "type": "firstchild"
+        }
+    },
+    "admin/services/clip9/overview": {
+        "title": "总览",
+        "order": 10,
+        "action": {
+            "type": "template",
+            "path": "clip9/overview"
+        }
+    },
+    "admin/services/clip9/settings": {
+        "title": "基本设置",
+        "order": 20,
+        "action": {
+            "type": "template",
+            "path": "clip9/basic"
+        }
+    },
+    "admin/services/clip9/advanced": {
+        "title": "高级设置",
+        "order": 30,
+        "action": {
+            "type": "template",
+            "path": "clip9/advanced"
+        }
+    },
+    "admin/services/clip9/log": {
+        "title": "日志",
+        "order": 50,
+        "action": {
+            "type": "template",
+            "path": "clip9/log"
+        }
+    }
+}

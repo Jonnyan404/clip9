@@ -1,0 +1,9 @@
+Package: clip9
+Version: {{VERSION}}
+Depends: libc
+Source: https://github.com/Jonnyan404/clip9
+License: MIT
+Section: net
+Architecture: {{ARCH}}
+Maintainer: Jonnyan404
+Description: Clip9 server for transferring text and files between devices
