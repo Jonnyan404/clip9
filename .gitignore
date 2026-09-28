@@ -12,6 +12,20 @@
 # 「同目录、名为 clip9-server」找它）。它是 `cargo build -p clip9-server` 的产物，不入库。
 /rust/crates/desktop/binaries/
 
+# ── cargo 源配置：**不入库**（2026-09-28 定）──
+#
+# ⚠️★ `rust/.cargo/config.toml` 曾经入库过，内容是「把 crates.io 换成 USTC 镜像」——
+# 那纯粹是**本机网络**的权宜（本机直连 crates.io 会大面积 `transfer too slow`），
+# 但配置跟着仓库走，线上也照用。而 GitHub 的 runner 在 Azure，连那个镜像很慢。
+#
+# 2026-09-28 一次 Release 就是被它拖死的：`cross` 起容器前必须在**宿主机**上跑一次
+# `cargo metadata`，那一步超时失败 → cross **静默**改成在宿主机上编 → 宿主机没有
+# musl 工具链 → 报出一个看着像代码写错的 `cc-rs` 错误（详见 release.yml 里那段注释）。
+#
+# 所以线上走 **crates.io 直连**（所有 Rust 项目的正常路径）。本机那份则留在磁盘上、
+# 只是不再入库 —— 想让本机也换源，照原样自己建这个文件就行（内容见 git 历史）。
+/rust/.cargo/config.toml
+
 # ⚠️★ 文档**不入库**（2026-09-25 定）。
 #
 # 这些文档（设计 / 交接 / 行为规格 / 契约）是**工作过程记录**，不是成品文档：
