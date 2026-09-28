@@ -1,0 +1,73 @@
+name = "cloud-clipboard-worker"
+main = "src/index.js"
+compatibility_date = "2025-08-01"
+compatibility_flags = ["nodejs_compat"]
+
+# 托管 Vue3 前端静态资源（web-vue3/dist 的拷贝）
+#
+# 规则只有一条：命中静态资源就直接免费发出去，没命中就整包交给 Worker。
+# 所以这里必须是 "none" —— 不能用 "single-page-application"。
+#
+# 踩过的坑：SPA 回退只对「导航请求」生效，而浏览器点下载链接、直接打开分享链接
+# 恰好就是导航请求。于是 GET /file/<uuid>/<name> 压根到不了 Worker，
+# 被资源层回了一份 index.html —— 表现就是「下载下来是个 html」。
+# 前端 XHR 走的 /server、/text 反而是非导航请求，所以一直没人发现。
+# 现在改成：找不到资源就交给 Worker，由 Worker 自己兜底（见 src/index.js 末尾的 catch-all），
+# 这样「导航请求」和「XHR」走的是同一条路，不会再有两套行为。
+#
+# 也不要改用 run_worker_first 白名单：数组形式下「未匹配」的路径同样不会回落到 Worker，
+# 得把所有接口前缀一个个列全，漏一个就静默变 html。
+[assets]
+directory = "./assets"
+not_found_handling = "none"
+binding = "ASSETS"
+
+# 环境变量
+#
+# 正式部署走 GitHub Actions（.github/workflows/deploy-cloudflare.yml）：它把这个模板
+# 拷成 wrangler.toml，再用 repository secrets 覆盖下面这些值，然后 `wrangler deploy`。
+# 所以**线上跑的是 secret 里的值**；下面这些只是「secret 没设时的兜底」，
+# 而它们是公开仓库里写着的示例值 —— 忘了设 secret 就等于「以为有密码，其实密码公开」。
+#
+# ⚠️ 只有在**本地手敲 `wrangler deploy`** 时，下面这些值才会真的顶掉线上配置。
+#
+# AUTH_PASSWORD 为空 = 该实例开放访问（src/auth.js 的 resolveRoomAuth 在两者都空时
+# 返回 required: false）。这是**支持的配置**，开放还是加密由部署者决定。
+# 要加密就设 repository secret（推荐），或在本地这份里填真实密码。
+#
+# 想彻底免疫本地 deploy 的覆盖：把 AUTH_PASSWORD / ROOM_AUTH_JSON 改用
+# `wrangler secret put` 设置 —— secret 不会被 deploy 顶掉，代码不用改（env.X 读法一样）。
+[vars]
+AUTH_PASSWORD = "123"
+# 房间认证配置。值支持两种形式：
+#   字符串/数字: 仅密码（旧格式）
+#   对象: {"password": "xx", "fileExpire": 0}
+#     fileExpire: 0=该房间文件永不过期；>0=覆盖 FILE_EXPIRE 的秒数；不填=使用全局 FILE_EXPIRE
+ROOM_AUTH_JSON = "{\"private\":\"\",\"finance\":{\"password\":\"finance-pass\",\"fileExpire\":0},\"tmp\":\"quick-pass\"}"
+ROOM_LIST = "true"
+HISTORY_LIMIT = "50"
+TEXT_LIMIT = "40960"
+FILE_LIMIT = "204857600"
+FILE_EXPIRE = "3600"
+
+# D1 数据库绑定 (将被自动更新)
+[[d1_databases]]
+binding = "DB"
+database_name = "cloud-clipboard-db"
+database_id = "your-d1-database-id"
+
+# R2 存储绑定
+[[r2_buckets]]
+binding = "R2_BUCKET"
+bucket_name = "cloud-clipboard-files"
+
+# Durable Objects
+[[durable_objects.bindings]]
+name = "WEBSOCKET_ROOM"
+class_name = "WebSocketRoom"
+script_name = "cloud-clipboard-worker"
+
+# Durable Objects 迁移
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["WebSocketRoom"]

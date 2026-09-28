@@ -1,0 +1,210 @@
+// 房间鉴权在 Worker 上的两条硬约束：
+//
+//  A. /file/ 按「文件自己记录的房间」鉴权，不看客户端传的 ?room=。
+//     客户端可以随便写 ?room=，若被信任，`?room=default` 就能把受保护房间的文件读出来。
+//     （Go 侧曾真的如此，见 cloud-clip/lib/auth.go 的 inferRequestRoom。）
+//
+//  B. 会话令牌的签名密钥材料必须包含房间密码。
+//     parseRoomAuth 返回 {password, fileExpire} 对象，写成 normalizeAuthValue(roomAuth[room])
+//     会 String() 成 '[object Object]' —— 只设房间密码时密钥完全可预测，
+//     任何人都能自己签一个 scope=global 的令牌绕过所有房间密码。
+//
+//  C. 受保护房间下，客户端拿到的 url 必须能靠 ?auth= 自己取到 ——
+//     Android 快捷指令的第二步下载就靠这个（第一次请求的凭据不会跟着走）。
+import { FileHandler } from './.build/file.mjs';
+import { ContentHandler } from './.build/content.mjs';
+import { ShareHandler } from './.build/share.mjs';
+import { issueRoomSessionToken, validateRoomSessionToken, resolveRoomAuth, canAccessRoomAsync } from './.build/auth.mjs';
+import { makeEnv, makeChecker, getJson } from './harness.mjs';
+
+const { check, summary } = makeChecker();
+
+const PNG = new Uint8Array([
+  0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a,
+  0x00, 0x00, 0x00, 0x0d, 0x49, 0x48, 0x44, 0x52,
+]);
+
+async function uploadTo(env, db, room, filename, { auth }) {
+  const form = new FormData();
+  form.append('file', new Blob([PNG], { type: 'image/png' }), filename);
+  const headers = {};
+  if (auth) headers.Authorization = `Bearer ${auth}`;
+  const res = await FileHandler.upload(
+    new Request(`http://worker.local/upload?room=${encodeURIComponent(room)}`, {
+      method: 'POST', headers, body: form,
+    }),
+    env,
+  );
+  const json = await res.json();
+  // 注意 /upload 返回的 url 是 /content/<id>（和 Go 侧一致），拿不到文件 uuid —— 从库里读。
+  const uuid = db.prepare('SELECT uuid FROM messages WHERE id = ?').get(Number(json.id))?.uuid;
+  return { ...json, uuid };
+}
+
+// itty-router 的 params 由路由层塞进去，测试里手工挂上
+function downloadRequest(url, params) {
+  return Object.assign(new Request(url), { params });
+}
+
+console.log('\n── A. /file/ 的房间来自文件本身，?room= 伪造无效 ──');
+{
+  const { env, db } = makeEnv();
+  env.AUTH_PASSWORD = '';                                   // 只设房间密码，逼出这条路径
+  env.ROOM_AUTH_JSON = JSON.stringify({ vault: 'vaultpw' });
+
+  const up = await uploadTo(env, db, 'vault', 'secret.png', { auth: 'vaultpw' });
+  const uuid = up.uuid;
+  check('上传到 vault 成功', typeof uuid, 'string');
+
+  const spoof = await FileHandler.download(
+    downloadRequest(`http://worker.local/file/${uuid}/secret.png?room=default`, { uuid, filename: 'secret.png' }),
+    env,
+  );
+  check('谎报 ?room=default 必须 401', spoof.status, 401);
+  check('不得吐出字节', (await spoof.text()).includes('PNG'), false);
+
+  const emptyRoom = await FileHandler.download(
+    downloadRequest(`http://worker.local/file/${uuid}/secret.png?room=`, { uuid, filename: 'secret.png' }),
+    env,
+  );
+  check('谎报空 room 必须 401', emptyRoom.status, 401);
+
+  const noCreds = await FileHandler.download(
+    downloadRequest(`http://worker.local/file/${uuid}/secret.png?room=vault`, { uuid, filename: 'secret.png' }),
+    env,
+  );
+  check('不传凭据也必须 401', noCreds.status, 401);
+
+  const ok = await FileHandler.download(
+    downloadRequest(`http://worker.local/file/${uuid}/secret.png?room=vault&auth=vaultpw`, { uuid, filename: 'secret.png' }),
+    env,
+  );
+  check('房间密码正确才放行', ok.status, 200);
+}
+
+console.log('\n── B. 会话令牌的签名密钥必须含房间密码 ──');
+{
+  const { env: env1 } = makeEnv();
+  env1.AUTH_PASSWORD = '';
+  env1.ROOM_AUTH_JSON = JSON.stringify({ vault: 'pw-one' });
+
+  const { env: env2 } = makeEnv();
+  env2.AUTH_PASSWORD = '';
+  env2.ROOM_AUTH_JSON = JSON.stringify({ vault: 'pw-two' });
+
+  const token = await issueRoomSessionToken(env1, 'vault');
+  check('同配置下令牌有效', await validateRoomSessionToken(env1, 'vault', token), true);
+  // 房间密码变了 → 密钥材料变了 → 旧令牌必须失效。
+  // 若这里仍是 true，说明房间密码根本没参与派生（'[object Object]' 的老毛病）。
+  check('换掉房间密码后旧令牌失效', await validateRoomSessionToken(env2, 'vault', token), false);
+}
+
+console.log('\n── C. 受保护房间：/content/latest 的 url 能靠 ?auth= 自己取到 ──');
+{
+  const { env, db } = makeEnv();
+  env.AUTH_PASSWORD = 'pw123';
+  env.ROOM_AUTH_JSON = '{}';
+
+  const up = await uploadTo(env, db, 'default', 'shot.png', { auth: 'pw123' });
+
+  const noAuth = await getJson(ContentHandler.getLatest, env, '/content/latest?json=1&room=default', { auth: null });
+  check('不带凭据读元数据 401', noAuth.status, 401);
+
+  const withAuth = await getJson(ContentHandler.getLatest, env, '/content/latest?json=1&room=default&auth=pw123', { auth: null });
+  check('带 ?auth= 读元数据 200', withAuth.status, 200);
+  check('url 形态完好（不能出现 http:/ 这种少一个斜杠）', withAuth.json.url.startsWith('http://worker.local/file/'), true);
+  check('url 带上了文件名', withAuth.json.url.endsWith('/shot.png'), true);
+
+  // 第二步：客户端照 url 去取。Android 快捷指令就是在这里漏了 auth。
+  const uuid = up.uuid;
+  const step2NoAuth = await FileHandler.download(
+    downloadRequest(`http://worker.local/file/${uuid}/shot.png`, { uuid, filename: 'shot.png' }),
+    env,
+  );
+  check('第二步不带凭据 → 401（这就是用户报的现象）', step2NoAuth.status, 401);
+
+  const step2WithAuth = await FileHandler.download(
+    downloadRequest(`http://worker.local/file/${uuid}/shot.png?auth=pw123`, { uuid, filename: 'shot.png' }),
+    env,
+  );
+  check('第二步补上 ?auth= → 200', step2WithAuth.status, 200);
+}
+
+console.log('\n── D. {"open": true} = 全局加密时仍然开放的房间 ──');
+{
+  const { env } = makeEnv();
+  env.AUTH_PASSWORD = 'global-pw';
+  env.ROOM_AUTH_JSON = JSON.stringify({
+    public: { open: true },
+    vault: 'vaultpw',
+    'legacy-empty': '',
+    contradiction: { open: true, password: 'both' },
+  });
+
+  // 显式开放：不要密码，也**不**回落全局密码
+  check('open 房间 required=false', resolveRoomAuth(env, 'public').required, false);
+  check('open 房间不带凭据也放行', await canAccessRoomAsync(env, 'public', ''), true);
+
+  // 房间自己的密码生效；全局密码**仍然有效**（旧行为，别改回去）
+  check('房间密码 required=true', resolveRoomAuth(env, 'vault').required, true);
+  check('房间密码本身放行', await canAccessRoomAsync(env, 'vault', 'vaultpw'), true);
+  check('全局密码对房间仍然有效', await canAccessRoomAsync(env, 'vault', 'global-pw'), true);
+  check('错密码不放行', await canAccessRoomAsync(env, 'vault', 'nope'), false);
+
+  // 空字符串 = 只接受全局密码（旧语义，没变）
+  check('空字符串回落全局密码', resolveRoomAuth(env, 'legacy-empty').password, 'global-pw');
+
+  // 没配过的房间也回落全局密码
+  check('没配过的房间继承全局密码', resolveRoomAuth(env, 'never-configured').password, 'global-pw');
+
+  // open + password 同时给 = 配置写错 → 按**需要密码**处理（不能因为多打一个字段把房间敞开）
+  check('open+password 按需要密码处理', resolveRoomAuth(env, 'contradiction').required, true);
+  check('open+password 空凭据不放行', await canAccessRoomAsync(env, 'contradiction', ''), false);
+}
+
+console.log('\n── D. 从 UI 分享的文件（令牌 typ=content）也要能读字节 ──');
+// UI 的分享按钮固定发 `{type:'content', id:<内容 id>}`，所以从卡片/时间流分享出去的
+// 图片、视频，令牌里 `typ` 是 "content"，而 `/file/` 按 `typ="file"` 校验 ——
+// 不认 content 的话，受保护实例上一律 401（分享页预览、下载按钮、OG 的 og:image 全挂），
+// 而文本却是好的（它走 /content，那边本来就认 content）。
+// 与 Go 侧 TestContentShareCanReadItsFile 对应。
+{
+  const { env, db } = makeEnv();
+  env.AUTH_PASSWORD = '';
+  env.ROOM_AUTH_JSON = JSON.stringify({ private: 'private-pass' });
+  const token = await issueRoomSessionToken(env, 'private', 3600, '');
+
+  const shareContent = async (contentId) => {
+    const res = await ShareHandler.create(
+      new Request('http://worker.local/share?room=private', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ type: 'content', id: String(contentId), ttl: 600 }),
+      }),
+      env,
+    );
+    return { status: res.status, json: await res.json() };
+  };
+
+  const first = await uploadTo(env, db, 'private', 'photo.png', { auth: token });
+  const second = await uploadTo(env, db, 'private', 'other.png', { auth: token });
+  const share = await shareContent(first.id);
+  check('D 前置：内容分享签发成功', share.status, 200);
+
+  const read = (uuid, name, shareToken) => FileHandler.download(
+    downloadRequest(
+      `http://worker.local/file/${uuid}/${name}?t=${encodeURIComponent(shareToken)}`,
+      { uuid, filename: name },
+    ),
+    env,
+  );
+
+  const own = await read(first.uuid, 'photo.png', share.json.token);
+  check('D1 内容分享的令牌能读它指向的文件', own.status, 200);
+
+  // ⚠️ 但不能拿它去读**别的**文件 —— 那等于绕过房间边界。
+  const cross = await read(second.uuid, 'other.png', share.json.token);
+  check('D2 内容分享不能读别的文件', cross.status, 401);
+}
+
+summary('房间鉴权在 Worker 上成立');

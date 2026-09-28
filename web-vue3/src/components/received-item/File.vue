@@ -1,0 +1,497 @@
+<script setup>import { computed, ref } from 'vue';
+import { useAppStore } from '@/store/app';
+import { useWebSocketStore } from '@/store/websocket';
+import { useTheme } from 'vuetify';
+import { useDisplay } from 'vuetify';
+import { useI18n } from 'vue-i18n';
+import axios from 'axios';
+import { toast } from '@/plugins/toast';
+import { useMarkdown } from '@/composables/useMarkdown.js';
+import MarkdownBody from '@/components/MarkdownBody.vue';
+import MarkdownToggle from '@/components/MarkdownToggle.vue';
+import ShareLinkButton from '@/components/ShareLinkButton.vue';
+import { SHARE_DEFAULT_TTL, createShareLink, deviceLabel, errorMessage, formatTimestamp, percentage, prettyFileSize } from '@/util.js';
+
+const mdiCellphone = 'mdi-cellphone';
+const mdiCodeTags = 'mdi-code-tags';
+const mdiLanguageMarkdown = 'mdi-language-markdown';
+const mdiClockOutline = 'mdi-clock-outline';
+const mdiClose = 'mdi-close';
+const mdiDesktopTower = 'mdi-desktop-tower';
+const mdiDownload = 'mdi-download';
+const mdiDownloadOff = 'mdi-download-off';
+const mdiImageSearchOutline = 'mdi-image-search-outline';
+const mdiIpNetworkOutline = 'mdi-ip-network-outline';
+const mdiMovie = 'mdi-movie';
+const mdiMovieSearchOutline = 'mdi-movie-search-outline';
+const mdiMusicNote = 'mdi-music-note';
+const mdiPound = 'mdi-pound';
+const mdiTextBoxSearchOutline = 'mdi-text-box-search-outline';
+const props = defineProps({
+    meta: {
+        type: Object,
+        default: () => ({}),
+    },
+});
+const app = useAppStore();
+const ws = useWebSocketStore();
+const theme = useTheme();
+const isDark = computed(() => theme.current.value?.dark ?? false);
+const display = useDisplay();
+const { t } = useI18n();
+const textPreviewDisplayLimit = 16 * 1024;
+
+const loadingPreview = ref(false);
+const loadedPreview = ref(0);
+const expand = ref(false);
+const srcPreview = ref(null);
+const textPreview = ref('');
+const showFullTextPreview = ref(false);
+const shareFileUrl = ref('');
+const downloading = ref(false);
+const expired = computed(() => {
+    if (!props.meta.expire || props.meta.expire <= 0) {
+        return false;
+    }
+    return Date.now() / 1000 > props.meta.expire;
+});
+const isPreviewableVideo = computed(() => props.meta.name.match(/\.(mp4|webm|ogv)$/gi));
+const isPreviewableAudio = computed(() => props.meta.name.match(/\.(mp3|wav|ogg|opus|m4a|flac)$/gi));
+const isPreviewableText = computed(() => props.meta.name.match(/\.(txt|text|md|markdown|json|log|csv|tsv|ya?ml|xml|ini|conf|cfg|toml|properties|env|gitignore|dockerfile|js|jsx|mjs|cjs|ts|tsx|vue|css|scss|sass|less|html|htm|sql|sh|bash|zsh|fish|ps1|bat|cmd|go|py|java|kt|kts|rb|php|rs|c|cc|cpp|cxx|h|hh|hpp|hxx|swift|proto)$/gi));
+const hasTruncatedTextPreview = computed(() => textPreview.value.length > textPreviewDisplayLimit);
+const displayedTextPreview = computed(() => {
+    if (!hasTruncatedTextPreview.value || showFullTextPreview.value) {
+        return textPreview.value;
+    }
+    return `${textPreview.value.slice(0, textPreviewDisplayLimit)}\n\n...`;
+});
+// markdown 预览：文件场景用扩展名当可靠信号（一份只有一句话的 README，靠内容启发式
+// 判不出来），默认行为跟个性化里的开关走，右上角的按钮可以单独覆盖这一条。
+const md = useMarkdown(
+    () => displayedTextPreview.value,
+    () => /\.(md|markdown|mdown|mkd)$/i.test(props.meta.name || ''),
+);
+const previewIcon = computed(() => {
+    if (isPreviewableVideo.value || isPreviewableAudio.value) {
+        return mdiMovieSearchOutline;
+    }
+    if (isPreviewableText.value) {
+        return mdiTextBoxSearchOutline;
+    }
+    return mdiImageSearchOutline;
+});
+// 下载走**直连正文**的地址（rawUrl），不是分享页地址 —— 分享页是 hash 路由，取不了字节。
+// 服务端签发 token 时已经把这条地址一起给出来了，别在前端再拼一遍。
+async function ensureFileShareUrl() {
+    if (shareFileUrl.value) {
+        return shareFileUrl.value;
+    }
+    const data = await createShareLink({
+        type: 'file',
+        uuid: props.meta?.cache,
+        ttl: SHARE_DEFAULT_TTL,
+        maxUses: 0,
+        room: ws.room,
+    });
+    shareFileUrl.value = data?.rawUrl || '';
+    return shareFileUrl.value;
+}
+async function ensureFileDownloadUrl() {
+    const url = await ensureFileShareUrl();
+    if (!url) {
+        return '';
+    }
+    const downloadUrl = new URL(url, window.location.origin);
+    downloadUrl.searchParams.set('download', 'true');
+    return downloadUrl.toString();
+}
+async function downloadFile() {
+    if (expired.value || downloading.value) {
+        return;
+    }
+    downloading.value = true;
+    try {
+        const url = await ensureFileDownloadUrl();
+        const anchor = document.createElement('a');
+        anchor.href = url;
+        anchor.download = props.meta?.name || 'file';
+        anchor.rel = 'noopener';
+        document.body.appendChild(anchor);
+        anchor.click();
+        document.body.removeChild(anchor);
+    } catch (error) {
+        console.error('下载失败:', error);
+        toast(t('fileFetchFailed'));
+    } finally {
+        downloading.value = false;
+    }
+}
+async function previewFile() {
+    if (expand.value) {
+        expand.value = false;
+        return;
+    }
+    if (srcPreview.value || textPreview.value) {
+        expand.value = true;
+        return;
+    }
+    expand.value = true;
+    if (isPreviewableVideo.value || isPreviewableAudio.value) {
+        try {
+            srcPreview.value = await ensureFileShareUrl();
+        } catch (error) {
+            console.error('生成预览链接失败:', error);
+            toast(t('fileFetchFailed'));
+        }
+    } else if (isPreviewableText.value) {
+        showFullTextPreview.value = false;
+        loadingPreview.value = true;
+        loadedPreview.value = 0;
+        axios.get(`file/${props.meta.cache}/${encodeURIComponent(props.meta.name)}`, {
+            responseType: 'text',
+            onDownloadProgress: e => { loadedPreview.value = e.loaded; },
+        }).then(response => {
+            textPreview.value = typeof response.data === 'string' ? response.data : String(response.data || '');
+        }).catch(error => {
+            const errMsg = errorMessage(error);
+            if (errMsg) {
+                toast(t('fileFetchFailedMsg', { msg: errMsg }));
+            } else {
+                toast(t('fileFetchFailed'));
+            }
+        }).finally(() => {
+            loadingPreview.value = false;
+        });
+    } else {
+        loadingPreview.value = true;
+        loadedPreview.value = 0;
+        axios.get(`file/${props.meta.cache}/${encodeURIComponent(props.meta.name)}`, {
+            responseType: 'arraybuffer',
+            onDownloadProgress: e => { loadedPreview.value = e.loaded; },
+        }).then(response => {
+            srcPreview.value = URL.createObjectURL(new Blob([response.data]));
+        }).catch(error => {
+            const errMsg = errorMessage(error);
+            if (errMsg) {
+                toast(t('fileFetchFailedMsg', { msg: errMsg }));
+            } else {
+                toast(t('fileFetchFailed'));
+            }
+        }).finally(() => {
+            loadingPreview.value = false;
+        });
+    }
+}
+function toggleTextPreview() {
+    showFullTextPreview.value = !showFullTextPreview.value;
+}
+async function deleteItem() {
+    try {
+        await axios.delete(`revoke/${props.meta.id}`, {
+            params: new URLSearchParams([['room', ws.room]]),
+        });
+        if (!expired.value && props.meta.cache) {
+            try {
+                await axios.delete(`file/${props.meta.cache}`);
+                toast(t('deleteSuccessFile', { name: props.meta.name }));
+            } catch (error) {
+                console.error('删除物理文件失败:', error);
+                const errMsg = errorMessage(error);
+                if (errMsg) {
+                    toast(t('deleteFailedFileMsg', { msg: errMsg }));
+                } else {
+                    toast(t('deleteFailedFile'));
+                }
+            }
+        } else {
+            toast(t('deleteSuccessFile', { name: props.meta.name }));
+        }
+    } catch (error) {
+        const errMsg = errorMessage(error);
+        if (errMsg) {
+            toast(t('deleteFailedMessageMsg', { msg: errMsg }));
+        } else {
+            toast(t('deleteFailedMessage'));
+        }
+    }
+}
+function deviceIcon(type) {
+    const lowerType = type?.toLowerCase() || '';
+    if (lowerType.includes('mobile') || lowerType.includes('phone') || lowerType.includes('tablet') || lowerType.includes('ios') || lowerType.includes('android')) {
+        return mdiCellphone;
+    }
+    return mdiDesktopTower;
+}
+</script>
+
+<template>
+    <v-hover v-slot="{ isHovering, props }">
+        <v-card :elevation="isHovering ? 10 : 2" v-bind="props" class="timeline-card timeline-card--file timeline-card--id-float mb-3 transition-swing" :class="{ 'timeline-card--dark': isDark }">
+            <div v-if="meta.id" class="text-caption text-grey-darken-1 timeline-card__id-float">
+                <v-icon size="x-small" class="mr-1">{{ mdiPound }}</v-icon>{{ meta.id }}
+            </div>
+            <v-card-text>
+                <div class="text-caption d-flex flex-nowrap align-center mb-2 timeline-card__meta" v-if="meta.timestamp && (app.display.timestamp || app.display.device || app.display.ip)">
+                    <v-chip size="x-small" label variant="flat" color="secondary" class="mr-2 flex-shrink-0">{{ t('fileMessage') }}</v-chip>
+                    <template v-if="app.display.timestamp">
+                        <span class="mr-3 text-no-wrap flex-shrink-0"><v-icon size="x-small" class="mr-1">{{ mdiClockOutline }}</v-icon>{{ formatTimestamp(meta.timestamp) }}</span>
+                    </template>
+                    <template v-if="app.display.device && meta.senderDevice && meta.senderDevice.type">
+                        <span class="mr-3 text-no-wrap flex-shrink-0"><v-icon size="x-small" class="mr-1">{{ deviceIcon(meta.senderDevice.type) }}</v-icon>{{ deviceLabel(meta.senderDevice) }}</span>
+                    </template>
+                    <template v-if="app.display.ip && meta.senderIP">
+                        <span class="text-no-wrap flex-shrink-0"><v-icon size="x-small" class="mr-1">{{ mdiIpNetworkOutline }}</v-icon>{{ meta.senderIP }}</span>
+                    </template>
+                </div>
+
+                <div class="d-flex flex-row align-center flex-nowrap">
+                    <v-img
+                        v-if="meta.thumbnail && (!isPreviewableVideo && !isPreviewableAudio)"
+                        :src="meta.thumbnail"
+                        class="mr-3 flex-grow-0 flex-shrink-0"
+                        width="2.5rem"
+                        height="2.5rem"
+                        style="border-radius: 3px"
+                    ></v-img>
+                    <v-icon
+                        v-else-if="isPreviewableAudio"
+                        class="mr-3 flex-grow-0 flex-shrink-0"
+                        size="2.5rem"
+                        color="grey"
+                    >{{mdiMusicNote }}</v-icon>
+                    <v-icon
+                        v-else-if="isPreviewableVideo"
+                        class="mr-3 flex-grow-0 flex-shrink-0"
+                        size="2.5rem"
+                        color="grey"
+                    >{{mdiMovie }}</v-icon>
+                    <div class="flex-grow-1 mr-2" style="min-width: 0">
+                        <div
+                            class="text-h6 text-truncate text-on-surface timeline-card__title"
+                            :style="{'text-decoration': expired ? 'line-through' : ''}"
+                            :title="meta.name"
+                        >{{meta.name}}</div>
+                        <div class="text-caption timeline-card__file-meta">
+                            {{ prettyFileSize(meta.size) }}
+                            <template v-if="display.smAndDown"><br></template>
+                            <template v-else>|</template>
+                            {{ meta.expire > 0 ? (expired ? t('expiredAt', { time: formatTimestamp(meta.expire) }) : t('willExpireAt', { time: formatTimestamp(meta.expire) })) : t('neverExpires') }}
+                        </div>
+                    </div>
+
+                    <div class="d-flex flex-nowrap align-center timeline-card__icon-row timeline-card__preview-actions">
+                        <v-tooltip v-if="app.display.cardDownload" :text="expired ? t('expired') : t('download')" location="top">
+                            <template v-slot:activator="{ props }">
+                                <v-btn
+                                    v-bind="props"
+                                    icon
+                                    density="compact"
+                                    variant="text"
+                                    color="grey"
+                                    class="timeline-card__icon-button"
+                                    :loading="downloading"
+                                    :disabled="expired || downloading"
+                                    @click="downloadFile"
+                                >
+                                    <v-icon>{{expired ? mdiDownloadOff : mdiDownload }}</v-icon>
+                                </v-btn>
+                            </template>
+                        </v-tooltip>
+
+                        <template v-if="app.display.cardPreview && (meta.thumbnail || isPreviewableVideo || isPreviewableAudio || isPreviewableText)">
+                            <v-progress-circular
+                                v-if="loadingPreview"
+                                indeterminate
+                                color="grey"
+                            >{{ percentage(loadedPreview / meta.size, 0) }}</v-progress-circular>
+                            <v-tooltip :text="t('preview')" location="top">
+                                <template v-slot:activator="{ props }">
+                                    <v-btn v-bind="props" icon density="compact" variant="text" color="grey" class="timeline-card__icon-button" @click="!expired && previewFile()">
+                                        <v-icon>{{previewIcon }}</v-icon>
+                                    </v-btn>
+                                </template>
+                            </v-tooltip>
+                        </template>
+
+                        <share-link-button :meta="meta" class="timeline-card__icon-button" />
+
+                        <v-tooltip v-if="app.display.cardDelete" :text="t('delete')" location="top">
+                            <template v-slot:activator="{ props }">
+                                <v-btn v-bind="props" icon density="compact" variant="text" color="grey" class="timeline-card__icon-button" @click="deleteItem" :disabled="loadingPreview">
+                                    <v-icon>{{mdiClose}}</v-icon>
+                                </v-btn>
+                            </template>
+                        </v-tooltip>
+                    </div>
+                </div>
+                <v-expand-transition v-if="meta.thumbnail || isPreviewableVideo || isPreviewableAudio || isPreviewableText">
+                    <div v-show="expand">
+                        <v-divider class="my-2"></v-divider>
+                        <video
+                            v-if="isPreviewableVideo"
+                            :src="srcPreview"
+                            style="max-height:480px;max-width:100%;"
+                            class="rounded d-block mx-auto"
+                            controls
+                            preload="metadata"
+                        ></video>
+                        <audio
+                            v-else-if="isPreviewableAudio"
+                            :src="srcPreview"
+                            style="width:100%"
+                            class="rounded d-block mx-auto"
+                            controls
+                            preload="metadata"
+                        ></audio>
+                        <template v-else-if="isPreviewableText">
+                                                        <div class="md-preview">
+                                <markdown-toggle
+                v-if="md.available"
+                v-model:mode="md.mode"
+                :actions="md.actions"
+            ></markdown-toggle>
+                                <markdown-body v-if="md.html" :html="md.html"></markdown-body>
+                                <pre v-else class="timeline-card__text-preview" :class="{ 'timeline-card__text-preview--md': md.available }">{{ displayedTextPreview }}</pre>
+                            </div>
+                            <div v-if="hasTruncatedTextPreview" class="d-flex justify-space-between align-center mt-2">
+                                <div class="text-caption text-medium-emphasis">
+                                    {{ t('textPreviewTruncated', { limit: prettyFileSize(textPreviewDisplayLimit) }) }}
+                                </div>
+                                <v-btn size="small" variant="text" color="primary" @click="toggleTextPreview">
+                                    {{ showFullTextPreview ? t('collapseTextPreview') : t('expandTextPreview') }}
+                                </v-btn>
+                            </div>
+                        </template>
+                        <img
+                            v-else
+                            :src="srcPreview"
+                            style="max-height:480px;max-width:100%;"
+                            class="rounded d-block mx-auto"
+                        >
+                    </div>
+                </v-expand-transition>
+            </v-card-text>
+
+        </v-card>
+    </v-hover>
+</template>
+
+<style scoped>
+.timeline-card :deep(.v-card-text) {
+    padding: 16px 24px 20px;
+}
+
+.timeline-card {
+    border-radius: 22px;
+    border: 1px solid rgba(148, 163, 184, 0.26);
+    overflow: hidden;
+    background: rgba(255, 255, 255, 0.9);
+    transition: background-color 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease;
+}
+
+.timeline-card--dark {
+    border-color: rgba(71, 85, 105, 0.72);
+    background: rgba(15, 23, 42, 0.9);
+}
+
+.timeline-card--file {
+    box-shadow: 0 14px 32px rgba(15, 23, 42, 0.06);
+}
+
+.timeline-card--file::before {
+    content: '';
+    display: block;
+    height: 4px;
+    background: linear-gradient(90deg, #10b981, #06b6d4);
+}
+
+.timeline-card__meta {
+    color: rgba(71, 85, 105, 0.9);
+    overflow: visible;
+}
+
+.timeline-card__title {
+    margin-bottom: 0.35rem;
+}
+
+.timeline-card__file-meta {
+    color: rgba(71, 85, 105, 0.88);
+}
+
+/* G: ID 固定右上角,操作按钮与标题行同行 */
+.timeline-card--id-float {
+    position: relative;
+}
+
+.timeline-card__id-float {
+    position: absolute;
+    top: 0.4rem;
+    right: 1.5rem;
+    z-index: 1;
+    pointer-events: none;
+}
+
+.timeline-card__preview-actions {
+    margin-left: 0.5rem;
+    flex-shrink: 0;
+}
+
+.timeline-card__icon-row {
+    flex-wrap: nowrap;
+    white-space: nowrap;
+}
+
+.timeline-card__icon-button {
+    background: rgba(248, 250, 252, 0.92);
+    margin-left: 0.125rem;
+    flex: 0 0 auto;
+}
+
+.timeline-card__text-preview {
+    margin: 0;
+    max-height: 30rem;
+    overflow: auto;
+    border-radius: 14px;
+    background: rgba(241, 245, 249, 0.9);
+    white-space: pre-wrap;
+    word-break: break-word;
+    font-size: 0.875rem;
+    line-height: 1.6;
+    /* 原本是模板上的 Vuetify `pa-4` —— 它带 !important，会压掉下面 --md 那条
+       padding-right，所以挪进这里自己写。 */
+    padding: 16px;
+}
+
+/* 有 md 图标时给图标让位。必须加在 pre 自己身上：它才是滚动盒，滚动条贴着它的右沿；
+   加在外层 .md-preview 上会让这块灰底的右边缘缩进去，看着像断了。
+   用 ::before 浮动占位而不是 padding-right —— 后者会把每一行都压窄。 */
+.timeline-card__text-preview--md::before {
+    content: '';
+    float: right;
+    width: var(--md-toggle-gutter);
+    /* 22px 给不支持 lh 单位的浏览器兜底；下面一行才是准的（正好一个行高） */
+    height: 22px;
+    height: var(--md-toggle-height);
+}
+
+
+.timeline-card--dark .timeline-card__meta,
+.timeline-card--dark .timeline-card__file-meta,
+.timeline-card--dark .text-grey {
+    color: rgba(226, 232, 240, 0.72) !important;
+}
+
+.timeline-card--dark .timeline-card__icon-button {
+    background: rgba(30, 41, 59, 0.92);
+}
+
+.timeline-card--dark .timeline-card__text-preview {
+    background: rgba(30, 41, 59, 0.88);
+    color: rgba(226, 232, 240, 0.92);
+}
+
+/* 浮动图标的定位基准 —— MarkdownToggle 内部是 absolute */
+.md-preview {
+    position: relative;
+}
+</style>
