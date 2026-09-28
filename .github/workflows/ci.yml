@@ -61,6 +61,12 @@ jobs:
       - name: 分享桥（外壳 ↔ SPA）静态自检
         run: node tools/share-bridge-smoke.mjs
 
+      # ⚠️★ shell / workflow 里的 `$var：`（变量后面紧跟全角标点）：bash 把那个全角字符
+      # 算进变量名 —— 开了 `set -u` 就整条命令挂掉，没开就**静默**少一截消息。
+      # 2026-09-28 全仓扫出 9 处。见 tools/shell-smoke.mjs 抬头。
+      - name: shell 脚本静态自检
+        run: node tools/shell-smoke.mjs
+
   # ── Rust：fmt / clippy / test ──────────────────────────────────────
   #
   # ubuntu 上要装 Tauri 的系统库：缺 webkit2gtk 时 `tauri-build` 会直接失败，报错与「代码写错了」很像。
