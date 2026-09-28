@@ -74,6 +74,13 @@ jobs:
       - name: Android 契约静态自检
         run: node tools/android-contract-smoke.mjs
 
+      # ⚠️★ `release.yml` ↔ `openwrt.yml` / `android.yml` 之间靠一串**字符串**连着
+      # （artifact 名字、glob 前缀、矩阵条目数）。而那两个工作流**本机跑不起来**
+      # （要 runner、Android SDK、Docker 里的 apk-tools），断了只有到发版那天才知道。
+      # 见 tools/workflows-smoke.mjs 抬头。
+      - name: 工作流跨文件约定静态自检
+        run: node tools/workflows-smoke.mjs
+
   # ── Rust：fmt / clippy / test ──────────────────────────────────────
   #
   # ubuntu 上要装 Tauri 的系统库：缺 webkit2gtk 时 `tauri-build` 会直接失败，报错与「代码写错了」很像。
