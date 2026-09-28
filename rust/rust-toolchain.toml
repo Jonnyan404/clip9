@@ -3,6 +3,12 @@ channel = "stable"
 components = ["rustfmt", "clippy"]
 # ⚠️ 这个列表里的目标必须都能装上，否则 rustup 会在每次构建前试图安装并失败。
 # 只列 Tier 2（mips-*-musl 是 Tier 3，rustup 装不了，OpenWrt mips 要另想办法）。
+#
+# ⚠️★ 三个 android 目标**要齐**：`android/app/build.gradle.kts` 的 `abiFilters` 列着
+# `arm64-v8a` / `armeabi-v7a` / `x86_64`，少一个就会「编得过、装得上，只在
+# `System.loadLibrary` 那一步炸」。x86_64 那个（模拟器用）早先不在这里，于是
+# `bash tools/build-android.sh` 会**静默跳过**它 —— 现在补齐，并给那个脚本加了
+# `--require-all`（CI 用）来把「跳过」变成硬失败。
 targets = [
     "wasm32-unknown-unknown",
     "x86_64-unknown-linux-musl",
@@ -10,4 +16,5 @@ targets = [
     "armv7-unknown-linux-musleabihf",
     "aarch64-linux-android",
     "armv7-linux-androideabi",
+    "x86_64-linux-android",
 ]

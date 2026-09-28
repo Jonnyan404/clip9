@@ -11,6 +11,9 @@
 #   bash tools/build-android.sh --abi arm64-v8a      # 只编一个 ABI（最快的冒烟）
 #   bash tools/build-android.sh --no-gradle          # 只编 .so 并同步，不叫 Gradle
 #   bash tools/build-android.sh --print              # 只把要跑的命令打出来，什么都不做
+#   bash tools/build-android.sh --release --require-all
+#                                                    # ⚠️ **CI 用这个**：范围内的 ABI
+#                                                    # 有一个没编出来就非零退出，不静默跳过
 #   bash tools/build-android.sh --release -- -Psigning.store.file=/abs/clip9.jks \
 #       -Psigning.store.password=… -Psigning.key.alias=… -Psigning.key.password=…
 #                                                    # `--` 之后原样交给 ./gradlew
@@ -26,7 +29,10 @@
 #   · 少了哪个 ABI 要说出来。`build.gradle.kts` 的 `abiFilters` 列了三个，
 #     **它不会替你检查 `jniLibs/` 里是不是真有那三个目录**。
 #
-# ⚠️ 它**不在 CI 里**：CI 上没有 NDK，也就没有 `.so` 可编（与 `sync-android-jni-libs.mjs` 同理）。
+# ⚠️★ **怎么判断「某个 ABI 的 `.so` 根本没编」**：`rustup target add` 没做过时，
+#   下面那个循环是**跳过**它、然后照常走到 Gradle（因为 Gradle 只看 `jniLibs/`，
+#   而 `abiFilters` 也不会替它检查）。在**本机**那是方便（只为冒烟编一个 ABI），
+#   在 **CI** 上就是「绿着出一个缺原生库的包」——所以那边必须加 `--require-all`。
 #
 # ⚠️ 本机没有 `gradle` CLI，只有 wrapper —— 一律 `./gradlew`。
 # ⚠️ 本机有**两个** rust：只有 `$HOME/.cargo/bin` 那个（rustup）装了 android target。
@@ -49,6 +55,9 @@ GRADLE_TASK='assembleDebug'
 ONLY_ABI=''
 RUN_GRADLE=1
 PRINT_ONLY=0
+# ⚠️ 默认 0 = 本机口径（缺 target 就跳过那个 ABI，方便只为冒烟编一个）。
+#    CI 一律传 `--require-all`。见文件抬头那段。
+REQUIRE_ALL=0
 GRADLE_ARGS=()
 
 # ⚠️ 用**两个锚点**取用法，别写行号 —— 加一行表头就会让 `--help` 少印一段，
@@ -76,6 +85,10 @@ while [ $# -gt 0 ]; do
             ;;
         --no-gradle)
             RUN_GRADLE=0
+            shift
+            ;;
+        --require-all)
+            REQUIRE_ALL=1
             shift
             ;;
         --print)
@@ -122,18 +135,43 @@ case "$CARGO_BIN" in
 esac
 
 # ── NDK ──────────────────────────────────────────────────────────────────────
-# 优先级：显式环境变量 → SDK 默认位置下版本号最大的那个。
+# 优先级：显式环境变量 → SDK 下的 `ndk/` 里版本号最大的那个。
+#
+# ⚠️★ 候选根里**必须有 Linux 的**：这一段原来是照 macOS 写的（只有
+#    `~/Library/Android/sdk`），拿到 ubuntu runner 上会报「没找到 NDK」——
+#    而 GitHub 的 runner 上其实装着好几个（Android SDK 在 `/usr/local/lib/android/sdk`，
+#    由 `ANDROID_SDK_ROOT` / `ANDROID_HOME` 指出来）。
 if [ -n "${ANDROID_NDK_HOME:-}" ]; then
     NDK="$ANDROID_NDK_HOME"
 elif [ -n "${ANDROID_NDK_ROOT:-}" ]; then
     NDK="$ANDROID_NDK_ROOT"
 else
-    # NDK 的目录名就是版本号；用 `sort` 取最后一个（两段式的版本号按字典序也是对的）。
-    NDK="$(ls -d "$HOME"/Library/Android/sdk/ndk/* 2>/dev/null | sort | tail -1 || true)"
+    # ⚠️ 换行分隔的候选根（bash 3.2 没有关联数组；这里也用不上）。
+    #    `${VAR:-}` 是必须的 —— 直接写 `$ANDROID_SDK_ROOT` 在 `set -u` 下会当场挂掉。
+    NDK_SDK_ROOTS="${ANDROID_SDK_ROOT:-}
+${ANDROID_HOME:-}
+$HOME/Library/Android/sdk
+$HOME/Android/Sdk"
+    NDK=""
+    while IFS= read -r sdk_root; do
+        # 空行是上面那几个没设的变量留下的，跳过。
+        [ -n "$sdk_root" ] || continue
+        # NDK 的目录名就是版本号；用 `sort` 取最后一个（两段式的版本号按字典序也是对的）。
+        cand="$(ls -d "$sdk_root"/ndk/* 2>/dev/null | sort | tail -1 || true)"
+        if [ -n "$cand" ] && [ -d "$cand" ]; then
+            NDK="$cand"
+            break
+        fi
+    done <<EOF
+$NDK_SDK_ROOTS
+EOF
 fi
 if [ -z "$NDK" ] || [ ! -d "$NDK" ]; then
-    echo "✗ 没找到 NDK。" >&2
-    echo "  装一个：\$HOME/Library/Android/sdk/cmdline-tools/latest/bin/sdkmanager 'ndk;27.3.13750724'" >&2
+    echo "✗ 没找到 NDK。找过（按这个顺序）：" >&2
+    echo "    \$ANDROID_NDK_HOME、\$ANDROID_NDK_ROOT、" >&2
+    echo "    \${ANDROID_SDK_ROOT:-}/ndk/*、\${ANDROID_HOME:-}/ndk/*、" >&2
+    echo "    \$HOME/Library/Android/sdk/ndk/*、\$HOME/Android/Sdk/ndk/*" >&2
+    echo "  装一个（macOS）：\$HOME/Library/Android/sdk/cmdline-tools/latest/bin/sdkmanager 'ndk;27.3.13750724'" >&2
     echo "  或者把 ANDROID_NDK_HOME 指到已有的那一个。" >&2
     exit 1
 fi
@@ -201,6 +239,12 @@ while IFS='|' read -r abi target clang; do
     if [ "$installed" = 0 ]; then
         echo "· 跳过 ${abi}：target $target 没装。"
         echo "  装它（要联网，约 30 MB）：rustup target add $target"
+        if [ "$REQUIRE_ALL" = 1 ]; then
+            echo "✗ --require-all：这个 ABI 在范围内，不能跳过。" >&2
+            echo "  它要是被跳过，Gradle 照样会编出一个**缺这个 ABI 原生库**的包 ——" >&2
+            echo "  \`abiFilters\` 只过滤、不检查 \`jniLibs/\` 里有没有东西。先装 target 再来。" >&2
+            exit 1
+        fi
         SKIPPED="$SKIPPED $abi"
         continue
     fi
@@ -242,6 +286,11 @@ fi
 MISSING=""
 while IFS='|' read -r abi target clang; do
     [ -n "$abi" ] || continue
+    # ⚠️ 与上面的编译循环同样要按 `--abi` 过滤：不然用 `--abi arm64-v8a --require-all`
+    #    时会把另外两个**根本没要**的 ABI 报成「没有 .so」，然后拒绝退出。
+    if [ -n "$ONLY_ABI" ] && [ "$ONLY_ABI" != "$abi" ]; then
+        continue
+    fi
     [ -f "$ROOT/android/app/src/main/jniLibs/$abi/libclip9_android.so" ] || MISSING="$MISSING $abi"
 done <<EOF
 $TARGETS
@@ -254,6 +303,12 @@ if [ -n "$MISSING" ]; then
     echo "  装出来的 APK 会在 System.loadLibrary 那一步炸（编得过、装得上、点得开）。"
     echo "  补法：rustup target add x86_64-linux-android    # 只有模拟器那个要另外装 target"
     echo "        只想要一个 ABI 的冒烟包，就把 abiFilters 里另外两个删掉。"
+    if [ "$REQUIRE_ALL" = 1 ]; then
+        echo "✗ --require-all：上面的 ABI 是**范围内**的，一个都不能缺。" >&2
+        echo "  （\`sync-android-jni-libs.mjs\` 找不到对应 target 产物时的表现是「跳过」，" >&2
+        echo "   不是失败 —— 所以这里要自己判一次。）" >&2
+        exit 1
+    fi
 fi
 
 # ── Gradle ───────────────────────────────────────────────────────────────────
