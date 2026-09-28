@@ -26,6 +26,7 @@
 //!   静默忽略意味着「配了却不生效」，那是这个项目最忌讳的一档。
 
 use std::collections::{HashMap, HashSet};
+use std::io::IsTerminal;
 use std::net::{SocketAddr, ToSocketAddrs};
 use std::path::{Path, PathBuf};
 
@@ -106,11 +107,24 @@ const MIGRATE_FLAGS: &[(&str, bool, &str)] = &[
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
+    // ⚠️★ `with_ansi` **必须**跟着「输出到不到终端」走，不能不管它。
+    // `tracing_subscriber::fmt()` 的默认值是**恒定开**（只跟 cargo feature 有关，
+    // 它自己不探 tty），于是「输出被重定向到文件或管道」时颜色码照样写进去。
+    // 实测（2026-09-28）：`clip9-server … > out.log` 里是
+    // `^[[2m2026-09-28T…^[[0m ^[[32m INFO^[[0m …`。
+    //
+    // 每一个**非终端**的消费方都会被这件事弄花：
+    //   - OpenWrt：procd 把 stdout 收进 logd，LuCI 的日志页整屏是 `^[[32m`；
+    //   - Docker：`docker logs` 同理；
+    //   - 桌面端：它把服务端的输出收进自己的日志里。
+    // 而**交互式**跑的时候颜色是想要的。所以判据就是「stdout 是不是终端」。
+    // ⚠️ 判错了不会报错、只会满地控制字符 —— 所以别把这个判据删了。
     tracing_subscriber::fmt()
         .with_env_filter(
             tracing_subscriber::EnvFilter::try_from_default_env()
                 .unwrap_or_else(|_| "clip9_server=info,tower_http=warn".into()),
         )
+        .with_ansi(std::io::stdout().is_terminal())
         .init();
 
     // ⚠️★ 子命令要在参数解析**之前**判：`migrate` 是位置参数，而解析器把位置参数当错误
