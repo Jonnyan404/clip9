@@ -23,3 +23,15 @@ build/
 # 目录被忽略的话 git 不会往里看，里面的 `.gitkeep` 也就跟着丢了（写了等于没写）。
 # 这样「我们打算出哪几个 ABI」在仓库里看得见，而真正会随着构建变化的东西看不见。
 app/src/main/jniLibs/**/*.so
+
+# ── 签名材料：**绝对不能进仓库** ──────────────────────────────────────────────
+# 密钥库按设计放在仓库外（本机 `~/keystore/clip9/`，那份 `CREDENTIALS.txt` 里有口令与指纹）。
+# 这两条是防呆，防的是一个很自然的手滑：Go 版的 workflow 里写着
+# `base64 --decode > android/app/my-release-key.keystore`，照那个习惯手动解一份到
+# `android/app/` 里就能出包 —— 但那一次 `git add -A` 会把**私钥本身**推上公开仓库。
+#
+# ⚠️★ 后果是不可逆的：进了 git 历史就再也拿不掉（改写历史要力推，而且别人早就 clone 过），
+# 拿到私钥的人可以签出**能覆盖安装**的包 —— 这类事故没有补救。
+# 判据见 `tools/android-contract-smoke.mjs`（第 12 条，名单驱动，加规则的同时加名单项）。
+*.jks
+*.keystore

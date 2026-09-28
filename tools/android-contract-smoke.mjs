@@ -396,6 +396,15 @@ if (unreadB.length) {
     ['android/.gradle/', 'Gradle 自己的缓存'],
     ['android/.kotlin/', 'Kotlin 2.x 的会话与增量缓存（现在是空的，所以洞看不见）'],
     ['android/local.properties', '指向本机 SDK 的绝对路径（每台机器都不一样）'],
+    // ⚠️★ 签名私钥。它按设计放在**仓库外**（本机 `~/keystore/clip9/`），但最容易发生的
+    // 事故恰恰是往仓库里放一份：Go 版的 workflow 就是 `base64 --decode >
+    // android/app/my-release-key.keystore`，照那个习惯手动解一份到 `android/app/` 里很自然。
+    // 而它一旦进了 git 历史就**再也拿不掉**（改写历史要力推，且别人 clone 过的都还在），
+    // 拿到它的人可以签出能**覆盖安装**的包 —— 这类事故没有补救。
+    // ⚠️ 这两条**不带尾斜杠**：它们是文件名模式，`*.jks` 在 `check-ignore` 眼里是纯字符串匹配、
+    //    不要求文件存在（与上面那些目录规则相反，见本判据抬头那段注释）。
+    ['android/app/my-release-key.jks', '签名私钥（keytool -genkeypair 的产物）'],
+    ['android/app/my-release-key.keystore', '签名私钥的另一种后缀（Go 版用的就是这个名）'],
   ];
   const results = ARTIFACTS.map(([path, why]) => [path, why, ignored(path)]);
   if (results.some(([, , r]) => r === null)) {
