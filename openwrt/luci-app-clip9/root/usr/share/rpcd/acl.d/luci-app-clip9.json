@@ -1,0 +1,39 @@
+{
+    "luci-app-clip9": {
+        "description": "Grant access to clip9 settings",
+        "read": {
+            "uci": ["clip9"],
+            "file": {
+                "/etc/config/clip9": ["read"],
+                "/var/log/clip9.log": ["read"],
+                "/etc/init.d/clip9": ["exec"],
+                "/usr/bin/clip9-server": ["exec"],
+                "/bin/busybox": ["exec"],
+                "/usr/bin/pgrep": ["exec"],
+                "/usr/bin/curl": ["exec"],
+                "/usr/bin/wget": ["exec"],
+                "/usr/bin/du": ["exec"]
+            }
+        },
+        "write": {
+            "uci": ["clip9"],
+            "file": {
+                "/etc/config/clip9": ["write"],
+                "/var/log/clip9.log": ["write", "truncate"],
+                "/etc/init.d/clip9": ["exec"],
+                "/usr/bin/clip9-server": ["exec"]
+            }
+        },
+        "execute": {
+            "file": {
+                "/usr/bin/clip9-server": ["exec"],
+                "/etc/init.d/clip9": ["exec"],
+                "/bin/busybox": ["exec"],
+                "/usr/bin/pgrep": ["exec"],
+                "/usr/bin/curl": ["exec"],
+                "/usr/bin/wget": ["exec"],
+                "/usr/bin/du": ["exec"]
+            }
+        }
+    }
+}

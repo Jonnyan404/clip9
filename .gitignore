@@ -48,10 +48,12 @@ docs/
 *.redb.lock
 config.json
 
-# 打包产物
+# ── 打包产物 ──
+# ⚠️ 这里原来指的是 `packaging/openwrt/`，而那个路径**早就没有了**（拆库之前的结构）——
+#    一条指向不存在目录的忽略规则永远不生效，也不会有人发现。2026-09-28 订正为实际位置：
+#    OpenWrt 的二进制、ipk、apk 全在 `openwrt/build/`（见 `openwrt/README.md`）。
 /dist/
-/packaging/openwrt/*.ipk
-/packaging/openwrt/build/
+/openwrt/build/
 
 # ── 顶层摆法：`rust/` 一格里是**全部 Rust**，其余各占一格（2026-09-28）──
 #

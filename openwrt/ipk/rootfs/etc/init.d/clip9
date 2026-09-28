@@ -1,0 +1,64 @@
+#!/bin/sh /etc/rc.common
+#
+# ⚠️ 与 Go 版（`/etc/init.d/cloud-clipboard`）的三处必要差异：
+#
+#   1. **多了 `-data`** —— 那是本实现独有的参数。redb 库与 `uploads/` 都挂在数据目录
+#      下面，配置里写的相对路径就是相对它解析（见 `rust/crates/server` 的
+#      `resolve_against`：**相对数据目录，不是相对 cwd** —— procd 起的进程 cwd 没人能预测）。
+#   2. **不再手写 `config.json`**。Go 那份脚本会 heredoc 出一份带 `historyFile` 的配置；
+#      那个键在本实现里**已被 serde 当成未知字段丢掉**（历史改存 redb 了，键名是 `dbPath`），
+#      于是「脚本写的」和「服务端读的」看着一致、其实差一层。现在交给服务端自己写
+#      （配置文件不存在时它会写一份默认的，见 `clip9-server.rs` 的 main），
+#      脚本只负责把目录建出来。
+#   3. `-auth "$auth"` 在 UCI 默认值（空串）下**不会**把配置里的密码抹掉 ——
+#      这条靠服务端那边的「字符串参数非空才覆盖」（`non_empty`）保证；
+#      Go 版也是这个语义，本实现 2026-09-28 之前漏了，已修。
+
+START=99
+USE_PROCD=1
+PROG=/usr/bin/clip9-server
+LOG_FILE="/var/log/clip9.log"
+
+start_service() {
+    config_load clip9
+
+    local enabled
+    local host
+    local port
+    local auth
+    local config
+    local data
+
+    config_get enabled main enabled "0"
+    [ "$enabled" = "0" ] && return 1
+
+    config_get host main host "0.0.0.0"
+    config_get port main port "9501"
+    config_get auth main auth ""
+    config_get config main config "/etc/clip9/config.json"
+    config_get data main data "/etc/clip9/data"
+
+    # 目录：数据目录（库 + uploads 都挂在它下面）与配置文件的父目录。
+    # ⚠️ 配置文件的父目录也要建 —— 服务端写默认配置失败时**只 warn**、照常用内存里的默认值跑，
+    # 于是「配置没落盘」这件事在日志里一闪而过，下一个人会以为已经存下来了。
+    mkdir -p "$data" "$data/uploads" "$(dirname "$config")"
+    mkdir -p /tmp/clip9
+
+    touch "$LOG_FILE"
+    chmod 666 "$LOG_FILE"
+
+    procd_open_instance
+    procd_set_param command $PROG -host "$host" -port "$port" -auth "$auth" -config "$config" -data "$data"
+
+    procd_set_param stdout 1
+    procd_set_param stderr 1
+    procd_set_param respawn
+
+    procd_close_instance
+
+    echo "$(date): Clip9 started on $host:$port with config $config, data $data" >> "$LOG_FILE"
+}
+
+service_triggers() {
+    procd_add_reload_trigger "clip9"
+}
