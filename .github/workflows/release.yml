@@ -446,6 +446,18 @@ jobs:
   android:
     needs: info
     uses: ./.github/workflows/android.yml
+    # ⚠️★ **少了这一行，这个 job 一定红。**
+    #   可复用工作流**不会**自动拿到调用方的 secret —— 官方规则是「secrets are only passed
+    #   to directly called workflow」：要么 `secrets:` 显式映射，要么 `secrets: inherit`。
+    #   少了它，`android.yml` 里那四个 `secrets.SIGNING_*` 全是**空串**，于是它的存在性
+    #   检查当场报「先给 clip9 这个仓库加上这几个 secret」——**看着像 secret 没设，其实设了**
+    #   （`gh secret list` 里七个都在）。这一条 2026-09-28 真在 CI 上红过。
+    #   ⚠️ 而**手动 dispatch 时是好好的**：那时它是顶层工作流、直接在仓库里跑，`secrets.*`
+    #   读得到。所以「单独跑正常、被 release 一调就红」的全部原因就是这一行。
+    #   ⚠️ `openwrt.yml` 一个 secret 都不用 → **故意不给它 inherit**：`inherit` 是把**全部**
+    #   仓库 secret 都塞过去（含 `DOCKERHUB_*` / `HOMEBREW_TAP_GITHUB_TOKEN`），它用不上。
+    #   哪天它要用 secret 了，`tools/workflows-smoke.mjs` 会先红在这里。
+    secrets: inherit
     with:
       tag: ${{ needs.info.outputs.tag }}
 
