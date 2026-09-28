@@ -3,7 +3,11 @@
 /local.properties
 /.idea
 .DS_Store
-/build
+# ⚠️★ 不写 `/build` —— 那只匹配 `android/build`，而 **AGP 的主产物在 `android/app/build/`**。
+# 它在 2026-09-28 第一次真编时冒出来（105 MB / 438 个文件），而 `git status` 把它当成
+# 一个未跟踪目录：一次 `git add -A` 就会把几万个构建产物收进仓库，且**再也拿不掉**。
+# 判据见 `tools/android-contract-smoke.mjs`（第 12 条）。
+build/
 /captures
 .externalNativeBuild
 .cxx

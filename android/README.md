@@ -29,6 +29,14 @@
   编得过、装得上、一调就炸）。用 `tools/sync-android-jni-libs.mjs` 搬，`--check` 能提前问一句。
 - `app/proguard-rules.pro` 里的 `-keep`：release 开了 R8，**类名一改短第 1 条就废了**。
 
+⚠️ 上面这五处现在**逐条有判据**：`node tools/android-contract-smoke.mjs`（12 条，已接进 CI 的
+frontend job）。它管两组 —— 「ABI 名单在三处是否一致」与「库名 / JNI 符号名在六处是否一致」，
+外加「`jniLibs/<abi>/` 真的有占位」「`android/.gitignore` 有没有把产物目录整个忽略掉」
+「`.kt` 的块注释闭不闭合」。⚠️ 变异验证 18 组（详见脚本抬头）。
+
+⚠️ 它**抓不到**下面那段说的那件事（`JObject` vs `JClass`）—— 两种在 ABI 上都是指针、
+都不会崩，静态也看不出「该用哪个」。那条**仍然只能靠注释**。
+
 > ⚠️ 还有一条**只能靠注释**记着的：Kotlin 那边是 `object ServerBridge { external fun … }`，
 > 也就是**实例方法** —— 所以 Rust 侧第二个参数收的是 `JObject`（`jobject`）而不是 `JClass`（`jclass`）。
 > 改成 `companion object` + `@JvmStatic` 会静默变成静态方法。**两种在 ABI 上都是指针、都不会崩，
@@ -171,11 +179,27 @@ wrapper 的发行版已经缓存在 `~/.gradle/wrapper/dists/gradle-8.13-bin`。
   `BUILD SUCCESSFUL in 25s`。⚠️ 但那只跑默认的 `help` 任务 —— 于是它**只**证明了
   `settings.gradle.kts` 与两个 `build.gradle.kts` 能被求值、AGP 8.7.3 与 Kotlin 2.0.21
   能被解析。**一个 Kotlin 文件都没过编译器，`AndroidManifest.xml` 与资源都没被解析，也没有 APK。**
-- ⚠️★ **`assembleDebug` / `assembleRelease` 从没跑过**（见上面那条沙箱的原因）。
-  所以「Kotlin 编不编得过、清单与资源合不合得成、R8 会不会动 `jniLibs`」**都没有验证**。
-- ⚠️★ **Kotlin 代码从未编译过**（`MainActivity` / `WebAppActivity` / `ServerService` /
-  `ServerBridge` / `AppPrefs` / `ServerAddress` / `SharePayload`）。写的时候是逐行对着 API 与资源名核的
-  （id / string / color / drawable 都逐个对过），但「对过名字」不等于「编得过」。
+- ✅ **`assembleDebug` 跑过一次**（2026-09-28，本机）—— 编到 Kotlin 就停了：
+  `BUILD FAILED in 1m 16s`，`:app:compileDebugKotlin` 报 11 条。⚠️ 但这一趟**没白跑**：
+  它把「Kotlin 编不编得过」从「未知」变成了「**两个已知根因**」，而且走完了资源合并与
+  manifest 合并，并**真的找到了 `.so`**（日志里那句
+  `Unable to strip the following libraries, packaging them as they are: libclip9_android.so`
+  说明它已经在打包了 —— 只是找不到 strip 工具，那是本机没配 NDK 的 strip，属正常）。
+  两个根因都已修：
+  1. `SharePayload.kt` 的 KDoc 里写了「斜杠 + 星号」那种形式。**Kotlin 的块注释可以嵌套**，
+     于是注释里又开了一层、外层一直不闭合，**把文件后半整个吞掉**（`ShareIntent` 与
+     `PendingShare` 一起消失）。编译器报的是「文件末尾注释未闭合」+ 九条
+     `Unresolved reference`，**读起来像「凭空少了几个类」**。
+  2. `WebAppActivity` 有两个 `const val` 写在类体里 —— 只许出现在顶层 / `object` /
+     `companion object` 三处。已挪进 `companion object`。
+  ⚠️★ 第 1 条现在有判据守着（`node tools/android-contract-smoke.mjs` 按词法扫 `.kt` 的块注释），
+  当初要是它在，就不用花那一趟构建。
+- ⚠️★ **修完还没重跑。** 下一次 `bash tools/build-android.sh` 才知道这两个修法对不对、
+  以及后面还有没有别的错 —— `AndroidManifest.xml` 与资源要到打包阶段才验，
+  R8 与 `jniLibs` 的处置要到 release 才验。
+- ⚠️ **Kotlin 只过了「语法与符号解析」这一关，而且没走到成功。** 编译器现在只是
+  还没抱怨到那些 API 用法上（`AlertDialog` / `evaluateJavascript` / `OnBackPressedCallback` …）——
+  编过才算数。
 - ⚠️★ **分享那条路的「跑起来对不对」完全没验过。** 它跨了四层：`Intent` 解析 → 起服务端
   → 开 WebView → 轮询 `isReady()` → 投递 → 取回 `{ok, reason}`。
   ⚠️ 其中「`evaluateJavascript` 回来的字符串长什么样」**只有真跑一次才知道** ——

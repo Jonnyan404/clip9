@@ -67,6 +67,13 @@ jobs:
       - name: shell 脚本静态自检
         run: node tools/shell-smoke.mjs
 
+      # ⚠️★ Android 那两条跨文件契约（ABI 清单三处 / native 库名与 JNI 符号六处）
+      # **散在 Cargo.toml / Kotlin / Gradle / proguard / jniLibs 里，没有任何编译器看着**。
+      # 对不上的症状只有 `UnsatisfiedLinkError`，而它**不会说是哪一处**。
+      # 见 tools/android-contract-smoke.mjs 抬头。
+      - name: Android 契约静态自检
+        run: node tools/android-contract-smoke.mjs
+
   # ── Rust：fmt / clippy / test ──────────────────────────────────────
   #
   # ubuntu 上要装 Tauri 的系统库：缺 webkit2gtk 时 `tauri-build` 会直接失败，报错与「代码写错了」很像。
