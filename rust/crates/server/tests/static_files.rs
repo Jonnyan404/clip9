@@ -258,7 +258,7 @@ async fn the_share_landing_page_gets_the_shell_from_the_embedded_copy() {
     assert!(body.contains("<base href=\"/\">"), "外壳要注入 <base>");
 }
 
-/// ⚠️★ 仓库里那份 `rust/crates/server/static/` **不许比 `web-vue3/dist` 旧**。
+/// ⚠️★ `rust/crates/server/static/` 必须与**它自己的同步清单**一致。
 ///
 /// 为什么值得一条测试（照 Go 的 `TestEmbeddedSpaCarriesAutomationEntry` 写）：
 /// 正式构建用的是**编进二进制的这一份**，而前端改完只落在 `web-vue3/dist` 里 ——
@@ -266,42 +266,59 @@ async fn the_share_landing_page_gets_the_shell_from_the_embedded_copy() {
 /// 编译完全成功、跑起来也正常，只是界面永远停在上一版。用户看到的现象是
 /// 「界面里根本没有这个功能」，而代码明明写好了。
 ///
-/// ⚠️ 源目录不在就**跳过**（clip9 是独立仓库，单独 clone 出来没有它）——
-/// 但要把话说给跑测试的人听，别静默地变成「这条永远绿」。
+/// ⚠️★ 但**逐字节比 `web-vue3/dist` 是做不到的**（这条测试原来就是那样，等于永远红）：
+/// `web-vue3/vite.config.js` 每次构建都注入一个**随机** build id（那是故意的 —— 让 PWA 缓存
+/// 失效、并能核对线上跑的是哪次构建），而且入口 chunk 与 ShareView chunk 互相引用对方带 hash
+/// 的文件名 —— **每次构建的文件名都不一样**。所以「前端改了却没同步」由
+/// `tools/sync-web-assets.mjs --check` 用**源码指纹**来判（那才是 CI 上跑的一道）。
+///
+/// 这一条守的是另一半，而且**不需要 node、也不需要构建产物**：
+/// `static/` 里的文件清单必须与「同步那一刻」记下来的一模一样 ——
+/// 手工往目录里塞或删文件、同步脚本只跑了一半，都在这里红。
+///
+/// ⚠️ 清单是 `rust/crates/server/static.sync-manifest`（纯文本，格式见那个脚本的注释），
+/// **不在 `static/` 里面** —— 放进去会被 `build.rs` 编进二进制并对外提供。
 #[test]
-fn the_shipped_copy_matches_the_front_end_build() {
-    let source = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../web-vue3/dist");
-    if !source.join("index.html").is_file() {
-        eprintln!(
-            "跳过 `the_shipped_copy_matches_the_front_end_build`：{} 不在。\n\
-             \x20 这是**独立 clone** 的正常情况（那一份属于云剪贴板主仓库）。\n\
-             \x20 要真跑这条，得在有 web-vue3 的构建产物的目录里跑。",
-            source.display()
-        );
-        return;
-    }
-    let shipped = static_dir();
+fn the_shipped_copy_matches_its_sync_manifest() {
+    let manifest = Path::new(env!("CARGO_MANIFEST_DIR")).join("static.sync-manifest");
+    let raw = std::fs::read_to_string(&manifest).unwrap_or_else(|err| {
+        panic!(
+            "读不到 {}：{err}\n\
+             \x20 这一份静态产物不是 tools/sync-web-assets.mjs 同步出来的。\n\
+             \x20 修法：node tools/sync-web-assets.mjs（然后重编 clip9-server）",
+            manifest.display()
+        )
+    });
 
-    let mut source_files = relative_files(&source);
-    let mut shipped_files = relative_files(&shipped);
-    source_files.sort();
-    shipped_files.sort();
-    assert_eq!(
-        shipped_files, source_files,
-        "`rust/crates/server/static/` 与 `web-vue3/dist` 的文件清单不一致 —— \
-         跑 `node tools/sync-web-assets.mjs` 同步（编进二进制的是前者）。"
+    // 第一条非注释行是 `source <指纹>`，其余每行一条相对路径。
+    let body: Vec<&str> = raw
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty() && !line.starts_with('#'))
+        .collect();
+    let source = body
+        .first()
+        .and_then(|line| line.strip_prefix("source "))
+        .unwrap_or_else(|| panic!("{} 的第一行不是 `source <指纹>`", manifest.display()));
+    assert!(
+        source.len() == 64 && source.chars().all(|c| c.is_ascii_hexdigit()),
+        "源码指纹不像 sha256：{source:?}"
     );
 
-    // ⚠️ 清单一样还不够：**内容**也得一样（同名文件被换成旧版是这条要拦的主要情况）。
-    for rel in &source_files {
-        let want = std::fs::read(source.join(rel)).expect("读源");
-        let got = std::fs::read(shipped.join(rel)).expect("读仓库里那份");
-        assert!(
-            want == got,
-            "`static/{rel}` 与 `web-vue3/dist/{rel}` 内容不一致 —— 前端改过而这份没同步。\n\
-             \x20 修法：node tools/sync-web-assets.mjs"
-        );
-    }
+    let mut recorded: Vec<String> = body[1..].iter().map(|line| (*line).to_owned()).collect();
+    let dir = static_dir();
+    let mut shipped = relative_files(&dir);
+    recorded.sort();
+    shipped.sort();
+
+    assert_eq!(
+        shipped,
+        recorded,
+        "`rust/crates/server/static/` 与 {} 记的清单不一致 —— \
+         目录被手工动过，或者同步只跑了一半。\n\
+         \x20 修法：node tools/sync-web-assets.mjs（然后重编 clip9-server）",
+        manifest.display()
+    );
 }
 
 /// 目录下的所有普通文件（相对路径，`/` 分隔），跳过 `.DS_Store`。
