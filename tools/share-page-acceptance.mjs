@@ -9,7 +9,7 @@
 // # 为什么需要它
 //
 // `docs/HANDOVER.md` §5/§6 一直挂着这一条：落地页的 OG 标签与 `<base>` 只验到 **HTML 这一层**
-// （`crates/server/tests/share_api.rs` 逐字断言那份 HTML），而「**前端拿这份外壳渲染出什么**」
+// （`rust/crates/server/tests/share_api.rs` 逐字断言那份 HTML），而「**前端拿这份外壳渲染出什么**」
 // 没人验过。那份 HTML 对不对、和页面能不能用，是两件事 —— 下面四种都不会让服务端测试变红：
 //
 //   · 前端路由没接管（页面停在主应用 / 白屏）

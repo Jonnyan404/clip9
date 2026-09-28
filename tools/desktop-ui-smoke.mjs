@@ -12,7 +12,7 @@
 //
 // # ⚠️ 为什么要有它
 //
-// `crates/desktop/ui/app.js` 里到处是 `el('cfg-textlimit')` 这种**字符串 id**，
+// `rust/crates/desktop/ui/app.js` 里到处是 `el('cfg-textlimit')` 这种**字符串 id**，
 // 而这一侧**没有任何测试运行器**（`web-vue3` 与 `ui/*.js` 都没有，见 MEMORY.md）。
 // 于是「id 打错一个字」的表现是**那个功能静默失效**：不报错、不 panic，
 // 控制台里可能只有一行 `null.classList` —— 而这一版连控制台都不给用户看。
@@ -278,13 +278,13 @@ const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 // 而变异验证常常只想换**其中一个**（写 8 个 `-` 比把前面 7 个路径全抄一遍清楚）。
 const cliArgs = process.argv.slice(2).map((value) => (value === '-' ? undefined : value));
 const [
-  jsPath = join(root, 'crates/desktop/ui/app.js'),
-  htmlPath = join(root, 'crates/desktop/ui/index.html'),
-  rustPath = join(root, 'crates/desktop/src/commands.rs'),
-  capabilitiesPath = join(root, 'crates/desktop/capabilities/default.json'),
-  bootPath = join(root, 'crates/desktop/ui/boot.js'),
-  clientPath = join(root, 'crates/client/src/config.rs'),
-  i18nPath = join(root, 'crates/desktop/ui/i18n.js'),
+  jsPath = join(root, 'rust/crates/desktop/ui/app.js'),
+  htmlPath = join(root, 'rust/crates/desktop/ui/index.html'),
+  rustPath = join(root, 'rust/crates/desktop/src/commands.rs'),
+  capabilitiesPath = join(root, 'rust/crates/desktop/capabilities/default.json'),
+  bootPath = join(root, 'rust/crates/desktop/ui/boot.js'),
+  clientPath = join(root, 'rust/crates/client/src/config.rs'),
+  i18nPath = join(root, 'rust/crates/desktop/ui/i18n.js'),
   /** ⚠️★ 判据 16 / 17 要扫的是**一整个目录**，不是一个文件（壳发出去的键散在
    * `desktop/src/*.rs` 与 `client/src/*.rs` 里）。`:` 分隔几个目录。
    * ⚠️ 为什么是这两颗 crate：它们是**桌面端会跑到**的那些句子（`desktop` 是壳本身，
@@ -292,9 +292,9 @@ const [
    * `server` / `core` / `actions` / `store` **故意不在里面** —— 它们的中文是**服务端 API
    * 的报错文案**（与 Go 版逐字对齐，随 `{"error":…}` 出去），这一版不翻它们
    *（见 `docs/specs/desktop-client.md` §8.10 的边界）。 */
-  rustSrcArg = join(root, 'crates/desktop/src') + ':' + join(root, 'crates/client/src'),
+  rustSrcArg = join(root, 'rust/crates/desktop/src') + ':' + join(root, 'rust/crates/client/src'),
   /** ⚠️ 判据 18：两份渲染器（壳 / 页面）共用的那份夹具。 */
-  sayFixturePath = join(root, 'crates/desktop/tests/fixtures/say-cases.json'),
+  sayFixturePath = join(root, 'rust/crates/desktop/tests/fixtures/say-cases.json'),
 ] = cliArgs;
 
 /** `:` 分隔的目录表 → 里面所有 `.rs` 的绝对路径（**排序**：报告要稳定，变异验证要能逐条对）。 */
@@ -1259,7 +1259,7 @@ if (i18nSource) {
   //
   // ⚠️ 判据 16：壳里**不许再自己拼界面文案**（含汉字的字面量）。
   //    症状是「切了语言，壳递过来那几十句一个字都没变」—— 而且**不报错**：
-  //    多语言之前它们就是 `String`（`crates/client/src/msg.rs` 的文件头记着这件事）。
+  //    多语言之前它们就是 `String`（`rust/crates/client/src/msg.rs` 的文件头记着这件事）。
   //    ⚠️★ 放行**开发者面**的东西：日志宏 / 断言 / `panic!` / `expect(`。它们上不了屏，
   //    而且这个仓库的日志**就是中文**（改英文只是噪声）—— 页面那边同一条规矩
   //    （判据 15 放行 `console.*(…)` 的实参）。
@@ -1274,7 +1274,7 @@ if (i18nSource) {
   //    两处都是为了让这条静态检查看得见）。拼出来的键（`Msg::key(some_var)`）它看不见 ——
   //    所以下面会把这种地方**数出来印一遍**（有它的那天要人工过一眼）。
   //
-  // ⚠️ 范围（`crates/desktop/src` + `crates/client/src`，以及**为什么不含** server/core/…）
+  // ⚠️ 范围（`rust/crates/desktop/src` + `rust/crates/client/src`，以及**为什么不含** server/core/…）
   //    写在文件头第 8 个参数那段注释里。
   const rustFiles = rustSources(rustSrcArg);
   if (!rustFiles.length) {
@@ -1375,7 +1375,7 @@ if (i18nSource) {
     //    两份实现一定会漂，而症状是最坏的一类：「同一条通知，系统通知里是一个说法、
     //    切回界面看是另一个说法」，**没人会同时看两处**。
     //    ⚠️ 钉住它们的不是「两边代码看起来一样」，而是这份**输入输出表**
-    //    （`crates/desktop/tests/fixtures/say-cases.json`，Rust 那一半在
+    //    （`rust/crates/desktop/tests/fixtures/say-cases.json`，Rust 那一半在
     //    `shell_text.rs` 的 `the_fixture_renders_the_same_on_this_side`）。
     //
     // ⚠️★ 顺序要紧：这一条会**就地换掉 `DICTS` 的内容**（见下），所以它必须排在
