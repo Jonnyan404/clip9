@@ -383,6 +383,7 @@ import { useI18n } from 'vue-i18n';
 import axios from 'axios';
 import { toast } from '@/plugins/toast';
 import { errorMessage, prettyFileSize } from '@/util.js';
+import { postText } from '@/send.js';
 import TraditionalColorDialog from '@/components/TraditionalColorDialog.vue';
 import ComposerSlashMenu from '@/components/ComposerSlashMenu.vue';
 import { SLASH_TEMPLATES, resolveSlashText, slashMenuShouldOpen, slashMenuShouldStay, slashPendingAt, stripTrailingSlash } from '@/slash-template.js';
@@ -594,16 +595,13 @@ async function sendText() {
     if (!app.send.text) {
         return;
     }
-    await axios.post(
-        'text',
-        app.send.text,
-        {
-            params: new URLSearchParams([['room', ws.room]]),
-            headers: {
-                'Content-Type': 'text/plain',
-            },
-        },
-    );
+    // ⚠️ 这条 POST 的**唯一**定义在 `src/send.js`（外壳的分享桥走的是同一个函数）。
+    // ⚠️★ 这里原来**漏了 `?client=`**（便签模式一直带着它）→ 服务端存下来的
+    // `sender_client_id` 是空串，而它正是「哪条是我自己发的」的判据
+    // （服务端 `handlers.rs` 的 `sender_base` 注释写着要带上）。
+    // 抽取时顺手补上：服务端对那个字段只做存储与下发、不做回显过滤，所以补它不可能
+    // 改变「消息送没送到」。
+    await postText({ room: ws.room, text: app.send.text });
     app.send.text = '';
 }
 async function sendFiles() {
