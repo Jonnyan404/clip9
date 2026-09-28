@@ -32,8 +32,11 @@ import { fileURLToPath } from 'node:url';
 
 import { dispose, makeTempDir } from './lib/tmpdir.mjs';
 
-const RUST_DIR = resolve(dirname(fileURLToPath(import.meta.url)), '..');
-const REPO_ROOT = resolve(RUST_DIR, '..');
+// ⚠️★ 仓库根 = clip9 根；**全部 Rust 在 `rust/` 里**（`cargo` 只能在那个目录跑）。
+// 这两个基准自 2026-09-28 起分开：在这之前 `RUST_DIR` 就是仓库根。
+// 用错基准的症状分别是「cargo 在仓库根找不到 Cargo.toml」与「cases 找不到」。
+const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
+const RUST_DIR = join(REPO_ROOT, 'rust');
 
 /** Go 仓库里的 `cloud-clip/` 目录。
  *
@@ -52,8 +55,8 @@ const REPO_ROOT = resolve(RUST_DIR, '..');
 function findGoDir() {
   const candidates = [
     process.env.GO_DIR,
-    join(REPO_ROOT, 'cloud-clip'),
-    join(dirname(RUST_DIR), 'cloud-clipboard-go', 'cloud-clip'),
+    join(dirname(REPO_ROOT), 'cloud-clip'),
+    join(dirname(REPO_ROOT), 'cloud-clipboard-go', 'cloud-clip'),
   ].filter(Boolean);
   for (const candidate of candidates) {
     if (existsSync(join(candidate, 'lib', 'handler.go'))) return resolve(candidate);
@@ -107,7 +110,7 @@ const config = JSON.stringify({
   // 定时自动化的总开关。⚠️ **必须显式写出来**：两边的默认值一度不一致
   // （Go 的 `defaultConfig()` 是 true，Rust 的 `AutomationConfig::default()` 曾写成 false），
   // 靠默认值「碰巧对上」的比对等于没比。默认值本身由 `config_defaults_match_go` 那条
-  // 单测钉着（在 `crates/core/src/config.rs` 里）。
+  // 单测钉着（在 `rust/crates/core/src/config.rs` 里）。
   automation: { enabled: true },
 });
 writeFileSync(join(goData, 'config.json'), config);
@@ -459,7 +462,7 @@ await waitReady(RS_PORT, rsChild);
 console.log('\n=== 契约数据 cases/ 两个仓库一致吗 ===');
 {
   const goCases = join(GO_DIR, '..', 'cases');
-  const ourCases = join(RUST_DIR, 'cases');
+  const ourCases = join(REPO_ROOT, 'cases');
   const collect = (dir, base = '') => {
     const out = [];
     for (const e of readdirSync(dir, { withFileTypes: true })) {
@@ -1385,7 +1388,7 @@ await compareVia(
 // （`isGlobalAdmin` 认明文全局密码或它换来的会话令牌），而这份共享配置刻意没有 ——
 // 加了全局密码会让 `work` / `ws-bc` 那些房间一起变成受保护房间，
 // 前面一百多条用例的**语义**就跟着变了（虽然两边一起变、断言照样绿，但那是假绿）。
-// admin 档由 `crates/server/tests/automation_api.rs` 的端到端用例覆盖。
+// admin 档由 `rust/crates/server/tests/automation_api.rs` 的端到端用例覆盖。
 console.log('\n=== 定时自动化：/tasks ===');
 
 /** 各台自己建的任务 id / task token。⚠️ 不能共用：id 是 uuid、token 是随机串。 */
@@ -1620,7 +1623,7 @@ await compareCreate(
 //
 // ⚠️★ 这一页分**两层**验，因为「逐字节比正文」在这里**做不到**，而原因是可查的：
 //
-// · **文件层**（谁负责：`crates/server/tests/automation_page.rs` 的
+// · **文件层**（谁负责：`rust/crates/server/tests/automation_page.rs` 的
 //   `page_matches_go_byte_for_byte`）：Rust 的 `automation_page.html` 与 Go 的
 //   `cloud-clip/lib/automation_page.html` **逐字节相同**。这一层把页面里的一切
 //   （文案表 / 四份 i18n / 动作标签 / 内联脚本 / CSS 注释）都钉住了 ——

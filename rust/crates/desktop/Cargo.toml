@@ -1,0 +1,68 @@
+[package]
+name = "clip9-desktop"
+version.workspace = true
+edition.workspace = true
+description = "clip9 桌面客户端（Tauri 壳）—— ⚠️ 这里没有业务逻辑，剪贴板同步全在 clip9-client"
+
+[build-dependencies]
+tauri-build = { version = "2.0", features = [] }
+
+[dependencies]
+# ⚠️ `tray-icon` + `image-png` 是**托盘菜单**要的（§7 第 5 条）：
+# 前者的图标在 macOS 上要从 PNG 解出来，所以两者得一起开。
+tauri = { version = "2.11", features = ["tray-icon", "image-png"] }
+# ⚠️ 系统通知（「本机剪贴板没发出去」「房间的内容写进剪贴板了」）走官方插件 ——
+# 与自启同一个判据：自己写要三套（macOS 的 `NSUserNotification` / Linux 的
+# `notify-send` / Windows 的 toast），而这三套的细节都会变。
+# ⚠️★ 但**能力文件里不给页面这条权限**（`capabilities/default.json` 里故意没有
+# `notification:*`）：页面仍然一行都调不到它，只有 Rust 侧的 `notify::SystemNotifier`
+# 能发（理由见 `notify.rs` 的模块文档）。插件会给页面注入一段 JS，那是它自带的；
+# **能不能调**由 ACL 决定，而我们没开。
+tauri-plugin-notification = "2"
+# ⚠️★ 单实例。**必须在 `main.rs` 里第一个注册**（官方文档明写）—— 它要在别的插件
+# 有机会插手之前处理掉「已经有一个实例在跑」。
+# ⚠️ 没有它的后果**不是**「多开一个窗口」那么轻：`Debouncer` 是**进程内**的，
+# 于是两个实例会互相把对方写进剪贴板的内容当成一次新复制、再传回房间（来回弹）。
+# 完整推导见 `docs/specs/desktop-client.md` §1.1 缺口 A。
+# ⚠️ 它**不需要** capabilities 里加权限：我们只在 Rust 侧用它，页面碰不到它的 JS API
+#（与 `autostart` 同理 —— 那里也只注册、不在页面上调用）。
+tauri-plugin-single-instance = "2"
+# ⚠️ 开机自启**跨平台**（macOS LaunchAgent / Linux `~/.config/autostart` / Windows 注册表）。
+# 自己写要三套，而这三套的细节都会变 —— 这里用一个官方插件是划算的
+# （对比：`open_web` 那条**没有**引插件，因为系统自带的 `open`/`start`/`xdg-open`
+#  二十年没变过。**判断标准是「这东西稳不稳」，不是「是不是插件」。**）
+tauri-plugin-autostart = "2"
+# ⚠️ 选文件（输入区的 📎 / 🖼）用官方插件，**不自己写** —— 理由与上面那条同一套判据：
+# 自写要三套（macOS `osascript` / Windows `IFileOpenDialog` / Linux `zenity`），
+# 而这三套的细节都会变。⚠️ 页面上**不直接用它的 JS API**（那要一个打包器，
+# 而这份界面是手写的、没有构建步骤）—— 走壳里的一条命令（`pick_files`），
+# 由 Rust 侧调它。这样「页面只跟 IPC 命令说话」这条纪律不破。
+tauri-plugin-dialog = "2"
+# ⚠️ 全局快捷键（现在只有一条：显示 / 隐藏主窗口，默认 ⌘⇧V）用官方插件。
+# 自己写要三套（macOS 的 `RegisterEventHotKey` / Windows 的 `RegisterHotKey` /
+# Linux 的 X11 grab + Wayland 那条死路），而「哪个组合键已经被别人占了」的判定
+# 各平台都不一样 —— 这正是判据里说的「这东西稳不稳」那一类。
+# ⚠️ 与 `notification` / `autostart` 一样：**页面上不给它权限**
+#（`capabilities/default.json` 里没有 `global-shortcut:*`），只有 Rust 侧调用。
+tauri-plugin-global-shortcut = "2"
+# ⚠️ 服务端配置的**类型**（`Config`）从这里来 —— 桌面端的「配置可视化」用它**校验**。
+# 自己再写一份镜像就是「第二份定义」，而两份一定会漂（这个项目已经为这个付过几次代价）。
+clip9-core = { path = "../core" }
+# ⚠️ 业务逻辑全在这个 crate 里（去重 / 防抖 / 分类 / 边界水印 / 上下行）。
+# 壳只做「把事件转成它的调用」+ 窗口 —— 见 docs/specs/desktop-client.md §2 的硬边界。
+clip9-client = { path = "../client" }
+# 条目形状（`ReceiveHolder`）。⚠️ 单独引它是为了**读协议字段**，
+# 而不是重新定义一份：页面上的「文件条目没有正文」这类坑要对着它写。
+clip9-protocol = { workspace = true }
+# ⚠️ `reqwest` 只为了**命名** `build_client()` 返回的那个类型。
+# 它不是新的依赖（`clip9-client` 已经带着它），而「让上层自己再造一个 HTTP 客户端」
+# 意味着超时策略要复制一份 —— 那是最容易漂的地方（见 `uploader` 的两个超时常量）。
+reqwest = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+tokio = { version = "1", features = ["sync"] }
+
+[dev-dependencies]
+# 配置文件要落盘才能测（原子写、坏了不许覆盖）—— 所以测试要一个真的临时目录。
+# ⚠️ 与 `rust/crates/server` / `rust/crates/store` 用的是同一个版本（`Cargo.lock` 里只有一个）。
+tempfile = "3"

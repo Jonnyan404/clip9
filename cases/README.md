@@ -41,7 +41,7 @@
 **谁生成**：Go 侧的 `protocol_fixture_test.go`，用 `encoding/json` 直接序列化真实结构体。
 所以它就是**服务端真实吐出来的字节**，不是手抄的。
 
-**谁消费**：`crates/protocol/tests/go_fixtures.rs` ——
+**谁消费**：`rust/crates/protocol/tests/go_fixtures.rs` ——
 读进来 → 反序列化 → 再序列化 → 与原文件深比较。
 
 **为什么值得**：字段名与 `omitempty` 的**实际效果**只有 Go 的 `encoding/json` 说了算。
@@ -56,14 +56,14 @@ Go 默认开 HTML 转义（`<` → `\u003c`），serde_json 不转义；以及 k
 **谁生成**：Go 侧的 `share_fixture_test.go`。每组用例是「固定的配置 + 固定的 claims」，
 它把**派生出的签名密钥**（`keyHex`）和**签出来的 token** 一起导出。
 
-**谁消费**：`crates/core/tests/share_tokens.rs` —— 逐字节复现密钥与 token，
+**谁消费**：`rust/crates/core/tests/share_tokens.rs` —— 逐字节复现密钥与 token，
 并把 token 解析回同一份 claims。
 
 **为什么值得**：分享令牌的形状（`base64url(json).base64url(hmac)`）、claims 的
 `omitempty` 效果、**密钥派生时房间的升序** —— 这三样读代码都看不出来，
 而任何一处对不上都会导致「Go 签的链接在 Rust 上全变废链」，而且要等用户点开旧链接才发现。
 
-⚠️ 改它之前先读 `crates/core/src/share.rs` 的模块注释：**红了意味着所有已发出的分享链接会失效**。
+⚠️ 改它之前先读 `rust/crates/core/src/share.rs` 的模块注释：**红了意味着所有已发出的分享链接会失效**。
 ⚠️ 活的互验在 `tools/compare-with-go.mjs` 里（起两个真实实例，各签一张，看对方认不认）——
 fixture 钉的是静态的那一半。
 
@@ -72,7 +72,7 @@ fixture 钉的是静态的那一半。
 **谁生成**：Go 侧把**注册表**与**每个动作的实际输出**导出成 JSON。期望值是**跑出来的**、
 不是人写的 —— 生成器第一次跑就抓出了三条人写错的期望值。
 
-**谁消费**：`crates/actions/tests/go_cases.rs` —— 逐条比对 + 逐字段对账元数据 +
+**谁消费**：`rust/crates/actions/tests/go_cases.rs` —— 逐条比对 + 逐字段对账元数据 +
 单独钉住**刻意的差异**（大小写映射、URL 里的 `\s`、时分秒越界）。
 
 **为什么值得**：动作库的边界全是「读代码看不出来」的那类 —— emoji 要走 **UTF-16 代理对**、

@@ -1,11 +1,11 @@
-# 构建产物
-/target/
+# 构建产物（Rust 全在 `rust/` 下 —— 见下面那段说明）
+/rust/target/
 **/*.rs.bk
 *.pdb
 
 # Tauri 自动生成的 ACL / capability schema（`tauri-build` 每次构建都会重写）——
 # 是产物不是源码，照官方模板忽略掉。
-/crates/desktop/gen/
+/rust/crates/desktop/gen/
 
 # ⚠️★ 文档**不入库**（2026-09-25 定）。
 #
@@ -33,6 +33,39 @@ config.json
 /dist/
 /packaging/openwrt/*.ipk
 /packaging/openwrt/build/
+
+# ── 顶层摆法：`rust/` 一格里是**全部 Rust**，其余各占一格（2026-09-28）──
+#
+#   clip9/
+#   ├── rust/        Cargo.toml / Cargo.lock / .cargo / rust-toolchain.toml / crates/ / target/
+#   ├── web-vue3/    前端源码（构建产物编进服务端二进制）
+#   ├── cloudflare/  Worker + D1 + R2
+#   ├── shortcuts/   快捷指令（web-vue3 构建的输入）
+#   └── cases/ tools/ docs/
+#
+# ⚠️★ 所有 `cargo` 命令都要在 `rust/` 里跑 —— 仓库根没有 `Cargo.toml`。
+
+# ── web-vue3（2026-09-28 从父仓库 cloud-clipboard-go/ 复刻进来）──
+# ⚠️ 规则**不带结尾斜杠**（带斜杠的只匹配目录，软链挡不住）
+/web-vue3/node_modules
+/web-vue3/dist
+# 派生产物：由 web-vue3/scripts/sync-shortcuts.mjs 从 shortcuts/ 生成 —— 唯一源在 shortcuts/
+/web-vue3/public/shortcuts
+# 本地开发数据
+/web-vue3/.vite
+
+# ── cloudflare（Worker + D1 + R2，同日复刻）──
+# ⚠️ workers/ 内部那几条（.wrangler / node_modules / wrangler.toml / assets / test/.build）
+# 由复刻过来的 cloudflare/workers/.gitignore 管着，这里只补它盖不到的根一层。
+/cloudflare/node_modules
+/cloudflare/.d1_database_id
+
+# ── shortcuts（前端构建的输入：sync-shortcuts.mjs 读它）──
+# HTTP Shortcuts 的原始导出带明文密码，只作本地中间产物；入库的是换过占位的 shortcuts.zip
+/shortcuts/android/shortcuts.json
+# Apple：source/ 只放中间产物（未签名捷径 / plist），入库的是 apple/ 下签好名的那几份
+/shortcuts/apple/source/*.shortcut
+/shortcuts/apple/source/*.plist
 
 # macOS
 .DS_Store
