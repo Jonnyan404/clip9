@@ -1,24 +1,24 @@
 # clip9 前端产物的同步清单 —— 由 tools/sync-web-assets.mjs 生成，别手改。
-source 76fa20b9321c09a42f5753d9419abca7989c598b699bd06efe5dfaaf2a1a5820
+source ef3b402100ec58a8a140b21d73fa431d326ce4331a4d33b4ad07a383400258fa
 apple-touch-icon.png
-assets/ShareView-CME69jjP.js
-assets/ShareView-CME69jjP.js.br
-assets/ShareView-CME69jjP.js.gz
 assets/ShareView-DjLm0d4-.css
 assets/ShareView-DjLm0d4-.css.br
 assets/ShareView-DjLm0d4-.css.gz
+assets/ShareView-DmgfETnp.js
+assets/ShareView-DmgfETnp.js.br
+assets/ShareView-DmgfETnp.js.gz
 assets/highlight-langs-Dt8YXhtn.js
 assets/highlight-langs-Dt8YXhtn.js.br
 assets/highlight-langs-Dt8YXhtn.js.gz
 assets/i18n-B2E8evwD.js
 assets/i18n-B2E8evwD.js.br
 assets/i18n-B2E8evwD.js.gz
-assets/index-DgPaamLt.css
-assets/index-DgPaamLt.css.br
-assets/index-DgPaamLt.css.gz
-assets/index-amUmISUW.js
-assets/index-amUmISUW.js.br
-assets/index-amUmISUW.js.gz
+assets/index-CNeOdtop.css
+assets/index-CNeOdtop.css.br
+assets/index-CNeOdtop.css.gz
+assets/index-DcmN0YG_.js
+assets/index-DcmN0YG_.js.br
+assets/index-DcmN0YG_.js.gz
 assets/materialdesignicons-webfont-B7mPwVP_.ttf
 assets/materialdesignicons-webfont-CSr8KVlo.eot
 assets/materialdesignicons-webfont-Dp5v-WZN.woff2
