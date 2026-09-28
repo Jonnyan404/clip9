@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  暗色下与亮色同一套：`Theme.Material3.DayNight.NoActionBar` 自己会换配色，
+  所以这里只需要重新声明一次 `Base.Theme.Clip9` —— 留着它是给「以后有某一项
+  在暗色下确实要不一样」留的口子。⚠️ 真加项时注意：这里**只覆盖 Base**，
+  `Theme.Clip9` 继承过去，别把继承链拆了。
+-->
+<resources>
+    <style name="Base.Theme.Clip9" parent="Theme.Material3.DayNight.NoActionBar" />
+</resources>

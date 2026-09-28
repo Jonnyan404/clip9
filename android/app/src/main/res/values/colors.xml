@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  ⚠️ 这里**只放主题里没有的颜色**。
+
+  管理页的配色（标题、正文、卡片、按钮）全部由 `Theme.Clip9`
+  （Material3 DayNight）提供 —— 也就是「亮色 / 暗色各一套」这件事不需要我们写两遍。
+  父仓库的 Go 版 Android 工程里那十几个 `primary` / `bg_screen` / `running_green`…
+  是它自己画界面用的；这里不用它们，所以**不放**（放了就是一堆没人读的资源，
+  而 release 开了 `isShrinkResources`，它们本来也会被剥掉）。
+
+  ⚠️ `error` 是唯一一个主题里没有对应语义色的：管理页要把服务端与本地组件的
+  **错误原文**用红字显示出来（见 `layout/activity_main.xml` 的 `errorText` / `libMissingText`）。
+-->
+<resources>
+    <color name="error">#B3261E</color>
+</resources>

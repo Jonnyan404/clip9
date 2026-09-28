@@ -1,0 +1,1 @@
+这里放 libclip9_android.so（armeabi-v7a）。⚠️ 它是构建产物、不进仓库 —— 用 tools/sync-android-jni-libs.mjs 从 rust/target 搬过来。

@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  明文 HTTP 的策略。
+
+  ⚠️★ 背景（设计稿 §3.1）：Android 9（API 28）起 `usesCleartextTraffic` **默认为 false**
+  → WebView 加载 `http://…` 直接失败，报的是 `ERR_CLEARTEXT_NOT_PERMITTED` ——
+  一句和网络毫无关系的话（而同一地址 `curl` 是通的）。
+
+  ⚠️ 这里选的是设计稿里的「**甲**」：`base-config` 全局放行明文。
+  理由：这个 App 的**全部**用途就是连用户自己的服务端，而那个服务端**默认就是 http**
+  （`docs/api.md` 里没有 TLS 这一节）。选「乙」（`domain-config` 只列私网段）
+  会让「填一个局域网地址」这个最主要的用法直接不可用 ——
+  因为地址是**运行时**填的，而 `<domain-config>` 是**编译期**的，两者天生对不上。
+
+  ⚠️ 也就是说：这个放宽范围 = 这个 App 的全部用途，别的网络流量它本来也不产生。
+-->
+<network-security-config>
+    <base-config cleartextTrafficPermitted="true">
+        <trust-anchors>
+            <certificates src="system" />
+            <!--
+              ⚠️★ 用户自己装的证书也信 —— 这一条是「自签服务端」的**正解**：
+              用户在设备上装一次自己的 CA，WebView 就走正常校验、根本不会弹
+              「证书验证没通过」那个框。
+              而那个框（`WebViewClient.onReceivedSslError`）默认是**拒**的 ——
+              无条件 `proceed()` 等于把 TLS 校验关掉（设计稿 §3.2）。
+            -->
+            <certificates src="user" />
+        </trust-anchors>
+    </base-config>
+</network-security-config>
