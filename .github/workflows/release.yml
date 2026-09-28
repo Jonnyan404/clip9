@@ -15,6 +15,8 @@ name: Release
 # 产物（2026-09-28 定）：
 #   clip9-cli-<target>.tar.gz                    服务端二进制，**前端已编在里面**（一个文件丢过去就能跑）
 #   clip9-desktop-<target>.<dmg|deb|AppImage>    桌面端，**含服务端**（见 desktop job 的注释）
+#   clip9:…（容器镜像）                          由 Release 里那份二进制做的，**镜像里不编译**
+#   Formula/clip9.rb + Casks/clip9.rb            Homebrew tap（二进制与桌面端各一份）
 #   clip9-openwrt-… / clip9-android-…            ⚠️ 还没接（理由见 README 的「还没做」）
 #
 # ⚠️ 发 Release 只由最后那个 `publish` job 做：并行 job 各自建 Release 会互相打架。
@@ -32,6 +34,8 @@ on:
 
 permissions:
   contents: write
+  # ghcr.io 要这个；只推 Docker Hub 的话它用不上，但留着不碍事。
+  packages: write
 
 env:
   CARGO_TERM_COLOR: always
@@ -39,8 +43,39 @@ env:
   BIN: clip9-server
   # 发布出去的名字（Jonny 定的命名表：`clip9-cli` = 二进制程序）。
   PACKAGE: clip9-cli
+  # Homebrew tap 的仓库。
+  TAP: ${{ github.repository_owner }}/homebrew-tap
 
 jobs:
+  # ── 先把「这次到底在给哪个 tag 干活」算出来 ──────────────────────────────
+  #
+  # ⚠️ 三处（publish / docker / homebrew）都要用它，而且**手动触发时没有 release 对象**
+  # （那样 `github.event.release.*` 全是空）。预发布与否也要判 —— docker 的 `latest`
+  # 只在正式发布时才推，手动跑时没有那个字段，只能去问 API。
+  info:
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.r.outputs.tag }}
+      prerelease: ${{ steps.r.outputs.prerelease }}
+    steps:
+      - id: r
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          EVENT_TAG: ${{ github.event.release.tag_name }}
+          EVENT_PRE: ${{ github.event.release.prerelease }}
+          INPUT_TAG: ${{ inputs.tag }}
+        run: |
+          set -euo pipefail
+          tag="${EVENT_TAG:-$INPUT_TAG}"
+          pre="$EVENT_PRE"
+          if [ -z "$pre" ] && [ -n "$tag" ]; then
+            pre=$(gh api "repos/${GITHUB_REPOSITORY}/releases/tags/${tag}" --jq .prerelease 2>/dev/null || echo false)
+          fi
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "prerelease=${pre:-false}" >> "$GITHUB_OUTPUT"
+          echo "tag=${tag}  prerelease=${pre:-false}"
+
   # ── 命令行 / 服务端：一个静态二进制，五个平台 ────────────────────────────
   #
   # ⚠️★ 服务端**不需要系统库**：前端产物已编在二进制里，没有运行时要跟着走的资源 ——
@@ -49,19 +84,11 @@ jobs:
   #
   # ⚠️ armv7 是**硬浮点 musl**（`…musleabihf`）：armv7 的 Linux 设备实际上都是硬浮点
   # （树莓派 2/3/4 的 32 位系统、各种 ARM 路由 / NAS）；软浮点那个变体装上去跑不起来。
-  # ⚠️ 这个三元组不是随手写的 —— 它和另外两个一样，**已在 `rust/rust-toolchain.toml` 的
-  # `targets` 里声明**（那份清单就是这条的对照物：名字写错的话 rustup 会在构建前试图安装并失败）。
+  # ⚠️ 三个三元组都**已在 `rust/rust-toolchain.toml` 的 `targets` 里声明**（那份清单就是
+  # 这条的对照物：名字写错的话 rustup 会在构建前试图安装并失败）。
   #
-  # ⚠️★ 但 armv7 这一格**有已知风险**：服务端依赖 `aws-lc-sys`（`axum-server` 的 rustls 用它做
-  # TLS），而 AWS-LC 的「Platform Support」表里 armv7 **只列了 `armv7-unknown-linux-gnueabihf`
-  # （glibc）**，没有 armv7 + musl 这一格（32 位 ARM 的 musl 只列到 `arm-…-musleabihf`）。
-  # 也就是说第一次跑 Release 时，armv7 很可能挂在 `aws-lc-sys` 的构建上。
-  #
-  # 退路（代价从低到高）：
-  #   ① 换成 `armv7-unknown-linux-gnueabihf` —— AWS-LC 明确支持，`cross` 也有镜像；
-  #      代价是**动态链接**（设备上要有 glibc ≥ 2.31），「一个文件丢过去就能跑」这条就没了。
-  #   ② 把 TLS provider 从 `aws-lc-rs` 换成 `ring` —— 那是**全平台**的改动，要单独验。
-  # ⚠️ 真要动手时先**把失败信息读出来**再选，别照着这句话当成已经诊断好了。
+  # ⚠️ armv7 曾担心的 `aws-lc-sys`（armv7 + musl 不在 AWS-LC 的平台表里）**实测是过的**
+  # （2026-09-28，3m39s）—— 那张表是「跑没跑过他们的测试」，不是「编不编得过」。
   linux:
     runs-on: ubuntu-latest
     strategy:
@@ -72,7 +99,7 @@ jobs:
           - aarch64-unknown-linux-musl
           - armv7-unknown-linux-musleabihf
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - uses: taiki-e/install-action@v2
         with:
@@ -83,10 +110,27 @@ jobs:
           workspaces: rust
           key: ${{ matrix.target }}
 
-      # ⚠️ `cross` 走容器，目标由它自己管 —— 别在这里 `rustup target add`。
+      # ⚠️★ 这里必须盯一句「有没有真的进容器」：`cross` 拿不到 workspace metadata 时**不报错**，
+      # 只打一行 note 就改成**在宿主机上**编。而宿主机是 ubuntu-latest，没有 musl 工具链 ——
+      # 于是报出来的是 `cc-rs: failed to find tool "x86_64-linux-musl-gcc"` 这种
+      # **看着像代码写错**的错。2026-09-28 撞过一次（第一次跑同一份配置却是好的，因为那次
+      # metadata 那一步没失败）—— 所以那条 note 要变成硬失败。
+      #
+      # ⚠️ 那次 metadata 之所以会失败，是仓库里原来带着一份「把 crates.io 换成 USTC 镜像」的
+      # `.cargo/config.toml`（给作者本机用的）：runner 在 Azure，连那个镜像很慢，同一次运行里
+      # 宿主机那边的索引更新花了 3m55s。**那份配置已经从仓库里去掉了**（不该出现在线上），
+      # 所以现在走的是 crates.io 直连；这条判据留着，防的是下次换个原因又来一遍。
       - name: 构建（静态链接 musl）
         working-directory: rust
-        run: cross build --release -p $BIN --target ${{ matrix.target }}
+        shell: bash
+        run: |
+          set -o pipefail
+          cross build --release -p $BIN --target ${{ matrix.target }} 2>&1 | tee cross.log
+          if grep -q 'Falling back to `cargo` on the host' cross.log; then
+            echo "::error::cross 没有起容器（拿不到 workspace metadata，多半是 registry 连不上），\
+          它改成在宿主机上编了 —— 宿主机上没有 musl 工具链，这一格的产物一定是错的"
+            exit 1
+          fi
 
       - name: 打包
         working-directory: rust
@@ -101,7 +145,7 @@ jobs:
           tar -C dist -czf "dist/$name.tar.gz" "$name"
           (cd dist && sha256sum "$name.tar.gz" > "$name.tar.gz.sha256")
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: ${{ env.PACKAGE }}-${{ matrix.target }}
           path: |
@@ -116,7 +160,7 @@ jobs:
       matrix:
         target: [aarch64-apple-darwin, x86_64-apple-darwin]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - run: rustup target add ${{ matrix.target }}
         working-directory: rust
@@ -141,7 +185,7 @@ jobs:
           tar -C dist -czf "dist/$name.tar.gz" "$name"
           (cd dist && shasum -a 256 "$name.tar.gz" > "$name.tar.gz.sha256")
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: ${{ env.PACKAGE }}-${{ matrix.target }}
           path: |
@@ -158,6 +202,9 @@ jobs:
   #
   # ⚠️★ 刻意**不用** `bundle.externalBin`：它会把文件名加上 `-<target-triple>` 后缀，
   # 那样 `default_binary()` 找的就是一个不存在的名字 —— 而且是**打包成功、运行时才报**。
+  #
+  # ⚠️★ 那个 `files` 映射是 **`{ 目标: 源 }`**，不是 `{ 源: 目标 }`（写反过一次：打包器会去
+  # 「包内」找源，报 `Failed to copy "MacOS/clip9-server" to "binaries/clip9-server"`）。
   #
   # ⚠️ 所以这里是**两步**：先把服务端编出来、拷到配置里写死的那个暂存路径
   # （`rust/crates/desktop/binaries/clip9-server`，已 gitignore），再让 tauri 打包。
@@ -177,7 +224,7 @@ jobs:
             bundles: deb,appimage
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       # ⚠️ 缺 webkit2gtk 时 `tauri-build` 会直接失败，报错与「代码写错了」很像。
       - name: Tauri 的系统依赖（Linux）
@@ -225,7 +272,7 @@ jobs:
           done
           ls -l "$out"
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: clip9-desktop-${{ matrix.target }}
           path: rust/target/desktop-release/*
@@ -233,20 +280,242 @@ jobs:
 
   # 收口到一个 job 传产物：并行 job 各自去动 Release 会互相打架。
   publish:
-    needs: [linux, macos, desktop]
+    needs: [info, linux, macos, desktop]
     # 发布事件当然要传；手动跑时**填了 tag 才传**（留空 = 只构建）。
     if: github.event_name == 'release' || inputs.tag != ''
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           path: artifacts
           merge-multiple: true
 
-      - uses: softprops/action-gh-release@v2
+      - uses: softprops/action-gh-release@v3
         with:
-          # 发布事件用它自己那个标签；手动跑用你填的那个。
-          tag_name: ${{ github.event.release.tag_name || inputs.tag }}
+          tag_name: ${{ needs.info.outputs.tag }}
           files: artifacts/*
           # ⚠️ 重跑时**替换**同名资产，而不是失败在「已存在」上。
           overwrite_files: true
+
+      - name: 记一笔预发布
+        if: needs.info.outputs.prerelease == 'true'
+        run: |
+          echo "::notice::这是预发布（prerelease）：容器镜像**只推 tag、不推 latest**。"
+
+  # ── 容器镜像：**不编译**，直接用 Release 里那份二进制 ─────────────────────
+  #
+  # ‼️ 所以这个 job 必须 `needs: publish` —— 镜像里是 `wget` Release 资产的，资产还没传完就
+  #    build 的话会拿到 404。
+  #
+  # 标签规则（Jonny 定的）：**预发布时只保留对应标签的镜像，不推 latest**；正式发布才推 latest。
+  docker:
+    needs: [info, publish]
+    runs-on: ubuntu-latest
+    env:
+      REGISTRY_GHCR: ghcr.io
+      # ⚠️ ghcr 的镜像名**必须全小写**，而 `github.repository` 是 `Jonnyan404/clip9` ——
+      # 直接用会出现 `invalid reference format`。在下面的步骤里 `tr` 一下。
+      REPO: ${{ github.repository }}
+      DH_USER: ${{ secrets.DOCKERHUB_USERNAME }}
+      TAG: ${{ needs.info.outputs.tag }}
+      PRERELEASE: ${{ needs.info.outputs.prerelease }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: 算镜像标签
+        id: tags
+        shell: bash
+        run: |
+          set -euo pipefail
+          # ⚠️ 两个 secret 是按仓库算的，从 cloud-clipboard-go 那边**不会**跟过来。
+          #    缺了就当场说清楚，别让 docker/login-action 报一句不认识的错。
+          if [ -z "$DH_USER" ] || [ -z "${{ secrets.DOCKERHUB_TOKEN }}" ]; then
+            echo "::error::要推 Docker Hub 就得先给 clip9 这个仓库加上 DOCKERHUB_USERNAME 与 DOCKERHUB_TOKEN 两个 secret"
+            exit 1
+          fi
+          ghcr="${REGISTRY_GHCR}/$(echo "$REPO" | tr '[:upper:]' '[:lower:]')"
+          dh="${DH_USER}/clip9"
+          {
+            echo 'tags<<EOF'
+            echo "${ghcr}:${TAG}"
+            echo "${dh}:${TAG}"
+            # ⚠️★ 预发布**不推 latest** —— 那会让 `docker pull clip9` 从某个 beta 悄悄变过去。
+            if [ "$PRERELEASE" != "true" ]; then
+              echo "${ghcr}:latest"
+              echo "${dh}:latest"
+            fi
+            echo 'EOF'
+          } >> "$GITHUB_OUTPUT"
+          cat "$GITHUB_OUTPUT"
+
+      - uses: docker/setup-qemu-action@v4
+      - uses: docker/setup-buildx-action@v4
+
+      - name: 登录 ghcr.io
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # ⚠️ 这两个 secret 目前**只存在于 cloud-clipboard-go 仓库**（secrets 是按仓库存的），
+      # 要用 Docker Hub 就得在 clip9 里也加一份。
+      - name: 登录 Docker Hub
+        uses: docker/login-action@v4
+        with:
+          username: ${{ env.DH_USER }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      # ⚠️ context 指到 `packaging/docker`（那里只有 Dockerfile）—— 镜像不需要仓库里任何文件，
+      #    别把整个仓库当 context 发过去。
+      - uses: docker/build-push-action@v7
+        with:
+          context: packaging/docker
+          file: packaging/docker/Dockerfile
+          build-args: |
+            VERSION=${{ env.TAG }}
+          platforms: linux/amd64,linux/arm64,linux/arm/v7
+          push: true
+          tags: ${{ steps.tags.outputs.tags }}
+
+  # ── Homebrew：把 formula 与 cask 推进 tap 仓库 ────────────────────────────
+  #
+  # 两份都是**生成的**（版本号 + sha256 从刚发出去的资产上现算），别在 tap 里手改 ——
+  # 下一次发布就盖掉了。
+  #
+  # ⚠️★ 需要 clip9 仓库里的 `HOMEBREW_TAP_GITHUB_TOKEN`（对 `homebrew-tap` 有 contents: write
+  # 的 PAT）。没有它这一步会**红**——刻意不写成「静默跳过」：默默不更新 tap 比红一次更难查。
+  #
+  # ⚠️ 预发布**也照常更新**（你说的是「release 增加 homebrew 支持」，没给预发布例外）。
+  # 想让预发布不动 tap，就在这个 job 上加 `if: needs.info.outputs.prerelease != 'true'`。
+  homebrew:
+    needs: [info, publish]
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      TAG: ${{ needs.info.outputs.tag }}
+    steps:
+      - name: 取回刚发出去的产物并算 sha256
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p dl
+          gh release download "$TAG" --repo "$GITHUB_REPOSITORY" -D dl \
+            -p 'clip9-cli-*.tar.gz' -p 'clip9-desktop-*.dmg'
+          ls -l dl
+          (cd dl && sha256sum *.tar.gz *.dmg > sums.txt)
+          cat dl/sums.txt
+
+      - name: 生成 formula 与 cask
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="${TAG#v}"
+          base="https://github.com/${GITHUB_REPOSITORY}/releases/download/${TAG}"
+          sums="$(cat dl/sums.txt)"
+          sha() { echo "$sums" | awk -v f="$1" '$2 == f { print $1 }'; }
+
+          cli_arm=$(sha clip9-cli-aarch64-apple-darwin.tar.gz)
+          cli_intel=$(sha clip9-cli-x86_64-apple-darwin.tar.gz)
+          lx_arm=$(sha clip9-cli-aarch64-unknown-linux-musl.tar.gz)
+          lx_intel=$(sha clip9-cli-x86_64-unknown-linux-musl.tar.gz)
+          dmg_arm=$(sha clip9-desktop-aarch64-apple-darwin.dmg)
+          dmg_intel=$(sha clip9-desktop-x86_64-apple-darwin.dmg)
+          for v in "$cli_arm" "$cli_intel" "$lx_arm" "$lx_intel" "$dmg_arm" "$dmg_intel"; do
+            [ -n "$v" ] || { echo "::error::有产物没取到，上面 ls 里看看少了哪个"; exit 1; }
+          done
+
+          mkdir -p out
+          cat > out/clip9.rb <<EOF
+          # 本文件由 clip9 的发布流程生成，别手改（下次发布会整份盖掉）。
+          class Clip9 < Formula
+            desc "自托管的跨设备剪贴板：单文件服务端，前端已编在二进制里"
+            homepage "https://github.com/${GITHUB_REPOSITORY}"
+            version "${version}"
+            license "MIT"
+
+            on_macos do
+              on_arm do
+                url "${base}/clip9-cli-aarch64-apple-darwin.tar.gz"
+                sha256 "${cli_arm}"
+              end
+              on_intel do
+                url "${base}/clip9-cli-x86_64-apple-darwin.tar.gz"
+                sha256 "${cli_intel}"
+              end
+            end
+
+            on_linux do
+              on_arm do
+                url "${base}/clip9-cli-aarch64-unknown-linux-musl.tar.gz"
+                sha256 "${lx_arm}"
+              end
+              on_intel do
+                url "${base}/clip9-cli-x86_64-unknown-linux-musl.tar.gz"
+                sha256 "${lx_intel}"
+              end
+            end
+
+            def install
+              bin.install "clip9-cli"
+            end
+
+            test do
+              assert_match "clip9-server", shell_output("#{bin}/clip9-cli -v")
+            end
+          end
+          EOF
+
+          # ⚠️ 这个 .app **没有签名**：装得上，但第一次打开会被 Gatekeeper 拦
+          #（「无法验证开发者」，要右键打开或在「隐私与安全性」里放行）。
+          cat > out/clip9-desktop.rb <<EOF
+          # 本文件由 clip9 的发布流程生成，别手改（下次发布会整份盖掉）。
+          cask "clip9" do
+            version "${version}"
+
+            on_arm do
+              sha256 "${dmg_arm}"
+              url "${base}/clip9-desktop-aarch64-apple-darwin.dmg"
+            end
+
+            on_intel do
+              sha256 "${dmg_intel}"
+              url "${base}/clip9-desktop-x86_64-apple-darwin.dmg"
+            end
+
+            name "clip9"
+            desc "自托管的跨设备剪贴板（桌面端，自带服务端）"
+            homepage "https://github.com/${GITHUB_REPOSITORY}"
+
+            app "clip9.app"
+          end
+          EOF
+
+          head -6 out/clip9.rb out/clip9-desktop.rb
+
+      - name: 推进 tap
+        shell: bash
+        env:
+          TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [ -z "$TAP_TOKEN" ]; then
+            echo "::error::缺 secret HOMEBREW_TAP_GITHUB_TOKEN（对 ${TAP} 有 contents: write 的 PAT）。\
+          没有它就没法更新 Homebrew —— 刻意报错而不是静默跳过：跳过一次你会以为「brew 那边已经好了」。"
+            exit 1
+          fi
+          git clone --depth=1 "https://x-access-token:${TAP_TOKEN}@github.com/${TAP}.git" tap
+          mkdir -p tap/Formula tap/Casks
+          cp out/clip9.rb tap/Formula/clip9.rb
+          cp out/clip9-desktop.rb tap/Casks/clip9.rb
+          cd tap
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add Formula/clip9.rb Casks/clip9.rb
+          if git diff --cached --quiet; then
+            echo "· 与 tap 里的现有内容一致，不用提交"
+            exit 0
+          fi
+          git commit -m "clip9 ${TAG}"
+          git push
+          echo "· 已更新 ${TAP}"
