@@ -15,6 +15,10 @@ members = [
     # 业务逻辑在 `crates/client`。见 `docs/specs/desktop-client.md` §0.1 的切片表。
     # ⚠️ 第一次编译要几分钟（Tauri 的依赖树是几百个 crate）。
     "crates/desktop",
+    # Android 外壳的 JNI 桥（`cdylib`）。⚠️ 与 `desktop` 平级、同属**末端** crate ——
+    # 它只被 Kotlin 调用，宿主上编出来的 `.dylib` 没人用；留着是为了让它的代码
+    # 也进 `cargo clippy` / `cargo test`（见 `crates/android/src/lib.rs` 的模块文档）。
+    "crates/android",
 ]
 
 [workspace.package]
