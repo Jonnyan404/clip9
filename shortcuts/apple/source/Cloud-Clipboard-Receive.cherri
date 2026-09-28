@@ -1,0 +1,96 @@
+#define name Cloud-Clipboard-Receive
+#define color green
+#define version 26
+// Receive 不需要输入（它是"拉取"），所以不要 sharesheet / quickactions——那两个是给带输入的发送用的。
+// 需要的是"随手能唤起"的入口：macOS 菜单栏 + Spotlight 搜索 + 快捷指令搜索 + Apple Watch。
+// 不声明的话 WFWorkflowTypes 只有 Watch 和 ShowInSearch，等于没有可用入口。
+#define from menubar,spotlight,search,watch
+
+#include 'actions/web'
+#include 'actions/text'
+#include 'actions/sharing'
+#include 'actions/documents'
+#include 'actions/device'
+
+// 导入时填写配置（也可之后在快捷指令顶部"文本"动作中修改）
+#question qServerURL "服务器地址，例如 https://clip.example.com 或 http://127.0.0.1:9501" "http://127.0.0.1:9501"
+#question qRoomName "房间名，与发送端一致；默认填 default" "default"
+#question qRoomPassword "全局访问密码或房间密码；未设密码则留空" ""
+
+@rawEndpoint = text(qServerURL)
+@endpoint = getText(@rawEndpoint)
+@rawRoom = text(qRoomName)
+@room = getText(@rawRoom)
+@password = text(qRoomPassword)
+@endpoint = replaceText('^\s+|\s+$', '', @endpoint, true, true)
+@endpoint = replaceText('/+$', "", @endpoint, true, true)
+@room = replaceText('^\s+|\s+$', '', @room, true, true)
+if !@room { @room = "default" }
+if !@endpoint {
+    alert("请先编辑快捷指令顶部的部署地址、房间名和密码。")
+    stop()
+}
+@encodedRoom = urlEncode(@room)
+@authorization = "Bearer {@password}"
+@response = downloadURL("{@endpoint}/content/latest?room={@encodedRoom}&format=json", {"Authorization":"{@authorization}", "Accept":"application/json", "Cache-Control":"no-cache"})
+@record = getDictionary(@response)
+@error = getValue(@record, "error")
+if @error {
+    @message = getValue(@record, "message")
+    alert("获取失败：{@error}\n{@message}")
+    stop()
+}
+const uuidValue = getValue(@record, "uuid")
+@uuid = getText(uuidValue)
+const nameValue = getValue(@record, "name")
+@filename = getText(nameValue)
+const typeValue = getValue(@record, "type")
+@msgType = getText(typeValue)
+@modelName = getDeviceDetail('Device Model')
+@model = getText(@modelName)
+if @uuid {
+    if @filename {
+        @encodedUUID = urlEncode(@uuid)
+        @encodedName = urlEncode(@filename)
+        @download = downloadURL("{@endpoint}/file/{@encodedUUID}/{@encodedName}?room={@encodedRoom}", {"Authorization":"{@authorization}", "Cache-Control":"no-cache"})
+        if @msgType == "image" {
+            @picture = getFirstItem(@download)
+            setClipboard(@picture, true)
+            // vibrate() 是 iOS 专属动作，macOS 上不可用。此前只写了 iOS 分支，
+            // 导致 macOS 拉取图片时毫无反馈。补一条通知作为等价提示。
+            if @model == "Mac" {
+                showNotification("已接收图片，已复制到剪贴板", "Cloud Clipboard", false)
+            }
+            if @model != "Mac" {
+                vibrate()
+            }
+        } else {
+            // 保存位置只能每次询问。Shortcuts 的文件夹选择器作用域限于文件提供者命名空间
+            // （iCloud 云盘 / 我的 Mac），够不到任意本地绝对路径，因此「静默保存到指定目录」
+            // 做不到 —— 2026-09-16 实测：关掉「询问保存位置」后点选文件夹，文件落到了
+            // iCloud 云盘而不是所选的真实路径。故不再提供保存目录配置项。
+            @named = setName(@download, @filename)
+            @saved = saveFilePrompt(@named, false)
+            if @model == "Mac" {
+                reveal(@saved)
+            }
+            if @model != "Mac" {
+                vibrate()
+            }
+        }
+        stop()
+    }
+}
+@content = getValue(@record, "content")
+if !@content {
+    alert("服务器没有返回文字内容。")
+    stop()
+}
+setClipboard(@content, true)
+// 同上：macOS 没有 vibrate()，补一条通知，否则这条分支在 Mac 上完全静默。
+if @model == "Mac" {
+    showNotification("已接收文字，已复制到剪贴板", "Cloud Clipboard", false)
+}
+if @model != "Mac" {
+    vibrate()
+}

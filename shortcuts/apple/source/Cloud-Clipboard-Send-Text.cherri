@@ -1,0 +1,118 @@
+// 发送【文本】。与「发送文件」拆开 —— 判型交给用户，客户端不做任何类型判断。
+//
+// 为什么拆：剪贴板条目的名字反映的是**剪贴板格式**而非内容（纯文本 -> "Clipboard <日期>"、
+// 带 HTML 味 -> "Clipboard <日期>.html"、图片 -> "Clipboard <日期>.png"），
+// 所以客户端没法可靠判型；而用户自己知道发的是什么。
+// 拆开之后服务端的 /upload/raw（内容嗅探 + UTF-16 解码 + HTML 降级）可以整个删掉。
+//
+// 本捷径做的事：
+//   getText 拿到纯文本（Shortcuts 自己会剥 HTML）
+//   → 过一次「从多信息文本获取 Markdown」，把 UTF-16 字节规范化成 UTF-8
+//   → POST /text
+#define name Cloud-Clipboard-Send-Text
+#define inputs file, image, text, url, pdf
+#define from sharesheet,quickactions,menubar
+#define noinput getclipboard
+#define color blue
+#define version 26
+
+#include 'actions/web'
+#include 'actions/text'
+#include 'actions/sharing'
+// getDeviceDetail 在 actions/device 里，用来判断当前平台（决定给通知还是给振动）
+#include 'actions/device'
+
+#question qServerURL "服务器地址，例如 https://clip.example.com 或 http://127.0.0.1:9501" "http://127.0.0.1:9501"
+#question qRoomName "房间名，多设备接收同一内容时使用相同房间；默认填 default" "default"
+#question qRoomPassword "全局访问密码或房间密码；未设密码则留空" ""
+#question qDeviceName "设备名称，接收端用它显示消息来自哪台设备；同一账号下多台设备建议填不同名字，留空则按系统信息推断" "快捷指令"
+
+// 请求体仍用 **File**：编码问题在下面用「Base64 绕一圈」解决。
+//
+// ⚠️ 别改成 JSON 体。试过：cherri 只能把「字典变量」传给 WFJSONValues，而 Shortcuts 的 JSON 体
+// 要的是**内联的 WFDictionaryFieldValue**，传变量它认不出来 —— 结果发出去的是空 body，
+// 服务端存成空内容（实测就是这样坏的）。
+action 'downloadurl' rawUpload(text url: 'WFURL', variable body: 'WFRequestVariable', dictionary! headers: 'WFHTTPHeaders') {
+    "WFHTTPMethod": "POST",
+    "WFHTTPBodyType": "File"
+}
+
+@endpoint = text(qServerURL)
+@room = text(qRoomName)
+@password = text(qRoomPassword)
+@deviceName = text(qDeviceName)
+@endpoint = replaceText('^\s+|\s+$', '', @endpoint, true, true)
+@endpoint = replaceText('/+$', "", @endpoint, true, true)
+@room = replaceText('^\s+|\s+$', '', @room, true, true)
+if !@room { @room = "default" }
+if !@endpoint {
+    alert("请先编辑快捷指令顶部的部署地址、房间名和密码。")
+    stop()
+}
+@encodedRoom = urlEncode(@room)
+// 设备名走 name 参数带给服务端，服务端只认「这次请求声明的名字」，不存储。
+// 留空时服务端会回落到按 UA 推断（会显示成 "iOS 17 / BackgroundShortcutRunner" 那种），
+// 所以这里不做兜底 —— 空值本身就是合法的「不声明」。
+@encodedDeviceName = urlEncode(@deviceName)
+
+@source = ShortcutInput
+if !@source { @source = getClipboard() }
+@amount = count(@source)
+if @amount != 1 {
+    alert("请复制一段文字后运行，或从分享菜单发送一项。每次发送一项。")
+    stop()
+}
+// 直接对输入取文本 —— **不要**先 getFirstItem。
+// 实测：「取第一项」对文本条目会取到错的东西，结果是发出去的内容为空（只有 \xa0\n）。
+// 对照：UI 里「获取剪贴板 → 从输入获取文本」两步的捷径是正常的，差别就在这一步。
+//
+// getText：拿到纯文本（富文本的 HTML 由 Shortcuts 自己剥掉）。
+// 不要再包一层 text() —— 实测那一步会报「文本失败…无法将文本转换为 NSString」。
+@asText = getText(@source)
+
+// 规范化编码：Shortcuts 读到的文本落成 HTTP 请求体时是 UTF-16
+//（字节里能看到 A\x00B\x00C\x00 这种"字符后跟 NUL"的模式），直接发到只按 UTF-8 解析的
+// /text 会变乱码。
+//
+// 解法是**绕一圈 URL 编解码**：它只做**类型转换**，内容原样回来 ——
+// 解出来的值变成「文本」类型，Shortcuts 就会按 UTF-8 序列化请求体了。
+//
+// 为什么不用 Base64：cherri 的 base64Encode/base64Decode 挂在 actions/crypto 下，而那个 include
+// 跟已有的 include 打架 —— 加上它报「已经包含」，不加又说动作没注册（像是 cherri 的坑）。
+// urlEncode / urlDecode 属于 Basic Actions（**自动包含**，不需要 include），源码里本来就在用 urlEncode。
+//
+// ⚠️ 别用「从多信息文本获取 Markdown」那类**转换**动作：它是富文本 → markdown 的转换器，
+// 会为了保住正文里字面量的 `-` 不被当成列表符号而输出 `\-`（就是「发出去的 markdown
+// 前面多了一堆反斜杠」的来源），遇到纯文本还会直接返回空串。两头都是坏的。
+@encoded = urlEncode(@asText)
+@normalized = urlDecode(@encoded)
+
+@uploadURL = "{@endpoint}/text?room={@encodedRoom}&client=ios-shortcuts&name={@encodedDeviceName}"
+@response = rawUpload(@uploadURL, @normalized, {"Authorization":"Bearer {@password}"})
+
+@record = getDictionary(@response)
+@error = getValue(@record, "error")
+if @error {
+    @message = getValue(@record, "message")
+    alert("发送失败：{@error}\n{@message}")
+    stop()
+}
+@savedID = getValue(@record, "id")
+if !@savedID {
+    alert("服务器未确认保存，请检查部署地址及服务器状态。")
+    stop()
+}
+// 反馈：通知 + 振动。
+//
+// **通知两个平台都要发**，不能像 Receive 那样按平台二选一 —— 通知里带的是 ID，
+// 而 ID 是「按 ID 接收」唯一的信息来源（见 README「怎么用」）。iOS 上省掉通知
+// 就等于让人拿不到 ID。
+//
+// 振动是 **iOS 专属**动作（cherri 文档明写），macOS 上根本不存在，必须用 @model 守卫。
+// 顺带说明为何用通知而不是 show()：show() 会在屏幕中央弹结果卡片打断视线。
+@modelName = getDeviceDetail('Device Model')
+@model = getText(@modelName)
+if @model != "Mac" {
+    vibrate()
+}
+showNotification("已发送 {@savedID}", "Cloud Clipboard", false)
