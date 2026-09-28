@@ -1,0 +1,34 @@
+# ⚠️★ 构建 context 是**仓库根**（`docker build .`），所以这里要把与镜像无关的东西全排掉。
+# 镜像里只有一个从 Release 下下来的二进制 —— 它不需要仓库里的**任何**文件，
+# 这个文件的作用只是别让构建把几百 MB 送到 builder 那边。
+#
+# ⚠️ 别删：`rust/target` 是 GB 级、各个 `node_modules` 是十万级文件，
+# 少了它每次构建（含 CI 上那种）都要先传一遍这些。
+# ⚠️ `Dockerfile` / `entrypoint.sh` 不在排除之列 —— 它们就是构建要用的那两个。
+
+.git
+.gitignore
+.github
+
+# 与镜像无关的源码/文档/用例
+cloudflare
+cases
+docs
+shortcuts
+tools
+
+# 构建产物与依赖（最大的几个）
+**/node_modules
+rust/target
+rust/dist
+rust/crates/desktop/binaries
+rust/crates/desktop/gen
+web-vue3/dist
+web-vue3/public/shortcuts
+web-vue3/.vite
+
+# 本地运行数据
+data
+config.json
+*.redb
+*.redb.lock

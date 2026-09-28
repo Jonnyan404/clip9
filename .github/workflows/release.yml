@@ -366,12 +366,12 @@ jobs:
           username: ${{ env.DH_USER }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
-      # ⚠️ context 指到 `packaging/docker`（那里只有 Dockerfile）—— 镜像不需要仓库里任何文件，
-      #    别把整个仓库当 context 发过去。
+      # ⚠️ context 是**仓库根**（`Dockerfile` 与 `entrypoint.sh` 都在根上，与 Go 那边一样）——
+      #    根上那份 `.dockerignore` 已经把 `rust/target` 与各 `node_modules` 排掉了。
       - uses: docker/build-push-action@v7
         with:
-          context: packaging/docker
-          file: packaging/docker/Dockerfile
+          context: .
+          file: Dockerfile
           build-args: |
             VERSION=${{ env.TAG }}
           platforms: linux/amd64,linux/arm64,linux/arm/v7
