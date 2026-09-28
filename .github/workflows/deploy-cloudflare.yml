@@ -1,0 +1,217 @@
+name: Deploy Cloudflare Worker
+
+# 把 `cloudflare/`（Worker + D1 + R2）部署到 Cloudflare。**纯手动**。
+#
+# ⚠️★ 刻意**不挂任何自动触发**（与 cloud-clipboard-go 那边同一条规矩）：这一步会**动线上数据**
+# ——建 D1 库、跑迁移、用模板**整份覆盖** Worker 的变量 —— 跟着打标签或推分支自动发生不合适。
+#
+# ⚠️★ 需要的 secrets（都在**这个仓库**的 Settings → Secrets 里；从 cloud-clipboard-go 不会跟过来）：
+#     CLOUDFLARE_API_TOKEN / CF_API_TOKEN    二者取一：要 D1 + R2 + Workers 的编辑权限
+#     CLOUDFLARE_ACCOUNT_ID / CF_ACCOUNT_ID  二者取一
+#     AUTH_PASSWORD / ROOM_AUTH_JSON / ROOM_LIST / HISTORY_LIMIT / TEXT_LIMIT /
+#     FILE_LIMIT / FILE_EXPIRE               可选：不设就用 `wrangler.toml.template` 里的值
+# ⚠️ 前两个**不给就直接失败**，不静默跳过 —— 「以为部署了、其实没部署」比红一次难查得多。
+# ⚠️ 后面那几个可选的里，`AUTH_PASSWORD` / `ROOM_AUTH_JSON` 是安全相关的：模板里写的是
+# **公开仓库里的示例密码**，忘了设 secret 就等于「以为设了密码，其实是公开密码」。
+# 但**不中止部署**（空密码是支持的配置），只把它们顶到运行页最显眼的位置。
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CF_API_TOKEN || secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CF_ACCOUNT_ID || secrets.CLOUDFLARE_ACCOUNT_ID }}
+      # 下面这些是 D1 / R2 资源的名字，`wrangler.toml.template` 里也是这几个。
+      DB_NAME: clip9-db
+      BUCKET_NAME: clip9-files
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: 检查 Cloudflare 凭据
+        run: |
+          if [ -z "$CLOUDFLARE_API_TOKEN" ]; then
+            echo "::error::缺 CF_API_TOKEN / CLOUDFLARE_API_TOKEN —— 到本仓库 Settings → Secrets 里加上"
+            exit 1
+          fi
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: |
+            web-vue3/package-lock.json
+            cloudflare/package-lock.json
+            cloudflare/workers/package-lock.json
+
+      # ⚠️ wrangler **不全局装**：用 `cloudflare/package-lock.json` 钉住的那个版本，
+      #    否则「本地跑什么版本」和「线上跑什么版本」是两件事（Go 那边是 `npm i -g`）。
+      - name: 装 wrangler（按 lockfile 钉住的版本）
+        working-directory: cloudflare
+        run: npm ci
+
+      - name: 把 wrangler 放进 PATH
+        run: echo "$GITHUB_WORKSPACE/cloudflare/node_modules/.bin" >> "$GITHUB_PATH"
+
+      - name: 装 Worker 依赖
+        working-directory: cloudflare/workers
+        run: npm ci
+
+      # ⚠️ 放在部署**之前**：这些测试（12 个文件 / 320 项断言）此前没接进任何门禁，
+      #    而部署会动线上数据 —— 红了就别往下走。
+      # ⚠️ 它不需要 wrangler、不联网：用 node:sqlite 当 D1、Map 当 R2，
+      #    打包器是 `node_modules/.bin/esbuild`（由 wrangler 带进来）。
+      - name: Worker 的测试
+        working-directory: cloudflare/workers
+        run: bash test/run.sh
+
+      - name: 构建前端（sync-shortcuts + vite build + after-build）
+        working-directory: web-vue3
+        run: |
+          npm ci
+          npm run build
+
+      # ⚠️ 排除 `.gz` / `.br`：Workers Static Assets **自己会协商压缩**，
+      #    带上那两份只是让部署体积翻倍。
+      - name: 把构建产物拷成 Worker 的静态资源
+        run: |
+          set -euo pipefail
+          rm -rf cloudflare/workers/assets
+          mkdir -p cloudflare/workers/assets
+          for item in web-vue3/dist/*; do
+            case "$(basename "$item")" in
+              *.gz|*.br) continue ;;
+            esac
+            cp -R "$item" cloudflare/workers/assets/
+          done
+          echo "assets 文件数: $(find cloudflare/workers/assets -type f | wc -l | tr -d ' ')"
+
+      - name: 准备 D1 与 R2
+        working-directory: cloudflare/workers
+        run: |
+          set -euo pipefail
+          # R2 桶：已存在时 `r2 bucket create` 会报错，这里不当失败。
+          wrangler r2 bucket create "$BUCKET_NAME" 2>/dev/null || echo "R2 桶已存在"
+
+          cp wrangler.toml.template wrangler.toml
+
+          # ⚠️★ `database_id` 必须换成真的 id —— 模板里是占位串，直接 deploy 会报
+          # 「database_id 不是合法的 UUID」，而那句话不告诉你要去哪拿 id。
+          # ⚠️ 末尾那个 `|| true`：`set -euo pipefail` 下，`d1 list` 报错或 `head` 提前关掉管道
+          # 都会让整条赋值失败 —— 而「库里还没有这个 db」正是要走下面那条创建分支的**正常**情况。
+          d1_id=$(wrangler d1 list --json 2>/dev/null \
+            | jq -r --arg n "$DB_NAME" '.[] | select(.name == $n) | .uuid' \
+            | head -1 || true)
+          if [ -z "$d1_id" ] || [ "$d1_id" = "null" ]; then
+            echo "没有现成的 $DB_NAME，创建它"
+            create_out=$(wrangler d1 create "$DB_NAME")
+            d1_id=$(printf '%s' "$create_out" | grep -o 'database_id = "[^"]*"' | cut -d'"' -f2 || true)
+          fi
+          if [ -z "$d1_id" ] || [ "$d1_id" = "null" ]; then
+            echo "::error::拿不到 D1 的 id —— 检查这个 API Token 有没有 D1: Edit 权限"
+            exit 1
+          fi
+          echo "D1 id: $d1_id"
+          sed -i "s/database_id = \"your-d1-database-id\"/database_id = \"$d1_id\"/" wrangler.toml
+          grep -n 'database_id' wrangler.toml
+
+      - name: 跑 D1 迁移（远程）
+        working-directory: cloudflare/workers
+        run: wrangler d1 execute "$DB_NAME" --file=../d1/schema.sql --remote --yes
+
+      # ⚠️ schema.sql 用的是 `CREATE TABLE IF NOT EXISTS`，给**已有的表**加不了列。
+      - name: 补 senderClientID 列（幂等）
+        working-directory: cloudflare/workers
+        run: |
+          set -euo pipefail
+          has_col=$(wrangler d1 execute "$DB_NAME" --remote --yes --json \
+            --command "SELECT count(*) AS c FROM pragma_table_info('messages') WHERE name='senderClientID';" \
+            | jq -r '[.. | objects | .c? // empty] | .[0] // 0')
+          if [ "$has_col" != "1" ]; then
+            echo "messages 表缺 senderClientID 列，ALTER 补上"
+            wrangler d1 execute "$DB_NAME" --remote --yes \
+              --command "ALTER TABLE messages ADD COLUMN senderClientID TEXT;"
+          else
+            echo "senderClientID 列已在，跳过"
+          fi
+
+      # ⚠️ 把 secrets 写进刚生成的 wrangler.toml，再 deploy —— 所以**线上跑的是 secret 里的值**。
+      - name: 部署 Worker
+        working-directory: cloudflare/workers
+        env:
+          AUTH_PASSWORD: ${{ secrets.AUTH_PASSWORD }}
+          ROOM_AUTH_JSON: ${{ secrets.ROOM_AUTH_JSON }}
+          ROOM_LIST: ${{ secrets.ROOM_LIST }}
+          HISTORY_LIMIT: ${{ secrets.HISTORY_LIMIT }}
+          TEXT_LIMIT: ${{ secrets.TEXT_LIMIT }}
+          FILE_LIMIT: ${{ secrets.FILE_LIMIT }}
+          FILE_EXPIRE: ${{ secrets.FILE_EXPIRE }}
+        run: |
+          python3 - <<'PY'
+          import json, os, re, subprocess, sys
+
+          keys = [
+              "AUTH_PASSWORD", "ROOM_AUTH_JSON", "ROOM_LIST",
+              "HISTORY_LIMIT", "TEXT_LIMIT", "FILE_LIMIT", "FILE_EXPIRE",
+          ]
+          # 这两个是安全相关的（模板里是公开仓库里写着的示例值），没设就顶到运行页上。
+          security_keys = {"AUTH_PASSWORD", "ROOM_AUTH_JSON"}
+          not_injected = []
+
+          with open("wrangler.toml", "r", encoding="utf-8") as f:
+              toml = f.read()
+
+          for k in keys:
+              v = os.environ.get(k, "")
+              if not v:
+                  if k in security_keys:
+                      not_injected.append(k)
+                      print(f"::warning::{k} 没设，线上用的是模板里的示例值")
+                  else:
+                      print(f"::warning::{k} 没设，用模板里的默认值")
+                  continue
+              # ⚠️ 用 json.dumps 转义后再塞进去：值里可能有引号/反斜杠（ROOM_AUTH_JSON 就是）。
+              pattern = re.compile(r'(?P<key>' + re.escape(k) + r'\s*=\s*)"(?:\\.|[^"\\])*"')
+              toml, n = pattern.subn(lambda m: m.group("key") + json.dumps(v), toml)
+              if n == 0:
+                  print(f"::warning::模板里没匹配到 {k}，这个值没写进去")
+              else:
+                  print(f"已替换 {k}")
+
+          with open("wrangler.toml", "w", encoding="utf-8") as f:
+              f.write(toml)
+
+          proc = subprocess.Popen(["wrangler", "deploy"], stdout=subprocess.PIPE,
+                                  stderr=subprocess.STDOUT, text=True)
+          lines = []
+          for line in proc.stdout:
+              print(line, end="")
+              lines.append(line)
+          proc.wait()
+
+          full = "".join(lines)
+          url = re.search(r'https://[^\s]+\.workers\.dev', full)
+          summary = os.environ.get("GITHUB_STEP_SUMMARY")
+
+          if summary and not_injected:
+              with open(summary, "a", encoding="utf-8") as sf:
+                  sf.write("### ⚠️ 这几个值没有 secret 提供\n\n")
+                  for k in not_injected:
+                      sf.write(f"- `{k}`：线上用的是模板里的值\n")
+                  sf.write(
+                      "\n模板里的 AUTH_PASSWORD / ROOM_AUTH_JSON 是公开仓库里写着的示例值。"
+                      "你要的就是开放访问（空密码）的话不用管；否则到 "
+                      "Settings → Secrets and variables → Actions 补上。\n\n"
+                  )
+          if summary and url:
+              sf_url = url.group(0)
+              with open(summary, "a", encoding="utf-8") as sf:
+                  sf.write(f"### 🚀 部署成功\n\n**Worker URL**：[{sf_url}]({sf_url})\n")
+
+          sys.exit(proc.returncode)
+          PY
