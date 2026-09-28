@@ -283,29 +283,43 @@ async fn main() -> anyhow::Result<()> {
     Ok(())
 }
 
+/// 取一个**字符串**参数：**非空才算给了**。
+///
+/// ⚠️★ 这条不是洁癖，是 `applyCommandLineArgs` 的原文语义（Go 那边每个字符串参数都是
+/// `if *flg_x != ""`），而少了它有一个**静默**的坏结果：`-auth ""` 会把配置里的密码
+/// **抹掉**。⚠️ 而 `-auth ""` 恰恰是最常见的写法 —— OpenWrt 的 procd 脚本只能无条件
+/// 带上它（`option auth ''` 的默认值就是空串）。
+///
+/// 实测（2026-09-28）：配置里写着 `"auth": "secret-pass"`，
+/// 只给 `-config` 时 `POST /text` 是 **401**；多给一个 `-auth ""` 之后变成 **200**，
+/// 也就是**实例变成了开放的**，而日志里一个字都没说。
+fn non_empty(args: &Args, name: &str) -> Option<String> {
+    args.get(name).filter(|v| !v.is_empty())
+}
+
 /// 把命令行参数盖到配置上。**语义逐条对齐 Go 的 `applyCommandLineArgs`**：
-/// 字符串参数非空才覆盖、数字参数大于 0 才覆盖。
+/// 字符串参数非空才覆盖（[`non_empty`]）、数字参数大于 0 才覆盖（[`positive`]）。
 fn apply_flags(config: &mut Config, args: &Args) -> anyhow::Result<()> {
     // ⚠️ `-host` 支持逗号分隔（Go 那边也是），这里直接**覆盖**成字符串，
     // 由 `resolve_hosts` 统一归一（数组写法、逗号写法都收）。
-    if let Some(v) = args.get("host") {
+    if let Some(v) = non_empty(args, "host") {
         config.server.host = serde_json::Value::String(v);
     }
     if let Some(n) = positive(args, "port")? {
         config.server.port = u16::try_from(n)
             .map_err(|_| anyhow::anyhow!("-port 的值 {n} 超出端口范围（1..65535）"))?;
     }
-    if let Some(v) = args.get("auth") {
+    if let Some(v) = non_empty(args, "auth") {
         config.server.auth = AuthValue::Str(v);
     }
-    if let Some(v) = args.get("storage") {
+    if let Some(v) = non_empty(args, "storage") {
         config.server.storage_dir = v;
     }
-    if let Some(v) = args.get("dbpath") {
+    if let Some(v) = non_empty(args, "dbpath") {
         // 取用点在下面算 `db_path` 的地方（配置与命令行**同一个优先级链**）。
         config.server.db_path = v;
     }
-    if let Some(v) = args.get("prefix") {
+    if let Some(v) = non_empty(args, "prefix") {
         config.server.prefix = v;
     }
     if let Some(n) = positive(args, "history")? {
@@ -668,4 +682,93 @@ fn run_migrate(raw: &[String]) -> anyhow::Result<()> {
     )?;
     print!("{}", clip9_server::migrate::describe(&report, dry_run));
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// 一份「每个字符串字段都被人配过」的配置 —— 每个值都与默认值不同，
+    /// 这样「有没有被命令行盖掉」看得出来。
+    fn configured() -> Config {
+        let mut c = Config::default();
+        c.server.host = serde_json::Value::String("10.0.0.1".into());
+        c.server.auth = AuthValue::Str("secret-pass".into());
+        c.server.storage_dir = "custom-uploads".into();
+        c.server.db_path = "custom.redb".into();
+        c.server.prefix = "custom-prefix".into();
+        c
+    }
+
+    fn parse(raw: &[&str]) -> Args {
+        let raw: Vec<String> = raw.iter().map(|s| (*s).to_owned()).collect();
+        Args::parse(&raw, FLAGS).expect("这些参数的名字都在 FLAGS 里")
+    }
+
+    /// ⚠️★ **空串不算「给了」** —— 这条是 Go `applyCommandLineArgs` 的原文语义
+    /// （`cloud-clip/lib/flags.go` 里每个字符串参数都写着 `if *flg_x != ""`）。
+    ///
+    /// 少了它有一个**静默**的坏结果：`-auth ""` 会把配置里的密码**抹掉**，
+    /// 实例变成开放的，而日志里一个字都不说。而 `-auth ""` 恰恰是最常见的写法 ——
+    /// OpenWrt 的 procd 脚本只能无条件带上它（`option auth ''` 的缺省就是空串）。
+    ///
+    /// ⚠️ 五个字符串参数**一起**给是有意的：只给 `-auth` 的话，「只修了 auth 那一段」
+    /// 的半吊子实现照样能过。这里要钉住的是「**这一类**参数都非空才覆盖」。
+    #[test]
+    fn empty_string_flags_do_not_override_the_config() {
+        let mut c = configured();
+        let args = parse(&["-host", "", "-auth", ""]);
+        apply_flags(&mut c, &args).unwrap();
+        let args = parse(&["-storage", "", "-dbpath", "", "-prefix", ""]);
+        apply_flags(&mut c, &args).unwrap();
+
+        let before = configured();
+        assert_eq!(
+            c.server.host, before.server.host,
+            "-host \"\" 不该改监听地址"
+        );
+        assert_eq!(c.server.auth, before.server.auth, "-auth \"\" 不该改密码");
+        assert_eq!(
+            c.server.storage_dir, before.server.storage_dir,
+            "-storage \"\" 不该改文件目录"
+        );
+        assert_eq!(
+            c.server.db_path, before.server.db_path,
+            "-dbpath \"\" 不该改库文件路径"
+        );
+        assert_eq!(
+            c.server.prefix, before.server.prefix,
+            "-prefix \"\" 不该改前缀"
+        );
+    }
+
+    /// `-auth=` 是**另一条**解析分支（`inline` 那一支，而不是「吃下一个参数」那一支）
+    /// —— 空串走哪条路都得是「没给」。
+    #[test]
+    fn inline_empty_flag_is_also_not_given() {
+        let args = parse(&["-auth=", "-host="]);
+        let mut c = configured();
+        apply_flags(&mut c, &args).unwrap();
+
+        let before = configured();
+        assert_eq!(c.server.auth, before.server.auth, "-auth= 不该改密码");
+        assert_eq!(c.server.host, before.server.host, "-host= 不该改监听地址");
+    }
+
+    /// **对照组**：非空的时候一定要盖上去 —— 免得上面两条被「什么都不盖」蒙混过去
+    /// （那种实现会让上两条恒绿，却把参数变成彻底的摆设）。
+    #[test]
+    fn non_empty_string_flags_do_override_the_config() {
+        let mut c = configured();
+        let args = parse(&["-host", "127.0.0.1", "-auth", "newpass"]);
+        apply_flags(&mut c, &args).unwrap();
+        let args = parse(&["-storage", "s2", "-dbpath", "d2", "-prefix", "p2"]);
+        apply_flags(&mut c, &args).unwrap();
+
+        assert_eq!(c.server.host, serde_json::Value::String("127.0.0.1".into()));
+        assert_eq!(c.server.auth, AuthValue::Str("newpass".into()));
+        assert_eq!(c.server.storage_dir, "s2");
+        assert_eq!(c.server.db_path, "d2");
+        assert_eq!(c.server.prefix, "p2");
+    }
 }
