@@ -1,0 +1,124 @@
+name: Docker
+
+# 纯手动的容器镜像发布 —— **不挂任何自动触发**（`release: published` 那条在 release.yml 里）。
+#
+# 用途：① 给一个已经发过的 tag 补镜像；② 重推同一标签（镜像里的东西要修）；
+#      ③ 只构其中某个平台。
+#
+# ⚠️★ 镜像里**不编译**：`packaging/docker/Dockerfile` 从那个 tag 的 Release 下载二进制 ——
+# 所以那个 Release 必须**已经存在、资产已经传完**，否则镜像里的 `wget` 会拿到 404。
+# 下面第一步就是先把这个问清楚，别等构建到一半才发现。
+#
+# ⚠️ 与 release.yml 里那个 docker job 的区别只在 `latest`：那边按规则走（预设发布**不推**
+# latest），这边由你勾。默认**不勾** —— 补一次镜像不该顺手把 `latest` 挪走。
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 要构建的 Release 标签（例如 v0.1.0-beta1）
+        required: true
+        type: string
+      platforms:
+        description: 平台列表（逗号分隔，支持 linux/amd64、linux/arm64、linux/arm/v7）
+        required: true
+        type: string
+        default: linux/amd64,linux/arm64,linux/arm/v7
+      also_latest:
+        description: 同时推成 latest（⚠️ 会盖掉当前的 latest）
+        required: true
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+  # ghcr.io 要这个。
+  packages: write
+
+env:
+  REGISTRY_GHCR: ghcr.io
+
+jobs:
+  docker:
+    runs-on: ubuntu-latest
+    env:
+      REPO: ${{ github.repository }}
+      DH_USER: ${{ secrets.DOCKERHUB_USERNAME }}
+      TAG: ${{ inputs.tag }}
+      PLATFORMS: ${{ inputs.platforms }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: 先确认那个 tag 的资产齐了（不齐就别往下走）
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets[].name' > assets.txt
+          cat assets.txt
+          # 平台串 → 归档名。⚠️ 顺手在这里校验平台串：写错的平台在 buildx 那一步才报，
+          # 报出来的是「找不到镜像」，跟「平台名打错了」看不出关系。
+          IFS=',' read -ra plats <<< "$PLATFORMS"
+          for p in "${plats[@]}"; do
+            case "$p" in
+              linux/amd64) t=x86_64-unknown-linux-musl ;;
+              linux/arm64) t=aarch64-unknown-linux-musl ;;
+              linux/arm/v7) t=armv7-unknown-linux-musleabihf ;;
+              *) echo "::error::不认识的平台 $p"; exit 1 ;;
+            esac
+            grep -qx "clip9-cli-${t}.tar.gz" assets.txt \
+              || { echo "::error::$TAG 这个 Release 里没有 clip9-cli-${t}.tar.gz —— 镜像里的 wget 会 404"; exit 1; }
+          done
+
+      - name: 算镜像标签
+        id: tags
+        shell: bash
+        run: |
+          set -euo pipefail
+          # ⚠️ 两个 secret 是按仓库算的，从 cloud-clipboard-go 那边**不会**跟过来。
+          if [ -z "$DH_USER" ] || [ -z "${{ secrets.DOCKERHUB_TOKEN }}" ]; then
+            echo "::error::要推 Docker Hub 就得先给 clip9 这个仓库加上 DOCKERHUB_USERNAME 与 DOCKERHUB_TOKEN 两个 secret"
+            exit 1
+          fi
+          # ⚠️ ghcr 的镜像名**必须全小写**，而 `github.repository` 是 `Jonnyan404/clip9`。
+          ghcr="${REGISTRY_GHCR}/$(echo "$REPO" | tr '[:upper:]' '[:lower:]')"
+          dh="${DH_USER}/clip9"
+          {
+            echo 'tags<<EOF'
+            echo "${ghcr}:${TAG}"
+            echo "${dh}:${TAG}"
+            if [ "${{ inputs.also_latest }}" = "true" ]; then
+              echo "${ghcr}:latest"
+              echo "${dh}:latest"
+            fi
+            echo 'EOF'
+          } >> "$GITHUB_OUTPUT"
+          cat "$GITHUB_OUTPUT"
+
+      - uses: docker/setup-qemu-action@v4
+      - uses: docker/setup-buildx-action@v4
+
+      - name: 登录 ghcr.io
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: 登录 Docker Hub
+        uses: docker/login-action@v4
+        with:
+          username: ${{ env.DH_USER }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      # ⚠️ context 指到 `packaging/docker`（那里只有 Dockerfile）—— 镜像不需要仓库里任何文件。
+      - uses: docker/build-push-action@v7
+        with:
+          context: packaging/docker
+          file: packaging/docker/Dockerfile
+          build-args: |
+            VERSION=${{ env.TAG }}
+          platforms: ${{ env.PLATFORMS }}
+          push: true
+          tags: ${{ steps.tags.outputs.tags }}
