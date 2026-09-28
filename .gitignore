@@ -7,6 +7,11 @@
 # 是产物不是源码，照官方模板忽略掉。
 /rust/crates/desktop/gen/
 
+# 打包时**暂存**的服务端二进制：`tauri.conf.json` 的 `bundle.*.files` 从这个固定路径取，
+# 好让它和桌面主程序落在**同一个目录**（`server_process.rs` 的 `default_binary()` 就按
+# 「同目录、名为 clip9-server」找它）。它是 `cargo build -p clip9-server` 的产物，不入库。
+/rust/crates/desktop/binaries/
+
 # ⚠️★ 文档**不入库**（2026-09-25 定）。
 #
 # 这些文档（设计 / 交接 / 行为规格 / 契约）是**工作过程记录**，不是成品文档：
