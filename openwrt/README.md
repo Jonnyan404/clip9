@@ -100,6 +100,15 @@ cd <仓库根>
 二进制，而后面每一层（打包、装到路由器）都看不出它不是 musl。
 CI 用的是 `cross`（`taiki-e/install-action` 装的）。
 
+⚠️★ **每个 target 用单独的 target 目录**（`rust/target/cross-<三元组>`），别把它们合并回
+一个 `target/`。原因见 `build.sh` 第 3 节那段注释：三个 target 串在一个 job 里跑，而 `cross`
+给每个 target 用的镜像 **glibc 不一样高**，**宿主**构建脚本落在共用的 `target/release/`
+里跨镜像复用 —— 第二个 target 起就报 `failed to run custom build command for libc …:
+version `GLIBC_2.28' not found`（exit 101）。这是 **cross-rs/cross#724** 的已知毛病
+（同 issue 里写明 `cargo clean` 不管用），报出来的**却是某个依赖的名字**，很容易认错方向。
+`release.yml` 的 linux job 没这个问题，因为它**一个 target 一个 job**、各自一份缓存。
+`tools/workflows-smoke.mjs` 的第 9 条判据钉着「每个 target 单独目录 + 取产物处同源」。
+
 ### 4.1 让 CI 打（不动本机）
 
 `.github/workflows/openwrt.yml` 就是上面那串命令的自动化版本，**两个入口**：
@@ -158,16 +167,21 @@ CI 用的是 `cross`（`taiki-e/install-action` 装的）。
 
 ## 7. 还没验过的事（写在明处）
 
-- ⚠️★ **`.github/workflows/openwrt.yml` 一次都没跑过**（2026-09-28 写下时）。本机也验不了：
-  它要 runner 上的 Docker（`apk mkpkg` 是 Alpine 的工具）。能提前问的只有
-  `node tools/workflows-smoke.mjs`（7 条跨文件判据，已接进 CI 的 frontend job，19 组变异验过）——
-  它管的是「artifact 名字 / 前缀 / 矩阵条目数」这些**字符串**约定，管不了「打不打得出来」。
-  ⚠️ 所以第一次 CI 红了**先看那三条**（见 §4.1），别先怀疑脚本。
+- ⚠️★ **`openwrt.yml` 已经跑过，但还没绿过。** 2026-09-28 首次上 CI，两次都是
+  `binaries` 红在第三个 target 上（`GLIBC_2.28 not found`，cross#724 —— 见 §4 那段警告）。
+  **修法（每个 target 单独 target 目录）是在本机改的，还没经一次真实运行验证** ——
+  `cross` 要 Docker，本机与沙箱都跑不了。⚠️ 下一次 CI 若这里还红，先看**是不是同一个 target、
+  同一句 GLIBC**；如果不是，那就是另一码事，别硬套这个结论。
+  已经**绿过**的是：`version` 与 `luci` 两个 job，以及 `release.yml` 那边的接线
+  （artifact 名字 / 前缀 / 矩阵条目数 —— 那几条由 `node tools/workflows-smoke.mjs` 提前判）。
+  ⚠️ 本机验不了它要 runner 上的 Docker（`apk mkpkg` 是 Alpine 的工具）。
 - **没有在真机上装过**。本机也没有 `opkg` / `apk`，所以「装上去能不能用」这一步没做。
   已经验过的是：**包的结构与内容**（解开逐项核对过——文件位置、权限、
   `control` 字段、LuCI 包里**不含** `/etc/config/clip9`）。
 - **`cross` 的三个 musl 目标本机没编过**（本机没有 `cross`）。这三个目标在
-  `release.yml` 里**每次发版都编**（Linux 那三格），所以编得出来这件事是绿过的。
+  `release.yml` 里**每次发版都编**（Linux 那三格，**一个 target 一个 job**），
+  所以「编得出来」是绿过的；⚠️ 但那**不能**推出「`build.sh` 里串起来也能编」——
+  2026-09-28 恰好证明了这一点。
 - **LuCI 界面没在真的 LuCI 里跑过**（本机没有 `lua`/`luac`，语法只能靠读）。
 - `usr/share/luci/i18n/clip9.po` 会被打进去，但 **LuCI 认的是编译出来的 `.lmo`**，
   而这条手工打包链路不做那步编译 —— 所以界面目前**只有中文**（与 Go 版一致）。
