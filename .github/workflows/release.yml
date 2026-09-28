@@ -28,6 +28,7 @@ on:
         description: 要构建并把产物传上去的 Release 标签（例如 v0.1.0）。留空 = 只构建，不发布。
         required: false
         type: string
+        default: v0.1.0-beta1
 
 permissions:
   contents: write
