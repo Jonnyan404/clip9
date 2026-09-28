@@ -417,12 +417,19 @@ if (unreadB.length) {
 
 // ── 判据 11：Kotlin 的块注释 ────────────────────────────────────────────────
 //
-// ⚠️★ Kotlin 的块注释**可以嵌套** —— 所以 KDoc 正文里出现一次「斜杠 + 星号」
-// 就会再开一层：内层的 `*/` 先把内层关掉，**外层一直不闭合**，于是文件剩下的内容
-// 全被吞进注释里。编译器报的是 `Syntax error: Unclosed comment`（行号指向文件末尾，
-// 因为错误发生在那里）+ 一串 `Unresolved reference: <那个文件里定义的类>` ——
-// **看起来像「凭空少了几个类」，而不是「注释写坏了」**。
-// 2026-09-28 为此白跑了一趟完整 Gradle 构建（1 分 16 秒 + 人工读日志）。
+// ⚠️★ Kotlin 的块注释**可以嵌套**，于是注释里那两个字面量**哪种顺序都不能出现**：
+//
+//   ① 注释正文里写「斜杠 + 星号」→ 又开一层：内层的闭合符先把内层关掉，**外层一直
+//      不闭合**，文件剩下的内容全被吞进注释。编译器报 `Syntax error: Unclosed comment`
+//      （行号指向文件末尾，因为错误发生在那里）+ 一串
+//      `Unresolved reference: <那个文件里定义的类>` —— **看起来像「凭空少了几个类」**。
+//   ② 注释正文里写「星号 + 斜杠」→ 注释**在那一行提前关掉**，它**后面那几行变成顶层代码**，
+//      报一串 `Syntax error: Expecting a top level declaration`，**列号指向注释里的字**。
+//      ⚠️★ 这一种更隐蔽：它连「注释没闭合」都不报，所以只查 ① 的写法会**全绿**。
+//
+// 两次都是真踩（2026-09-28）：① 白跑一趟 Gradle 构建（1 分 16 秒 + 人工读日志）；
+// ② 是**修 ① 时写下的注释自己踩的** —— 那句解释里带着 ② 的字面量，又白跑一趟（7 秒）。
+// 「解释这个坑的注释里，一个组合字面量都不能出现」这句话本身就是这条判据的由来。
 //
 // ⚠️ 这是「替编译器做它能做的那一小部分」。真编一次当然更彻底，但本机没有 Kotlin
 // 编译器、CI 也没接 Android 构建 —— 而这一条是毫秒级的，且抓的正是最隐蔽的那类。
@@ -445,6 +452,9 @@ function kotlinComments() {
     let depth = 0;
     let opened = -1;
     const nested = [];
+    // ② 的落点：**不在任何注释里**出现的闭合符。它只可能来自「注释被提前关掉」，
+    // 因为 Kotlin 代码里不会有这种写法（`a * /b` 不是合法表达式）。
+    const strays = [];
     while (i < text.length) {
       const c = text[i];
       if (depth > 0) {
@@ -471,6 +481,12 @@ function kotlinComments() {
       if (c === '/' && text[i + 1] === '*') {
         depth = 1;
         opened = i;
+        i += 2;
+        continue;
+      }
+      // ⚠️ 这个分支必须在 `/*` 之后判：`/` 开头的两种都已经在前面 continue 掉了。
+      if (c === '*' && text[i + 1] === '/') {
+        strays.push(i);
         i += 2;
         continue;
       }
@@ -508,12 +524,18 @@ function kotlinComments() {
         `${name}:${lineOf(at)} 块注释正文里又开了一层（「斜杠 + 星号」会一路吞掉后面的代码）`,
       );
     }
+    for (const at of strays) {
+      problems.push(
+        `${name}:${lineOf(at)} 注释外面出现了闭合符 —— 多半是注释正文里写了「星号 + 斜杠」` +
+          `把注释提前关掉，它后面那几行就变成顶层代码了`,
+      );
+    }
   }
   return { count: files.length, problems };
 }
 
 {
-  const label = 'Kotlin 的块注释都闭合、且注释正文里没有再开一层';
+  const label = 'Kotlin 的块注释闭合正常（没被提前关掉、也没有嵌出第二层）';
   const res = kotlinComments();
   if (res === null) {
     fail(label, '读不到 android/app/src/main/java/com/clip9/app 下的 .kt 文件');
