@@ -114,7 +114,7 @@ pub struct Channel {
     /// 给人看的名字（托盘菜单、设置界面）。
     pub name: String,
 
-    /// 服务端地址，**含可能的子路径前缀**（`https://host/cloud-clipboard`）。
+    /// 服务端地址，**含可能的子路径前缀**（`https://host/clip9`）。
     /// 别在这里写接口路径 —— 接口由 [`crate::endpoint`] 拼。
     pub server: String,
 

@@ -1569,8 +1569,8 @@ mod tests {
     /// `ws_request` 也要保住服务端的子路径前缀（§1.1）。
     #[test]
     fn the_ws_request_keeps_the_sub_path() {
-        let req = ws_request("https://host/cloud-clipboard", "default", None).unwrap();
-        assert_eq!(req.uri().path(), "/cloud-clipboard/push");
+        let req = ws_request("https://host/clip9", "default", None).unwrap();
+        assert_eq!(req.uri().path(), "/clip9/push");
         assert_eq!(req.uri().scheme_str(), Some("wss"));
     }
 

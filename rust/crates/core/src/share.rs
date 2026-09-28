@@ -15,7 +15,7 @@
 //!
 //! # 密钥怎么来
 //!
-//! [`ShareKey::derive`]：`SHA256("cloud-clipboard-share-v1" || 0 || 全局密码 || 各房间(0||房间||0||密码))`。
+//! [`ShareKey::derive`]：`SHA256("clip9-share-v1" || 0 || 全局密码 || 各房间(0||房间||0||密码))`。
 //! 用配置派生而不是随机密钥，是为了**重启后已发出的分享链接不失效**；配置里一个字都没配时
 //! 再混入调用方给的随机盐（那时也没有别的秘密可保护）。
 //!
@@ -44,7 +44,11 @@ use crate::config::Config;
 type HmacSha256 = Hmac<Sha256>;
 
 /// 派生密钥时的域分隔标签。改它 = 让所有已发出的分享链接失效。
-const SHARE_KEY_LABEL: &[u8] = b"cloud-clipboard-share-v1";
+///
+/// ⚠️ 这是 clip9 自己的标签：独立成独立项目时从 `cloud-clipboard-share-v1` 改成了这个，
+/// 所以**同一份配置在 clip9 与 Go 版上算出来的密钥不同** —— 两边的分享链接互不通用。
+/// 这是有意的（不要求兼容旧项目），代价是升级时已发出的链接全部失效。
+const SHARE_KEY_LABEL: &[u8] = b"clip9-share-v1";
 
 /// 分享有效期默认值（15 分钟）。
 pub const DEFAULT_SHARE_TTL_SECONDS: i64 = 15 * 60;
@@ -159,9 +163,12 @@ impl ShareKey {
     ///
     /// 派生输入与 Go 逐字一致（房间按名字升序，`BTreeMap` 的迭代顺序就是它）：
     /// ```text
-    /// SHA256("cloud-clipboard-share-v1" || 0 || 全局密码 || Σ(0 || 房间 || 0 || 房间密码))
+    /// SHA256("clip9-share-v1" || 0 || 全局密码 || Σ(0 || 房间 || 0 || 房间密码))
     /// ```
     /// 没有认证材料时再套一层 `SHA256(上面那份 || fallback_salt)`。
+    ///
+    /// ⚠️ **只有那个域分隔标签与 Go 不同**（见 [`SHARE_KEY_LABEL`]）—— 算式其余部分逐字照抄，
+    /// 所以算法本身仍然被 `cases/share/tokens.json` 那份夹具钉着。
     ///
     /// ⚠️ 加了盐就**不能**在重启后保持稳定（盐是每进程随机的）—— 但没有密码的部署本来
     /// 就没有「分享链接」以外的秘密，Go 那边同样如此。
