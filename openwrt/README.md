@@ -98,7 +98,28 @@ cd <仓库根>
 直接用 `cargo` 会在 `aws-lc-sys` 那里报 `failed to find tool "x86_64-linux-musl-gcc"` ——
 那是个**看着像代码写错**的错。脚本**故意不回落**到宿主机 `cargo`：那样会编出宿主机的
 二进制，而后面每一层（打包、装到路由器）都看不出它不是 musl。
-CI 的 `release.yml` 用的也是 `cross`。
+CI 用的是 `cross`（`taiki-e/install-action` 装的）。
+
+### 4.1 让 CI 打（不动本机）
+
+`.github/workflows/openwrt.yml` 就是上面那串命令的自动化版本，**两个入口**：
+
+- `workflow_call` —— `release.yml` 发版时调它（**构建归那个文件，上传归 `release.yml` 的
+  `publish-openwrt` job**）。
+- `workflow_dispatch` —— 单独手动跑。⚠️ 填了 `tag` 就**覆盖上传**（`overwrite_files: true`）：
+  补一个架构的包、或某个包要重打时不必再发一次版；留空则只构建、不上传。
+
+⚠️ 三条只有站在 CI 上才看得出来的事：
+
+- **`openwrt/build/` 在 git 里不存在**（整个 gitignore）→ `luci` 那个 job 里那两个打包脚本
+  会往里面写，所以它前一步得先 `mkdir -p openwrt/build`。
+- `build.sh` **必须带 `--skip-web`**：不带它会去跑 `npm run build`，而 runner 上
+  `web-vue3/node_modules` 不存在 —— 那一步必挂。（前端产物已入库，本来就只需要编进二进制。）
+  ⚠️ 但 `build.sh` 里那道 `sync-web-assets.mjs --check` 照样是**硬闸**，`--skip-web` 关不掉它。
+- **三个数字是跨文件的**：`release.yml` 的 `publish-openwrt` 里写着
+  `[ "$n_ipk" = 7 ]` / `[ "$n_apk" = 8 ]` / `[ "$n_luci" = 2 ]`，它们必须与上面那个文件里
+  两个矩阵的条目数一致。改矩阵而没改那边 → **只在发布时**才红。
+  `node tools/workflows-smoke.mjs`（已接进 CI）就是提前问这一句的。
 
 ⚠️★ **`luci-app-clip9/root/etc/uci-defaults/luci-clip9` 在包里是 `644`，这是对的** ——
 别给它加执行位。它**看上去就像漏了 `chmod`**（2026-09-28 我就差点把它当 bug 去「修」，
@@ -137,6 +158,11 @@ CI 的 `release.yml` 用的也是 `cross`。
 
 ## 7. 还没验过的事（写在明处）
 
+- ⚠️★ **`.github/workflows/openwrt.yml` 一次都没跑过**（2026-09-28 写下时）。本机也验不了：
+  它要 runner 上的 Docker（`apk mkpkg` 是 Alpine 的工具）。能提前问的只有
+  `node tools/workflows-smoke.mjs`（7 条跨文件判据，已接进 CI 的 frontend job，19 组变异验过）——
+  它管的是「artifact 名字 / 前缀 / 矩阵条目数」这些**字符串**约定，管不了「打不打得出来」。
+  ⚠️ 所以第一次 CI 红了**先看那三条**（见 §4.1），别先怀疑脚本。
 - **没有在真机上装过**。本机也没有 `opkg` / `apk`，所以「装上去能不能用」这一步没做。
   已经验过的是：**包的结构与内容**（解开逐项核对过——文件位置、权限、
   `control` 字段、LuCI 包里**不含** `/etc/config/clip9`）。
