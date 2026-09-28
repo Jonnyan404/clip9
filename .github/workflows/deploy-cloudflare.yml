@@ -39,6 +39,12 @@ jobs:
             echo "::error::缺 CF_API_TOKEN / CLOUDFLARE_API_TOKEN —— 到本仓库 Settings → Secrets 里加上"
             exit 1
           fi
+          # ⚠️ account id 缺失**不中止**（token 只够一个账号时 wrangler 会自己认出来），
+          # 但要说一声：多个账号时它会报一句「non-interactive environment 里选不了账号」——
+          # 那句话跟「secret 没设」看不出关系。
+          if [ -z "$CLOUDFLARE_ACCOUNT_ID" ]; then
+            echo "::warning::没设 CF_ACCOUNT_ID / CLOUDFLARE_ACCOUNT_ID —— token 只够一个账号时能自动认出来，多个账号时会失败"
+          fi
 
       - uses: actions/setup-node@v7
         with:
@@ -51,6 +57,9 @@ jobs:
 
       # ⚠️ wrangler **不全局装**：用 `cloudflare/package-lock.json` 钉住的那个版本，
       #    否则「本地跑什么版本」和「线上跑什么版本」是两件事（Go 那边是 `npm i -g`）。
+      #    ⚠️ `cloudflare/workers/package.json` 里还另有一个 wrangler 的 devDependency
+      #    （4.59.3，给 `wrangler dev` 用的）—— 这条 `npm ci` 装的是 `cloudflare/` 那份
+      #    （4.81.1），下一步往 PATH 里加的也是它。
       - name: 装 wrangler（按 lockfile 钉住的版本）
         working-directory: cloudflare
         run: npm ci
