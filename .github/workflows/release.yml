@@ -1,0 +1,125 @@
+name: Release
+
+# 打 `v*` 标签时出四个平台的 `clip9-server` 单文件二进制，附到 Release 上。
+#
+# ⚠️★ 服务端**不需要系统库**：前端产物已编在二进制里，没有运行时资源要跟着走 ——
+# 「一个文件丢过去就能跑」是真的。所以这里只出 `-p clip9-server`（它不拉 `crates/client`
+# 与 `crates/desktop`，那两条才要 GUI 库）。
+#
+# 还没做的（`docs/ARCHITECTURE.md` §10 的 T4）：Docker 镜像、OpenWrt 的 .ipk、Android 外壳。
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: 只构建，不建 Release
+        type: boolean
+        default: true
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+  BIN: clip9-server
+
+jobs:
+  linux:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        target: [x86_64-unknown-linux-musl, aarch64-unknown-linux-musl]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cross
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: rust
+          key: ${{ matrix.target }}
+
+      # ⚠️ `cross` 走容器，目标由它自己管 —— 别在这里 `rustup target add`。
+      - name: 构建（静态链接 musl）
+        working-directory: rust
+        run: cross build --release -p $BIN --target ${{ matrix.target }}
+
+      - name: 打包
+        working-directory: rust
+        run: |
+          set -euo pipefail
+          name="$BIN-${{ matrix.target }}"
+          mkdir -p "dist/$name"
+          cp "target/${{ matrix.target }}/release/$BIN" "dist/$name/"
+          cp ../LICENSE ../README.md "dist/$name/"
+          tar -C dist -czf "dist/$name.tar.gz" "$name"
+          (cd dist && sha256sum "$name.tar.gz" > "$name.tar.gz.sha256")
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.BIN }}-${{ matrix.target }}
+          path: |
+            rust/dist/*.tar.gz
+            rust/dist/*.sha256
+          if-no-files-found: error
+
+  macos:
+    runs-on: macos-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        target: [aarch64-apple-darwin, x86_64-apple-darwin]
+    steps:
+      - uses: actions/checkout@v4
+
+      - run: rustup target add ${{ matrix.target }}
+        working-directory: rust
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: rust
+          key: ${{ matrix.target }}
+
+      - name: 构建
+        working-directory: rust
+        run: cargo build --release -p $BIN --target ${{ matrix.target }}
+
+      - name: 打包
+        working-directory: rust
+        run: |
+          set -euo pipefail
+          name="$BIN-${{ matrix.target }}"
+          mkdir -p "dist/$name"
+          cp "target/${{ matrix.target }}/release/$BIN" "dist/$name/"
+          cp ../LICENSE ../README.md "dist/$name/"
+          tar -C dist -czf "dist/$name.tar.gz" "$name"
+          (cd dist && shasum -a 256 "$name.tar.gz" > "$name.tar.gz.sha256")
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.BIN }}-${{ matrix.target }}
+          path: |
+            rust/dist/*.tar.gz
+            rust/dist/*.sha256
+          if-no-files-found: error
+
+  # 收口到一个 job 发 Release：并行 job 各自建 Release 会互相打架。
+  publish:
+    needs: [linux, macos]
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: artifacts/*
+          generate_release_notes: true
