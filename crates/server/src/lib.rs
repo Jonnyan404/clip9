@@ -17,7 +17,8 @@
 //! | [`auth_token`] | `/auth/token*`：用密码换会话令牌、续期 |
 //! | [`share`] | 分享：签发 / 元信息 / 记录列表 / 打开上报 / 落地页 |
 //! | [`share_card`] | 分享落地页的 OG 卡片内容（纯函数，好测） |
-//! | [`spa_shell`] | SPA 外壳的读取与 `<base>` / OG 标签注入 |
+//! | [`spa_shell`] | 外壳的 `<base>` / OG 标签**注入**（纯字符串，好测；读取在 [`static_files`]） |
+//! | [`static_files`] | 前端产物：外部目录 `-static` > **内嵌**，一份实现（含 Go 的 `wantsHTML` 闸） |
 //! | [`text_body`] | `/text` 的三种请求体形态 + UTF-16 嗅探 |
 //! | [`user_agent`] | UA → 设备信息（⚠️ 近似实现，见模块注释） |
 //! | [`state`] | 共享状态 + 广播出口 |
@@ -37,6 +38,7 @@ pub mod share;
 pub mod share_card;
 pub mod spa_shell;
 pub mod state;
+pub mod static_files;
 pub mod text_body;
 pub mod user_agent;
 pub mod ws;
@@ -307,29 +309,32 @@ pub fn router(state: Arc<AppState>) -> Router {
         // ⚠️★ **原来是 `CorsLayer::permissive()`（= `Allow-Origin: *`），2026-09-26 收窄了**：
         // `*` 在本机服务端上是**一个真的洞**（用户访问的任意网站都能把开放房间的内容读走）。
         // 放行谁、为什么是那三个，以及 `file://` 的 `null` 为什么也不行，全在 `cors` 模块的文档里。
-        .layer(cors::cors())
-        .with_state(state);
+        .layer(cors::cors());
 
     // ── 前端静态资源 ────────────────────────────────────────────────────
     //
-    // ⚠️ 挂在 `fallback_service` 上，也就是排在**所有 `.route()` 之后**：
-    // API 路由优先，剩下的（`/`、`/assets/…`、前端路由）才落到这里。
-    // 这和 Go 那边「先注册 API、最后 `mux.Handle(prefix+"/", spaStaticHandler)`」是同一个结构。
+    // ⚠️★ 必须挂在 `.with_state(state)` **之前**：挂晚了 Router 的状态就是 `()`，
+    // 处理器取不到 `State<Arc<AppState>>` —— 而它要读 `static_dir` 与 `config.server.prefix`。
+    // ⚠️ 也要挂在 `.layer(cors)` **之后**：`Router::layer` 只包住**当时已经加上的**东西，
+    // 所以静态资源上没有 CORS 头 —— 与改动前一致（静态资源本来也不需要）。
     //
-    // ⚠️ **SPA 兜底必须落到 `index.html`**：前端是 history 路由，`/s/<token>` 这类深链
-    // 直接访问（或刷新）时服务端得吐出同一份 HTML，否则刷新就 404。
-    // 这也是为什么 SPA 和 API 必须**同源** —— 否则前端那些相对路径的请求全要配代理。
-    let app = match static_dir {
-        Some(dir) => {
-            let index = dir.join("index.html");
-            app.fallback_service(
-                tower_http::services::ServeDir::new(&dir)
-                    .fallback(tower_http::services::ServeFile::new(index)),
-            )
-        }
-        // 没配静态目录 = 这次部署只跑 API（Android 客户端连别人的服务端就是这种）。
-        None => app,
+    // ⚠️ 它落在**所有 `.route()` 之后**：API 路由优先，剩下的（`/`、`/assets/…`、
+    // 前端路由的深链）才到这儿 —— 与 Go「先注册 API、最后 `mux.Handle(prefix+"/", …)`」
+    // 是同一个结构。SPA 兜底必须落到 `index.html`，否则 `/board` 这类深链一刷新就 404。
+    // ⚠️ 举例子别用 `/rooms` —— 那是**接口**，它的 403 与兜底无关（前端路由与接口共用命名空间）。
+    //
+    // ⚠️★ 来源（外部目录 `-static` > **内嵌**）与「怎么发」全在 `static_files` 里，
+    // **只有那一处** —— 这里只问一句「有没有得发」。
+    //
+    // ⚠️ 这也是为什么 SPA 与 API 必须**同源**：前端那些请求是相对路径，
+    // 不同源就全要配代理。
+    let app = if static_files::has_source(static_dir.as_deref()) {
+        app.fallback(static_files::serve)
+    } else {
+        // 两种来源都没有 = 这次部署**只跑 API**（Android 客户端连别人的服务端就是这种）。
+        app
     };
+    let app = app.with_state(state);
 
     if prefix.is_empty() {
         app
