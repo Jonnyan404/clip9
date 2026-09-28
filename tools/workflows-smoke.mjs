@@ -13,6 +13,11 @@
 //     被 release.yml 调用时**也会**去覆盖上传，两个 job 同时动一个 Release；
 //   · `abiFilters` 里列着某个 ABI，而 `rust-toolchain.toml` 里没有对应 target →
 //     那个 `.so` **静默不编**，最后由 APK 在设备上 `System.loadLibrary` 炸。
+//   · 调可复用工作流时少写 `secrets:` / `secrets: inherit` → 被调文件里那些
+//     `secrets.X` 全是**空串**，而它自己会报「secret 没设」（其实设了）；
+//     ⚠️ 手动 dispatch 却是好的（那时它读得到仓库 secret）→ 症状像「只有 release 坏」。
+//   · `openwrt/scripts/build.sh` 让几个 target 共用 `target/` → 宿主构建脚本跨镜像复用，
+//     第二个 target 起报 `GLIBC_2.28 not found`（cross#724），报的却是某个依赖的名字。
 //
 // ⚠️★ 这些字符串**没有编译器看着**，也没有测试运行器 —— 与
 // `tools/android-contract-smoke.mjs` / `share-bridge-smoke.mjs` 同一类。
@@ -175,6 +180,36 @@ function uploadNames(body) {
 /** `openwrt-pkg-ipk-${{ matrix.arch }}` → `openwrt-pkg-ipk-`（`${{` 之前那截字面量）。 */
 const literalHead = (s) => s.split('${{')[0];
 
+/**
+ * `release.yml` 里所有调**本仓库**可复用工作流的 job。
+ * 返回 `[{ job, file, secrets }]`；`secrets` = `'inherit' | 'map' | 'other' | 'none'`。
+ * `file` 是相对仓库根的路径（如 `.github/workflows/android.yml`），方便直接 `read()`。
+ * ⚠️ `'other'` = `secrets:` 后面跟着读不懂的东西（行内 flow mapping 之类）——
+ *    调用方拿它报红，**不**当成「没传」也**不**当成「传了」。
+ * ⚠️ 只认**顶层 job 缩进**（两格）的 `uses:`（四格），与 `jobBlock` 同一套假设。
+ */
+function localWorkflowCalls(text) {
+  if (text === null) return null;
+  const out = [];
+  for (const m of text.matchAll(/^ {2}([A-Za-z0-9_-]+):[ \t]*$/gm)) {
+    const job = m[1];
+    const body = jobBlock(text, job);
+    if (body === null) continue;
+    const use = /^ {4}uses: \.\/\.github\/workflows\/(\S+)[ \t]*$/m.exec(body);
+    if (!use) continue;
+    const sec = /^ {4}secrets:(.*)$/m.exec(body);
+    let secrets = 'none';
+    if (sec) {
+      const rest = sec[1].trim();
+      if (rest === 'inherit') secrets = 'inherit';
+      else if (rest === '') secrets = 'map';
+      else secrets = 'other';
+    }
+    out.push({ job, file: `.github/workflows/${use[1]}`, secrets });
+  }
+  return out;
+}
+
 /** 某个 job 里第一个 `download-artifact` 的 `pattern:` 或 `name:`。 */
 function downloadSelector(body) {
   if (body === null) return null;
@@ -195,6 +230,7 @@ const openwrt = read(OPENWRT);
 const android = read(ANDROID);
 const gradle = read('android/app/build.gradle.kts');
 const syncJs = read('tools/sync-android-jni-libs.mjs');
+const buildSh = read('openwrt/scripts/build.sh');
 const toolchain = read('rust/rust-toolchain.toml');
 
 // ── 判据 1：release.yml 取的东西，两个可复用工作流真的传了 ─────────────────
@@ -423,6 +459,114 @@ const toolchain = read('rust/rust-toolchain.toml');
   else ok(label);
 }
 
+// ── 判据 8：调可复用工作流时，它用到的 secret 真的传过去了 ────────────────
+//
+// ⚠️★ 可复用工作流**不会**自动拿到调用方的 secret —— 官方规则是「secrets are only passed
+//    to directly called workflow」：要么 `secrets:` 显式映射，要么 `secrets: inherit`。
+//    少了它，被调文件里那些 `secrets.X` 全是**空串**。
+// ⚠️★ 症状**极难认**：被调工作流自己会报「先给这个仓库加上这几个 secret」——
+//    看着像「secret 没设」，可 `gh secret list` 里明明都在。2026-09-28 真这样红过一次
+//    （`release.yml` 调 `android.yml` 少了 `secrets: inherit`），而**手动 dispatch 是好的**
+//    （那时它是顶层工作流、直接读得到仓库 secret）→ 于是更像「只有 release 坏」。
+// ⚠️ 这条**不写死**「哪个文件要 secret」：从被调文件里扫 `secrets.*` 现算 ——
+//    哪天给 `openwrt.yml` 加一个 secret，这里会先红，而不是等发布。
+{
+  const label = '调可复用工作流时，它用到的 secret 真的传过去了';
+  const problems = [];
+  if (release === null) {
+    problems.push(`读不到 ${RELEASE}`);
+  } else {
+    const calls = localWorkflowCalls(release);
+    // ⚠️ 自洽检查：解析出的调用点数**必须**等于文件里 `uses: ./.github/workflows/` 的条数。
+    //    否则「漏解析了一个调用点」会静默通过 —— 而漏的那个恰恰可能就是要拦的那个。
+    const raw = [...release.matchAll(/^ {4}uses: \.\/\.github\/workflows\/\S+/gm)].length;
+    if (calls === null || !calls.length) {
+      problems.push(`一个 uses: ./.github/workflows/… 的 job 都没解析出来（读不全）`);
+    } else if (calls.length !== raw) {
+      problems.push(`解析出 ${calls.length} 个调用点，文件里却有 ${raw} 个 —— 解析不可信`);
+    } else {
+      const passed = [];
+      for (const { job, file, secrets } of calls) {
+        const text = read(file);
+        if (text === null) {
+          problems.push(`${job} 调的 ${file} 读不到`);
+          continue;
+        }
+        // ⚠️ `GITHUB_TOKEN` 是**每个工作流都自动有的**，不需要调用方传 → 不算缺口。
+        const need = [...new Set([...text.matchAll(/secrets\.([A-Za-z_][A-Za-z0-9_]*)/g)].map((m) => m[1]))].filter(
+          (n) => n !== 'GITHUB_TOKEN',
+        );
+        if (!need.length) continue; // 它一个 secret 都不用 —— 传不传都对
+        if (secrets === 'none') {
+          problems.push(
+            `${job} 调的 ${file} 用了 ${need.join('、')}，但那个 job 里没有 secrets: —— ` +
+              `被调工作流里这些值全是空串，它会自己报「secret 没设」（其实设了）`,
+          );
+        } else if (secrets === 'other') {
+          problems.push(`${job} 的 secrets: 后面读不懂（行内 flow mapping？）—— 写成块状或 inherit 才判得准`);
+        } else if (secrets === 'map') {
+          const body = jobBlock(release, job);
+          const missing = need.filter((n) => !new RegExp(`^ {6}${n}: `, 'm').test(body));
+          if (missing.length) problems.push(`${job} 的 secrets: 映射里少了 ${missing.join('、')}`);
+          else passed.push(`${job}→${file.split('/').pop()}（映射）`);
+        } else {
+          passed.push(`${job}→${file.split('/').pop()}（inherit）`);
+        }
+      }
+      if (problems.length === 0) {
+        // 报出来的「不传」只列**确实一个 secret 都不用**的那些 job（`inherit` 多传是合法的，
+        // 不该被说成「故意不传」——那份名单是给人看证据的，说错就白给了）。
+        const idle = calls.filter((c) => c.secrets === 'none').map((c) => c.job);
+        const tail = idle.length ? `；${idle.join('、')} 不用 secret（故意不传）` : '';
+        ok(`${label} —— ${passed.join('、')}${tail}`);
+      }
+    }
+  }
+  if (problems.length) fail(label, problems.join('\n    '));
+}
+
+// ── 判据 9：openwrt 的 build.sh 给每个 target 单独的 target 目录 ──────────
+//
+// ⚠️★ 三个 target 串在**同一个 job** 里，而 `cross` 每个 target 用的镜像 glibc 不一样高。
+//    **宿主**构建脚本落在共用的 `target/release/` 里 → 在 glibc 高的镜像里编出来、
+//    被 glibc 低的镜像直接执行 → `failed to run custom build command for libc …:
+//    version `GLIBC_2.28' not found`（exit 101）。**cross-rs/cross#724**，
+//    同 issue 里写明 `cargo clean` 不管用，要分开 target 目录。
+// ⚠️★ 症状**指不到这里**：报的是某个依赖 crate 的 build script，像代码/依赖问题；
+//    而且**换一次顺序就换一个 target 倒**（2026-09-28：x86_64 与 armv7 都过，
+//    只挂在第三个 aarch64 上），更像「那个架构有问题」。
+// ⚠️ 这条判的是「**同一处定义**」：`CARGO_TARGET_DIR` 里那截前缀与第 4 步拼产物路径
+//    用的前缀必须逐字相同 —— 两边各写一份的话，改了其中一处就会去别处找二进制。
+{
+  const label = 'openwrt 的 build.sh 给每个 target 单独的 target 目录（且取产物处同源）';
+  const problems = [];
+  if (buildSh === null) {
+    problems.push('读不到 openwrt/scripts/build.sh');
+  } else {
+    // ⚠️ 两种写法都认：前缀写成变量（`"$PREFIX$target"`）或直接写在引号里。
+    //    这里比较的是**引号里 `$target` 之前的那一截**，所以两种写法比的是同一个东西。
+    const ctd = /CARGO_TARGET_DIR="([^"]*)\$target"/.exec(buildSh);
+    const src = /^[ \t]*src="([^"]*)\$target\/release\/clip9-server"/m.exec(buildSh);
+    if (!ctd) {
+      problems.push(
+        '没找到 `CARGO_TARGET_DIR="…$target"` —— 三个 target 共用 target/ 时，宿主构建脚本' +
+          '会跨镜像复用，第二个 target 起就报 GLIBC not found（cross#724）',
+      );
+    }
+    if (!src) {
+      problems.push('没找到 `src="…$target/release/clip9-server"` —— 取产物那一步被改写了？');
+    }
+    if (ctd && src && ctd[1] !== src[1]) {
+      problems.push(
+        `target 目录两处不是同一个值：CARGO_TARGET_DIR 那处是 ${JSON.stringify(ctd[1])}，` +
+          `取产物那处是 ${JSON.stringify(src[1])}`,
+      );
+    }
+    if (!problems.length) ok(`${label} —— ${JSON.stringify(ctd[1])}<target>`);
+  }
+  if (problems.length) fail(label, problems.join('\n    '));
+}
+
 // ── 输出 ────────────────────────────────────────────────────────────────────
 
 if (failures.length) {
@@ -433,4 +577,4 @@ if (failures.length) {
   console.error(`\n✗ ${failures.length} 条判据没过。`);
   process.exit(1);
 }
-console.log('\n✓ 工作流之间的跨文件约定自检通过（7 条判据）。');
+console.log('\n✓ 工作流之间的跨文件约定自检通过（9 条判据）。');
