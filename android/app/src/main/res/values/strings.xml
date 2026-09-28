@@ -73,6 +73,25 @@
          否则用户只看到一句「没加载成功」而无从下手。 -->
     <string name="lib_missing">本地组件（libclip9_android.so）没加载成功：%1$s\n\n跑 node tools/sync-android-jni-libs.mjs 把 .so 搬进 jniLibs/，再重新构建。</string>
 
+    <!-- 分享进来（系统分享面板 → clip9）之后的结果。
+         ⚠️★ 下面那几条 `share_reason_*` 的**名字与 web-vue3/src/share.js 的 SHARE_REASONS
+         逐键对应**（那边回的是稳定键，不是句子）。tools/share-bridge-smoke.mjs 对着两处逐字比；
+         加一个键要两边一起加。 -->
+    <string name="share_reason_not_ready">界面还没连上服务端，这次分享没发出去。稍等一下再分享一次。</string>
+    <string name="share_reason_no_room">界面还没进房间（分享页没有房间），这次分享没发出去。</string>
+    <string name="share_reason_empty">分享过来的是空内容。</string>
+    <string name="share_reason_server_error">服务端拒了这次分享。</string>
+    <!-- ⚠️ 不认识的键要**把键名显示出来**，别静默成一句「发送失败」——
+         以后 SPA 加了新键时，这句话是唯一看得出是哪个键的地方。 -->
+    <string name="share_reason_unknown">发送没有成功（%1$s）。</string>
+    <string name="share_failed_reason">分享没发出去：%1$s</string>
+    <string name="share_failed">分享没发出去（界面没有回话）。</string>
+    <string name="share_sent">已发送到当前房间</string>
+    <string name="share_timeout">界面一直没准备好，这次分享没发出去。</string>
+    <!-- ⚠️ 这一条**两处都用**：① manifest 只声明 text/plain，但别的 App 可能无视 mimeType
+         直接发一个流；② SPA 回 `files-unsupported` 那个 reason 键。同一个事实、同一句话。 -->
+    <string name="share_files_unsupported">现在只支持分享文本，文件还不行。</string>
+
     <!-- 自签 HTTPS 的确认框。⚠️ 两个占位符的顺序与 WebAppActivity.askAboutCertificate 一致：
          ① primaryError ② SHA-256 指纹。 -->
     <string name="ssl_title">证书验证没通过</string>

@@ -54,6 +54,13 @@ jobs:
       - name: 桌面界面静态自检
         run: node tools/desktop-ui-smoke.mjs
 
+      # ⚠️★ 「外壳 → SPA」那条缝的**两侧都没有测试运行器**：web-vue3 是手写前端，
+      # android/ 那半边连编译器都没在本机跑过。而对不上的症状是**什么都没发生**
+      # （注入过去的方法名是 undefined，reason 键对不上就只显示一句兜底话）。
+      # 见 tools/share-bridge-smoke.mjs 抬头。
+      - name: 分享桥（外壳 ↔ SPA）静态自检
+        run: node tools/share-bridge-smoke.mjs
+
   # ── Rust：fmt / clippy / test ──────────────────────────────────────
   #
   # ubuntu 上要装 Tauri 的系统库：缺 webkit2gtk 时 `tauri-build` 会直接失败，报错与「代码写错了」很像。

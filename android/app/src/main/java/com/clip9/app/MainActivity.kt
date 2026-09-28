@@ -42,6 +42,10 @@ import com.google.zxing.qrcode.QRCodeWriter
  *
  * ⚠️ 它**只**负责发 Intent 给 [ServerService]：服务端必须在**前台服务**里起，
  * 否则 App 一退到后台就可能被回收，而用户以为它还在跑。启停的阻塞调用也在那边（后台线程）。
+ *
+ * ⚠️★ 它也是**分享进来**的落点（manifest 里那个 `ACTION_SEND` 过滤器挂在它身上）：
+ * 冷启动分享时服务端还没起来，必须先有个人把服务端起起来、再给 [WebAppActivity] 一个地址。
+ * 那段绕路见 [handleShareIntent]。
  */
 class MainActivity : AppCompatActivity() {
 
@@ -74,6 +78,15 @@ class MainActivity : AppCompatActivity() {
 
     /** 上一次真的画过的地址 —— 免得每 700ms 重算一次二维码。 */
     private var renderedAddress: String? = null
+
+    /**
+     * 「手上这次分享还没送进 WebView」。
+     *
+     * ⚠️★ 冷启动分享时（App 根本没在跑）服务端**还没起来**，所以这一刻不能直接开 WebView：
+     * 先把它起起来，等 [refresh] 看到真的 RUNNING 了再开。
+     * ⚠️ 用这个标志防重开：`refresh` 每 700ms 跑一次，不加标志就会一直往栈上叠 Activity。
+     */
+    private var waitingToDeliver = false
 
     private val poll = object : Runnable {
         override fun run() {
@@ -111,6 +124,22 @@ class MainActivity : AppCompatActivity() {
         findViewById<Button>(R.id.webViewCheckButton).setOnClickListener { checkWebView() }
 
         askNotificationPermission()
+
+        // ⚠️ 最后做：它可能只是 toast 一句（分享文件那条还没做），也可能去起服务端。
+        // 放最后是为了「界面已经画好了」—— 起服务端要几秒，这段时间用户得看到东西。
+        handleShareIntent(intent)
+    }
+
+    /**
+     * ⚠️★ `launchMode="singleTop"` + 分享进来时走的是**这里**，不是 [onCreate] ——
+     * 不实现它的话「App 已经开着时分享一段文本」会看起来什么都没发生。
+     */
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        // ⚠️ 必须 setIntent：不设的话 `getIntent()` 还是启动时那一个，
+        // `onResume` 里再来一轮就会把同一次分享又处理一遍。
+        setIntent(intent)
+        handleShareIntent(intent)
     }
 
     override fun onResume() {
@@ -198,6 +227,15 @@ class MainActivity : AppCompatActivity() {
         val running = status == ServerBridge.STATUS_RUNNING
         val port = AppPrefs.port(this)
         val address = if (running) ServerAddress.lanUrl(port) else null
+
+        // ⚠️★ 手上还压着一次分享（冷启动那一下刚把服务端起起来）→ 现在才开 WebView。
+        // 早一步开的话页面会先显示「连不上」再自己恢复，而投递那边还得多等一轮。
+        // ⚠️ `waitingToDeliver` 在这里归零 = 只开一次 —— 不然每 700ms 叠一个 Activity。
+        if (waitingToDeliver && running) {
+            waitingToDeliver = false
+            openLocal()
+        }
+
         if (address == null) {
             addressText.text = getString(R.string.no_address_yet)
             addressActions.visibility = View.GONE
@@ -245,6 +283,38 @@ class MainActivity : AppCompatActivity() {
         // ⚠️ 用 `startForegroundService`：服务端要在 App 退到后台之后继续活着。
         // 「停止」那条也走它 —— 服务里第一件事就是 `startForeground`，所以不会踩 5 秒的线。
         ContextCompat.startForegroundService(this, intent)
+    }
+
+    // ── 分享进来 ──────────────────────────────────────────────────────
+
+    /**
+     * 处理一次「分享 → clip9」。
+     *
+     * 设计稿 §4 第 2 条：「热的那次立刻送，冷的那次不能丢」。
+     *
+     * ⚠️★ 冷启动那条路绕了一圈，值得写下来：Intent 先被**暂存**在 [PendingShare]，
+     * 这里只负责「把服务端起起来」，等 [refresh] 看到真的 RUNNING 了才开 [WebAppActivity]，
+     * 由那边等 SPA 的 `isReady()` 再真的投递。中途任何一步都不许丢东西。
+     * ⚠️ 这里**不能**同步等服务端起来 —— 那是几秒钟的阻塞，在 UI 线程上就是 ANR。
+     */
+    private fun handleShareIntent(intent: Intent?) {
+        if (ShareIntent.isUnsupportedShare(intent)) {
+            // ⚠️ 分享文件那条还没做 → 明说一句。什么都不说看起来就是「clip9 坏了」。
+            toast(getString(R.string.share_files_unsupported))
+            return
+        }
+        val payload = ShareIntent.parse(intent) ?: return
+        PendingShare.hold(payload)
+        waitingToDeliver = true
+        when (ServerBridge.status()) {
+            ServerBridge.STATUS_RUNNING -> openLocal()
+            // ⚠️ 没起就顺手起起来：用户分享的意图就是「把它发到我的看板上」，
+            // 这里再让他自己去点一下「启动」是说不过去的。
+            ServerBridge.STATUS_IDLE -> sendAction(ServerService.ACTION_START, AppPrefs.port(this))
+            // 过渡态（正在起 / 正在停）：不动手 —— 抢着动手只会撞上 Rust 那边的四态拒绝，
+            // 由 refresh() 接上就够了。
+            else -> Unit
+        }
     }
 
     // ── 地址 / 二维码 ─────────────────────────────────────────────────
