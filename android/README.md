@@ -166,6 +166,47 @@ release 的签名材料也**不进仓库**，通过 `-P` 传（四个都给齐�
   -Psigning.key.password=…
 ```
 
+### 4.1 正式的签名密钥（2026-09-28 生成）
+
+本机那份在 **`~/keystore/clip9/`**（在仓库外，目录与文件都是 `600`）。口令与指纹是同一目录下
+`CREDENTIALS.txt` 里的那几行。走项目脚本是这样（四个 `-P` 参数由 `--` 之后原样转给 Gradle）：
+
+```bash
+bash tools/build-android.sh --release -- \
+  "-Psigning.store.file=$HOME/keystore/clip9/clip9-release.jks" \
+  "-Psigning.store.password=…" \
+  "-Psigning.key.alias=clip9" \
+  "-Psigning.key.password=…"
+```
+
+- 密钥库 `clip9-release.jks`：PKCS12，**4096-bit RSA**，别名 `clip9`，有效期到 2054-02-13。
+- SHA-256 指纹 `E6:B9:C9:E2:D7:E4:0C:E0:FF:98:2A:65:70:EB:05:4C:5B:B5:86:5D:B2:98:3A:83:6E:EF:EB:F4:2E:AA:D5:8F`
+- SHA-1 指纹 `E2:F0:97:42:58:B6:77:7C:9C:AC:DB:83:C8:34:03:20:A1:18:5A:30`
+
+⚠️★ **这把密钥库丢了就再也发不出能覆盖安装的包** —— 同一个 `applicationId`
+（`com.clip9.app`）以后只能用同一把签名。口令可以换（`keytool -storepasswd`，不影响签名身份），
+**密钥库本身不能丢**：备份到密码管理器或离线盘，别只留本机这一份。
+
+⚠️ 它与 Go 版（`com.cloudclip`）那把**互不相干**：`applicationId` 不同就是两个独立的应用，
+没有「必须能覆盖旧版」的包袱，所以没有复用旧密钥的必要。
+
+⚠️★ 私钥留在仓库外这件事**是有判据的**（`tools/android-contract-smoke.mjs` 第 12 条）：
+`android/.gitignore` 里那两条 `*.jks` / `*.keystore` 是防呆 —— Go 版的 workflow 正是
+`base64 --decode > android/app/my-release-key.keystore`，照那个习惯手动解一份进来很自然，
+而那一次 `git add -A` 会把私钥推上公开仓库，**进了 git 历史就再也拿不掉**。
+
+CI 用的是同一把，走这四个 secret（名字与 Go 版一致；⚠️ **得在 clip9 这个仓库里各加一份**）：
+
+| secret | 值 |
+|---|---|
+| `SIGNING_KEY_STORE_BASE64` | `clip9-release.jks.base64` 的全部内容（一行，5748 字符） |
+| `SIGNING_KEY_STORE_PASSWORD` | 见 `~/keystore/clip9/CREDENTIALS.txt` |
+| `SIGNING_KEY_ALIAS` | `clip9` |
+| `SIGNING_KEY_PASSWORD` | 与 store 口令**相同**一个值（PKCS12 只有一份口令） |
+
+⚠️ 口令**刻意不写在这里**（这是公开仓库）。`.github/workflows/android.yml` 的「准备签名材料」
+那一步会把四个一起验，缺任何一个当场报红。
+
 ⚠️ 本机**没有 `gradle` CLI**（PATH 里那个不存在），但有 wrapper —— 所以**一律用 `./gradlew`**。
 wrapper 的发行版已经缓存在 `~/.gradle/wrapper/dists/gradle-8.13-bin`。
 
