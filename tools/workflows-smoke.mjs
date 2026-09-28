@@ -551,7 +551,7 @@ const toolchain = read('rust/rust-toolchain.toml');
 //    容器 `/target`（`src/docker/local.rs` 里就一句 `-v {host_target}:/target`），
 //    产物一直在宿主上，只是路径里多一层 `<triple>`。
 {
-  const label = 'openwrt 的 build.sh 给每个 target 单独的 target 目录（且取产物处同源）';
+  const label = 'openwrt 的 build.sh 给每个 target 单独的 target 目录（且取产物处不拼路径）';
   const problems = [];
   if (buildSh === null) {
     problems.push('读不到 openwrt/scripts/build.sh');
@@ -563,52 +563,47 @@ const toolchain = read('rust/rust-toolchain.toml');
       .split('\n')
       .filter((line) => !/^\s*#/.test(line))
       .join('\n');
-    // ⚠️ 两种写法都认：前缀写成变量（`"$PREFIX$target"`）或直接写在引号里。
-    //    这里比较的是**引号里 `$target` 之前的那一截**，所以两种写法比的是同一个东西。
     // ⚠️ `CARGO_TARGET_DIR` 前面必须**不是标识符字符**：不锚边界的话，
     //    `X_CARGO_TARGET_DIR="…"` 这种「换个名字等于没设」的写法会被当成命中
     //    （变异验证抓到过 —— 判据本来在这条上是瞎的）。
-    const ctd = /(?<![A-Za-z0-9_])CARGO_TARGET_DIR="([^"]*)\$target"/m.exec(code);
-    // 取产物那一步有两副**合法**形状：在该 target 的目录里 `find`（首选，不猜中间层），
-    // 或写死成 `<前缀>$target/$target/release/clip9-server`（**两层** `<triple>`）。
-    const findSrc = /^[ \t]*src="\$\(find "([^"]*)\$target"/m.exec(code);
-    const fixedSrc = /^[ \t]*src="([^"]*)\$target\/\$target\/release\/clip9-server"/m.exec(code);
-    const got = findSrc ?? fixedSrc;
-
-    // 少一层的那种写法（`…$target/release/clip9-server`）单列一条：它是**真出过事**的形状。
-    // ⚠️ 判定必须**按行**做：合法的两层写法 `…$target/$target/release/…` 里面**也含**
-    //    子串 `$target/release/…` —— 拿一个裸正则去测整份代码会把两层写法一起判红
-    //    （实测过：判据自己错杀，看起来像「改错了」）。
-    const naiveLines = code
-      .split('\n')
-      .filter(
-        (line) =>
-          /\$target\/release\/clip9-server/.test(line) &&
-          !/\$target\/\$target\/release\/clip9-server/.test(line),
-      );
-    if (naiveLines.length) {
-      problems.push(
-        '取产物那步写成了 `…$target/release/clip9-server` —— **少一层 `<triple>`**：' +
-          '`--target` 模式下 cargo 的产物在 `…/$target/$target/release/`。' +
-          '改成 `find "$前缀$target" …` 更省心（不再猜中间那几层）。',
-      );
-    }
+    // ⚠️ 而且前缀必须是**具名变量**：内联路径（`="$RUST_DIR/target/cross-$target"`）功能上
+    //    一样对，但第 4 步就没有同一个变量可引用、只能再写一份 —— 那正是旧形状的毛病。
+    const ctd = /(?<![A-Za-z0-9_])CARGO_TARGET_DIR="\$([A-Za-z_][A-Za-z0-9_]*)\$target"/m.exec(code);
     if (!ctd) {
       problems.push(
-        '没找到 `CARGO_TARGET_DIR="…$target"` —— 三个 target 共用 target/ 时，宿主构建脚本' +
-          '会跨镜像复用，第二个 target 起就报 GLIBC not found（cross#724）',
+        '没找到 `CARGO_TARGET_DIR="$<变量>$target"` —— 三个 target 共用 target/ 时，宿主构建' +
+          '脚本会跨镜像复用，第二个 target 起就报 GLIBC not found（cross#724）；' +
+          '而且前缀得是**具名变量**，第 4 步才能引用同一个（否则就是各写一份）',
       );
     }
-    if (!got && !problems.length) {
-      problems.push('没找到取产物那一步（`src="$(find "…$target"…)"` 或两层 `<triple>` 的写法）');
+    // 取产物那一步：⚠️ 只认 `src=` 这个变量名 —— 它同时是后面 `cp` 的输入；
+    //    改了名字这里会红（提示跟着代码改），而不是静默放过。
+    const srcLines = [...code.matchAll(/^[ \t]*src=(.+)$/gm)].map((m) => m[1].trim());
+    if (srcLines.length !== 1) {
+      problems.push('取产物那一步（src=）有 ' + srcLines.length + ' 处 —— 应当只有 1 处');
+    } else {
+      const srcLine = srcLines[0];
+      // ⚠️★ **先判这一条**：它才是真出过事的形状，说的也最具体（写死路径 / 少一层）。
+      //    把 `release/clip9-server` 拼进路径就是少一层来的 —— `--target` 模式下 cargo 会在
+      //    target 目录里**再套一层** `<triple>/`。
+      //    ⚠️ 连「写对了两层」的那种也一起拦下：`find` 已经不猜层数了，没理由再退回写死 ——
+      //    写死就意味着「层数」这件事又回到了脚本里，下次还得靠人记着。
+      if (/release\/clip9-server/.test(srcLine)) {
+        problems.push(
+          '取产物那一步把路径写死了：' + srcLine + '\n' +
+            '    别数那几层 —— 2026-09-28 就是数错一层红的（cross 编完了、`Finished release' +
+            ' profile` 也打出来了，紧接着报「找不到产物」）。改成在该 target 的目录里找。',
+        );
+      }
+      // 再判「两处是不是同一个变量」。
+      if (ctd && !srcLine.includes('"$' + ctd[1] + '$target"')) {
+        problems.push(
+          '取产物那一步没有以 "$' + ctd[1] + '$target" 为根（CARGO_TARGET_DIR 用的正是 $' +
+            ctd[1] + '）—— 两处各写一份的话，改了其中一处就会去别的地方找二进制',
+        );
+      }
     }
-    if (ctd && got && ctd[1] !== got[1]) {
-      problems.push(
-        `target 目录两处不是同一个值：CARGO_TARGET_DIR 那处是 ${JSON.stringify(ctd[1])}，` +
-          `取产物那处是 ${JSON.stringify(got[1])}`,
-      );
-    }
-    if (!problems.length) ok(`${label} —— ${JSON.stringify(ctd[1])}<target>`);
+    if (!problems.length) ok(label + ' —— src= 在 "$' + ctd[1] + '$target" 里找');
   }
   if (problems.length) fail(label, problems.join('\n    '));
 }
