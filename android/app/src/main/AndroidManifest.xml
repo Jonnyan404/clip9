@@ -30,10 +30,26 @@
             android:name=".MainActivity"
             android:exported="true"
             android:launchMode="singleTop">
-            <!-- ⚠️ singleTop：常驻通知点回来时不该再叠一个管理页。 -->
+            <!-- ⚠️ singleTop：常驻通知点回来时不该再叠一个管理页；
+                 ⚠️★ 分享进来时也靠它 —— 走的是 `onNewIntent`（见 MainActivity）。 -->
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+
+            <!--
+              「分享 → clip9」。
+              ⚠️★ 这里**只声明 `text/plain`**：文件那条路还没做（见 `SharePayload.kt` 抬头）。
+              声明了 `image/*` 就会让用户在相册的分享面板里看到 clip9，点进来却只能得到
+              一句「还没做」—— 那比「分享面板里没有 clip9」更糟。
+              ⚠️ 分享的入口放在**管理页**而不是 WebView 页：冷启动时服务端还没起来，
+              得先把服务端起起来（MainActivity 的 `handleShareIntent`），
+              而 `WebAppActivity` 需要有人给它一个地址才能开。
+            -->
+            <intent-filter>
+                <action android:name="android.intent.action.SEND" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="text/plain" />
             </intent-filter>
         </activity>
 

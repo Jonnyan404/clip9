@@ -36,6 +36,27 @@
 
 ---
 
+## 一之二、第二份契约：分享桥（`window.clip9Share`）
+
+「分享 → clip9」是**外壳与页面之间**的另一条契约，两侧**都没有测试运行器**
+（`web-vue3` 是手写前端；这边连编译器都没跑过）。连接全是**按字面量**做的：
+
+| 什么 | 在哪 | 对不上的症状 |
+|---|---|---|
+| 三个方法名 `isReady` / `sendText` / `sendFiles` | `web-vue3/src/share.js` ↔ `WebAppActivity.kt` 里那两个注入的 JS 串 | 注入过去是 `undefined is not a function`，**WebView 会把它吞掉** = 什么都没发生 |
+| `reason` 键（`not-ready` / `no-room` / `empty` / `files-unsupported` / `server-error`） | `share.js` 的 `SHARE_REASONS` ↔ `WebAppActivity.shareReasonText` 的那张 `when` 表 | 落到兜底话「发送没有成功（键名）」上 —— 至少看得见是哪个键 |
+
+⚠️ 这两处由 `node tools/share-bridge-smoke.mjs` 逐字对，**并已接进 CI**
+（`.github/workflows/ci.yml` 的 frontend job）。改名字/加键时它会红 —— 那是提醒，
+不是误报。
+
+⚠️ 分享**只支持文本**（manifest 里只声明 `text/plain`）：文件那条路在 WebView 里做不通
+（页面拿不到路径），候选与取舍在 `docs/specs/android-client.md` §4.3。
+⚠️ 投递是「等 `isReady()` 为真 → 把 payload 交给 `sendText` → 轮询取回 `{ok, reason}`」，
+**两条路都有超时**（各 20 秒），超时**会说出来**而不是静默吞掉。
+
+---
+
 ## 二、怎么构建
 
 ### 1. 交叉编 `.so`
@@ -126,22 +147,31 @@ wrapper 的发行版已经缓存在 `~/.gradle/wrapper/dists/gradle-8.13-bin`。
   也就是说：`build.gradle.kts` / `settings.gradle.kts` / `AndroidManifest.xml` / 资源 是否真的能编过，
   **没有验证**。
 - ⚠️★ **Kotlin 代码从未编译过**（`MainActivity` / `WebAppActivity` / `ServerService` /
-  `ServerBridge` / `AppPrefs` / `ServerAddress`）。写的时候是逐行对着 API 与资源名核的
+  `ServerBridge` / `AppPrefs` / `ServerAddress` / `SharePayload`）。写的时候是逐行对着 API 与资源名核的
   （id / string / color / drawable 都逐个对过），但「对过名字」不等于「编得过」。
+- ⚠️★ **分享那条路的「跑起来对不对」完全没验过。** 它跨了四层：`Intent` 解析 → 起服务端
+  → 开 WebView → 轮询 `isReady()` → 投递 → 取回 `{ok, reason}`。
+  ⚠️ 其中「`evaluateJavascript` 回来的字符串长什么样」**只有真跑一次才知道** ——
+  代码里按 `"true"` / `"null"` / `{"ok":true}` 写并加了注释，但那是**推断**，不是实测。
+  ⚠️ 真机验收的第 6 条（设计稿 §7）就是它。
 - ⚠️ **只有 `arm64-v8a` 的 `.so`**。`armeabi-v7a` 与 `x86_64` 的 Rust target 一个没编
   （`x86_64-linux-android` 连 target 都没装）。`abiFilters` 里列着它们，所以在这两个 ABI 上
   装出来的 APK 会在 `System.loadLibrary` 那一步炸 —— **`abiFilters` 不会替你检查这件事**。
 - ⚠️ **没有在真机或模拟器上跑过**。所以「明文 HTTP 能不能连、自签 HTTPS 那个确认框长什么样、
   前台服务会不会被 ROM 杀掉、锁屏之后还活着吗」这些都**只是照着设计稿写的**。
-- ⚠️ **Rust 侧那半边验过**：`crates/android` 在主机上 `clippy --all-targets -D warnings` 干净、
+- ✅ **Rust 侧那半边验过**：`crates/android` 在主机上 `clippy --all-targets -D warnings` 干净、
   5 条测试全绿（含两条四态状态机的决策表）；`aarch64-linux-android` 也真的编得出来。
+- ✅ **分享桥的 SPA 那半边验过**：`npm run build` 过，且 `node tools/share-bridge-smoke.mjs`
+  的 7 条判据全绿、8 组变异全部按预期变红（见设计稿 §0.4）。
 
 ---
 
 ## 四、还没做的
 
-- **A5 分享菜单**：`ACTION_SEND` → 灌进 WebView 的发送路径，契约是
-  `window.clip9Share = { sendText, sendFiles, isReady }`。
+- **A5 的文件那条**（分享图片/文件）：原稿的 `sendFiles(uris)` 做不到（WebView 拿不到路径），
+  四条候选（base64 / 分块 base64 / `WebViewAssetLoader` / `addWebMessageListener`）
+  与取舍在 `docs/specs/android-client.md` §4.3。⚠️ 倾向最后一条，但它要加 `androidx.webkit`、
+  还要面对「`allowedOriginRules` 对运行时填的远端地址」这件事 —— **是一片单独的活**。
 - **A6 打包**：签名 / 两个 ABI 的 release / CI 里怎么出 APK。
 
 （切片表在 `docs/specs/android-client.md` §0.2。）
@@ -155,12 +185,13 @@ android/
 ├── app/build.gradle.kts          namespace/applicationId/minSdk/abiFilters（⚠️ 契约见 §一）
 ├── app/proguard-rules.pro        ⚠️ R8 会改短类名 → JNI 符号名失效，见 §一
 └── app/src/main/
-    ├── AndroidManifest.xml       权限、两个 Activity、那个前台服务
+    ├── AndroidManifest.xml       权限、两个 Activity、那个前台服务、分享过滤器（只 text/plain）
     ├── java/com/clip9/app/
-    │   ├── MainActivity.kt       原生管理页（每 700ms 轮询 ServerBridge.status）
-    │   ├── WebAppActivity.kt     全屏 WebView（明文 HTTP / 自签证书 / 返回键 / 外链都在这）
+    │   ├── MainActivity.kt       原生管理页（每 700ms 轮询 ServerBridge.status）+ 分享进来的落点
+    │   ├── WebAppActivity.kt     全屏 WebView + 分享投递（明文 HTTP / 自签证书 / 返回键 / 外链也在这）
     │   ├── ServerService.kt      前台服务：唯一起停服务端的地方
     │   ├── ServerBridge.kt       ⚠️ JNI 契约，见 §一
+    │   ├── SharePayload.kt       分享的解析 + 排队（⚠️ 契约见 §一之二）
     │   ├── AppPrefs.kt           端口 / 远端地址（⚠️ 这是**应用偏好**，不是服务端配置）
     │   └── ServerAddress.kt      回环地址 与 局域网地址（⚠️ 两者不是一回事）
     ├── res/layout/               activity_main.xml（管理页）/ activity_webapp.xml（WebView）
