@@ -1,0 +1,17 @@
+*.iml
+.gradle
+/local.properties
+/.idea
+.DS_Store
+/build
+/captures
+.externalNativeBuild
+.cxx
+
+# jniLibs 里的 `.so` 是**构建产物**（由 `tools/sync-android-jni-libs.mjs` 从 `rust/target/` 搬来），
+# 与 Go 那边的 `app/libs/cloudclipservice.aar` 一个待遇：不进仓库。
+#
+# ⚠️★ 只忽略 `.so`，**不**忽略 `jniLibs/<abi>/` 这个目录本身 ——
+# 目录被忽略的话 git 不会往里看，里面的 `.gitkeep` 也就跟着丢了（写了等于没写）。
+# 这样「我们打算出哪几个 ABI」在仓库里看得见，而真正会随着构建变化的东西看不见。
+app/src/main/jniLibs/**/*.so

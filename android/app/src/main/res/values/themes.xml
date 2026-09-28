@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  主题。与父仓库的 Go 版 Android 工程同一套骨架（Material3 + DayNight + 无 ActionBar）。
+  ⚠️ `Base.Theme.Clip9` 这一层是为了让 `values-night` 能只覆盖它需要覆盖的项，
+  见同目录的 `values-night/themes.xml`。
+
+  ⚠️ 这里**只定义主题**，不定义 `TextAppearance.*` 之类的自定义样式：
+  最开始写过两个（`TextAppearance.Clip9.Section` / `.Note`），但布局里用的是
+  主题自带的 `?attr/textAppearanceTitleSmall` 那些 —— 那两个样式没有任何引用。
+  没人读的资源比没有资源更糟（下一个人会以为它在生效）。
+-->
+<resources>
+    <style name="Base.Theme.Clip9" parent="Theme.Material3.DayNight.NoActionBar" />
+
+    <style name="Theme.Clip9" parent="Base.Theme.Clip9" />
+</resources>

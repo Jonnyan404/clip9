@@ -1,0 +1,82 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  界面文案。
+  ⚠️ 这里只有 Android **原生**那两页（管理页 + WebView 壳）的字。看板/分享页的文案在
+  `web-vue3/src/locales/{zh,zh-TW,en,ja}.json`（那是**服务端下发**的，与这边无关，
+  四份都要补的那条规则说的是那边）。
+
+  ⚠️★ 写文案时记住这是**要显示在手机上的字**，不是注释：
+  别写 `**加粗**` 这种 markdown（屏幕上会原样出现星号）、别为了对齐在字符串里排版
+  （换行与缩进都会被原样保留），要换行就写 `\n`。
+-->
+<resources>
+    <string name="app_name">clip9</string>
+
+    <!-- 状态 -->
+    <string name="status_idle">未启动</string>
+    <string name="status_running">运行中</string>
+    <string name="status_stopping">正在停止…</string>
+    <string name="status_starting">正在启动…</string>
+    <string name="status_label">服务端：%1$s</string>
+
+    <!-- 启停 -->
+    <string name="action_start">启动服务端</string>
+    <string name="action_stop">停止服务端</string>
+    <string name="action_busy">请稍候…</string>
+
+    <!-- 本机地址 -->
+    <string name="section_local">本机地址</string>
+    <string name="copy_address">复制地址</string>
+    <string name="address_copied">地址已复制</string>
+    <string name="show_qr">显示二维码</string>
+    <string name="hide_qr">收起二维码</string>
+    <string name="open_local_ui">打开本机界面</string>
+    <string name="no_address_yet">（先启动服务端，这里才会出现地址）</string>
+
+    <!-- 端口 -->
+    <string name="port_label">端口</string>
+    <string name="port_invalid">端口要在 1 到 65535 之间</string>
+    <string name="port_saved">端口已保存</string>
+    <string name="save">保存</string>
+    <string name="port_note">端口被占用时服务端会直接报错，不会自己换一个 —— 静默换端口会让别的设备上填的地址永远连不上。</string>
+
+    <!-- 远端 -->
+    <string name="section_remote">远端服务端</string>
+    <string name="remote_hint">http://192.168.1.10:9501/</string>
+    <string name="open_remote_ui">打开远端界面</string>
+    <string name="remote_empty">先填一个远端地址</string>
+
+    <!-- 其它 -->
+    <string name="section_other">其它</string>
+    <string name="battery_whitelist">加入电池优化白名单</string>
+    <string name="battery_already">已经在白名单里了</string>
+    <string name="battery_unavailable">这台设备打不开电池优化设置</string>
+    <string name="battery_note">不做这一步，服务端会在锁屏一段时间后被系统杀掉，而日志里什么都不会留下（看起来像「莫名其妙断连」）。</string>
+    <string name="webview_check">检查 WebView 版本</string>
+    <string name="webview_version">WebView UA：%1$s</string>
+    <string name="webview_old">这台设备的 WebView 偏旧（Chrome %1$d），界面可能显示不全或一片白。不是这个 App 的问题，是系统组件没更新。</string>
+    <string name="data_dir">数据目录：%1$s</string>
+    <string name="data_dir_note">（应用私有目录，卸载即清空。配置文件 config.json 也在里面。）</string>
+    <string name="notification_denied">没给通知权限：服务端照常运行，但通知栏里看不到它。</string>
+    <string name="version_format">v%1$s · 本地组件 %2$s</string>
+
+    <!-- 常驻通知 -->
+    <string name="notification_channel_name">服务端运行状态</string>
+    <string name="notification_channel_desc">显示本机服务端是否在运行</string>
+    <string name="notification_starting">正在启动服务端…</string>
+    <!-- 文案要说清楚**为什么**要常驻（ARCHITECTURE §4.1 第 2 条）：
+         「clip9 正在运行」会让用户以为 App 在偷偷做事。 -->
+    <string name="notification_running">别的设备现在可以连到这台手机：%1$s</string>
+    <string name="notification_stop">停止</string>
+
+    <!-- 本地组件缺失（.so 没搬进来 / ABI 不对）。⚠️ 这一条**必须**给出下一步动作，
+         否则用户只看到一句「没加载成功」而无从下手。 -->
+    <string name="lib_missing">本地组件（libclip9_android.so）没加载成功：%1$s\n\n跑 node tools/sync-android-jni-libs.mjs 把 .so 搬进 jniLibs/，再重新构建。</string>
+
+    <!-- 自签 HTTPS 的确认框。⚠️ 两个占位符的顺序与 WebAppActivity.askAboutCertificate 一致：
+         ① primaryError ② SHA-256 指纹。 -->
+    <string name="ssl_title">证书验证没通过</string>
+    <string name="ssl_message">这个地址用了自签证书（或者证书链有问题）。\n\n%1$s\n\n指纹（SHA-256）：\n%2$s\n\n只在你确定那台服务端是自己的时候继续 —— 继续就等于放弃这次校验。</string>
+    <string name="ssl_continue">仍然继续</string>
+    <string name="ssl_cancel">取消</string>
+</resources>
