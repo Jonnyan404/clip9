@@ -13,9 +13,15 @@ name: Release
 # ⚠️ 刻意**不传 `generate_release_notes`**：那是你写的发布说明，不该被自动生成的盖掉。
 #
 # 产物（2026-09-28 定）：
-#   clip9-cli-<target>.tar.gz / .zip             服务端二进制，**前端已编在里面**（一个文件丢过去就能跑）
-#                                                ⚠️ Windows 那份是 `.zip`（双击就能解，Go 那边同一条规矩）
-#   clip9-desktop-<target>.<dmg|deb|AppImage|msi|exe>
+#   `clip9-cli-<平台>-<架构>.tar.gz`（Windows 那份是 `.zip`）—— 服务端二进制，
+#   **前端已编在里面**（一个文件丢过去就能跑）。`<平台>-<架构>` 只有这几种：
+#     linux-x86_64 / linux-aarch64 / linux-armv7
+#     macos-x86_64 / macos-aarch64
+#     windows-x86_64 / windows-aarch64
+#   ⚠️★ 写的是**这几个短名字**，不是 `x86_64-unknown-linux-musl` 那种三元组 ——
+#   三元组只在 CI 内部给 cargo 用（矩阵里的 `target`），产物名用 `label`。
+#   用它的地方有两处：`Dockerfile` 的 `wget` 与 homebrew 那步。
+#   `clip9-desktop-<平台>-<架构>.<dmg|deb|AppImage|msi|exe>`
 #                                                桌面端，**含服务端**（见 desktop job 的注释）
 #   clip9:…（容器镜像）                          由 Release 里那份二进制做的，**镜像里不编译**
 #   Formula/clip9.rb + Casks/clip9.rb            Homebrew tap（二进制与桌面端各一份）
@@ -96,10 +102,17 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        target:
-          - x86_64-unknown-linux-musl
-          - aarch64-unknown-linux-musl
-          - armv7-unknown-linux-musleabihf
+        # `target` 是 cargo 要的那串；`label` 只用来拼**产物名**：`linux-x86_64` 比
+        # `x86_64-unknown-linux-musl` 好念得多（Jonny 2026-09-28：「Linux 就显示 Linux」）。
+        # ⚠️ 两者贴着写是为了能一眼对上；拼错了会在**用它的地方**当场炸
+        #    （Dockerfile 的 `wget` 会 404、homebrew 那步会报「有产物没取到」），不会静默。
+        include:
+          - target: x86_64-unknown-linux-musl
+            label: linux-x86_64
+          - target: aarch64-unknown-linux-musl
+            label: linux-aarch64
+          - target: armv7-unknown-linux-musleabihf
+            label: linux-armv7
     steps:
       - uses: actions/checkout@v7
 
@@ -138,7 +151,7 @@ jobs:
         working-directory: rust
         run: |
           set -euo pipefail
-          name="$PACKAGE-${{ matrix.target }}"
+          name="$PACKAGE-${{ matrix.label }}"
           mkdir -p "dist/$name"
           # ⚠️ 落进包里的文件就叫 $PACKAGE（`clip9-cli`）—— 命名表说的是**程序**的名字。
           #    `$BIN` 那个名字是给桌面端的 bundle 用的（见 desktop job）。
@@ -149,7 +162,7 @@ jobs:
 
       - uses: actions/upload-artifact@v7
         with:
-          name: ${{ env.PACKAGE }}-${{ matrix.target }}
+          name: ${{ env.PACKAGE }}-${{ matrix.label }}
           path: |
             rust/dist/*.tar.gz
             rust/dist/*.sha256
@@ -160,7 +173,11 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        target: [aarch64-apple-darwin, x86_64-apple-darwin]
+        include:
+          - target: aarch64-apple-darwin
+            label: macos-aarch64
+          - target: x86_64-apple-darwin
+            label: macos-x86_64
     steps:
       - uses: actions/checkout@v7
 
@@ -180,7 +197,7 @@ jobs:
         working-directory: rust
         run: |
           set -euo pipefail
-          name="$PACKAGE-${{ matrix.target }}"
+          name="$PACKAGE-${{ matrix.label }}"
           mkdir -p "dist/$name"
           cp "target/${{ matrix.target }}/release/$BIN" "dist/$name/$PACKAGE"
           cp ../LICENSE ../README.md "dist/$name/"
@@ -189,7 +206,7 @@ jobs:
 
       - uses: actions/upload-artifact@v7
         with:
-          name: ${{ env.PACKAGE }}-${{ matrix.target }}
+          name: ${{ env.PACKAGE }}-${{ matrix.label }}
           path: |
             rust/dist/*.tar.gz
             rust/dist/*.sha256
@@ -219,7 +236,11 @@ jobs:
         #    aarch64 的 21 个汇编是 `.S`（由 cl.exe 汇编），而 runner 镜像里两套 MSVC
         #    工具链都在（`VC.Tools.x86.x64` / `VC.Tools.ARM64`）。
         #    **以 CI 第一次跑的结果为准** —— 挂了先看这一格，别先怀疑代码。
-        target: [x86_64-pc-windows-msvc, aarch64-pc-windows-msvc]
+        include:
+          - target: x86_64-pc-windows-msvc
+            label: windows-x86_64
+          - target: aarch64-pc-windows-msvc
+            label: windows-aarch64
     env:
       AWS_LC_SYS_PREBUILT_NASM: "1"
     steps:
@@ -251,7 +272,7 @@ jobs:
         run: |
           $ErrorActionPreference = 'Stop'
           $pkg  = $env:PACKAGE
-          $name = "$pkg-${{ matrix.target }}"
+          $name = "$pkg-${{ matrix.label }}"
           New-Item -ItemType Directory -Force -Path "dist/$name" | Out-Null
           Copy-Item "target/${{ matrix.target }}/release/$env:BIN.exe" "dist/$name/$pkg.exe"
           Copy-Item ../LICENSE, ../README.md "dist/$name/"
@@ -267,7 +288,7 @@ jobs:
 
       - uses: actions/upload-artifact@v7
         with:
-          name: ${{ env.PACKAGE }}-${{ matrix.target }}
+          name: ${{ env.PACKAGE }}-${{ matrix.label }}
           path: |
             rust/dist/*.zip
             rust/dist/*.sha256
@@ -303,18 +324,22 @@ jobs:
         include:
           - os: macos-latest
             target: aarch64-apple-darwin
+            label: macos-aarch64
             bundles: app,dmg
           - os: macos-latest
             target: x86_64-apple-darwin
+            label: macos-x86_64
             bundles: app,dmg
           - os: ubuntu-22.04
             target: x86_64-unknown-linux-gnu
+            label: linux-x86_64
             bundles: deb,appimage
           # ⚠️ 桌面端只出 x86_64：Windows 的 ARM64 机器能跑 x64 程序（系统自带模拟），
           #    而 `tauri build` 打 ARM64 的 `.msi` / NSIS 是另一条少人走的路 ——
           #    那是**单独一块**，不顺手加。（CLI 那边才两个架构都出，见上面那个 windows job。）
           - os: windows-latest
             target: x86_64-pc-windows-msvc
+            label: windows-x86_64
             bundles: msi,nsis
     runs-on: ${{ matrix.os }}
     env:
@@ -383,19 +408,95 @@ jobs:
           for f in "$base"/dmg/*.dmg "$base"/deb/*.deb "$base"/appimage/*.AppImage \
                    "$base"/msi/*.msi "$base"/nsis/*-setup.exe; do
             [ -e "$f" ] || continue
-            cp "$f" "$out/clip9-desktop-${{ matrix.target }}.${f##*.}"
+            cp "$f" "$out/clip9-desktop-${{ matrix.label }}.${f##*.}"
           done
           ls -l "$out"
 
       - uses: actions/upload-artifact@v7
         with:
-          name: clip9-desktop-${{ matrix.target }}
+          name: clip9-desktop-${{ matrix.label }}
           path: rust/target/desktop-release/*
           if-no-files-found: error
 
   # 收口到一个 job 传产物：并行 job 各自去动 Release 会互相打架。
+  # ── 资产名对不对 ──────────────────────────────────────────────────────
+  #
+  # ⚠️★ 这些名字是**跨文件**的约定：release.yml 各 job 矩阵里的 `label`、`Dockerfile`
+  # 里那三条 `wget`、homebrew 那步的 `sha` 查找。改一处而没改另一处，症状**只在发布时**
+  # 出现（docker job 的 wget 404、homebrew 报「有产物没取到」）—— 这一步把它挪到最前面。
+  #
+  # ⚠️ 刻意**不写 `if:`**：手动跑一次、tag 留空的那次冒烟也要走到这里（它不上传，但名字照样
+  # 能验）。⚠️ 也正因为不写 `if:`，它是唯一一个在两种触发下都跑的「产物」job。
+  assets:
+    needs: [linux, macos, windows, desktop]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/download-artifact@v8
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - name: 资产名对不对
+        run: |
+          set -euo pipefail
+          # 每行是 `<产物名>|<谁在用它>` —— 报错时能直接指到该改哪个文件。
+          expected=(
+            "clip9-cli-linux-x86_64.tar.gz|Dockerfile 的 amd64 与 homebrew formula 的 Linux/intel"
+            "clip9-cli-linux-aarch64.tar.gz|Dockerfile 的 arm64 与 homebrew formula 的 Linux/arm"
+            "clip9-cli-linux-armv7.tar.gz|Dockerfile 的 arm/v7"
+            "clip9-cli-macos-aarch64.tar.gz|homebrew formula 的 macOS/arm"
+            "clip9-cli-macos-x86_64.tar.gz|homebrew formula 的 macOS/intel"
+            "clip9-desktop-macos-aarch64.dmg|homebrew cask 的 macOS/arm"
+            "clip9-desktop-macos-x86_64.dmg|homebrew cask 的 macOS/intel"
+          )
+          ok=1
+          # ⚠️★ 变量后面跟非 ASCII 字符时**必须写 `${}`**：`$who）` 里的全角括号会被 bash
+          # 当成变量名的一部分（`set -u` 下直接报 unbound variable）—— 实测踩过。
+          for row in "${expected[@]}"; do
+            f="${row%%|*}"
+            who="${row##*|}"
+            if [ -f "artifacts/$f" ]; then
+              echo "  ✅ ${f}  （${who}）"
+            else
+              echo "::error::缺 ${f} —— ${who} 认的就是这个名字"
+              ok=0
+            fi
+          done
+          if [ "$ok" != 1 ]; then
+            echo "改了矩阵里的 label、却没改引用它的地方？"
+            echo "--- artifacts 里实际有什么 ---"
+            find artifacts -type f | sort
+            exit 1
+          fi
+          echo "以上名字都对得上"
+
+      # ⚠️★ 手动 docker 流程里还有第四处「平台串 → 标签」的映射，而它**不在产物里** ——
+      # 所以这里把那一段 case **原样抽出来执行**，拿它的结果去对产物。
+      # ⚠️ 不在这条判据里再抄一份映射：抄一份就是又一处会漂的地方（这条判据的意义就没了）。
+      - name: 手动 docker 流程那份映射也对得上
+        run: |
+          set -euo pipefail
+          block=$(awk '/case "\$p" in/,/^ *esac/' .github/workflows/docker.yml)
+          if [ -z "$block" ]; then
+            echo "::error::没能从 docker.yml 里抽出那段 case —— 它被改写过了，这条判据失效了"
+            exit 1
+          fi
+          echo "抽出来的映射："
+          echo "$block"
+          for p in linux/amd64 linux/arm64 linux/arm/v7; do
+            label=$(p="$p"; eval "$block"; printf '%s' "$label")
+            if [ -f "artifacts/clip9-cli-${label}.tar.gz" ]; then
+              echo "  ✅ ${p} → clip9-cli-${label}.tar.gz"
+            else
+              echo "::error::docker.yml 把 ${p} 映射成 ${label}，但资产里没有 clip9-cli-${label}.tar.gz"
+              exit 1
+            fi
+          done
+
   publish:
-    needs: [info, linux, macos, windows, desktop]
+    needs: [info, assets]
     # 发布事件当然要传；手动跑时**填了 tag 才传**（留空 = 只构建）。
     if: github.event_name == 'release' || inputs.tag != ''
     runs-on: ubuntu-latest
@@ -530,12 +631,12 @@ jobs:
           sums="$(cat dl/sums.txt)"
           sha() { echo "$sums" | awk -v f="$1" '$2 == f { print $1 }'; }
 
-          cli_arm=$(sha clip9-cli-aarch64-apple-darwin.tar.gz)
-          cli_intel=$(sha clip9-cli-x86_64-apple-darwin.tar.gz)
-          lx_arm=$(sha clip9-cli-aarch64-unknown-linux-musl.tar.gz)
-          lx_intel=$(sha clip9-cli-x86_64-unknown-linux-musl.tar.gz)
-          dmg_arm=$(sha clip9-desktop-aarch64-apple-darwin.dmg)
-          dmg_intel=$(sha clip9-desktop-x86_64-apple-darwin.dmg)
+          cli_arm=$(sha clip9-cli-macos-aarch64.tar.gz)
+          cli_intel=$(sha clip9-cli-macos-x86_64.tar.gz)
+          lx_arm=$(sha clip9-cli-linux-aarch64.tar.gz)
+          lx_intel=$(sha clip9-cli-linux-x86_64.tar.gz)
+          dmg_arm=$(sha clip9-desktop-macos-aarch64.dmg)
+          dmg_intel=$(sha clip9-desktop-macos-x86_64.dmg)
           for v in "$cli_arm" "$cli_intel" "$lx_arm" "$lx_intel" "$dmg_arm" "$dmg_intel"; do
             [ -n "$v" ] || { echo "::error::有产物没取到，上面 ls 里看看少了哪个"; exit 1; }
           done
@@ -551,22 +652,22 @@ jobs:
 
             on_macos do
               on_arm do
-                url "${base}/clip9-cli-aarch64-apple-darwin.tar.gz"
+                url "${base}/clip9-cli-macos-aarch64.tar.gz"
                 sha256 "${cli_arm}"
               end
               on_intel do
-                url "${base}/clip9-cli-x86_64-apple-darwin.tar.gz"
+                url "${base}/clip9-cli-macos-x86_64.tar.gz"
                 sha256 "${cli_intel}"
               end
             end
 
             on_linux do
               on_arm do
-                url "${base}/clip9-cli-aarch64-unknown-linux-musl.tar.gz"
+                url "${base}/clip9-cli-linux-aarch64.tar.gz"
                 sha256 "${lx_arm}"
               end
               on_intel do
-                url "${base}/clip9-cli-x86_64-unknown-linux-musl.tar.gz"
+                url "${base}/clip9-cli-linux-x86_64.tar.gz"
                 sha256 "${lx_intel}"
               end
             end
@@ -590,12 +691,12 @@ jobs:
 
             on_arm do
               sha256 "${dmg_arm}"
-              url "${base}/clip9-desktop-aarch64-apple-darwin.dmg"
+              url "${base}/clip9-desktop-macos-aarch64.dmg"
             end
 
             on_intel do
               sha256 "${dmg_intel}"
-              url "${base}/clip9-desktop-x86_64-apple-darwin.dmg"
+              url "${base}/clip9-desktop-macos-x86_64.dmg"
             end
 
             name "clip9"

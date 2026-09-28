@@ -5,7 +5,7 @@ name: Docker
 # 用途：① 给一个已经发过的 tag 补镜像；② 重推同一标签（镜像里的东西要修）；
 #      ③ 只构其中某个平台。
 #
-# ⚠️★ 镜像里**不编译**：`packaging/docker/Dockerfile` 从那个 tag 的 Release 下载二进制 ——
+# ⚠️★ 镜像里**不编译**：仓库根那份 `Dockerfile` 从那个 tag 的 Release 下载二进制 ——
 # 所以那个 Release 必须**已经存在、资产已经传完**，否则镜像里的 `wget` 会拿到 404。
 # 下面第一步就是先把这个问清楚，别等构建到一半才发现。
 #
@@ -57,18 +57,20 @@ jobs:
           set -euo pipefail
           gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets[].name' > assets.txt
           cat assets.txt
-          # 平台串 → 归档名。⚠️ 顺手在这里校验平台串：写错的平台在 buildx 那一步才报，
-          # 报出来的是「找不到镜像」，跟「平台名打错了」看不出关系。
+          # 平台串 → 归档名里那个**短标签**。⚠️ 顺手在这里校验平台串：写错的平台在 buildx
+          # 那一步才报，报出来的是「找不到镜像」，跟「平台名打错了」看不出关系。
+          # ⚠️ 这三个标签必须与 release.yml 各 job 矩阵里的 `label`、`Dockerfile` 的 case
+          #    三处一致（release.yml 的 `assets` job 就是盯这件事的，但它盯不到这里）。
           IFS=',' read -ra plats <<< "$PLATFORMS"
           for p in "${plats[@]}"; do
             case "$p" in
-              linux/amd64) t=x86_64-unknown-linux-musl ;;
-              linux/arm64) t=aarch64-unknown-linux-musl ;;
-              linux/arm/v7) t=armv7-unknown-linux-musleabihf ;;
+              linux/amd64)  label=linux-x86_64 ;;
+              linux/arm64)  label=linux-aarch64 ;;
+              linux/arm/v7) label=linux-armv7 ;;
               *) echo "::error::不认识的平台 $p"; exit 1 ;;
             esac
-            grep -qx "clip9-cli-${t}.tar.gz" assets.txt \
-              || { echo "::error::$TAG 这个 Release 里没有 clip9-cli-${t}.tar.gz —— 镜像里的 wget 会 404"; exit 1; }
+            grep -qx "clip9-cli-${label}.tar.gz" assets.txt \
+              || { echo "::error::$TAG 这个 Release 里没有 clip9-cli-${label}.tar.gz —— 镜像里的 wget 会 404"; exit 1; }
           done
 
       - name: 算镜像标签

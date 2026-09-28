@@ -28,17 +28,19 @@ WORKDIR /app/server-node
 COPY entrypoint.sh /app/entrypoint.sh
 
 # 按平台映射 Release 归档名并解压出二进制。
+# ⚠️★ 映射出来的是**产物名里那个短标签**（`linux-x86_64` 那种），**不是** cargo 的
+# 三元组 —— 发布出去的文件名就是 `<平台>-<架构>`（见 release.yml 的产物清单）。
 # ⚠️ armv7 时 TARGETARCH=arm 且 TARGETVARIANT=v7 —— **两个都要看**，只看 arch 会把
 # 32 位设备喂给 64 位的包。
-# ⚠️ 包里的二进制在 `clip9-cli-<triple>/` 下（发布时就这么打的），所以解到 /tmp 再搬到
+# ⚠️ 包里的二进制在 `clip9-cli-<平台>-<架构>/` 下（发布时就这么打的），所以解到 /tmp 再搬到
 # 目标位置；不用 `--strip-components`（busybox 的 tar 没有这个 GNU 选项）。
 # 末尾那下 `-v` 是**构建期**的核对：跑不起来（架构不对 / 不是静态）就当场编不出来，
 # 而不是等容器起来了才发现。
 RUN chmod +x /app/entrypoint.sh \
  && case "${TARGETARCH}-${TARGETVARIANT}" in \
-      amd64-*) B="x86_64-unknown-linux-musl";; \
-      arm64-*) B="aarch64-unknown-linux-musl";; \
-      arm-v7)  B="armv7-unknown-linux-musleabihf";; \
+      amd64-*) B="linux-x86_64";; \
+      arm64-*) B="linux-aarch64";; \
+      arm-v7)  B="linux-armv7";; \
       *) echo "不支持的平台: ${TARGETARCH}-${TARGETVARIANT}"; exit 1;; \
     esac \
  && wget -q -O - "https://github.com/Jonnyan404/clip9/releases/download/${VERSION}/clip9-cli-${B}.tar.gz" \
