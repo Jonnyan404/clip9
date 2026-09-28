@@ -8,6 +8,10 @@
 # 一个未跟踪目录：一次 `git add -A` 就会把几万个构建产物收进仓库，且**再也拿不掉**。
 # 判据见 `tools/android-contract-smoke.mjs`（第 12 条）。
 build/
+# ⚠️★ `.kotlin/` 同病：Kotlin 2.x 会在这儿放会话与增量编译缓存。它现在**是空的**
+# （只有一个空的 `sessions/`），而 git 不收空目录 —— 于是**洞是隐形的**：
+# `git status` 干净，等哪次编译往里写了文件才发现。名单与判据同一处维护（第 12 条）。
+.kotlin/
 /captures
 .externalNativeBuild
 .cxx

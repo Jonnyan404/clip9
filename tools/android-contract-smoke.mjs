@@ -360,17 +360,21 @@ if (unreadB.length) {
   }
 }
 
-// ── 判据 12：Gradle 的产物目录真的被忽略了 ─────────────────────────────────
+// ── 判据 12：Gradle / Kotlin 的产物路径真的被忽略了 ────────────────────────
 //
 // ⚠️★ `android/.gitignore` 里原本写的是 `/build` —— 那只匹配 `android/build`，
 // 而 **AGP 的主产物在 `android/app/build/`**。2026-09-28 第一次真编时它冒了出来
 // （105 MB / 438 个文件），`git status` 把它当成一个未跟踪目录：
 // 一次 `git add -A` 就会把几万个构建产物收进仓库，**而且进了历史就再也拿不掉**。
 //
+// ⚠️★ 这一类东西的共同特征是「**洞是隐形的**」，所以逐条点名比「看起来没事」重要：
+// 产物路径要么还不存在（没编过），要么存在但是**空的**（`android/.kotlin/` 就是，
+// 它只有一个空的 `sessions/`）—— 而 git 不收空目录，于是 `git status` 一直干净。
+//
 // ⚠️ 借 `git check-ignore` 判，不自己实现 gitignore 匹配：规则语法（锚定、`**`、
 // 目录尾斜杠、`!` 取反）自己抄一遍必然抄漏，而漏掉的那部分正是「以为忽略了其实没有」。
 {
-  const label = 'android/.gitignore 真的忽略了 Gradle 的产物目录';
+  const label = 'android/.gitignore 真的忽略了构建产物（Gradle / Kotlin / 本机 SDK 路径）';
   const ignored = (path) => {
     try {
       execFileSync('git', ['-C', ROOT, 'check-ignore', '-q', '--', path], { stdio: 'ignore' });
@@ -380,20 +384,34 @@ if (unreadB.length) {
       return err.status === 1 ? false : null;
     }
   };
-  // ⚠️ 路径带尾斜杠 = 「这是个**目录**」。不带的话，对一个当前不存在的目录
+  // ⚠️ 目录要带尾斜杠 = 「这是个**目录**」。不带的话，对一个当前不存在的目录
   // （比如还没编过时 `android/app/build`），git 没法判定它是目录，
   // 于是目录规则（`build/`）匹配不上，判据会**误报**。
-  const appBuild = ignored('android/app/build/');
-  const rootBuild = ignored('android/build/');
-  if (appBuild === null || rootBuild === null) {
+  //
+  // ⚠️★ 这份名单是**可扩展的**：新加一个「构建时会往里写东西」的路径就在这儿加一条，
+  // 判据立刻开始盯它。加之前先确认 `android/.gitignore` 里真有对应的那一条。
+  const ARTIFACTS = [
+    ['android/app/build/', 'AGP 的主产物在这儿'],
+    ['android/build/', '根工程的 reports'],
+    ['android/.gradle/', 'Gradle 自己的缓存'],
+    ['android/.kotlin/', 'Kotlin 2.x 的会话与增量缓存（现在是空的，所以洞看不见）'],
+    ['android/local.properties', '指向本机 SDK 的绝对路径（每台机器都不一样）'],
+  ];
+  const results = ARTIFACTS.map(([path, why]) => [path, why, ignored(path)]);
+  if (results.some(([, , r]) => r === null)) {
     fail(label, `${ROOT} 不是一个 git 仓库 —— 这条判据要靠 git 自己解释 .gitignore`);
-  } else if (appBuild && rootBuild) {
-    ok(label);
+  } else if (results.length === 0) {
+    // ⚠️★ 名单空了 = 这条判据**什么都没在判**，却会打印一个 ✓。
+    // 留一条下限，免得重构时把名单删干净、门禁变成绿灯摆设。
+    fail(label, 'ARTIFACTS 名单是空的 —— 这条判据什么都没在判');
   } else {
-    const bad = [];
-    if (!appBuild) bad.push('android/app/build（AGP 的主产物在这儿）');
-    if (!rootBuild) bad.push('android/build');
-    fail(label, `没被忽略：${bad.join('、')}`);
+    const bad = results.filter(([, , r]) => !r);
+    if (!bad.length) ok(`${label} —— ${results.length} 条`);
+    else
+      fail(
+        label,
+        `没被忽略：\n    ${bad.map(([path, why]) => `${path}（${why}）`).join('\n    ')}`,
+      );
   }
 }
 
