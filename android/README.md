@@ -207,6 +207,14 @@ CI 用的是同一把，走这四个 secret（名字与 Go 版一致；⚠️ **
 ⚠️ 口令**刻意不写在这里**（这是公开仓库）。`.github/workflows/android.yml` 的「准备签名材料」
 那一步会把四个一起验，缺任何一个当场报红。
 
+⚠️★ **`release.yml` 调 `android.yml` 时必须写 `secrets: inherit`**（那两处 `uses:` 下面）。
+2026-09-28 就因为漏了它，发版时这一格报了「先给 clip9 这个仓库加上这几个 secret」——
+而 `gh secret list` 里四个都在。**可复用工作流不会自动拿到调用方的 secret**（GitHub 的规则是
+「secrets are only passed to directly called workflow」），不写就是四个**空串**。
+⚠️★ 症状很容易认错方向：**手动 dispatch 是好的**（那时它是顶层工作流、直接读得到仓库 secret），
+只有被 `release.yml` 调用时才红 —— 看着像「release 那条路坏了」。
+`tools/workflows-smoke.mjs` 的第 8 条判据钉着这件事。
+
 ⚠️ 本机**没有 `gradle` CLI**（PATH 里那个不存在），但有 wrapper —— 所以**一律用 `./gradlew`**。
 wrapper 的发行版已经缓存在 `~/.gradle/wrapper/dists/gradle-8.13-bin`。
 
