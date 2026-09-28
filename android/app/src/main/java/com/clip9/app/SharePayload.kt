@@ -13,8 +13,15 @@ import android.content.Intent
  * ⚠️★ **只支持文本**。文件那条路（`EXTRA_STREAM` / `ACTION_SEND_MULTIPLE`）还没做 ——
  * 原因不是懒：WebView 里拿不到文件路径，而 SPA 的上传路径要真正的 `File`。
  * ⚠️ 所以 `AndroidManifest.xml` 里的 `intent-filter` **只声明 `text/plain`** ——
- * 声明了 `image/*` 就会让用户在相册的分享面板里看到 clip9，点进来却只能说「还没做」。
- * 那比「分享面板里没有 clip9」更糟。
+ * 声明了图片那一类 mimeType（形如「`image/` 后面跟一个星号」）会让用户在相册的分享面板里
+ * 看到 clip9，点进来却只能说「还没做」。那比「分享面板里没有 clip9」更糟。
+ *
+ * ⚠️★ 上面那句为什么绕开不写：**Kotlin 的块注释支持嵌套**，注释里那个「斜杠 + 星号」
+ * 会再开一层注释，于是这条 KDoc 的内层先被关闭、外层一直不闭合
+ * （`*/` 全在文件中间），**把后面剩下的整个文件都吞进注释里**。
+ * 症状不是报「注释没闭合」，而是十几条 `Unresolved reference: PendingShare` 这种
+ * 看着像「少了几个类」的错 —— 2026-09-28 真踩过，为此白跑了一趟完整构建。
+ * 判据见 `tools/android-contract-smoke.mjs`（它按词法扫，能提前抓住）。
  */
 
 /** 一次分享携带的正文。 */
