@@ -1,8 +1,14 @@
-//! SPA 外壳的读取与注入。
+//! SPA 外壳的注入。
 //!
 //! 对应 Go `spa_shell.go`。
 //!
-//! 为什么由服务端做这件事：
+//! ⚠️ 这个模块现在只管**注入**（纯字符串函数，好测）。**读取**搬去了
+//! [`crate::static_files`] —— 因为外壳有两个来源（外部目录 `-static` 与**内嵌**），
+//! 而「从哪来」只该有一处判定。原来这里的 `read_shell(dir)` 只能读目录，
+//! 于是内嵌那一份拿不到外壳：症状是**分享页的 OG 卡片退化成通用卡片**
+//!（`/s/<token>` 注入不进去），而它不报错。
+//!
+//! 为什么由服务端做注入这件事：
 //!
 //! 1. **OG 卡片**：分享链接要能被微信 / Telegram / Slack 展开，而抓取程序**不执行 JS**、
 //!    浏览器也不会把 `#` 之后的部分发给服务器 —— 于是 token 必须在**路径**里，
@@ -15,18 +21,8 @@
 //! （`<head>` / `</head>` / 一处 `<title>`）。**外壳形状出乎意料时不注入**，
 //! 由调用方回落到通用卡片 —— 宁可少一张预览卡，也不要吐出一份半截 HTML。
 
-use std::path::Path;
-
 const SHELL_HEAD_OPEN: &str = "<head>";
 const SHELL_HEAD_END: &str = "</head>";
-
-/// 读前端外壳（`<static_dir>/index.html`）。没有前端（只跑 API）时返回 `None`。
-#[must_use]
-pub fn read_shell(static_dir: Option<&Path>) -> Option<String> {
-    let dir = static_dir?;
-    let html = std::fs::read_to_string(dir.join("index.html")).ok()?;
-    (!html.is_empty()).then_some(html)
-}
 
 /// 外壳的基准目录：`<prefix>/`（没有 prefix 就是 `/`）。
 ///

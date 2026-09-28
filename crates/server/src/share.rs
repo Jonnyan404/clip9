@@ -873,8 +873,12 @@ pub async fn landing(
 
     // 正常路径：把卡片注入 SPA 外壳。没有外壳（只跑 API）就只给一张卡 ——
     // 抓取程序要的本来就是标签，而真人那边本来也没有前端可以看。
+    //
+    // ⚠️ 外壳从 `static_files` 取（**外部目录 > 内嵌**，判定只在那儿）。
+    // 别在这里写 `static_dir` —— 那样内嵌那一份就没有外壳可注入，
+    // 症状是分享页的摘要退化成通用卡片，而它不报错。
     let base = spa_shell::base_href(&prefix);
-    let body = match spa_shell::read_shell(state.static_dir.as_deref()) {
+    let body = match crate::static_files::read_shell(state.static_dir.as_deref()) {
         Some(shell) => {
             spa_shell::inject_tags(&shell, &base, &card.title, &share_card::head_tags(&card))
                 .unwrap_or_else(|| share_card::fallback_page(&card))

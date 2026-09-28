@@ -79,6 +79,28 @@ fn open_app() -> (Router, tempfile::TempDir) {
     (router(state), dir)
 }
 
+/// 一个**有静态目录、但里面没有 `index.html`** 的服务端 —— 也就是「没有外壳」。
+///
+/// ⚠️★ 为什么不能再用 `static_dir = None` 造这个状态：2026-09-28 起前端产物**编在
+/// `clip9-server` 里面**（`crates/server/static/` + `build.rs`），于是 `None` 只表示
+/// 「没传 `-static`」，**不再**表示「没有前端」——内嵌那一份恒在。
+/// 所以「没有外壳」现在只剩这一条路：**库**被塞了一个不含 `index.html` 的目录。
+/// ⚠️ 命令行那边 `-static` 指错会提前 `bail!`，但库没有那道闸。
+/// ⚠️ 这条路径**没有死**：分享落地页在拿不到外壳时要退回通用卡片（抓取程序要的只是标签），
+/// 而那正是下面那条测试钉的事。
+fn open_app_without_a_shell() -> (Router, tempfile::TempDir) {
+    let dir = tempfile::tempdir().expect("建临时目录");
+    let store = Store::open(dir.path().join("clip9.redb")).expect("打开 store");
+    let mut config = Config::default();
+    config.server.auth = AuthValue::Bool(false);
+    let static_dir = dir.path().join("static");
+    std::fs::create_dir_all(&static_dir).expect("建静态目录");
+    // ⚠️ 故意**不写** index.html —— 这个目录的存在本身就让 `has_source` 为真，
+    // 但读外壳会失败，于是走到「没有外壳」那一支。
+    let state = AppState::new(config, store, Some(static_dir));
+    (router(state), dir)
+}
+
 async fn call(app: &Router, request: Request<Body>) -> (StatusCode, String) {
     let mut request = request;
     // ⚠️ 用到 `ConnectInfo` 的端点（`/share/visit`）没有这个扩展会直接 500。
@@ -778,10 +800,14 @@ async fn a_token_whose_room_does_not_match_the_entry_is_refused() {
     assert_eq!(code_of(&body), "content_not_found");
 }
 
-/// 没有前端外壳时回退到一张通用卡片（API-only 的部署也要能被预览）。
+/// 没有前端外壳时回退到一张通用卡片（抓取程序照样能被预览）。
+///
+/// ⚠️ 装法见 [`open_app_without_a_shell`]：`static_dir = None` 已经**不再**表示「没有前端」了
+/// （内嵌那一份恒在），所以「没有外壳」得用「有个目录但里面没有 `index.html`」来造。
+/// ⚠️ 2026-09-28 这条测试就是这么红的 —— 它是**预期的行为改变**，不是回归。
 #[tokio::test]
 async fn the_landing_page_falls_back_to_a_card_without_a_shell() {
-    let (app, _dir) = open_app();
+    let (app, _dir) = open_app_without_a_shell();
     let request = Request::builder()
         .method("POST")
         .uri("/text")

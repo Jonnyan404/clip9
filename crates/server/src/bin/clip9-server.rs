@@ -1,7 +1,7 @@
 //! clip9 独立服务端二进制。
 //!
 //! 这一份就是「拎出去给 Docker / OpenWrt / Android 用」的那个东西 ——
-//! 它不依赖 Tauri、不依赖前端资源，只有 `clip9-server` 一个可执行文件。
+//! 它不依赖 Tauri、不依赖任何**外部**文件（前端产物**编在二进制里**，见 `build.rs`）。
 //!
 //! ⚠️ **端口被占用时要明确报错**，不能静默换端口：Android 上服务端和客户端在同一个
 //! 应用进程里，静默换端口会让客户端连到别人身上，而用户看到的只是「莫名其妙连不上」。
@@ -68,7 +68,11 @@ const FLAGS: &[(&str, bool, &str)] = &[
     ),
     ("cert", true, "指定证书文件，如果设置则覆盖配置文件"),
     ("key", true, "指定密钥文件，如果设置则覆盖配置文件"),
-    ("static", true, "指定前端产物目录"),
+    (
+        "static",
+        true,
+        "指定前端产物目录（**盖住**编进二进制的那一份）",
+    ),
     (
         "data",
         true,
@@ -186,24 +190,35 @@ async fn main() -> anyhow::Result<()> {
         .map_err(|e| anyhow::anyhow!("无法创建文件存储目录 {}：{e}", paths.uploads.display()))?;
     tracing::info!(dir = %paths.uploads.display(), "文件存储目录");
 
-    // 静态资源目录：`-static` > `CLIP9_STATIC` > 不挂（只跑 API）。
+    // 前端产物：**默认是编进二进制的那一份**（`crates/server/static/`，见 `crates/server/build.rs`），
+    // `-static` / `CLIP9_STATIC` 只是把它**盖掉**（调前端时用：换了产物不用重编）。
+    //
+    // ⚠️★ 原来是「`-static` > `CLIP9_STATIC` > **不挂**」—— 于是桌面端那份**自带**服务端
+    // 静默地没有前端：浏览器打开设置页那个「🌐 打开网页版」的地点是一片空白 **404**
+    //（2026-09-28 查出，见 `docs/specs/desktop-client.md` §3.5.1.1）。
+    // 现在「有没有前端」是**构建期**定的：内嵌那一份缺了会让构建失败
+    //（`build.rs` 里那个 panic），运行时**不再有**「没给参数所以没有界面」这种状态。
     //
     // ⚠️ 路径由**外壳**决定（`docs/ARCHITECTURE.md` §4.2）：Docker 挂载点 / OpenWrt 的
     // `/var/lib` / Android 私有目录各不相同，把路径逻辑写进业务代码会让它们互相打架。
-    //
-    // TODO(P3)：正式分发包里应该把前端**嵌进二进制**（`include_dir!`）——
-    // Go 那边是 `-tags embed`。现在用 `-static` 指向构建产物就够了。
     let static_dir = args.get("static").map(PathBuf::from);
-    if let Some(dir) = &static_dir {
-        // ⚠️ 早点失败：指错了目录的话，表现是「页面 404」而**日志里什么都没有**，
-        // 那种问题查起来最费时间。
-        if !dir.join("index.html").is_file() {
-            anyhow::bail!(
-                "静态目录 {} 里没有 index.html —— 那不像一份前端产物",
-                dir.display()
+    match &static_dir {
+        Some(dir) => {
+            // ⚠️ 早点失败：指错了目录的话，表现是「页面 404」而**日志里什么都没有**，
+            // 那种问题查起来最费时间。
+            if !dir.join("index.html").is_file() {
+                anyhow::bail!(
+                    "静态目录 {} 里没有 index.html —— 那不像一份前端产物",
+                    dir.display()
+                );
+            }
+            tracing::info!(
+                dir = %dir.display(),
+                "前端产物：用 -static 指的这一份（盖住了内嵌的）"
             );
         }
-        tracing::info!(dir = %dir.display(), "静态资源目录");
+        // ⚠️ 这行日志是「这一份到底有没有界面」的唯一线索 —— 排障时先看它一眼。
+        None => tracing::info!("前端产物：用编进二进制的那一份（crates/server/static）"),
     }
 
     let addrs = resolve_hosts(&config.server.host, config.server.port)?;
