@@ -25,9 +25,17 @@ name: Release
 #                                                桌面端，**含服务端**（见 desktop job 的注释）
 #   clip9:…（容器镜像）                          由 Release 里那份二进制做的，**镜像里不编译**
 #   Formula/clip9.rb + Casks/clip9.rb            Homebrew tap（二进制与桌面端各一份）
-#   clip9-openwrt-… / clip9-android-…            ⚠️ 还没接（理由见 README 的「还没做」）
+#   clip9-server-openwrt-<架构>-v<版本>.ipk       OpenWrt 服务端包，7 个架构
+#   clip9-server-openwrt-apk-<设备架构>-v<版本>.apk            8 个设备架构
+#   clip9-luci-openwrt-all-v<版本>.ipk / …-apk-noarch-v<版本>.apk  LuCI 界面包
+#   clip9-android-v<版本>.apk                    Android 外壳（三个 ABI 一个包）
+#   ⚠️ 后三组由 `openwrt.yml` / `android.yml` 两个**可复用工作流**构建（它们也能单独手动跑，
+#      那样会自己覆盖上传）。见下面那两个 `uses:` 与 `publish-openwrt` / `publish-android`。
 #
-# ⚠️ 发 Release 只由最后那个 `publish` job 做：并行 job 各自建 Release 会互相打架。
+# ⚠️ 发 Release 只由 `publish` 那一个 job 做：并行 job 各自建 Release 会互相打架。
+# ⚠️ 两个独立的 job **只由 `publish` 后面的 `publish-openwrt` / `publish-android` 上传** ——
+#    这样它们红了也不会挡住 cli / desktop 的发布（与 `docker` / `homebrew` 同一个道理：
+#    那两个也是 `needs: publish`）。
 
 on:
   release:
@@ -418,6 +426,29 @@ jobs:
           path: rust/target/desktop-release/*
           if-no-files-found: error
 
+  # ── OpenWrt 与 Android：各自一个**可复用工作流**，步骤不搬到这里 ────────────
+  #
+  # ⚠️★ 为什么不把它们展开成 job 写在这个文件里：这两套东西**各自还有一个「单独手动跑」
+  #    的入口**（补一个架构的包、重打 APK、给老 tag 补产物）。抄进来就有两份会漂的构建
+  #    步骤，而它们各自有十来步。两个文件里都判了 `github.event_name`，
+  #    所以被这里调用时**不上传** —— 上传归下面那两个 `publish-*`。
+  #    这是 Go 版 `release.yml` 调 `build-openwrt-ipk.yml` 的同一个形状。
+  #
+  # ⚠️★ 它们**不在 `assets` 的 needs 里**，这是故意的：`assets` 只核 cli/desktop 那七个
+  #    名字，一旦它 needs 这两个，缺个签名 secret 就会把整次发布卡住（连发布说明都传不上去）。
+  #    OpenWrt / Android 的资产名由各自文件自己核，上传由下面那两个 job 做。
+  openwrt:
+    needs: info
+    uses: ./.github/workflows/openwrt.yml
+    with:
+      tag: ${{ needs.info.outputs.tag }}
+
+  android:
+    needs: info
+    uses: ./.github/workflows/android.yml
+    with:
+      tag: ${{ needs.info.outputs.tag }}
+
   # 收口到一个 job 传产物：并行 job 各自去动 Release 会互相打架。
   # ── 资产名对不对 ──────────────────────────────────────────────────────
   #
@@ -517,6 +548,91 @@ jobs:
         if: needs.info.outputs.prerelease == 'true'
         run: |
           echo "::notice::这是预发布（prerelease）：容器镜像**只推 tag、不推 latest**。"
+
+  # ── OpenWrt 包：**排在 publish 之后**，覆盖上传 ──────────────────────────
+  #
+  # ⚠️★ 为什么不是并进 `publish`（它那边是 `files: artifacts/*` 一把传）：
+  #   ① OpenWrt 要编 3 次 `cross`、Android 要编三个 `.so` 再跑一遍 Gradle —— 并进去只能二选一：
+  #      要么整次发布等它们（缺个 secret 就卡住，连 cli/desktop 都发不出去），
+  #      要么传一份少了它们的资产。
+  #   ② 它们自己也要能**手动**覆盖上传（见那两个文件）。「传哪些、从哪取」这套逻辑
+  #      本来就该待在一个两边共用得上的地方 —— 这里就是发布那条路。
+  #
+  # ⚠️ 与 `docker` / `homebrew` 同一个道理：`needs: publish` 让它们**红在发布之后**，
+  #    已经传上去的 cli/desktop 不会因此回滚（改动**只**发生在这里那几个资产上）。
+  #
+  # ⚠️★ OpenWrt 与 Android **分成两个 job**（而不是一个 job 传两类）：那样一个红会连累
+  #    另一个的资产也传不上去（`needs` 里有一个失败，下游就整体 skip）。
+  #    分成两个之后，OpenWrt 挂了 Android 照样传。
+  # ⚠️ 两个 job 都**必须带 `pattern`**：不带的话会把 `assets` 收过的
+  #    `clip9-cli-*` / `clip9-desktop-*` 也拖下来，于是「这次传了哪些」取决于时序。
+  publish-openwrt:
+    needs: [info, publish, openwrt]
+    # 与 publish 同一个条件（手动跑、tag 留空的那次冒烟只构建、不上传）。
+    if: github.event_name == 'release' || inputs.tag != ''
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          path: extra
+          merge-multiple: true
+          # ⚠️ `openwrt-binaries`（裸二进制）刻意不在这个前缀里 —— 它是中间产物，
+          #    不是要发出去的资产。
+          pattern: openwrt-pkg-*
+
+      - name: 待传清单
+        run: |
+          set -euo pipefail
+          ls -l extra
+          # ⚠️ 空的 `files` 匹配是**静默**的（`action-gh-release` 会「成功地什么都没做」），
+          #    而这里空着通常意味着「上游那两个工作流的 artifact 名字改了」。
+          #
+          # ⚠️★ 这三个数字是**跨文件**的：它们必须与 `openwrt.yml` 里那两个矩阵的条目数一致。
+          #    改那边的矩阵而没改这里 → 这里红（这正是不想让它静默漂掉的那件事）。
+          #    7 = ipk 矩阵的 7 个架构；8 = apk 矩阵的 8 个设备架构；2 = LuCI 的 ipk + apk。
+          #    ⚠️ 只数个数、不重列名字：重列一遍就是**又一处会漂的地方**。
+          n_ipk=$(find extra -maxdepth 1 -name 'clip9-server-openwrt-*.ipk' | wc -l)
+          n_apk=$(find extra -maxdepth 1 -name 'clip9-server-openwrt-apk-*.apk' | wc -l)
+          n_luci=$(find extra -maxdepth 1 \( -name 'clip9-luci-openwrt-*.ipk' -o -name 'clip9-luci-openwrt-*.apk' \) | wc -l)
+          n_all=$(find extra -type f | wc -l)
+          echo "ipk=${n_ipk}（期望 7） apk=${n_apk}（期望 8） luci=${n_luci}（期望 2） 合计=${n_all}"
+          bad=0
+          [ "$n_ipk" = 7 ] || { echo "::error::ipk 有 ${n_ipk} 个，openwrt.yml 的 ipk 矩阵是 7 格"; bad=1; }
+          [ "$n_apk" = 8 ] || { echo "::error::apk 有 ${n_apk} 个，openwrt.yml 的 apk 矩阵是 8 格"; bad=1; }
+          [ "$n_luci" = 2 ] || { echo "::error::LuCI 包有 ${n_luci} 个，应该是 ipk + apk 两个"; bad=1; }
+          [ "$bad" = 0 ] || exit 1
+          echo "个数对得上"
+
+      - uses: softprops/action-gh-release@v3
+        with:
+          tag_name: ${{ needs.info.outputs.tag }}
+          files: extra/*
+          overwrite_files: true
+
+  # ── Android 的 APK：同上（单独一个 job，OpenWrt 红了不影响它）──────────────
+  publish-android:
+    needs: [info, publish, android]
+    if: github.event_name == 'release' || inputs.tag != ''
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          name: android-apk
+          path: extra
+
+      - name: 待传清单
+        run: |
+          set -euo pipefail
+          ls -l extra
+          n="$(find extra -type f -name '*.apk' | wc -l)"
+          echo "共 ${n} 个 APK"
+          [ "$n" -gt 0 ] || { echo "::error::没取到 APK —— artifact 名字对不上了？"; exit 1; }
+
+      - uses: softprops/action-gh-release@v3
+        with:
+          tag_name: ${{ needs.info.outputs.tag }}
+          files: extra/*.apk
+          overwrite_files: true
 
   # ── 容器镜像：**不编译**，直接用 Release 里那份二进制 ─────────────────────
   #
