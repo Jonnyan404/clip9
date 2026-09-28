@@ -329,7 +329,7 @@ myAction(@step)                 // ✓
 if @model != "Mac" {
     vibrate()
 }
-showNotification("已发送 {@savedID}", "Cloud Clipboard", false)
+showNotification("已发送 {@savedID}", "clip9", false)
 ```
 
 产物里可验证：`vibrate` 在 depth=1（被条件包住），`notification` 在 depth=0（裸的）。
@@ -494,8 +494,10 @@ Worker 侧代码：
 > 原版已退役并从仓库删除（源码与签名产物均已移除，需要时可在 git 历史里找回）。
 > 它的 29 项本地化类型名比较、4 路分支与 `?as=file` 协议都不再维护。
 > **注意**：原版、重写版都曾叫 `Cloud-Clipboard-Send`，而这个名字**现在整个不用了** ——
-> 发送已拆成 `Cloud-Clipboard-Send-Text` 与 `Cloud-Clipboard-Send-File`（判型交给用户）。
+> 发送已拆成 `Clip9-Send-Text` 与 `Clip9-Send-File`（判型交给用户）。
 > 文档与提交历史里出现 `Cloud-Clipboard-Send` 的地方都指更早的版本。
+> ⚠️ 同理，`Cloud-Clipboard-` 这一整个前缀也是旧名：项目从 cloud-clipboard-go 独立成 clip9 之后，
+> 四份源码与产物统一换成了 `Clip9-` 前缀。看到旧前缀时，对应的是改名前的版本。
 
 ### Receive 验收（2026-09-16 首次）
 
@@ -513,7 +515,7 @@ Worker 侧代码：
 原先用 `show()`，每次发送都会在屏幕中央弹一张卡片打断视线。现改为：
 
 ```cherri
-showNotification("已发送 {@savedID}", "Cloud Clipboard", false)
+showNotification("已发送 {@savedID}", "clip9", false)
 ```
 
 cherri 的动作名是 **`showNotification(body, title, playSound, attachment)`**，不是 `notification`。

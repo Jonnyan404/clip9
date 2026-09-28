@@ -9,7 +9,7 @@
 //   getText 拿到纯文本（Shortcuts 自己会剥 HTML）
 //   → 过一次「从多信息文本获取 Markdown」，把 UTF-16 字节规范化成 UTF-8
 //   → POST /text
-#define name Cloud-Clipboard-Send-Text
+#define name Clip9-Send-Text
 #define inputs file, image, text, url, pdf
 #define from sharesheet,quickactions,menubar
 #define noinput getclipboard
@@ -115,4 +115,4 @@ if !@savedID {
 if @model != "Mac" {
     vibrate()
 }
-showNotification("已发送 {@savedID}", "Cloud Clipboard", false)
+showNotification("已发送 {@savedID}", "clip9", false)

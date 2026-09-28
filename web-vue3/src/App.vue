@@ -763,7 +763,7 @@ watch(() => route.fullPath, () => {
                                         <v-icon color="primary">{{ mdiGithub }}</v-icon>
                                     </template>
                                     <v-list-item-title>
-                                        <a href="https://github.com/Jonnyan404/cloud-clipboard-go" target="_blank" rel="noopener" class="cc-settings__link">
+                                        <a href="https://github.com/Jonnyan404/clip9" target="_blank" rel="noopener" class="cc-settings__link">
                                             {{ t('github') }}
                                             <v-icon size="16" class="cc-settings__external">{{ mdiOpenInNew }}</v-icon>
                                         </a>

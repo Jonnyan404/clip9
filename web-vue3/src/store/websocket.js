@@ -520,7 +520,7 @@ export const useWebSocketStore = defineStore('websocket', {
                     // ⚠️ 拿到 `config` 就去取历史 —— 握手不再推历史，这条 HTTP 请求是**唯一**的来源。
                     this.loadHistoryFromHttp();
                     console.log(
-                        `%c Cloud Clipboard ${data.version} by Jonnyan404 %c https://github.com/Jonnyan404/cloud-clipboard-go `,
+                        `%c clip9 ${data.version} by Jonnyan404 %c https://github.com/Jonnyan404/clip9 `,
                         'color:#fff;background-color:#1e88e5',
                         'color:#fff;background-color:#64b5f6'
                     );

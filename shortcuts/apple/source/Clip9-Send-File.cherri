@@ -6,7 +6,7 @@
 // 本捷径做的事：把条目作为 multipart 表单的「文件」字段 POST 到 /upload。
 // 服务端用 part 自带的真实文件名（含扩展名）——**扩展名不需要猜**，
 // 这也是唯一能保住 .md / .sh 这类扩展名的方式（getName 会把扩展名剥掉）。
-#define name Cloud-Clipboard-Send-File
+#define name Clip9-Send-File
 #define inputs file, image, text, url, pdf
 #define from sharesheet,quickactions,menubar
 #define noinput getclipboard
@@ -83,4 +83,4 @@ if !@savedID {
 if @model != "Mac" {
     vibrate()
 }
-showNotification("已发送 {@savedID}", "Cloud Clipboard", false)
+showNotification("已发送 {@savedID}", "clip9", false)

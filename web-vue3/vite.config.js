@@ -37,8 +37,8 @@ export default defineConfig(({ command }) => {
                 injectRegister: null,
                 includeAssets: ['favicon.svg', 'favicon.ico', 'apple-touch-icon.png', 'pwa-192x192.png', 'pwa-512x512.png', 'reward-wechat.png', 'reward-alipay.png'],
                 manifest: {
-                    name: 'Cloud Clipboard',
-                    short_name: 'Clipboard',
+                    name: 'clip9',
+                    short_name: 'clip9',
                     description: 'Browser-based cloud clipboard for text and files',
                     lang: 'zh',
                     start_url: './',

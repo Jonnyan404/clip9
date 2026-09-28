@@ -12,10 +12,10 @@ const tab = ref('apple');
 // 文件名与 shortcuts/apple/ 下的产物一一对应（由 scripts/sync-shortcuts.mjs 拷进 public）。
 // 改捷径文件名时要同步这里。
 const APPLE_SHORTCUTS = [
-    { file: 'Cloud-Clipboard-Send-Text.shortcut', nameKey: 'scSendText', descKey: 'scSendTextDesc' },
-    { file: 'Cloud-Clipboard-Send-File.shortcut', nameKey: 'scSendFile', descKey: 'scSendFileDesc' },
-    { file: 'Cloud-Clipboard-Receive.shortcut', nameKey: 'scReceive', descKey: 'scReceiveDesc' },
-    { file: 'Cloud-Clipboard-Receive-By-ID.shortcut', nameKey: 'scReceiveById', descKey: 'scReceiveByIdDesc' },
+    { file: 'Clip9-Send-Text.shortcut', nameKey: 'scSendText', descKey: 'scSendTextDesc' },
+    { file: 'Clip9-Send-File.shortcut', nameKey: 'scSendFile', descKey: 'scSendFileDesc' },
+    { file: 'Clip9-Receive.shortcut', nameKey: 'scReceive', descKey: 'scReceiveDesc' },
+    { file: 'Clip9-Receive-By-ID.shortcut', nameKey: 'scReceiveById', descKey: 'scReceiveByIdDesc' },
 ];
 
 // HTTP Shortcuts 是第三方 App（本仓库只提供导入包）。三个官方渠道都在，任选其一 ——
