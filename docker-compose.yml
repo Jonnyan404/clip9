@@ -1,0 +1,43 @@
+# 与 cloud-clipboard-go 的 docker-compose.yml 同一套写法与同一批环境变量
+# （⚠️ 从 Go 版切过来只需要换 image 那行）。
+#
+# ⚠️ 镜像名里的 `latest` **只在正式发布时才有**：预发布（prerelease）只推 `vX.Y.Z` 那个标签，
+# 不推 latest。所以要用 beta 就把 image 换成 `ghcr.io/jonnyan404/clip9:v0.1.0-beta1`。
+
+services:
+    clip9:
+        container_name: clip9
+        restart: always
+        # ⚠️★ 必须的：服务端没有装 SIGTERM 处理器，而 **PID 1 对没有处理函数的信号是内核
+        # 直接忽略的** —— 不加这一行，`docker stop` 要整整 10 秒（等超时后被 SIGKILL）；
+        # 加了之后 tini 转发信号，实测 **0.22 秒**。`docker run` 那条路要加 `--init`。
+        init: true
+        ports:
+            - "9501:9501"
+        healthcheck:
+            test: ["CMD-SHELL", "nc -z 127.0.0.1 \"${LISTEN_PORT:-9501}\" || exit 1"]
+            interval: 30s
+            timeout: 10s
+            retries: 3
+            start_period: 10s
+        environment:
+            LISTEN_IP: ${LISTEN_IP:-} #默认为0.0.0.0,可设置为 127.0.0.1 不懂勿动
+            LISTEN_IP6: ${LISTEN_IP6:-} #默认为空,ipv6地址,可设置为::,不懂勿动
+            LISTEN_PORT: ${LISTEN_PORT:-} #默认为9501,可设置为其他端口
+            PREFIX: ${PREFIX:-} #子路径,可配合nginx使用,格式: /clip9
+            MESSAGE_NUM: ${MESSAGE_NUM:-} #历史记录的数量,默认为50（三端统一50）
+            AUTH_PASSWORD: ${AUTH_PASSWORD:-} #访问密码,默认为false,可自定义字符串密码
+            ROOM_AUTH_JSON: '${ROOM_AUTH_JSON:-{}}' #房间密码JSON, 例如 {"finance":"finance-pass","ops":""}
+            TEXT_LIMIT: ${TEXT_LIMIT:-} #文本长度限制,默认为4096(按字节算,一个汉字3字节)
+            FILE_EXPIRE: ${FILE_EXPIRE:-} #文件过期时间,默认为3600(1小时),单位为秒
+            FILE_LIMIT: ${FILE_LIMIT:-} #文件大小限制,默认为104857600(100MB),单位为字节
+            MKCERT_DOMAIN_OR_IP: ${MKCERT_DOMAIN_OR_IP:-} #mkcert域名或IP,默认为空,可设置为其他域名或IP,多个用空格分隔,仅域名支持通配符*
+            MANUAL_KEY_PATH: ${MANUAL_KEY_PATH:-} #手动设置证书路径,默认为空,该参数优先级高于MKCERT_DOMAIN_OR_IP
+            MANUAL_CERT_PATH: ${MANUAL_CERT_PATH:-} #手动设置证书路径,默认为空,该参数优先级高于MKCERT_DOMAIN_OR_IP
+            ROOM_LIST: ${ROOM_LIST:-} #是否启用房间列表展示功能,默认false
+            AUTOMATION_ENABLED: ${AUTOMATION_ENABLED:-} #定时自动化总开关,默认true（clip9 有,Go 没有）
+            DEFAULT_TZ: ${DEFAULT_TZ:-} #定时任务的默认时区,默认Asia/Shanghai（clip9 有,Go 没有）
+        volumes:
+            - /path/your/dir/data:/app/server-node/data #请注意修改为你自己的目录
+        # image: jonnyan404/clip9:latest
+        image: ghcr.io/jonnyan404/clip9:latest
