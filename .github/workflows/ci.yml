@@ -103,3 +103,67 @@ jobs:
       - run: cargo clippy -p clip9-actions --no-default-features --all-targets -- -D warnings
 
       - run: cargo test -p clip9-actions --no-default-features
+
+  # ── 提交信息：纯英文 conventional commit（`tools/check-commit-msg.mjs`）───────
+  #
+  # ⚠️★ 这条约定此前**不在任何门禁里**，全靠人记得手敲 `node tools/check-commit-msg.mjs`。
+  # 它有过实际代价：P0 阶段有 11 条提交的正文是中文（其中一条连主题也是），
+  # 还夹着两条「heredoc 没收干净」的（正文里留着 `EOF2`、标题出现两遍），
+  # 直到一次专门审计才发现。**规则只是「不许做」的时候没人守得住。**
+  #
+  # ⚠️ 为什么单开一个 job 而不是塞进 `rust` / `frontend`：那两个都要装工具链、
+  # 跑几分钟，而这一条只要 `checkout` + `node`。混在一起会让「信息写错了」这种
+  # 一秒就能看出来的事，排在编译后面才报。
+  #
+  # ⚠️★ 事件相关的值全部先落进 `env:`，`run:` 里只出现 `$VAR` —— 这样那段 shell
+  # 是**纯 shell**，可以原样抽到本机跑（`${{ }}` 模板语法在本机没法求值，
+  # 混在 run 里就等于这一段永远没验过）。
+  commit-msg:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # 要能回溯到 base 提交，浅克隆不够（`git rev-list A..B` 会算不出来）。
+          fetch-depth: 0
+
+      - name: 逐条检查本次带来的提交
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          PR_BASE: ${{ github.event.pull_request.base.sha }}
+          PR_HEAD: ${{ github.event.pull_request.head.sha }}
+          PUSH_BEFORE: ${{ github.event.before }}
+          PUSH_SHA: ${{ github.sha }}
+        run: |
+          set -eu
+          if [ "${EVENT_NAME:-}" = "pull_request" ]; then
+            range="${PR_BASE:?}..${PR_HEAD:?}"
+          else
+            before="${PUSH_BEFORE:-}"
+            if [ -z "$before" ] || [ "$before" = "0000000000000000000000000000000000000000" ]; then
+              # 初次推送 / 新建分支：before 是全 0，没有「上一个」可比。
+              range="HEAD~1..HEAD"
+            else
+              range="${before}..${PUSH_SHA:?}"
+            fi
+          fi
+
+          if ! git rev-list --no-merges "$range" >/dev/null 2>&1; then
+            # force push 之后 before 可能已经不在历史里。退化成只查 HEAD 那一条，
+            # 至少不是「全跳过」—— 而跳过会给出一个「查过了」的假信号。
+            echo "::warning::算不出提交范围（${range}）—— 可能是 force push，退回只查 HEAD。"
+            range="HEAD~1..HEAD"
+          fi
+
+          echo "要查的范围：${range}"
+          fail=0
+          # ⚠️ `--no-merges`：合并提交的信息是 git 自动生成的，不该按这条约定要求它。
+          for sha in $(git rev-list --no-merges "$range"); do
+            if ! git log -1 --format=%B "$sha" | node tools/check-commit-msg.mjs; then
+              echo "::error::$(git log -1 --format='%h %s' "$sha")"
+              fail=1
+            fi
+          done
+          if [ "$fail" -ne 0 ]; then
+            exit 1
+          fi
+          echo "本次带来的提交信息全部合规。"
