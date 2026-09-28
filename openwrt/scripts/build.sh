@@ -126,16 +126,42 @@ done
 # ── 3. 交叉构建 ────────────────────────────────────────────────────────────
 # ⚠️ `-C strip=symbols`：OpenWrt 设备 flash 很小，符号表动辄几 MB。
 #    用 rustc 自己的 strip 而不是外部 `strip` —— 交叉目标上通常没有对应的 strip 工具。
+#
+# ⚠️★ **每个 target 单独一个 target 目录**（下面是唯一那处定义，第 4 步拼产物路径也用它）。
+#    这不是洁癖，是**必须**：三个 target 串在**同一个 job** 里跑，而 `cross` 给每个 target
+#    用的镜像是**不同**的，glibc 也不一样高。**宿主**构建脚本（build script / proc macro）
+#    落在**共用**的 `target/release/` 里 —— 在 glibc 高的镜像里编出来的那个二进制，
+#    会被 glibc 低的镜像**直接拿去执行**（cargo 认为它还是新鲜的），于是：
+#
+#      error: failed to run custom build command for `libc v0.2.189`
+#        /target/release/build/libc-…/build-script-build:
+#        version `GLIBC_2.28' not found (required by …)      ← 还有 2.29 / 2.30
+#        ##[error]Process completed with exit code 101.
+#
+#    ⚠️★ 2026-09-28 真在 CI 上红过，而且**极容易认错**：报的是 `libc` 的 build script，
+#    看着像依赖/代码问题 —— 其实是交叉工具链的已知毛病 **cross-rs/cross#724**。
+#    那个 issue 里的复现步骤与本文件**一模一样**（先 x86_64-unknown-linux-musl、
+#    再 aarch64-unknown-linux-musl，第二个就炸），维护者的解释就是上面这段；
+#    同 issue 里明确写了 **`cargo clean` 不管用**，要「分开 target 目录」。
+#    ⚠️ `release.yml` 的 linux job 没有这个问题，因为它**一个 target 一个 job**、
+#    各自一份缓存 —— 那个形状本来就是对的，这里只是把同一件事在单 job 里补上。
+#    ⚠️ 顺序也会骗人：这次 x86_64 与 armv7 都过了、只挂在第三个上。换个顺序会换一个
+#    target 倒，**别**据此以为是那个架构特有的问题。
+CROSS_TARGET_DIR_PREFIX="$RUST_DIR/target/cross-"
+
 for target in "${TARGETS[@]}"; do
     echo "--- cross build $target ---"
-    ( cd "$RUST_DIR" && RUSTFLAGS="-C strip=symbols" cross build --release -p clip9-server --target "$target" )
+    ( cd "$RUST_DIR" && CARGO_TARGET_DIR="$CROSS_TARGET_DIR_PREFIX$target" \
+        RUSTFLAGS="-C strip=symbols" \
+        cross build --release -p clip9-server --target "$target" )
 done
 
 # ── 4. 摊平成 7 个 OpenWrt 架构名 ───────────────────────────────────────────
 for entry in "${ARCH_MAP[@]}"; do
     arch="${entry%%:*}"
     target="${entry#*:}"
-    src="$RUST_DIR/target/$target/release/clip9-server"
+    # ⚠️ 必须与上面那个 `CARGO_TARGET_DIR` 同源 —— 这是**同一处定义的第二次引用**。
+    src="$CROSS_TARGET_DIR_PREFIX$target/release/clip9-server"
     dst="$OUTPUT_DIR/clip9-server-$VERSION-$arch"
     if [ ! -f "$src" ]; then
         echo "错误: cross 跑完了但找不到 $src" >&2

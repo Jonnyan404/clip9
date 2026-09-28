@@ -115,6 +115,11 @@ jobs:
           #    而编译与测试都不会红）。
           # ⚠️ 不传 `--skip-web` 它会去跑 `npm run build`，而 runner 上
           #    `web-vue3/node_modules` 不存在 → 那一步必挂。
+          # ⚠️★ 三个 target 串在**这一个 job** 里跑（`release.yml` 是**一个 target 一个 job**），
+          #    所以 `build.sh` 必须给每个 target 单独的 target 目录 —— 共用 `target/` 会让
+          #    宿主构建脚本跨镜像复用，第二个 target 起报 `GLIBC_2.28 not found`（cross#724）。
+          #    那段推理写在 `openwrt/scripts/build.sh` 第 3 节，判据是
+          #    `tools/workflows-smoke.mjs` 的第 9 条。⚠️ 报出来的**是某个依赖的名字**。
           ./openwrt/scripts/build.sh "$VERSION" --skip-web
 
       - uses: actions/upload-artifact@v7
