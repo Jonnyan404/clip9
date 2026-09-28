@@ -13,8 +13,10 @@ name: Release
 # ⚠️ 刻意**不传 `generate_release_notes`**：那是你写的发布说明，不该被自动生成的盖掉。
 #
 # 产物（2026-09-28 定）：
-#   clip9-cli-<target>.tar.gz                    服务端二进制，**前端已编在里面**（一个文件丢过去就能跑）
-#   clip9-desktop-<target>.<dmg|deb|AppImage>    桌面端，**含服务端**（见 desktop job 的注释）
+#   clip9-cli-<target>.tar.gz / .zip             服务端二进制，**前端已编在里面**（一个文件丢过去就能跑）
+#                                                ⚠️ Windows 那份是 `.zip`（双击就能解，Go 那边同一条规矩）
+#   clip9-desktop-<target>.<dmg|deb|AppImage|msi|exe>
+#                                                桌面端，**含服务端**（见 desktop job 的注释）
 #   clip9:…（容器镜像）                          由 Release 里那份二进制做的，**镜像里不编译**
 #   Formula/clip9.rb + Casks/clip9.rb            Homebrew tap（二进制与桌面端各一份）
 #   clip9-openwrt-… / clip9-android-…            ⚠️ 还没接（理由见 README 的「还没做」）
@@ -193,21 +195,107 @@ jobs:
             rust/dist/*.sha256
           if-no-files-found: error
 
-  # ── 桌面端：Tauri 安装包（macOS .app/.dmg、Linux .deb/AppImage）──────────
+  # ── Windows：与 macos 那个 job 同一个形状，只是产物是 `.zip` ──────────────
+  #
+  # ⚠️ Windows **本来就有**（Go 那边 goreleaser 的 `goos` 里一直有 `windows`），
+  #    是这边写 release 时漏了。代码侧早就准备好了：`server_process.rs` 在 Windows 上找
+  #    `clip9-server.exe`、`commands.rs` 有 `start` 那条分支、快捷键显示也不是 macOS 的写法。
+  #
+  # ⚠️★ `AWS_LC_SYS_PREBUILT_NASM=1` 在这里是**必须的**，不是优化：
+  #    服务端的 TLS 走 `aws-lc-sys`（经 rustls），而它在 windows x86_64 上有 26 个 `.asm`
+  #    要用 NASM 汇编。这个 crate **找不到 NASM 时是 `panic!`**（源码 `nasm_builder.rs`），
+  #    不是回落 —— 而 windows runner 的镜像里**没有 NASM**。
+  #    `=1` 让它改用 crate 自带的预编译 `.obj`，是官方 README 里认的两条通行路之一。
+  #    ⚠️ aarch64 用不到它：那边的 21 个汇编是 `.S`，由 cl.exe 汇编。
+  #    ⚠️ 别的平台这个变量不起作用（只在 `target_os == windows && target_arch == x86_64` 读）。
+  windows:
+    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # ⚠️ 与 Go 那边的 windows 覆盖面一致（amd64 + arm64）。
+        # ⚠️★ 这两格是**推出来的、不是本机验过的**：本机是 macOS，编不了 MSVC 目标。
+        #    依据是 x86_64 那 26 个 `.asm` 走 crate 自带的预编译对象（上面那个变量），
+        #    aarch64 的 21 个汇编是 `.S`（由 cl.exe 汇编），而 runner 镜像里两套 MSVC
+        #    工具链都在（`VC.Tools.x86.x64` / `VC.Tools.ARM64`）。
+        #    **以 CI 第一次跑的结果为准** —— 挂了先看这一格，别先怀疑代码。
+        target: [x86_64-pc-windows-msvc, aarch64-pc-windows-msvc]
+    env:
+      AWS_LC_SYS_PREBUILT_NASM: "1"
+    steps:
+      - uses: actions/checkout@v7
+
+      # ⚠️ 这一格与别的 job 一样用 `bash`（Windows runner 上有 Git Bash）：
+      #    换成默认的 pwsh 就得把下面每一条都重写成 PowerShell，两份脚本迟早会漂。
+      - run: rustup target add ${{ matrix.target }}
+        working-directory: rust
+        shell: bash
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: rust
+          key: ${{ matrix.target }}
+
+      - name: 构建
+        working-directory: rust
+        shell: bash
+        run: cargo build --release -p $BIN --target ${{ matrix.target }}
+
+      # ⚠️ 打包这一步用 pwsh：`Compress-Archive` / `Get-FileHash` 是系统自带的，
+      #    不用赌 runner 的 PATH 里有没有 `zip`（Git Bash 不带你；而 Windows 那个 `tar.exe`
+      #    是 bsdtar，Git Bash 里又会是 GNU tar —— GNU tar 不认得 `.zip`，会**静默**写出一个
+      #    只是改了个名字的 tar，那比报错难查）。
+      - name: 打包（zip + sha256）
+        working-directory: rust
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $pkg  = $env:PACKAGE
+          $name = "$pkg-${{ matrix.target }}"
+          New-Item -ItemType Directory -Force -Path "dist/$name" | Out-Null
+          Copy-Item "target/${{ matrix.target }}/release/$env:BIN.exe" "dist/$name/$pkg.exe"
+          Copy-Item ../LICENSE, ../README.md "dist/$name/"
+          Compress-Archive -Path "dist/$name" -DestinationPath "dist/$name.zip" -Force
+          # ⚠️★ 用 `WriteAllText` 而不是 `Out-File`：后者在 PS 5.1 上写 CRLF，有的编码还带 BOM，
+          #    而另外三个平台那份是 `sha256sum` 写出来的 **LF** —— 带 CRLF 的 `.sha256`
+          #    在 Linux/macOS 上 `sha256sum -c` 会把 `\r` 当成文件名的一部分，直接对不上。
+          #    格式与 `sha256sum` 一致：`<hash>␠␠<文件名>`。
+          $hash = (Get-FileHash "dist/$name.zip" -Algorithm SHA256).Hash.ToLower()
+          [System.IO.File]::WriteAllText(
+            "$PWD/dist/$name.zip.sha256", "$hash  $name.zip`n")
+          Get-ChildItem dist
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: ${{ env.PACKAGE }}-${{ matrix.target }}
+          path: |
+            rust/dist/*.zip
+            rust/dist/*.sha256
+          if-no-files-found: error
+
+  # ── 桌面端：Tauri 安装包（macOS .app/.dmg、Linux .deb/AppImage、Windows .msi/.exe）──
   #
   # ⚠️★ 桌面端「含服务端」靠的是把那个二进制放进包内**与主程序同一个目录、名字仍叫
   # `clip9-server`**：`crates/desktop/src/server_process.rs` 的 `default_binary()` 就在那儿
   # 按这个名字找它。落位由 `tauri.conf.json` 的 `bundle.macOS.files` /
   # `bundle.linux.{deb,appimage}.files` 写死。
   #
-  # ⚠️★ 刻意**不用** `bundle.externalBin`：它会把文件名加上 `-<target-triple>` 后缀，
-  # 那样 `default_binary()` 找的就是一个不存在的名字 —— 而且是**打包成功、运行时才报**。
+  # ⚠️★ Windows 用**另一条路**：`bundle.windows` **没有 `files` 字段**（macOS/deb/AppImage 才有），
+  # 所以那边写在 `tauri.windows.conf.json` 的 `bundle.resources` 里。`resources` 在 Windows 上
+  # 落在 `$RESOURCE`，而 `$RESOURCE` 在 Windows 上**就是主程序所在目录**（tauri-utils
+  # `platform.rs` 里那条 `if cfg!(target_os = "windows") { return exe_dir }`），WiX 模板里
+  # `{{resources}}` 也确实注在 `<DirectoryRef Id="INSTALLDIR">` 内 —— 主程序旁边，正是要的位置。
+  # ⚠️ 放 `tauri.windows.conf.json` 而不是主配置：`resources` 是**全平台**的键，写进主配置会让
+  # macOS/Linux 的包里也躺一份用不到的 `clip9-server.exe`（平台专属配置按 JSON Merge Patch 合并）。
   #
-  # ⚠️★ 那个 `files` 映射是 **`{ 目标: 源 }`**，不是 `{ 源: 目标 }`（写反过一次：打包器会去
-  # 「包内」找源，报 `Failed to copy "MacOS/clip9-server" to "binaries/clip9-server"`）。
+  # ⚠️★ 刻意**不用** `bundle.externalBin`：它的**暂存文件名必须带** `-<target-triple>`
+  # （不然 CLI 找不到那个侧车），而这里要的落位名字是干净的那个。
+  #
+  # ⚠️★ `files` / `resources` 映射是 **`{ 目标: 源 }`**，不是 `{ 源: 目标 }`（写反过一次：
+  # 打包器会去「包内」找源，报 `Failed to copy "MacOS/clip9-server" to "binaries/clip9-server"`）。
   #
   # ⚠️ 所以这里是**两步**：先把服务端编出来、拷到配置里写死的那个暂存路径
-  # （`rust/crates/desktop/binaries/clip9-server`，已 gitignore），再让 tauri 打包。
+  # （`rust/crates/desktop/binaries/clip9-server[.exe]`，已 gitignore），再让 tauri 打包。
   desktop:
     strategy:
       fail-fast: false
@@ -222,7 +310,20 @@ jobs:
           - os: ubuntu-22.04
             target: x86_64-unknown-linux-gnu
             bundles: deb,appimage
+          # ⚠️ 桌面端只出 x86_64：Windows 的 ARM64 机器能跑 x64 程序（系统自带模拟），
+          #    而 `tauri build` 打 ARM64 的 `.msi` / NSIS 是另一条少人走的路 ——
+          #    那是**单独一块**，不顺手加。（CLI 那边才两个架构都出，见上面那个 windows job。）
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            bundles: msi,nsis
     runs-on: ${{ matrix.os }}
+    env:
+      # ⚠️★ Windows x86_64 上 `aws-lc-sys` 要 NASM，**找不到就 `panic!`**（不是回落），
+      #    而 runner 镜像里没有 NASM。`=1` 是官方 README 认的开关（改用 crate 自带的
+      #    预编译 `.obj`）。⚠️ 别的平台这个变量不起作用 —— 它只在
+      #    `target_os == windows && target_arch == x86_64` 那条分支里被读，
+      #    所以写在这里（一处）比给两条步骤各加一个条件更不容易漏。
+      AWS_LC_SYS_PREBUILT_NASM: "1"
     steps:
       - uses: actions/checkout@v7
 
@@ -243,13 +344,22 @@ jobs:
           key: desktop-${{ matrix.target }}
 
       # ① 服务端 → 配置里写死的那个暂存路径。
+      # ⚠️ 后缀按目标算：Windows 上 `default_binary()` 找的是 `clip9-server.exe`，
+      #    而 `tauri.windows.conf.json` 的 `resources` 源路径也写的是带 `.exe` 的那个名字。
+      # ⚠️ `shell: bash`：三个平台跑同一段（Windows runner 上也有 Git Bash）——
+      #    用默认的 pwsh 就得把这段再写一份，两份迟早会漂。
       - name: 编服务端并暂存到 bundle 取件的位置
         working-directory: rust
+        shell: bash
         run: |
           set -euo pipefail
-          cargo build --release -p clip9-server --target ${{ matrix.target }}
+          case "${{ matrix.target }}" in
+            *windows*) exe=".exe" ;;
+            *)         exe="" ;;
+          esac
+          cargo build --release -p $BIN --target ${{ matrix.target }}
           mkdir -p crates/desktop/binaries
-          cp "target/${{ matrix.target }}/release/clip9-server" crates/desktop/binaries/clip9-server
+          cp "target/${{ matrix.target }}/release/$BIN$exe" "crates/desktop/binaries/$BIN$exe"
 
       # ② 桌面端打包。⚠️ 不传任何 release 参数：发 Release 归下面那个唯一的 publish job。
       - uses: tauri-apps/tauri-action@v1
@@ -260,13 +370,18 @@ jobs:
           args: --target ${{ matrix.target }} --bundles ${{ matrix.bundles }}
 
       # ⚠️ 只收**能当 Release 资产的文件**：`.app` 是目录，当不了资产（它的内容在 dmg 里）。
+      # ⚠️ 扩展名从文件名上取（`${f##*.}`），所以这里不写死 dmg/deb/AppImage 之外的清单，
+      #    加一个平台只要往上面那个 for 里添一格。
+      # ⚠️ `shell: bash`：Windows runner 上默认是 pwsh，这段是 bash（Git Bash 在 runner 上有）。
       - name: 给产物带上 clip9-desktop 前缀
+        shell: bash
         run: |
           set -euo pipefail
           out="rust/target/desktop-release"
           mkdir -p "$out"
           base="rust/target/${{ matrix.target }}/release/bundle"
-          for f in "$base"/dmg/*.dmg "$base"/deb/*.deb "$base"/appimage/*.AppImage; do
+          for f in "$base"/dmg/*.dmg "$base"/deb/*.deb "$base"/appimage/*.AppImage \
+                   "$base"/msi/*.msi "$base"/nsis/*-setup.exe; do
             [ -e "$f" ] || continue
             cp "$f" "$out/clip9-desktop-${{ matrix.target }}.${f##*.}"
           done
@@ -280,7 +395,7 @@ jobs:
 
   # 收口到一个 job 传产物：并行 job 各自去动 Release 会互相打架。
   publish:
-    needs: [info, linux, macos, desktop]
+    needs: [info, linux, macos, windows, desktop]
     # 发布事件当然要传；手动跑时**填了 tag 才传**（留空 = 只构建）。
     if: github.event_name == 'release' || inputs.tag != ''
     runs-on: ubuntu-latest
