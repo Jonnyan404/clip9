@@ -54,6 +54,58 @@ pub struct Config {
     pub automation: AutomationConfig,
 }
 
+impl Config {
+    /// **写回配置前**的校验。返回 `Err(一句话)` 时**不许把它写进文件**。
+    ///
+    /// ⚠️★ 它**不是**启动校验 —— `config_file::load_or_create` 那条路**不调用**它，
+    /// 而且不能调用。理由是存量配置：在这里加一条规则就等于「升一次级、一部分人开不了机」
+    /// （那个模块的文档第 3 条已经定了「解析失败是致命错误」）。
+    /// 所以闸只放在**写**的那一侧：存不进去的值，从来没进过盘。
+    ///
+    /// ⚠️★ 每一条都必须说得出「**配了也不生效**」或「**下次起不来**」；
+    /// 说不出理由的（口味问题）别往这儿加 —— 往这儿加等于「界面上能改、改了白改」。
+    ///
+    /// ⚠️ 返回 `String` 而不是自定义错误：调用方（JNI 桥 / 各端表单）要的就是
+    /// **一句能原样显示给用户的话**，包一层错误类型只是多一层翻译。
+    /// ⚠️ `Result` 本身已经是 `#[must_use]`，别再叠一个（clippy 的 `double_must_use` 会红）。
+    pub fn validate_for_save(&self) -> Result<(), String> {
+        // ① 正文上限超过 HTTP 层的硬上限 —— 见 [`TEXT_LIMIT_MAX`] 的注释：
+        //    超出那一截**永远到不了**我们自己的检查，而且框架拒绝时回的**不是契约形状**。
+        if !self.text.is_effective() {
+            return Err(format!(
+                "单条正文上限只能填 0（不限）到 {TEXT_LIMIT_MAX} 之间 —— \
+                 再大的那一截会被 HTTP 层用另一种方式拒掉，配了也不生效"
+            ));
+        }
+
+        // ② 证书与私钥必须**一起**给：`serve::tls_paths` 对「只给一个」是直接报错，
+        //    所以存下去就等于存了一个「下次启动必然失败」的配置。
+        let has_cert = !self.server.cert.is_empty();
+        let has_key = !self.server.key.is_empty();
+        if has_cert != has_key {
+            return Err("证书与私钥必须一起给（只给一个服务端起不来）".to_owned());
+        }
+
+        // ③ 端口 `0` 是**合法**的 `u16`，而内核把它解释成「随便挑一个空闲端口」。
+        //    服务端确实能起来 —— 但 `server.port` 会一直写着 `0`，而真正监听的那个端口
+        //    **没有任何地方读得到**（`GET /server` 报的是 Host 头里的那个，界面与常驻通知
+        //    拼地址用的也是配置里这个数）。于是用户看到的是一个**连不上的地址**，
+        //    而两边都不报错 —— 这是「配了不生效」里最坏的一种形态。
+        //
+        //    ⚠️ 它同时兜住了一个界面侧的洞：数字框里打了一串字母时，表单读出来的
+        //    是一个 `0`（见 `ConfigPage.fromText`）。那一层只挡得住「根本不是数字」，
+        //    真正「是数字但配了白配」的判定只有这一处能下。
+        if self.server.port == 0 {
+            return Err(
+                "监听端口不能填 0 —— 那会让系统随便挑一个，而界面与通知里的地址会一直是 0"
+                    .to_owned(),
+            );
+        }
+
+        Ok(())
+    }
+}
+
 /// 定时自动化的运行时配置。
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
@@ -506,8 +558,7 @@ mod tests {
         assert!(bad.is_err(), "数组不是合法的 roomAuth 值");
     }
 
-    /// ⚠️★ `automation.enabled` 的默认值必须与 Go 的 `defaultConfig()` 一致（`true`）。
-    ///
+    /// ⚠️★ `automation.enabled` 的默认值必须与 Go 的 `defaultConfig()` 一致（`true`）。    ///
     /// 这条防的是「**同一份 `config.json` 在两个实现上行为不同**」：写成 `false` 的话，
     /// 没配 `automation` 块的部署在 Rust 上会静默关掉定时自动化 —— `/tasks` 回 404、
     /// `/server` 报 `{"enabled": false}`、SPA 的工具条不显示入口。
@@ -529,5 +580,72 @@ mod tests {
 
         let direct = Config::default();
         assert_eq!(direct.automation, cfg.automation, "两条默认值路径不能分叉");
+    }
+
+    /// **保存前的那道闸**：放行「能用的」，挡住「配了也不生效 / 下次起不来」的。
+    ///
+    /// ⚠️★ 这条断言的是**分界线本身**（正好等于上限要放行、多 1 就拒），
+    /// 不是「某个用法能用」—— 边界挪了就红。
+    ///
+    /// ⚠️ 名字里那个 `known` 是刻意的：每加一条规则都要在这里加一段，
+    /// 而**说不出「配了也不生效 / 下次起不来」的别加**（见 `validate_for_save` 的文档）。
+    #[test]
+    fn validate_for_save_passes_defaults_and_stops_the_known_breakages() {
+        // 缺省必须过 —— 否则「打开配置页、什么都不改、点保存」就会被自己的闸拦住。
+        assert_eq!(Config::default().validate_for_save(), Ok(()));
+
+        // ① 正文上限：边界两侧各一条（正好等于上限是合法的，它是「不超过」）。
+        let mut cfg = Config::default();
+        cfg.text.limit = TEXT_LIMIT_MAX;
+        assert_eq!(cfg.validate_for_save(), Ok(()), "正好等于上限要放行");
+
+        cfg.text.limit = TEXT_LIMIT_MAX + 1;
+        let err = cfg.validate_for_save().expect_err("超过上限必须挡住");
+        assert!(
+            err.contains(&TEXT_LIMIT_MAX.to_string()),
+            "拒绝的话里要带出真正的上限（否则用户只知道「太大了」，不知道能填多少）：{err}"
+        );
+
+        // `0` = 不限，是**合法**值 —— 它看起来最像「危险值」，所以单列一条。
+        cfg.text.limit = 0;
+        assert_eq!(cfg.validate_for_save(), Ok(()), "0 = 不限，要放行");
+
+        // ② 证书 / 私钥：四种组合里，只有「只给一个」要拒。
+        for (cert, key, should_pass) in [
+            ("", "", true),
+            ("/tmp/c.pem", "/tmp/k.pem", true),
+            ("/tmp/c.pem", "", false),
+            ("", "/tmp/k.pem", false),
+        ] {
+            let mut cfg = Config::default();
+            cfg.server.cert = cert.to_owned();
+            cfg.server.key = key.to_owned();
+            assert_eq!(
+                cfg.validate_for_save().is_ok(),
+                should_pass,
+                "cert={cert:?} key={key:?} 的判定不对 —— 只给一个的话服务端下次一定起不来"
+            );
+        }
+
+        // ③ 端口 0：它是合法的 `u16`，而内核把它当成「随便挑一个」——
+        //    服务端能起来，但配置里那个 `0` 与真正监听的端口**没有任何关系**，
+        //    界面/通知里拼出来的地址永远是错的。所以它属于「配了不生效」，要挡。
+        let mut cfg = Config::default();
+        cfg.server.port = 0;
+        let err = cfg
+            .validate_for_save()
+            .expect_err("端口 0 必须挡住（它会让地址显示成 :0）");
+        assert!(err.contains('0'), "拒绝的话里要点出那个 0：{err}");
+
+        // 边界另一侧：1 与 65535 都是能用端口，必须放行（挡多了就成了「界面不让配」）。
+        for port in [1_u16, 9501, u16::MAX] {
+            let mut cfg = Config::default();
+            cfg.server.port = port;
+            assert_eq!(
+                cfg.validate_for_save(),
+                Ok(()),
+                "端口 {port} 是能用端口，不该挡"
+            );
+        }
     }
 }

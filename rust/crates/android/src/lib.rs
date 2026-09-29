@@ -54,6 +54,11 @@ use std::path::{Path, PathBuf};
 use std::sync::{Mutex, MutexGuard};
 use std::time::Duration;
 
+// ⚠️ 直引 `clip9-core` 只要一个东西：`Config` 这个类型
+// （`config_file::save` 与 `Config::validate_for_save` 都要它）。
+// 它本来就在依赖树里（`clip9-server` 的依赖），不是新引入的编译负担 ——
+// 但**别**顺手把 `clip9-store` 也加上来（理由见 Cargo.toml 里那段注释）。
+use clip9_core::Config;
 use clip9_server::{config_file, paths, serve};
 use jni::JNIEnv;
 use jni::objects::{JObject, JString};
@@ -193,6 +198,24 @@ pub extern "system" fn Java_com_clip9_app_ServerBridge_nativeVersion(
 /// ⚠️★ **绝不静默换端口**（`docs/ARCHITECTURE.md` §4.1 第 1 条）：
 /// 端口被占用就如实报错。换一个端口的后果是「用户填进别的设备的地址永远连不上」，
 /// 而两边都不报错（这边起来了、对端说超时）。
+///
+/// # ⚠️★ 监听地址与端口**只从配置文件来**（2026-09-29 改）
+///
+/// 这两个参数**曾经**是形参（`host: JString, port: jint`），语义是「界面传进来的盖过配置文件」。
+/// 改掉它们是因为那句话与下面这件事直接冲突：
+///
+/// > 界面上已经可以改 `server.host` / `server.port` 了（配置页的「网络与存储」）。
+///
+/// 只要启动时**无条件**用形参覆盖，界面上那两项就是**配了永远不生效**——
+/// 而它俩在界面上看起来和其它项一模一样（都是「填了、存了、重启了、没反应」）。
+/// 修法有两条：① 让 Kotlin 先把配置读出来再原样传回来；② 让这边自己读。
+/// 选了 ②：配置文件是**唯一权威**，Kotlin 只当搬运工 ——
+/// ① 要多一次读、还得把 `host` 的 `Value`（字符串**或**数组）在 Kotlin 侧拼回字符串，
+/// 拼错一个字节就是「地址看着对、就是连不上」。
+///
+/// ⚠️ 连带后果，改这一处要一起想：`ServerService` 那个 `HOST = "0.0.0.0"` 常量、
+/// 以及 Android 侧那个「启动参数端口」`AppPrefs.port` 都**不再有意义**
+/// （端口搬进了 `config.json`，见 `ServerConfigStore.ensureCreated` 里那段迁移）。
 #[allow(non_snake_case)]
 #[unsafe(no_mangle)]
 pub extern "system" fn Java_com_clip9_app_ServerBridge_nativeStart(
@@ -200,14 +223,11 @@ pub extern "system" fn Java_com_clip9_app_ServerBridge_nativeStart(
     _this: JObject,
     config_path: JString,
     data_dir: JString,
-    host: JString,
-    port: jint,
 ) -> jstring {
     let config_path = java_string(&mut env, &config_path);
     let data_dir = java_string(&mut env, &data_dir);
-    let host = java_string(&mut env, &host);
 
-    let error = start(&config_path, &data_dir, &host, port);
+    let error = start(&config_path, &data_dir);
     java_string_or_null(&mut env, error.as_deref())
 }
 
@@ -263,6 +283,125 @@ pub extern "system" fn Java_com_clip9_app_ServerBridge_nativeLastError(
 ) -> jstring {
     let text = bridge().last_error.clone();
     java_string_or_null(&mut env, text.as_deref())
+}
+
+/// 读配置文件，返回一个**信封 JSON**（形状与理由见 [`load_config`]）。
+///
+/// ⚠️ 它是同步的，但只读一个几 KB 的文件（无网络、无锁），UI 线程上调没问题 ——
+/// 真正阻塞的是 `nativeStart` / `nativeStop`。
+///
+/// ⚠️★ 它**不写盘**：打开一次配置页不该有副作用。
+#[allow(non_snake_case)]
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_com_clip9_app_ServerBridge_nativeLoadConfig(
+    mut env: JNIEnv,
+    _this: JObject,
+    config_path: JString,
+) -> jstring {
+    let config_path = java_string(&mut env, &config_path);
+    let text = load_config(&config_path);
+    env.new_string(text)
+        .map(|s| s.into_raw())
+        .unwrap_or(std::ptr::null_mut())
+}
+
+/// 把界面上的配置写回文件。返回 `null` = 成功；非 null = **一句话原文**。
+///
+/// ⚠️★ 保存**不会**让正在跑的服务端用上新配置 —— 它只在启动时读一次
+/// （`config_file` 模块文档第 1 条的「改完重启生效」）。所以界面上必须写成
+/// 「保存并重启」，别做成「保存即生效」的假象。
+#[allow(non_snake_case)]
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_com_clip9_app_ServerBridge_nativeSaveConfig(
+    mut env: JNIEnv,
+    _this: JObject,
+    config_path: JString,
+    json: JString,
+) -> jstring {
+    let config_path = java_string(&mut env, &config_path);
+    let json = java_string(&mut env, &json);
+    let error = save_config(&config_path, &json);
+    java_string_or_null(&mut env, error.as_deref())
+}
+
+/// [`Java_com_clip9_app_ServerBridge_nativeLoadConfig`] 的实现。
+///
+/// 返回一个**信封**，而不是「配置文本 / null」：
+///
+/// ```json
+/// {"ok":true, "exists":true,  "config":{ … }}
+/// {"ok":true, "exists":false, "config":{ … }}   ← 文件还不存在，config 是默认值
+/// {"ok":false,"exists":true,  "error":"配置文件解析失败：…"}
+/// ```
+///
+/// ⚠️★ 为什么非要信封这一层：配置**可能读不出来**（文件在、内容坏了）。
+/// 如果「坏掉」也用「返回一份 JSON」表达，界面就只能把它当配置去解析 ——
+/// 得到的是一份**所有字段都缺、看起来像全默认**的东西，用户再一按保存，
+/// 真配置就被默认值盖掉了（密码、房间、路径全没）。信封让成功与失败
+/// 在**第一个字段**上就分得开。
+///
+/// ⚠️★ 读不出来时**回默认值而不报错**：文件不存在是「第一次用」最常见的形态，
+/// 那不是一个错误。要不要把这份默认值落下来，由界面决定
+/// （Android 侧是 `ServerConfigStore.ensureCreated`，它顺带做端口迁移）。
+fn load_config(config_path: &str) -> String {
+    let raw = match std::fs::read_to_string(Path::new(config_path)) {
+        Ok(raw) => raw,
+        // ⚠️ 不存在 / 没权限在这一层不区分：界面上都是「显示默认值 + 说一句」。
+        Err(_) => return envelope(true, false, Some(&Config::default()), None),
+    };
+    match serde_json::from_str::<Config>(&raw) {
+        Ok(config) => envelope(true, true, Some(&config), None),
+        Err(e) => envelope(false, true, None, Some(&format!("配置文件解析失败：{e}"))),
+    }
+}
+
+/// 拼那个信封。`config` 与 `error` **二选一**（两个都给时以 `config` 为准）。
+fn envelope(ok: bool, exists: bool, config: Option<&Config>, error: Option<&str>) -> String {
+    let mut object = serde_json::Map::new();
+    object.insert("ok".to_owned(), serde_json::Value::Bool(ok));
+    object.insert("exists".to_owned(), serde_json::Value::Bool(exists));
+    match (config, error) {
+        (Some(config), _) => {
+            // ⚠️ 序列化自己的类型**不该**失败；真失败了也别回 `null` ——
+            // 那会被界面当成「读到了，但内容为空」，比报错更难查。
+            object.insert(
+                "config".to_owned(),
+                serde_json::to_value(config).unwrap_or(serde_json::Value::Null),
+            );
+        }
+        (None, Some(text)) => {
+            object.insert(
+                "error".to_owned(),
+                serde_json::Value::String(text.to_owned()),
+            );
+        }
+        (None, None) => {}
+    }
+    serde_json::Value::Object(object).to_string()
+}
+
+/// [`Java_com_clip9_app_ServerBridge_nativeSaveConfig`] 的实现。
+///
+/// ⚠️★ 三道闸，**一道都不能少，而且顺序不能换**：
+///
+/// 1. `serde_json::from_str::<Config>` —— 解析不过就拒。界面是**拼 JSON** 出来的
+///    （`org.json` 那一套），把字段名拼错、或者把一个数写成字符串，都能让
+///    **服务端下次启动直接失败**（`config_file` 模块文档第 3 条：解析失败是致命错误）。
+/// 2. [`Config::validate_for_save`] —— 「配了也不生效 / 起不来」的值挡在这一步。
+/// 3. `config_file::save` 的**原子**落盘 —— 半截文件同样是「再也起不来」。
+///
+/// ⚠️ 先落盘再校验的话，被拒的那一份**已经在盘上了**，校验就成了装饰。
+fn save_config(config_path: &str, json: &str) -> Option<String> {
+    let config: Config = match serde_json::from_str(json) {
+        Ok(config) => config,
+        Err(e) => return Some(format!("这份配置读不回来，没有写入：{e}")),
+    };
+    if let Err(message) = config.validate_for_save() {
+        return Some(message);
+    }
+    config_file::save(Path::new(config_path), &config)
+        .err()
+        .map(|e| e.to_string())
 }
 
 /// `start` 走到岔路口时该选哪一条。
@@ -339,7 +478,7 @@ fn begin_stop(state: &mut State) -> StopAction {
 }
 
 /// [`Java_com_clip9_app_ServerBridge_nativeStart`] 的实现（与 JNI 那一层分开，好读）。
-fn start(config_path: &str, data_dir: &str, host: &str, port: i32) -> Option<String> {
+fn start(config_path: &str, data_dir: &str) -> Option<String> {
     // ① 先**占住位置**（`Idle` → `Starting`），再在锁外做那些慢事。
     //
     // ⚠️★ 建库 / 绑端口要动文件系统、最多几百毫秒，那段时间**不能**一直攥着锁：
@@ -365,7 +504,7 @@ fn start(config_path: &str, data_dir: &str, host: &str, port: i32) -> Option<Str
         }
     }
 
-    match build_and_launch(config_path, data_dir, host, port) {
+    match build_and_launch(config_path, data_dir) {
         Ok(running) => {
             let mut guard = bridge();
             guard.state = State::Running(running);
@@ -385,19 +524,17 @@ fn start(config_path: &str, data_dir: &str, host: &str, port: i32) -> Option<Str
 }
 
 /// 把配置读出来、库打开、服务起上，并确认它**没有立刻挂掉**。
-fn build_and_launch(
-    config_path: &str,
-    data_dir: &str,
-    host: &str,
-    port: i32,
-) -> Result<Running, String> {
-    let port = u16::try_from(port).map_err(|_| format!("端口 {port} 不在 0..=65535 之内"))?;
-
+///
+/// ⚠️★ 这里**不再**用形参覆盖 `server.host` / `server.port`（2026-09-29 改）——
+/// 覆盖了就等于「界面上那两项配了永远不生效」，理由见
+/// [`Java_com_clip9_app_ServerBridge_nativeStart`] 的文档。
+/// 监听地址与端口**只从 `config.json` 来**。
+///
+/// ⚠️ 仍然要 `mut`：`paths::open_store` 会把 `dbPath` / `storageDir` 解析成
+/// **绝对路径**写回这个 `Config`（内存里，不落盘）。
+fn build_and_launch(config_path: &str, data_dir: &str) -> Result<Running, String> {
     let mut config =
         config_file::load_or_create(Path::new(config_path)).map_err(|e| e.to_string())?;
-    // ⚠️ 界面传进来的监听设置**盖过**配置文件 —— 用户刚在界面上改的就是它。
-    config.server.host = serde_json::Value::String(host.to_owned());
-    config.server.port = port;
 
     // ⚠️ 路径由外壳算（`docs/ARCHITECTURE.md` §4.2）：Android 上就是应用私有目录。
     // ⚠️★ 「建目录 → 解析路径 → 开库」走**服务端那一份**（`paths::open_store`），
@@ -534,6 +671,21 @@ mod tests {
         (dir, config, data)
     }
 
+    /// 往配置文件里写一份「监听指定地址与端口」的配置，返回**配置文件路径**。
+    ///
+    /// ⚠️★ 有了它，下面那几条用例才是真的在走真机那条路：Android 侧现在也是
+    /// 「先把配置写好、再调 `start`」—— 监听地址与端口**只从配置文件来**
+    /// （见 [`Java_com_clip9_app_ServerBridge_nativeStart`] 的文档）。
+    /// ⚠️ 别再往 `start` 加回 host / port 形参，那样界面上的「监听地址」会变回「配了不生效」。
+    fn write_config(dir: &Path, host: &str, port: u16) -> String {
+        let path = dir.join("config.json");
+        let mut config = Config::default();
+        config.server.host = serde_json::Value::String(host.to_owned());
+        config.server.port = port;
+        config_file::save(&path, &config).expect("写配置文件");
+        path.display().to_string()
+    }
+
     /// 造一个「正在跑」但**没有真的起服务端**的 `Running`，给决策表用。
     ///
     /// ⚠️ `_keep` 是那个 `watch` 的接收端，本函数结束时就被丢掉了 ——
@@ -636,30 +788,23 @@ mod tests {
     #[test]
     fn the_bridge_starts_stops_and_restarts_on_the_same_port() {
         let _serial = serial();
-        let (_dir, config, data) = scratch();
-        let port = i32::from(free_port());
+        // ⚠️ `dir` 要**持有**到用例结束：它一被 drop，配置与库就都没了。
+        let (dir, _config, data) = scratch();
+        let config = write_config(dir.path(), "127.0.0.1", free_port());
 
-        assert_eq!(
-            start(&config, &data, "127.0.0.1", port),
-            None,
-            "第一次起应当成功"
-        );
+        assert_eq!(start(&config, &data), None, "第一次起应当成功");
         assert_eq!(status(), STATUS_RUNNING, "起完应当是「在跑」");
 
         // ⚠️ 幂等：再起一次**不算失败**，也不会冒出第二个服务端
         // （Android 的前台服务被系统重启时就会走到这一步）。
-        assert_eq!(
-            start(&config, &data, "127.0.0.1", port),
-            None,
-            "重复启动应当算成功（幂等）"
-        );
+        assert_eq!(start(&config, &data), None, "重复启动应当算成功（幂等）");
 
         assert_eq!(stop(), None, "停止应当成功");
         assert_eq!(status(), STATUS_IDLE, "停完状态要回到「没起」");
 
         // ⚠️ 同一个端口还能再起 —— 这一步红了就说明「停止」是假的。
         assert_eq!(
-            start(&config, &data, "127.0.0.1", port),
+            start(&config, &data),
             None,
             "同一个端口应当能再起（证明上一轮真的收干净了）"
         );
@@ -670,14 +815,14 @@ mod tests {
     #[test]
     fn an_occupied_port_is_reported_and_the_bridge_can_retry() {
         let _serial = serial();
-        let (_dir, config, data) = scratch();
+        let (dir, _config, data) = scratch();
 
         // 先自己占住一个端口。
         let squatter = std::net::TcpListener::bind("127.0.0.1:0").expect("占住端口");
         let port = squatter.local_addr().expect("读本地地址").port();
+        let config = write_config(dir.path(), "127.0.0.1", port);
 
-        let message =
-            start(&config, &data, "127.0.0.1", i32::from(port)).expect("端口被占用时应当失败");
+        let message = start(&config, &data).expect("端口被占用时应当失败");
         assert!(
             message.contains(&port.to_string()),
             "错误里要能读出是哪个端口被占了，实际是：{message}"
@@ -690,7 +835,7 @@ mod tests {
 
         drop(squatter); // 放掉端口
         assert_eq!(
-            start(&config, &data, "127.0.0.1", i32::from(port)),
+            start(&config, &data),
             None,
             "端口放掉之后应当还能起来（失败是可以重来的）"
         );
@@ -705,5 +850,96 @@ mod tests {
         assert_eq!(status(), STATUS_IDLE, "进这个用例时应当没有服务端在跑");
         assert_eq!(stop(), None, "没得停也算成功");
         assert_eq!(status(), STATUS_IDLE);
+    }
+
+    /// 配置读写（界面那条路）：**坏配置读不出来要说得清**、
+    /// **不能生效的值不许写进去**、**写出去的读得回来**。
+    ///
+    /// ⚠️★ 这条用例盯的是「界面把配置改坏了」这一类事故 —— 它们的共同后果是
+    /// **服务端下次启动直接失败**（`config_file` 第 3 条：解析失败是致命错误），
+    /// 而那时候配置页自己也读不出配置，用户没有任何办法退回去。
+    ///
+    /// ⚠️ 不用真起服务端：`load_config` / `save_config` 是纯函数（只碰文件），
+    /// 所以这条用例不抢那个全局状态，也不跟别的用例打架。
+    #[test]
+    fn config_round_trips_through_the_bridge_and_bad_values_are_refused() {
+        let dir = tempfile::tempdir().expect("建临时目录");
+        let path = dir.path().join("config.json").display().to_string();
+        let read = |p: &str| -> serde_json::Value {
+            serde_json::from_str(&load_config(p)).expect("信封本身必须是一段合法 JSON")
+        };
+
+        // ① 文件还不存在 → **不是错误**，回默认值 + `exists:false`。
+        let first = read(&path);
+        assert_eq!(
+            first["ok"],
+            serde_json::Value::Bool(true),
+            "文件不在不算失败"
+        );
+        assert_eq!(
+            first["exists"],
+            serde_json::Value::Bool(false),
+            "要如实说文件还不存在"
+        );
+        assert_eq!(
+            first["config"]["server"]["port"],
+            serde_json::json!(9501),
+            "文件不在时回的是默认值"
+        );
+
+        // ② 改一项再存 → 读回来**那一项真的变了**（防「存进去的是一份默认值」）。
+        let mut edited = first["config"].clone();
+        edited["server"]["port"] = serde_json::json!(18091);
+        assert_eq!(
+            save_config(&path, &edited.to_string()),
+            None,
+            "合法配置要能存进去"
+        );
+        let back = read(&path);
+        assert_eq!(
+            back["exists"],
+            serde_json::Value::Bool(true),
+            "存过之后文件要在"
+        );
+        assert_eq!(
+            back["config"]["server"]["port"],
+            serde_json::json!(18091),
+            "改的那一项要真的落盘了"
+        );
+
+        // ③ 拼错的 JSON（界面拼串拼坏了）→ **拒绝**，而且盘上还是上一份。
+        let err = save_config(&path, "{\"server\": {\"port\"").expect("坏 JSON 必须被拒");
+        assert!(err.contains("读不回来"), "要说清是哪种拒绝：{err}");
+        assert_eq!(
+            read(&path)["config"]["server"]["port"],
+            serde_json::json!(18091),
+            "被拒的那一次不该动到盘上的内容"
+        );
+
+        // ④ 能解析、但**配了也不生效**的值 → 拒绝（`validate_for_save` 真的接上了）。
+        edited["text"]["limit"] = serde_json::json!(clip9_core::config::TEXT_LIMIT_MAX + 1);
+        let err = save_config(&path, &edited.to_string()).expect("超上限的正文要拒");
+        assert!(err.contains("单条正文上限"), "要说清是哪一项不对：{err}");
+
+        // ⑤ 文件被写坏 → 读的时候要说清，**并且不能还给一份 config**
+        //    （给了的话界面会把它当成真配置显示，用户一保存就把什么都盖没了）。
+        std::fs::write(&path, "{ 坏掉的内容 }").expect("写坏文件");
+        let broken = read(&path);
+        assert_eq!(
+            broken["ok"],
+            serde_json::Value::Bool(false),
+            "坏文件必须报 ok:false"
+        );
+        assert!(
+            broken["error"]
+                .as_str()
+                .unwrap_or_default()
+                .contains("解析失败"),
+            "要说清是解析失败：{broken}"
+        );
+        assert!(
+            broken.get("config").is_none(),
+            "失败时**不能**再给一份 config —— 那会被界面当成真配置"
+        );
     }
 }
