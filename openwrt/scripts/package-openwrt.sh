@@ -39,7 +39,12 @@ BINARY="$BASE_DIR/build/clip9-server-$VERSION-$ARCH"
 PKG_DIR="$BASE_DIR/build/pkg-$ARCH"
 CONTROL_DIR="$BASE_DIR/ipk/control"
 ROOTFS_DIR="$BASE_DIR/ipk/rootfs"
-IPK_NAME="clip9-server-openwrt-$ARCH-v$VERSION.ipk"
+# ⚠️ 产物名里**不带 `server`**（2026-09-29 改的，Jonny：「clip9-server-openwrt 去掉 server」）。
+# 包**里面**那个程序仍然叫 `clip9-server`（装到 `/usr/bin/clip9-server`）—— 改的只是
+# 发到 Release 上的那个文件名。⚠️ 这个字符串同时被
+# `.github/workflows/openwrt.yml`（`ls -l` 与 upload 的 path）和
+# `.github/workflows/release.yml`（`publish-openwrt` 里那句 `find … -name`）认着。
+IPK_NAME="clip9-openwrt-$ARCH-v$VERSION.ipk"
 
 echo "脚本目录: $SCRIPT_DIR"
 echo "根目录: $BASE_DIR"

@@ -52,8 +52,8 @@ echo "  ✅ package-openwrt.sh  aarch64 + 包架构 aarch64_cortex-a53"
 ./openwrt/scripts/package-luci-app.sh "$VER"                            >"$WORK.p3.log" 2>&1 || { echo "  ❌ package-luci-app.sh 失败"; tail -20 "$WORK.p3.log"; exit 1; }
 echo "  ✅ package-luci-app.sh"
 
-SRV="$BUILD/clip9-server-openwrt-x86_64-v$VER.ipk"
-SRV2="$BUILD/clip9-server-openwrt-aarch64-v$VER.ipk"
+SRV="$BUILD/clip9-openwrt-x86_64-v$VER.ipk"
+SRV2="$BUILD/clip9-openwrt-aarch64-v$VER.ipk"
 LUC="$BUILD/clip9-luci-openwrt-all-v$VER.ipk"
 
 echo
@@ -113,7 +113,7 @@ chk "界面包 Depends 含 clip9" "$(grep -m1 '^Depends:' "$L/control" | grep -c
 
 echo
 echo "=== ⑤ gitignore 真的挡住了产物 ==="
-chk "build/ 被忽略" "$(git check-ignore "$BUILD/clip9-server-openwrt-x86_64-v$VER.ipk" >/dev/null 2>&1 && echo ignored || echo tracked)" "ignored"
+chk "build/ 被忽略" "$(git check-ignore "$BUILD/clip9-openwrt-x86_64-v$VER.ipk" >/dev/null 2>&1 && echo ignored || echo tracked)" "ignored"
 
 echo
 printf '=== 合计：\033[32m%d 通过\033[0m / \033[31m%d 失败\033[0m ===\n' "$PASS" "$FAIL"

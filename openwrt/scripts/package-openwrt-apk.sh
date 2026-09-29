@@ -64,7 +64,11 @@ resolve_package_arch() {
 
 resolve_package_arch
 
-APK_NAME="clip9-server-openwrt-apk-${PACKAGE_ARCH}-v${VERSION}.apk"
+# ⚠️ 产物名里**不带 `server`**（2026-09-29 改的，与 `package-openwrt.sh` 的 `IPK_NAME` 同一个理由）。
+# 包**里面**那个程序仍然叫 `clip9-server`。⚠️ 这个字符串同时被
+# `.github/workflows/openwrt.yml`（`ls -l` 与 upload 的 path）和
+# `.github/workflows/release.yml`（`publish-openwrt` 里那句 `find … -name`）认着。
+APK_NAME="clip9-openwrt-apk-${PACKAGE_ARCH}-v${VERSION}.apk"
 
 to_container_path() {
     local host_path=$1
