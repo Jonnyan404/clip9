@@ -679,6 +679,7 @@ name = "clip9-android"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "clip9-core",
  "clip9-server",
  "jni 0.21.1",
  "serde_json",

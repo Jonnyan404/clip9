@@ -26,6 +26,11 @@ crate-type = ["cdylib"]
 # 那意味着 android 自己也要决定「库开在哪里、目录建没建出来」，
 # 而这个 crate 的第一版手抄了一遍那段，抄漏了 `uploads/`（见 `paths::open_store`）。
 clip9-server = { path = "../server" }
+# ⚠️ 直引 `clip9-core` 只要一个类型：`Config`（配置读写那两个 JNI 入口用它）。
+# 它在依赖树里本来就有，多列一行不会多编一份 —— 但**别**顺手把 `clip9-store` 也列上：
+# 那意味着 android 自己也要决定「库开在哪里、目录建没建出来」，
+# 而这个 crate 的第一版手抄了一遍那段，抄漏了 `uploads/`（见 `paths::open_store`）。
+clip9-core = { path = "../core" }
 
 anyhow = { workspace = true }
 serde_json = { workspace = true }

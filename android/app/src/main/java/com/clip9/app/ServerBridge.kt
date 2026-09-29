@@ -3,7 +3,7 @@ package com.clip9.app
 /**
  * Rust 侧 `crates/android` 的 JNI 桥。
  *
- * ⚠️★ **这一整个文件是一份契约**：下面那五个 `external fun` 的名字被 Rust 那边
+ * ⚠️★ **这一整个文件是一份契约**：下面那七个 `external fun` 的名字被 Rust 那边
  * **逐字写死**（`Java_com_clip9_app_ServerBridge_native*`）。对不上的症状是
  * `UnsatisfiedLinkError` —— 而它**不会告诉你**是哪一处不对。三处必须同时一致：
  *
@@ -65,19 +65,19 @@ object ServerBridge {
         }
     }
 
-    // ⚠️★ 下面五个是**实例方法**（`object` 里的 `external fun` 不带 `@JvmStatic`），
+    // ⚠️★ 下面这七个是**实例方法**（`object` 里的 `external fun` 不带 `@JvmStatic`），
     // 所以 Rust 那边第二个参数收的是 `JObject`。改法见本文件抬头。
     // ⚠️ 它们**只能在 ensureLoaded() 为 true 之后**调 —— 所以全部包在下面几个 public 函数里。
     private external fun nativeVersion(): String
     private external fun nativeStart(
         configPath: String,
         dataDir: String,
-        host: String,
-        port: Int,
     ): String?
     private external fun nativeStop(): String?
     private external fun nativeStatus(): Int
     private external fun nativeLastError(): String?
+    private external fun nativeLoadConfig(configPath: String): String
+    private external fun nativeSaveConfig(configPath: String, json: String): String?
 
     /** `.so` 的版本号。拿得到它就说明整条链（加载 / 符号名 / ABI 目录）是通的。 */
     fun version(): String = if (ensureLoaded()) nativeVersion() else "（本地组件未加载）"
@@ -85,12 +85,41 @@ object ServerBridge {
     /**
      * 起服务端。**阻塞**（最多 800ms + 建库时间）—— ⚠️ **别在主线程上调**。
      *
+     * ⚠️★ **没有 host / port 参数**（2026-09-29 去掉的）：监听地址与端口**只从配置文件来**。
+     * 原来那两个形参的意思是「界面传进来的盖过配置文件」，而配置页现在**也能改这两项** ——
+     * 留着形参就等于界面上那两项「填了、存了、重启了、没反应」。
+     * 所以配置文件是唯一权威，见 `rust/crates/android/src/lib.rs` 里 `nativeStart` 的文档。
+     *
      * @return `null` = 成功；非 null = 一句话原文，应当原样显示给用户
      *   （失败时是错误原文，也可能是「正在启动 / 正在停止，请稍候」）。
      */
-    fun start(configPath: String, dataDir: String, host: String, port: Int): String? {
+    fun start(configPath: String, dataDir: String): String? {
         if (!ensureLoaded()) return loadFailureMessage ?: "本地组件未加载"
-        return nativeStart(configPath, dataDir, host, port)
+        return nativeStart(configPath, dataDir)
+    }
+
+    /**
+     * 读服务端配置。返回的是**信封 JSON**（形状与理由见 [ServerConfigStore.load]）。
+     *
+     * ⚠️ 本地组件没加载时**也要回一个 `ok:false` 的信封**，不能回空串：
+     * 上层拿 `JSONObject(...)` 解它，空串会抛成「读不出来（本地组件没有响应）」——
+     * 那句话是对的，但读不出**为什么**（而这句里带着原因）。
+     */
+    fun loadConfig(configPath: String): String {
+        if (!ensureLoaded()) {
+            return """{"ok":false,"exists":false,"error":"本地组件未加载"}"""
+        }
+        return nativeLoadConfig(configPath)
+    }
+
+    /**
+     * 写服务端配置。
+     *
+     * @return `null` = 成功；非 null = 一句话原文（解析不过 / 配了不生效 / 写不进去）。
+     */
+    fun saveConfig(configPath: String, json: String): String? {
+        if (!ensureLoaded()) return loadFailureMessage ?: "本地组件未加载"
+        return nativeSaveConfig(configPath, json)
     }
 
     /** 停服务端。**阻塞**（等 redb 事务收尾，上界 15 秒）—— ⚠️ 别在主线程上调。 */
