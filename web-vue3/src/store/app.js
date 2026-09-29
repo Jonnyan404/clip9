@@ -102,6 +102,14 @@ export const useAppStore = defineStore('app', {
         // 这样「一个 tab 一个模式」——每个 tab 有自己的地址，就互不干扰。
         // 房间本来就是这么做的（只走 URL、不落 localStorage），模式跟它保持一致。
         uiMode: readLocationParam('mode') || localStorage.getItem('uiMode') || 'default',
+        // 嵌入态（2026-09-29）：桌面端把网页版塞进 iframe 时带 `?embed=1`。
+        // ⚠️ 只有一件事：**输入交给宿主** —— 桌面端有自己的输入条，网页版在各模式里
+        // 把发送区**预置**成关（用户在个性化里拨过就听用户的，见 `display` getter）。
+        // 实现走的是**现成的个性化开关**，`composerFullyHidden` 会顺势把整个输入区藏掉 ——
+        // 与用户亲手拨关同一条代码路径，不另造第二套「隐藏」。
+        // ⚠️ 不写回 `displayByMode`：嵌入只是这一次浏览的形态，**不该**改写用户在
+        // 浏览器里用网页版时的偏好（同一个 origin，localStorage 是共享的）。
+        embedded: readLocationParam('embed') === '1',
     }),
     actions: {
         setSearchQuery(value) {
@@ -195,8 +203,27 @@ export const useAppStore = defineStore('app', {
 
         // 当前模式的显示开关。缺的键用 INITIAL_DISPLAY 兜底 —— 这样加新开关时，
         // 老用户不用迁移就能拿到默认值。
+        //
+        // ⚠️★ 嵌入态（`?embed=1`，桌面端的 iframe）：composer 那一组**没被用户拨过就当关** ——
+        // 「桌面端帮忙关一下」（Jonny 2026-09-29），但**允许手动打开**：用户在个性化里
+        // 拨过的（`displayByMode` 里有显式值）照旧算数。为什么走这里而不是在各个模式里
+        // 各判一遍 `app.embedded`：发送区有两套实现（UnifiedComposer / StickyComposer），
+        // 「藏输入区」已经各有一套读 `display` 的逻辑 —— 在源头把**默认值**改掉，
+        // 两边自动都吃到，`composerFullyHidden` 也顺势成立，不需要第二份「该不该藏」的判断。
+        // ⚠️ 只动 composer 组，别的开关照旧：嵌入是「不发」，不是「不看」。
         display() {
-            return { ...INITIAL_DISPLAY, ...(this.displayByMode[this.uiMode] || {}) };
+            const stored = this.displayByMode[this.uiMode] || {};
+            const base = { ...INITIAL_DISPLAY, ...stored };
+            if (!this.embedded) {
+                return base;
+            }
+            const hostTakesInput = { ...base };
+            for (const toggle of DISPLAY_TOGGLES) {
+                if (toggle.group === 'composer' && !(toggle.key in stored)) {
+                    hostTakesInput[toggle.key] = false;
+                }
+            }
+            return hostTakesInput;
         },
         useDark() {
             switch (this.dark) {
