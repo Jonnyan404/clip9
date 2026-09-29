@@ -162,6 +162,18 @@ watch(filteredReceived, syncSelection, { immediate: true });
 onMounted(syncSelection);
 
 // 窄屏没有并排的空间，预览改成**全屏弹窗**：同一个 GlancePreview，两个呈现位置。
+//
+// ⚠️★ `WIDE_MIN` 是**唯一**一处阈值（原来是写死的 `> 1024`，而且 CSS 里另有一份
+// `@media (max-width: 1024px)` —— 两份一定会漂，漂了不报错，只是「窗口多大才出预览」
+// 两处说法不一致）。现在窄屏那两条布局规则挂 `.glance-wall--narrow`，
+// 媒体查询整个删掉了 —— 判断只有这一处。
+//
+// ⚠️★ **1024 太大**：桌面端默认窗口 760 宽，减去侧栏 208+1，内容区只有 **551** ——
+// 于是「网页」那个视图里，速览**永远出不来右侧的预览面板**，只剩「点一下弹全屏」。
+// Jonny 2026-09-29：「改一下 SPA 的预览模式展示预览窗口的触发大小，
+// 让它在桌面端默认窗口大小也展示预览框」。
+// 取 500：551 留了余量；手机（≤430）仍然是弹窗，iPad 竖屏（768）本来就是两栏。
+const WIDE_MIN = 500;
 const previewDialog = ref(false);
 function selectItem(item) {
     selected.value = item;
@@ -169,9 +181,11 @@ function selectItem(item) {
         previewDialog.value = true;
     }
 }
-const isWide = ref(true);
+// ⚠️ 初值用**当前宽度**算，而不是先 `true` 再等 `onMounted` 纠 —— 后者在窄屏上会先画一帧
+// 两栏（`v-if` 那一拍），表现就是「窄屏打开时闪一下右侧面板」。
+const isWide = ref(window.innerWidth > WIDE_MIN);
 function syncWidth() {
-    isWide.value = window.innerWidth > 1024;
+    isWide.value = window.innerWidth > WIDE_MIN;
 }
 
 // ── 上下键切换条目 ─────────────────────────────────────────────────────
@@ -225,7 +239,7 @@ onBeforeUnmount(() => {
 
 <template>
     <!-- ⚠️ 没有标题：模式名和图标已经在工具栏的模式切换器里了。 -->
-    <div class="glance-wall" :class="{ 'glance-wall--dark': isDark }">
+    <div class="glance-wall" :class="{ 'glance-wall--dark': isDark, 'glance-wall--narrow': !isWide }">
         <PageToolbar variant="glance"></PageToolbar>
 
         <div class="glance-wall__shell">
@@ -532,7 +546,10 @@ onBeforeUnmount(() => {
     flex: 1;
     min-height: 0;
     display: grid;
-    grid-template-columns: minmax(0, 300px) minmax(0, 1fr);
+    /* ⚠️★ 左列**不是固定 300px**：`min(300px, 38%)` —— 宽屏封顶 300px（一行摘要够用就行），
+       窄到接近 `WIDE_MIN` 时按比例收，把省下的宽度让给右边的预览。
+       固定 300 在 551 那种宽度下会吃掉 55%，预览只剩 ~235px，白折腾。 */
+    grid-template-columns: minmax(0, min(300px, 38%)) minmax(0, 1fr);
     gap: 16px;
     padding-top: 10px;
 }
@@ -659,24 +676,18 @@ onBeforeUnmount(() => {
     gap: 4px;
 }
 
-/* ── 媒体查询一律放在**最后** ────────────────────────────────────────────
-   ⚠️ 这不是风格问题，是**顺序问题**：媒体查询里的选择器和基础规则特异性相同，
-   谁生效只看谁在文件里更靠后 —— 放在基础规则前面会被整个盖掉，而且是静默的。
-   这里踩过一次。 */
+/* ── 窄屏：两栏收成一栏、预览走全屏弹窗 ────────────────────────────────
+   ⚠️★ 这里**故意不是 `@media`**（原来那条 `@media (max-width: 1024px)` 已删）：
+   宽窄的判断在脚本里（`WIDE_MIN`），写成媒体查询就得把那个数**再抄一遍**，
+   两份一定会漂 —— 而漂了不报错，只是「窗口多大才出预览」两处说法不一致。
+   现在挂的是根元素上的类，与 `isWide` 同一份来源。
+   ⚠️ 面板那个 `display: none` 也不用写了：`v-if="isWide"` 根本没渲染它。 */
+.glance-wall--narrow .glance-wall__panes {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 0;
+}
 
-/* 窄屏：两栏收成一栏（预览走全屏弹窗，见模板里的 isWide）。 */
-@media (max-width: 1024px) {
-    .glance-wall__panes {
-        grid-template-columns: minmax(0, 1fr);
-        gap: 0;
-    }
-
-    .glance-wall__pane {
-        display: none;
-    }
-
-    .glance-wall__tabs {
-        gap: 14px;
-    }
+.glance-wall--narrow .glance-wall__tabs {
+    gap: 14px;
 }
 </style>
