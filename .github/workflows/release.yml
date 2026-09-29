@@ -21,6 +21,10 @@ name: Release
 #   ⚠️★ 写的是**这几个短名字**，不是 `x86_64-unknown-linux-musl` 那种三元组 ——
 #   三元组只在 CI 内部给 cargo 用（矩阵里的 `target`），产物名用 `label`。
 #   用它的地方有两处：`Dockerfile` 的 `wget` 与 homebrew 那步。
+#   ‼️ **不再发 `.sha256`**（Jonny 2026-09-29：「不要 sha256」）。所以那三个 job 只
+#      `tar`/`zip` 一份产物，`upload-artifact` 的 path 里也不再带 `*.sha256`。
+#      ⚠️ homebrew 那个 job **不受影响** —— 它一直是自己 `gh release download` 下来现算
+#      sha256 的（formula/cask 里的 `sha256` 字段是**必填**，与「发不发校验文件」是两件事）。
 #   `clip9-desktop-<平台>-<架构>.<dmg|deb|AppImage|msi|exe>`
 #                                                桌面端，**含服务端**（见 desktop job 的注释）
 #   clip9:…（容器镜像）                          由 Release 里那份二进制做的，**镜像里不编译**
@@ -28,15 +32,15 @@ name: Release
 #   clip9-openwrt-<架构>-v<版本>.ipk              OpenWrt 服务端包，7 个架构
 #   clip9-openwrt-apk-<设备架构>-v<版本>.apk      8 个设备架构
 #   clip9-luci-openwrt-all-v<版本>.ipk / …-apk-noarch-v<版本>.apk  LuCI 界面包
+#   clip9-android-v<版本>.apk                    Android **合并包**（三个 ABI 都在）
+#   clip9-android-v<版本>-<abi>.apk              Android **单 ABI 包**，3 个：
+#                                                arm64-v8a / armeabi-v7a / x86_64
 #   ⚠️★ OpenWrt 那一组里**只有 ipk 与 apk 是资产** —— 裸二进制
 #      （`clip9-server-<版本>-<架构>`）是**中间产物**，给 ipk/apk 两个 job 用。
 #      它**曾经真的被当资产传上去过**（v0.1.0-beta3 那次）：`publish` 的
 #      `download-artifact` 原来不带 `pattern`，会把整次运行里**所有** artifact 都拖下来，
 #      而 `openwrt.yml` 的 `binaries` job 正好在那一刻已经跑完了（时序问题）。
 #      现在那里写死成 `clip9-*`（cli / desktop 那两套），中间产物进不来。
-#   clip9-android-v<版本>.apk                    Android **合并包**（三个 ABI 都在）
-#   clip9-android-v<版本>-<abi>.apk              Android **单 ABI 包**，3 个：
-#                                                arm64-v8a / armeabi-v7a / x86_64
 #   ⚠️ 后面那几组由 `openwrt.yml` / `android.yml` 两个**可复用工作流**构建（它们也能单独
 #      手动跑，那样会自己覆盖上传）。见下面那两个 `uses:` 与 `publish-openwrt` /
 #      `publish-android`。
@@ -175,14 +179,12 @@ jobs:
           cp "target/${{ matrix.target }}/release/$BIN" "dist/$name/$PACKAGE"
           cp ../LICENSE ../README.md "dist/$name/"
           tar -C dist -czf "dist/$name.tar.gz" "$name"
-          (cd dist && sha256sum "$name.tar.gz" > "$name.tar.gz.sha256")
 
       - uses: actions/upload-artifact@v7
         with:
           name: ${{ env.PACKAGE }}-${{ matrix.label }}
           path: |
             rust/dist/*.tar.gz
-            rust/dist/*.sha256
           if-no-files-found: error
 
   macos:
@@ -219,14 +221,12 @@ jobs:
           cp "target/${{ matrix.target }}/release/$BIN" "dist/$name/$PACKAGE"
           cp ../LICENSE ../README.md "dist/$name/"
           tar -C dist -czf "dist/$name.tar.gz" "$name"
-          (cd dist && shasum -a 256 "$name.tar.gz" > "$name.tar.gz.sha256")
 
       - uses: actions/upload-artifact@v7
         with:
           name: ${{ env.PACKAGE }}-${{ matrix.label }}
           path: |
             rust/dist/*.tar.gz
-            rust/dist/*.sha256
           if-no-files-found: error
 
   # ── Windows：与 macos 那个 job 同一个形状，只是产物是 `.zip` ──────────────
@@ -279,11 +279,11 @@ jobs:
         shell: bash
         run: cargo build --release -p $BIN --target ${{ matrix.target }}
 
-      # ⚠️ 打包这一步用 pwsh：`Compress-Archive` / `Get-FileHash` 是系统自带的，
-      #    不用赌 runner 的 PATH 里有没有 `zip`（Git Bash 不带你；而 Windows 那个 `tar.exe`
-      #    是 bsdtar，Git Bash 里又会是 GNU tar —— GNU tar 不认得 `.zip`，会**静默**写出一个
-      #    只是改了个名字的 tar，那比报错难查）。
-      - name: 打包（zip + sha256）
+      # ⚠️ 打包这一步用 pwsh：`Compress-Archive` 是系统自带的，不用赌 runner 的 PATH 里
+      #    有没有 `zip`（Git Bash 不带你；而 Windows 那个 `tar.exe` 是 bsdtar，Git Bash 里
+      #    又会是 GNU tar —— GNU tar 不认得 `.zip`，会**静默**写出一个只是改了个名字的
+      #    tar，那比报错难查）。
+      - name: 打包（zip）
         working-directory: rust
         shell: pwsh
         run: |
@@ -294,13 +294,11 @@ jobs:
           Copy-Item "target/${{ matrix.target }}/release/$env:BIN.exe" "dist/$name/$pkg.exe"
           Copy-Item ../LICENSE, ../README.md "dist/$name/"
           Compress-Archive -Path "dist/$name" -DestinationPath "dist/$name.zip" -Force
-          # ⚠️★ 用 `WriteAllText` 而不是 `Out-File`：后者在 PS 5.1 上写 CRLF，有的编码还带 BOM，
-          #    而另外三个平台那份是 `sha256sum` 写出来的 **LF** —— 带 CRLF 的 `.sha256`
-          #    在 Linux/macOS 上 `sha256sum -c` 会把 `\r` 当成文件名的一部分，直接对不上。
-          #    格式与 `sha256sum` 一致：`<hash>␠␠<文件名>`。
-          $hash = (Get-FileHash "dist/$name.zip" -Algorithm SHA256).Hash.ToLower()
-          [System.IO.File]::WriteAllText(
-            "$PWD/dist/$name.zip.sha256", "$hash  $name.zip`n")
+          # ⚠️ 这里原来还写一份 `$name.zip.sha256`（CRLF 那个坑写了一大段注释）——
+          #    2026-09-29 起**不再发** `.sha256` 了，整段删掉。要用的话别直接抄回来：
+          #    当时用 `WriteAllText` 而不是 `Out-File` 是因为后者在 PS 5.1 上写 CRLF，
+          #    而另外三个平台那份是 `sha256sum` 写的 LF，带 `\r` 的校验文件在 Linux/macOS
+          #    上 `sha256sum -c` 会直接对不上。
           Get-ChildItem dist
 
       - uses: actions/upload-artifact@v7
@@ -308,7 +306,6 @@ jobs:
           name: ${{ env.PACKAGE }}-${{ matrix.label }}
           path: |
             rust/dist/*.zip
-            rust/dist/*.sha256
           if-no-files-found: error
 
   # ── 桌面端：Tauri 安装包（macOS .app/.dmg、Linux .deb/AppImage、Windows .msi/.exe）──
