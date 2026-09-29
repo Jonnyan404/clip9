@@ -31,8 +31,8 @@
   编得过、装得上、一调就炸）。用 `tools/sync-android-jni-libs.mjs` 搬，`--check` 能提前问一句。
 - `app/proguard-rules.pro` 里的 `-keep`：release 开了 R8，**类名一改短第 1 条就废了**。
 
-⚠️ 上面这五处现在**逐条有判据**：`node tools/android-contract-smoke.mjs`（15 条，已接进 CI 的
-frontend job）。它管四组：
+⚠️ 上面这五处现在**逐条有判据**：`node tools/android-contract-smoke.mjs`（16 条，已接进 CI 的
+frontend job）。它管五组：
 
 - 「ABI 名单在三处是否一致」+「库名 / JNI 符号名在六处是否一致」；
 - 「`jniLibs/<abi>/` 真的有占位」「构建产物路径（`app/build`、`build`、`.gradle`、`.kotlin`、
@@ -40,7 +40,11 @@ frontend job）。它管四组：
 - **契约 C**：`ConfigPage.kt` 那张「控件 ↔ JSON 字段名」表 ↔ `clip9-core` 的 `Config`
   （**双向**：写错的路径要红，`config.rs` 里新加的字段没人管也要红）；
 - **契约 D / E**：资源引用是否存在（`R.id` / `R.string` / `R.color` / `@string` / `@color`）
-  与跨端桥名（§一之四）。
+  与跨端桥名（§一之四）；
+- **契约 F**：布局里不许有「`wrap_content` 容器里撑满父向的裸 `<View>`」—— 裸 View 没有
+  内容高宽，`AT_MOST` 之下会被量成**整屏高**（2026-09-29 一根 1dp 的分隔线就这样把
+  整个管理页撑没了：面板 827dp、`ScrollView` 0 高，页签与三页内容全消失且不报错）。
+  分隔线这类东西用稿子的 gap 做法（相邻格 margin 露出容器底色）。
 
 ⚠️ 变异验证分三份台本（都在 `/tmp`，仓库文件一行不碰；夹具是那边一个真的 git 仓库）：
 
@@ -49,6 +53,7 @@ frontend job）。它管四组：
 | `clip9-android-smoke-mutate.cjs` | 5 | 契约 C 的路径写错 / `config.rs` 加字段 / 文案改名 / 桥名改名 + 一组对照 |
 | `clip9-cfg-mutate.cjs` | 6 | `validate_for_save` 的三道闸 + `config_file` 的读写 + 一组对照 |
 | `kt-mutate.mjs` | 5 | 块注释的三种坏法 + 两组反向（字符串 / 行注释里出现结束符**不该**红） |
+| `clip9-android-mutate-f.mjs` | 4 | 契约 F：把那根坏 View 原样造回来（要只红它）+ margin 改 2dp 的对照组 + 基线/还原 |
 
 ⚠️ 前两份都断言「**红的集合正好等于预期集合**」，不是「至少包含」——
 多红一条说明这一处改动破坏的不止一条判据，那本身就是一条要看的信号。

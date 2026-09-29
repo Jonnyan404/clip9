@@ -706,6 +706,12 @@ function kotlinComments() {
 //   契约 E：跨端桥名（Android ↔ 两份 `web-vue3`）
 //     · `clip9Auth` / `roomAuth` / `__default__` 三处对不上 →
 //       「免打开界面认证」**什么都不发生**（不报错、不提示，只是又被问了一次密码）。
+//   契约 F：布局里不许有「wrap_content 容器里撑满父向的裸 `<View>`」
+//     · 裸 View 没有内容高宽，`View` 默认的 `onMeasure`（`getDefaultSize`）对
+//       `AT_MOST` **返回整个 specSize** —— 一根 1dp 宽的分隔线会被量成一整屏高，
+//       把容器、面板一路撑爆，直到把旁边 `ScrollView`（`0dp + weight=1`）挤到 0 高：
+//       页签与三页内容全部消失，**不报错也不崩**，看起来像「界面坏了」。
+//       （2026-09-29 真机塌陷就是它，见 `docs/specs/android-client.md` §0.4 第 11 条。）
 
 /**
  * 从 `config.rs` 里抽出「结构体名 → { JSON 键 → 字段类型 }」。
@@ -1179,6 +1185,93 @@ const pageSwitches = configPageSwitches();
           '\n    ⚠️ 对不上的症状是**什么都没发生** —— 不报错、不提示，只是又被问了一次密码。',
       );
     }
+  }
+}
+
+// ── 契约 F：布局里不许有「wrap_content 容器里撑满父向的裸 View」────────────
+
+/**
+ * 逐个布局扫一遍标签树，找出「父容器某一向是 wrap_content、自己却在该向写
+ * match_parent 的裸 `<View>`」。
+ *
+ * ⚠️★ 为什么专盯**裸 `<View>`**：它没有内容高宽，`View` 默认的 `onMeasure`
+ * （`getDefaultSize`）对 `AT_MOST` **返回整个 specSize** —— 一根 1dp 宽的分隔线
+ * 会被量成一整屏高，把容器、面板一路撑爆，直到把旁边的 `ScrollView`
+ * （`0dp + weight=1`）挤到 0 高：页签与三页内容全部消失，**不报错也不崩**
+ * （2026-09-29 真机塌陷就是它，`uiautomator` 量到面板 827dp / 应为 ~431dp）。
+ *
+ * ⚠️ 有内容的容器没事：`LinearLayout` / `TextView` 在 `AT_MOST` 下量出来的是
+ * 自己内容的高宽 —— 所以只盯 `<View>`。
+ * ⚠️ 父是固定值或 match_parent 也没事：那一向的规格是 `EXACTLY`，解析是准的。
+ *
+ * ⚠️ 解析是**手写的标签扫描**而不是真 XML 解析器：本仓库的布局格式规整
+ * （一行一个属性、属性值里没有 `>`），正则够用；Node 没有内置 XML 解析器，
+ * 为几行判据引依赖不值得。⚠️ 注释先剥掉（`stripXmlComments`）——
+ * 注释里写的示例不是控件。
+ */
+function bareViewBlowups() {
+  const dir = join(ROOT, 'android/app/src/main/res/layout');
+  if (!existsSync(dir)) return null;
+  const files = readdirSync(dir).filter((f) => f.endsWith('.xml'));
+  if (!files.length) return null;
+  const hits = [];
+  const TAG = /<(\/?)([A-Za-z][\w.]*)((?:\s+[\w:]+="[^"]*")*)\s*(\/?)>/g;
+  for (const name of files) {
+    const text = stripXmlComments(readFileSync(join(dir, name), 'utf8'));
+    const stack = [];
+    let m;
+    while ((m = TAG.exec(text)) !== null) {
+      const [, closing, tag, attrs, selfClose] = m;
+      if (closing) {
+        stack.pop();
+        continue;
+      }
+      const get = (prop) => {
+        const hit = new RegExp(`android:${prop}="([^"]*)"`).exec(attrs);
+        return hit ? hit[1] : '';
+      };
+      const parent = stack[stack.length - 1];
+      if (parent && tag === 'View') {
+        const w = get('layout_width');
+        const h = get('layout_height');
+        const pw = parent.get('layout_width');
+        const ph = parent.get('layout_height');
+        // ⚠️★ 判的是**同一向**：子项在宽上要撑满、而父的宽是 wrap_content（高同理）。
+        //    宽高交叉着比（比如「子高 match_parent + 父宽 wrap_content」）在
+        //    horizontal LinearLayout 里**不是坑** —— 变异验证抓出来过这一版写法。
+        if (
+          (w === 'match_parent' && pw === 'wrap_content') ||
+          (h === 'match_parent' && ph === 'wrap_content')
+        ) {
+          const line = text.slice(0, m.index).split('\n').length;
+          const axis = w === 'match_parent' ? '宽' : '高';
+          hits.push(
+            `${name}:${line}  <View> 的${axis}是 match_parent，而 <${parent.tag}> 的${axis}是 wrap_content`,
+          );
+        }
+      }
+      if (!selfClose) stack.push({ tag, get });
+    }
+  }
+  return hits;
+}
+
+{
+  const label =
+    '契约 F：布局里没有「wrap_content 容器里撑满父向的裸 View」（那种 View 会被 AT_MOST 量成整屏高）';
+  const hits = bareViewBlowups();
+  if (hits === null) {
+    fail(label, '读不到 android/app/src/main/res/layout/ 下的布局');
+  } else if (hits.length) {
+    fail(
+      label,
+      hits.join('\n    ') +
+        '\n    ⚠️ 裸 View 没有内容高宽，`AT_MOST` 之下 onMeasure 返回整个可用空间 —— 一根分隔线\n' +
+        '       就能撑爆容器、把旁边的 weight 子项挤到 0。分隔线用稿子的 gap 做法：\n' +
+        '       相邻格 margin 露出容器底色，别用一根 match_parent 的 View。',
+    );
+  } else {
+    ok(`${label} —— 布局里全部裸 View 都过了`);
   }
 }
 

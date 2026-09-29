@@ -128,8 +128,17 @@
                 android:textSize="13sp" />
 
             <!-- ── 端口 / 局域网地址（稿子 `.metrics`）──────────────────────
-                 ⚠️ 容器底色是那条 1dp 的分隔线，两格各自的背景盖在上面 ——
-                 这就是稿子里 `gap:1px;background:#22314a` 的做法。 -->
+                 ⚠️★ 中间那 1dp 分隔线**不是一根 View**，是两格之间露出来的**容器底色**
+                 （左格 marginEnd=1dp）—— 稿子的 `gap:1px;background:#22314a` 就是这么做的。
+                 ⚠️★ 千万别把它改回 `<View width=1dp height=match_parent>`：这格容器是
+                 wrap_content（给子项的规格是 AT_MOST），**裸 View 的 onMeasure 对 AT_MOST
+                 会返回整个 specSize**（它没有内容高度可裁），于是一根 1dp 宽的线被量成
+                 一整屏高（真机量过：容器被撑到 541dp），把面板一起撑爆 —— 而面板是
+                 ScrollView（`0dp + weight=1`）的兄弟，ScrollView 就落到 0 高：
+                 页签与三页内容**全部消失**，不报错也不崩，看起来像「界面坏了」。
+                 （2026-09-29 Jonny 的真机就是这么坏的，竖屏就会。）
+                 ⚠️ 两个格子自己也写着 match_parent，但它们是 LinearLayout ——
+                 AT_MOST 下量出来是自己的内容高；只有**裸 View** 才有这个坑。 -->
             <LinearLayout
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
@@ -141,6 +150,7 @@
                     android:layout_width="0dp"
                     android:layout_height="match_parent"
                     android:layout_weight="1"
+                    android:layout_marginEnd="1dp"
                     android:background="@drawable/bg_console_metric_left"
                     android:orientation="vertical"
                     android:paddingStart="13dp"
@@ -168,11 +178,6 @@
                         android:textColor="@color/console_text"
                         android:textSize="14sp" />
                 </LinearLayout>
-
-                <View
-                    android:layout_width="1dp"
-                    android:layout_height="match_parent"
-                    android:background="@color/console_edge" />
 
                 <LinearLayout
                     android:layout_width="0dp"
