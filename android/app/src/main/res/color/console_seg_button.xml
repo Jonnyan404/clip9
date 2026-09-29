@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  三个页签按钮的**背景**（设计稿 `.seg button[aria-selected="true"]`）。
+
+  ⚠️★ 用 `ColorStateList` 而不是两张 drawable：`MaterialButton` 的 `app:backgroundTint`
+  收的就是它，选中/未选中由一个资源说了算 —— 换成代码里 `if (checked) setBackground…`
+  就会出现「哪一次忘了设」的漏网（而且只在某一次点击之后才看得出来）。
+  ⚠️ 未选中是**透明**：底色由外壳（`bg_console_seg`）给，两层各管一件事。
+-->
+<selector xmlns:android="http://schemas.android.com/apk/res/android">
+    <item
+        android:color="@color/console_edge"
+        android:state_checked="true" />
+    <item android:color="@android:color/transparent" />
+</selector>

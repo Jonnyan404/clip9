@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  圆环中心那个「开关」图标（设计稿 `#i-power`）：一条竖线 + 一段开口的弧。
+
+  ⚠️★ 它与 `ic_power.xml`（Material 的实心版）**不是同一个画法**，所以是两个文件而不是一个：
+  那个是实心填充、给通知栏那类「小图标」用的；这个是描边风格、专门配控制台那一套线宽（1.8）。
+  把两份合成一份的话，无论按哪一边的画法，另一边都会显得不搭。
+-->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+    <path
+        android:fillColor="#00000000"
+        android:pathData="M12,3.5 v8"
+        android:strokeColor="#FFFFFFFF"
+        android:strokeLineCap="round"
+        android:strokeWidth="1.8" />
+    <path
+        android:fillColor="#00000000"
+        android:pathData="M6.9,6.9 a7.4,7.4 0 1 0 10.2,0"
+        android:strokeColor="#FFFFFFFF"
+        android:strokeLineCap="round"
+        android:strokeWidth="1.8" />
+</vector>

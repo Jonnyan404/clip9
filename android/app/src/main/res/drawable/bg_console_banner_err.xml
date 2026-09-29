@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 出错时的横幅（设计稿 `.banner.err`）：红底 + 红边 + 浅红字。 -->
+<shape xmlns:android="http://schemas.android.com/apk/res/android"
+    android:shape="rectangle">
+    <corners android:radius="16dp" />
+    <solid android:color="@color/console_err_soft" />
+    <stroke
+        android:width="1dp"
+        android:color="@color/console_err_edge" />
+</shape>

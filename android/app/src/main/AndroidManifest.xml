@@ -29,7 +29,8 @@
         <activity
             android:name=".MainActivity"
             android:exported="true"
-            android:launchMode="singleTop">
+            android:launchMode="singleTop"
+            android:theme="@style/Theme.Clip9.Console">
             <!-- ⚠️ singleTop：常驻通知点回来时不该再叠一个管理页；
                  ⚠️★ 分享进来时也靠它 —— 走的是 `onNewIntent`（见 MainActivity）。 -->
             <intent-filter>

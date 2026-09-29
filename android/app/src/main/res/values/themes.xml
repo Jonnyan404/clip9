@@ -13,4 +13,68 @@
     <style name="Base.Theme.Clip9" parent="Theme.Material3.DayNight.NoActionBar" />
 
     <style name="Theme.Clip9" parent="Base.Theme.Clip9" />
+
+    <!--
+      管理页（`MainActivity`）专用：**固定深色**的控制台。
+
+      ⚠️★ 为什么不像 `Theme.Clip9` 那样跟系统亮暗走：设计稿 `b-console.html` 是一份
+      **深色**控制台（屏底 `#0a111f`、卡片 `#111c2e`、面板从上到下由亮到暗）。
+      要「与设计稿一致」就不能让它随系统漂移 —— 亮色主题下那份稿子根本无从对照。
+      ⚠️ parent 选 `Theme.Material3.Dark`（不是 DayNight）：`Dark` 本身就恒定深色。
+      ⚠️ `windowBackground` 必须显式设成控制台底色：不设的话窗口在布局加载出来之前
+      会先闪一下主题默认的面色（在深色界面上是一个明显的白闪）。
+
+      ⚠️ 只给 MainActivity 用。`WebAppActivity` 显示的是服务端下发的网页，它有自己的配色，
+      套上深色控制台反而会让「网页还没加载出来」那一段底色不对。
+    -->
+    <style name="Theme.Clip9.Console" parent="Theme.Material3.Dark.NoActionBar">
+        <item name="android:windowBackground">@color/console_bg</item>
+        <item name="android:statusBarColor">@color/console_bg</item>
+        <item name="android:navigationBarColor">@color/console_bg</item>
+        <item name="colorPrimary">@color/console_accent</item>
+    </style>
+
+    <!--
+      ── 控制台上的两个按钮样式 ──────────────────────────────────────────────
+
+      ⚠️★ 两个都继承 `Widget.Material3.Button.TextButton`（**不是** OutlinedButton）：
+      前者没有描边与内缩，才压得出设计稿那种「一块纯色圆角」的样子。
+      继承 Outlined 的话 `MaterialButtonToggleGroup` 还会在三个页签之间补上一圈描边，
+      而稿子里的分段控件是**没有分隔线**的（选中的那格自己亮起来）。
+
+      ⚠️ `insetTop/insetBottom` 必须归零：Material 按钮默认上下各留 6dp 的隐形内缩
+      （给阴影用），不归零的话控件比它看起来的高度多出 12dp，
+      于是「圆环面板底下那条快捷栏」会比稿子里高出一截，而且量不出是为什么。
+      ⚠️ `stateListAnimator` 归零：同理，要的是平面的一块色，不是会浮起来的按钮。
+    -->
+    <style name="Widget.Clip9.SegButton" parent="Widget.Material3.Button.TextButton">
+        <item name="android:insetTop">0dp</item>
+        <item name="android:insetBottom">0dp</item>
+        <item name="android:minWidth">0dp</item>
+        <item name="android:minHeight">38dp</item>
+        <item name="android:textSize">13.5sp</item>
+        <item name="android:textAllCaps">false</item>
+        <item name="android:letterSpacing">0</item>
+        <item name="cornerRadius">10dp</item>
+        <item name="elevation">0dp</item>
+        <item name="android:stateListAnimator">@null</item>
+    </style>
+
+    <!-- 迷你状态条上那个「启动 / 停止 / 请稍候」按钮（设计稿 `.strip .go`）。 -->
+    <style name="Widget.Clip9.ConsoleButton" parent="Widget.Material3.Button.TextButton">
+        <item name="android:insetTop">0dp</item>
+        <item name="android:insetBottom">0dp</item>
+        <item name="android:minWidth">0dp</item>
+        <item name="android:minHeight">32dp</item>
+        <item name="android:paddingStart">12dp</item>
+        <item name="android:paddingEnd">12dp</item>
+        <item name="android:paddingLeft">12dp</item>
+        <item name="android:paddingRight">12dp</item>
+        <item name="android:textSize">12sp</item>
+        <item name="android:textAllCaps">false</item>
+        <item name="android:letterSpacing">0</item>
+        <item name="cornerRadius">10dp</item>
+        <item name="elevation">0dp</item>
+        <item name="android:stateListAnimator">@null</item>
+    </style>
 </resources>

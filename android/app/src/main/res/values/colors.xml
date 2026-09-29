@@ -8,26 +8,84 @@
   是它自己画界面用的；这里不用它们，所以**不放**（放了就是一堆没人读的资源，
   而 release 开了 `isShrinkResources`，它们本来也会被剥掉）。
 
-  ⚠️ `error` 是唯一一个主题里没有对应语义色的：管理页要把服务端与本地组件的
-  **错误原文**用红字显示出来（见 `layout/activity_main.xml` 的 `errorText` / `libMissingText`）。
-
-  ⚠️★ 上面那条「不放主题里有的颜色」有一条例外，就是下面这两个 LED：
-  它们表达的是「**这个状态是好是坏**」，而 Material3 的三个语义色
-  （`primary` / `secondary` / `tertiary`）在亮色与暗色主题里换的是**同一族的深浅**，
-  不是「绿 / 灰」这层含义。也就是说拿它们画 LED 的话，
+  ⚠️★ 上面那条「不放主题里有的颜色」有**两处**例外，就是下面这两个 LED 与整组 `console_*`：
+  它们表达的是「**这个状态是好是坏**」以及「这是那份固定深色的控制台」，
+  而 Material3 的三个语义色（`primary` / `secondary` / `tertiary`）在亮暗主题里换的是
+  **同一族的深浅**，不是「绿 / 灰」这层含义。拿它们画 LED 的话，
   「已登录」和「要密码」在某个主题下会只差一点点明度 —— 那是看不出来的。
-  所以这两条是**语义色**（跟 `error` 同一类），不是主题色。
+  所以这几条是**语义色**，不是主题色。
 
-  ⚠️ 亮暗两个主题**共用**这两条：`#4CAF50` / `#9E9E9E` 的对比度在两边都够
+  ⚠️ 亮暗两个主题**共用**这两个 LED：`#4CAF50` / `#9E9E9E` 的对比度在两边都够
   （它们画的是一个 13sp 的「●」，只用来区分颜色，不承担读文字的任务）。
+
+  ⚠️★ 这里原来还有一条 `error`（`#B3261E`）。2026-09-29 删掉了：管理页改用
+  `console_err_text`（那份稿子是深色底，`#B3261E` 压在上面偏暗、读不清），
+  于是它一个读者都不剩 —— 没人读的资源比没有资源更糟（下一个人会以为它在生效）。
 -->
 <resources>
-    <color name="error">#B3261E</color>
-
     <!-- 清单里那一台「打开时能直接进」（存了密码）。 -->
     <color name="led_running">#4CAF50</color>
 
     <!-- 清单里那一台「打开时可能还要输一次密码」—— ⚠️ 刻意**不**用红：这不是错误，
          只是「没存密码」这个正常状态。用红会把一个正常状态说成坏消息。 -->
     <color name="led_idle">#9E9E9E</color>
+
+    <!-- ══════════════════════════════════════════════════════════════════
+         控制台配色（方案 B「控制台」）—— `docs/design/android-ui/b-console.html` 的 CSS 变量。
+
+         ⚠️★ 上面那条「不放主题里有的颜色」对**这一组**不适用，理由与 led_running 同源：
+         这份稿子是**固定深色**的控制台（屏底 #0a111f、卡片 #111c2e），不是「亮暗各一套」。
+         Material3 的 DayNight 语义色换的是同一族的深浅，表达不了「深色控制台」这一层含义 ——
+         所以 `Theme.Clip9.Console`（见 themes.xml）配上这一组**写死的**颜色，
+         管理页就与设计稿逐像素对得上，也不随系统亮暗漂移。
+
+         ⚠️ 命名一律 `console_*`：一眼看得出「它属于控制台那一套」，
+         以后别的页面要用主题色就继续用 `?attr/...`，两套不会互相污染。
+
+         ⚠️ 值只有一处定义 —— 布局 / drawable / Kotlin 都引这里。
+         设计稿改了某个色号，改这一处就够（那些写死在 drawable 里的渐变端点除外，
+         它们本来也只服务于这一个形状）。
+         ══════════════════════════════════════════════════════════════════ -->
+    <color name="console_bg">#FF0A111F</color>
+    <color name="console_surface">#FF111D31</color>
+    <color name="console_card">#FF111C2E</color>
+    <color name="console_edge">#FF22314A</color>
+    <color name="console_card_edge">#FF1E2C43</color>
+    <color name="console_text">#FFEAF0FA</color>
+    <color name="console_text_mid">#FFC7D6EC</color>
+    <color name="console_text_dim">#FF93A5C1</color>
+    <color name="console_text_faint">#FF7D90AD</color>
+    <color name="console_text_body">#FF8296B3</color>
+    <color name="console_say">#FF9DB0CC</color>
+    <color name="console_foot">#FF6A7D9B</color>
+    <color name="console_accent">#FF1E88E5</color>
+    <color name="console_seg">#FF101A2B</color>
+    <color name="console_quick">#FF131F34</color>
+    <color name="console_icon">#FF6FB2F0</color>
+    <color name="console_ok">#FF34C07A</color>
+    <color name="console_ok_edge">#FF1F5138</color>
+    <color name="console_err">#FFFF6B5E</color>
+    <color name="console_err_text">#FFFFB4AA</color>
+    <color name="console_err_soft">#FF2C1614</color>
+    <color name="console_err_edge">#FF573028</color>
+    <color name="console_led_off">#FF5C7093</color>
+    <color name="console_go_stop">#FF3A1D19</color>
+    <color name="console_dirty">#FF24344F</color>
+    <color name="console_dirty_edge">#FF37517A</color>
+    <color name="console_strip_top">#FF152238</color>
+    <color name="console_panel_top">#FF1B3050</color>
+    <color name="console_panel_bottom">#FF0C1524</color>
+    <color name="console_core_top">#FF16233A</color>
+    <color name="console_core_bottom">#FF101A2C</color>
+    <color name="console_core_edge">#FF24344F</color>
+    <color name="console_core_ic">#FF8FA6C6</color>
+    <color name="console_live_top">#FF123024</color>
+    <color name="console_live_bottom">#FF0D2419</color>
+    <color name="console_bad_top">#FF2F1614</color>
+    <color name="console_bad_bottom">#FF241110</color>
+    <color name="console_bad_ic">#FFFF7A6C</color>
+    <!-- 环形轨道：设计稿写的是 `rgba(255,255,255,.07)`，约等于 7% 不透明的白。 -->
+    <color name="console_ring_track">#12FFFFFF</color>
+    <!-- 未运行时那一小段弧（设计稿 `stroke="#3b4d6b"`）。 -->
+    <color name="console_arc_idle">#FF3B4D6B</color>
 </resources>

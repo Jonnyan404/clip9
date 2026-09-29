@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  控制台用的图标一律**描边风格**（对齐设计稿里的 SVG symbol：`fill:none;stroke:currentColor;
+  stroke-width:1.8`），底色一律 `#00000000`、然后由 ImageView 的 `app:tint` 染 —— 于是
+  同一个图标在「灰/亮/红」几种语境下共用一个文件。
+
+  ⚠️ `h0.01` 那种极短的线段是**故意的**：配合 `strokeLineCap="round"` 画出来就是一个圆点，
+  与设计稿 `M12 17h.01` 逐字对应（换成 `<circle>` 反而对不上那 1.8 的线宽）。
+-->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+    <path
+        android:fillColor="#00000000"
+        android:pathData="M12,4.5 L21,19.5 L3,19.5 Z"
+        android:strokeColor="#FFFFFFFF"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:strokeWidth="1.8" />
+    <path
+        android:fillColor="#00000000"
+        android:pathData="M12,10 v4 M12,17 h0.01"
+        android:strokeColor="#FFFFFFFF"
+        android:strokeLineCap="round"
+        android:strokeWidth="1.8" />
+</vector>
