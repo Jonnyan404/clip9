@@ -69,6 +69,8 @@
   // ⚠️ 存语种的键在 `i18n.js` 里还有一份（那边是正主，这里是**先读一步**的那一份）——
   // 判据 10 会把两边的值拿来对。⚠️ 名字与 SPA 那边一致，但**不是**契约：两者不同 origin。
   const LOCALE_KEY = 'locale';
+  // ⚠️ 桌面端输入框藏不藏（2026-09-29）：`app.js` 里有一份同名常量，判据 10 对着。
+  const COMPOSER_KEY = 'composer';
   const root = document.documentElement;
   try {
     const theme = localStorage.getItem(THEME_KEY);
@@ -78,6 +80,9 @@
     // ⚠️ 侧栏只认 `'narrow'` 这一个值：**读不到、值不认得、存的是 `'wide'`** 一律当宽的。
     // 所以这里**不需要**写 `'wide'`（`app.js` 那边会显式写，是为了让「点了一下」在 DOM 上看得见）。
     if (localStorage.getItem(SIDEBAR_KEY) === 'narrow') root.dataset.sidebar = 'narrow';
+    // ⚠️ 输入框同款：只认 `'hidden'`。晚一步贴的代价是「先画一条输入区再跳没」——
+    // 与侧栏那条同一个病，所以归进这个文件。
+    if (localStorage.getItem(COMPOSER_KEY) === 'hidden') root.dataset.composer = 'hidden';
 
     // ⚠️★ 语种：这里只认 `'en'`（源语言 `'zh'` 不贴，其余一律当源语言）。
     // 判据 14 会把这个字面量拿去 `i18n.js` 的 `LOCALES` 里找，并且要求它**不是**源语言。

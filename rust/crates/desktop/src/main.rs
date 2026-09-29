@@ -296,6 +296,11 @@ fn main() {
             commands::send_files,
             commands::refresh,
             commands::open_web,
+            // ⚠️ 「内容区里嵌的那个网页版」该指向哪 —— 与 `open_web` **共用同一个
+            // 拼地址的函数**（`local_server_url`），所以配了证书 / 路径前缀时两处不会漂。
+            // 少注册一个的表现是 iframe **永远空白**：页面那边只会 `catch` 到一个
+            // 「命令不存在」，从它自己的代码里看不出问题。
+            commands::spa_url,
             commands::apply_settings,
             commands::autostart_enabled,
             commands::hotkey_registered,

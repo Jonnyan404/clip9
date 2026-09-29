@@ -135,8 +135,6 @@ let lastRooms = [];
  * ⚠️★ 它只有一个用处：**换语种之后把界面重画一遍**（`applyLocale`）。
  * 换语种**不改变**版本号（壳那边的数据一个字节都没动），所以不能指望下一拍 `tick()`
  * 会重画 —— 快照得自己留一份。
- * ⚠️ 代价明说：多留一份整屏条目（与 `lastEntries` 那份重叠）。等到哪天真的嫌大了，
- * 正确的做法是**删掉 `lastEntries`** 让它从这份里取，而不是反过来再存第三份。
  */
 let lastState = null;
 
@@ -150,13 +148,6 @@ let lastSelected = 0;
 
 /** 上一次渲染的**限额**（握手下发的那一份）。只给输入区右下角那个计数器用。 */
 let lastLimits = { textLimit: 0, fileLimit: 0 };
-
-/** 上一次渲染的**条目**（右键菜单要靠它从卡片的下标找回那一条）。
- *
- * ⚠️ 不复用 `lastVersion`（那只是个数字了，什么也读不出来）：为了读一条正文去留一份
- * 整屏条目的副本不值得 —— 而这份东西是「右键菜单从卡片下标反查那一条」唯一的路。
- */
-let lastEntries = [];
 
 /** 「展开」的两份状态。⚠️ 都按 **entry.id**，而且**切房间时必须清**。
  *
@@ -183,6 +174,91 @@ const openedBodies = new Map(); // id -> 取回来的**全文**（取过一次�
 const EXPANDABLE_BYTES = 960;
 
 const el = (id) => document.getElementById(id);
+
+/* ── 内容区的两个视图：手写时间线 / 嵌进来的 SPA（2026-09-29 的实验）────────────
+   ⚠️★ 「网页」那个视图是一个 **iframe**，加载的是**本机自带那个服务端**的网页版
+   （`http://127.0.0.1:<port>/`）。父页面在 `tauri://`、它在新源的 `http://` —— 这是
+   **跨源 iframe**，要 `tauri.conf.json` 的 `frame-src` 放行（原来只有 `default-src 'self'`，
+   跨源会被**直接拒**，而 WebView 里只留一条 console 消息、页面上什么都不发生）。
+   ⚠️★ 嵌进来的那份 SPA **不是哑视图**：它自己开 WebSocket、自己取历史、自己拿
+   `config.latestId` 对齐实时边界 —— 它是**第二个客户端**（「同一台机器在设备列表里
+   显示成两台」那条代价就是这么来的，见 `docs/specs/desktop-client.md`）。
+   ⚠️ 原时间线**一行没删**：iframe 白屏时它是兜底，切回去也是对照的那一份。
+   ⚠️ 这一版**不做持久化**：只想看效果，不值得为它多一个要跟 `boot.js` 对齐的存储键。 */
+let mainView = 'spa';
+/** 本机自带服务端的地址（`http://127.0.0.1:9502`）。`null` = 没有那个二进制 → 不给切换按钮。 */
+let spaBase = null;
+/** 已经设进 iframe 的地址。
+ *
+ * ⚠️★ 只在**变了**的时候才重设 `src`：快照每 700ms 来一次，每次都重设等于把整个 SPA
+ * 重载一遍（WebSocket 跟着重连）。「当前房间」变了下一次快照就会看见，所以不会漏。
+ */
+let spaSrc = null;
+
+/** 问壳要一次地址。⚠️ 失败 / 没有自带服务端都当 `null` —— 那不是错误，留在时间线上继续用。
+ *（与 `open_web` 报错的那条路不同：那是用户**点了**一个按钮，说不出地址才该报。）
+ */
+async function loadSpaBase() {
+  try {
+    spaBase = await invoke('spa_url');
+  } catch (error) {
+    spaBase = null;
+  }
+  el('view-switch').hidden = !spaBase;
+  // ⚠️★ 拿不到地址就**别停在「网页」那一版上**：那一版会是一块永远的白屏，
+  // 而且切换按钮也藏着（`view-switch` 整块不显示）—— 用户就卡在那儿，连切回去的路都没有。
+  if (!spaBase && mainView === 'spa') mainView = 'timeline';
+  // ⚠️★ 无条件调一次：`mainView` 的默认值是 `spa`，而 **DOM 的初值是「时间线可见」**
+  // （HTML 里 `hidden` 挂在 iframe 上）—— 两边对不齐的话，第一屏是时间线，
+  // 看起来就像「切换没生效」。`applyView` 是幂等的，多调一次没有代价。
+  applyView();
+}
+
+/** 把 iframe 的地址对齐到「当前房间」。⚠️ 只在真的变了时才动 `src`。
+ *
+ * ⚠️★ 传的是 **`room.room`（服务端那边的房间名）**，**不是** `room.name`（给用户看的名字）——
+ * 两个是**两个配置字段**（`Channel::name` / `Channel::room`），可以一个叫「默认」一个叫
+ * `default`。2026-09-29 实测踩到：传了展示名 → SPA 打开的是一个服务端**不存在**的房间
+ * → 「列表 30 多条、网页空的」。快照里两个都给了（`RoomView`），各用各的。
+ *
+ * ⚠️ **不传 `?mode=`**：模式选择是 SPA 自己的事（它按 `?mode=` → localStorage → 标准模式
+ * 的顺序挑，还有整套切换界面），桌面端再摆一份就是第二份要跟着漂的东西
+ *（Jonny 2026-09-29：「模式切换网页带的有」—— 那版下拉已经删了）。
+ */
+function syncSpa(state) {
+  if (mainView !== 'spa' || !spaBase) return;
+  const room = state.rooms[state.selected];
+  if (!room) return;
+  // ⚠️ `embed=1`：让网页版把发送区整个让给宿主（SPA 的 `display` getter 把 composer
+  // 那组预置成关，走的就是个性化里「关掉输入区」同一条路）——
+  // 不然网页视图里会有两个输入框（桌面端底下一条 + 网页版自己的）。
+  // ⚠️ `theme=`：把桌面端选的深浅色同步给网页版（SPA 只在 embed 下认这个参数）。
+  const url = `${spaBase}/?room=${encodeURIComponent(room.room)}&embed=1&theme=${currentTheme()}`;
+  if (url === spaSrc) return;
+  spaSrc = url;
+  el('spa').src = url;
+}
+
+/** 两个视图的可见性。
+ *
+ * ⚠️ 切回「列表」时**不卸** iframe（不清 `src`）：它继续在后台连着，切回来不用重连 ——
+ * 而那正是「两个客户端」那条代价本身，藏起来不等于不存在。
+ */
+function applyView() {
+  const web = mainView === 'spa';
+  el('timeline').hidden = web;
+  el('spa').hidden = !web;
+  // ⚠️★ 「网页」视图里把桌面端自己的状态栏**整条藏掉**（房间名 / 条数 / 设备圆圈）：
+  // Jonny 2026-09-29：「列表的右侧状态栏和网页的顶部菜单栏叠一起了」——
+  // SPA 自己的头部有房间名，桌面端再挂一条就是上下两根横杆。
+  // ⚠️ 代价明说：「N 台在线」在网页视图里没地方看（拿「看得见」换「不叠」）。
+  el('main-head').hidden = web;
+  el('view-list').classList.toggle('on', !web);
+  el('view-web').classList.toggle('on', web);
+  // ⚠️ 切到「网页」时**立刻**对齐地址（用最后那份快照）—— 不然要等下一拍（700ms）才动，
+  // 点了像卡了一下。⚠️ 放在这里而不是点击处理器里：启动时的那次 `applyView` 也要走这条路。
+  if (web && lastState) syncSpa(lastState);
+}
 
 /** 一个方框开关（稿子里的 `<span class="sq">`）。
  *
@@ -251,6 +327,12 @@ function setTheme(theme) {
   // `data-i18n-title` —— 后者只能给一句固定的。⚠️ 换语种时这里**要再调一次**
   //（`applyLocale` 里做了），否则那句话会留在上一个语种里。
   button.title = theme === 'dark' ? t('side.theme.tip.light') : t('side.theme.tip.dark');
+  // ⚠️ 主题要**同步给网页视图**（Jonny 2026-09-29）—— iframe 是跨源的，没法从外面
+  // 改它里面的样式，唯一能做的就是把它**重载**一遍（URL 里的 `theme=` 变了，
+  // `syncSpa` 会自己发现并重设 `src`）。代价明说：切一次主题 = iframe 重连一次。
+  // ⚠️ 启动那一次（下面紧跟着的 `setTheme(currentTheme())`）`spaBase` 还没拿到，
+  // `syncSpa` 自己会早退，不用额外挡。
+  if (lastState) syncSpa(lastState);
 }
 
 // 启动时先对一次：`boot.js` 贴的是存储里的值，而按钮的图标 / 悬停提示得跟它一致
@@ -423,13 +505,9 @@ function sizeLabel(bytes) {
 
 const IMAGE_SUFFIX = /\.(png|jpe?g|gif|webp|bmp|heic|svg)$/i;
 
-/** 一张卡片。`index` 是它在**这一屏**里的位置（右键菜单要靠它找回这条）。 */
-function renderEntry(entry, index) {
+/** 一张卡片。 */
+function renderEntry(entry) {
   const card = h('div', entry.mine ? 'card me' : 'card');
-  // ⚠️★ 只存**下标**，不把条目内容塞进 DOM：内容会随重画换掉，而下标
-  // 每次都跟着 `lastEntries` 一起更新（见 `openEntryMenu`）。
-  // ⚠️ 也**不存 id**：切房间之后同一个 id 可能属于另一个房间的条目。
-  card.dataset.index = String(index);
 
   if (entry.kind === 'file') {
     // ⚠️ 预览只认**壳本地拼出来的**地址，而且只认图片；别的按文件条目显示。
@@ -655,9 +733,6 @@ function renderRooms(state) {
    留一份就会有两份「哪条连接」的定义 —— §4.7 明说了不要。 */
 
 function renderTimeline(state) {
-  // ⚠️ 先记下来，**不管后面走哪条提前返回**：右键菜单读的是它，
-  // 而「空列表」时它必须是**空数组**（否则菜单会拿到上一个房间的条目）。
-  lastEntries = state.entries;
   const host = el('timeline');
   // ⚠️★ 先记「刚才是不是贴在底部」，**再**清空 —— 清空之后 `scrollHeight` 已经是 0，
   // 那时候判会永远算出「贴底」，等于没判。
@@ -681,7 +756,7 @@ function renderTimeline(state) {
       : t('正在取这个房间的历史…（取不到会每 5 秒重试一次）')));
     return;
   }
-  state.entries.forEach((entry, index) => host.append(renderEntry(entry, index)));
+  state.entries.forEach((entry) => host.append(renderEntry(entry)));
   // 新的内容在末尾 → 贴底时跟到底（用户刚复制的东西要立刻看见）。
   if (wasPinned) host.scrollTop = host.scrollHeight;
 }
@@ -776,6 +851,10 @@ function render(state) {
   renderRooms(state);
   renderTimeline(state);
   renderDevices(state);
+  // ⚠️ iframe 的地址要跟着**当前房间**走，而房间只在快照里 —— 所以对齐放在渲染这一拍
+  //    （`syncSpa` 自己只在真变了时才动 `src`）。
+  //    ⚠️ `lastState` 的赋值**在别处**（`tick` / 换语种那两条路要用它），这里不碰。
+  syncSpa(state);
   updateCounter();
 
   const room = state.rooms[state.selected];
@@ -935,106 +1014,14 @@ renderComposerHint();
   }
 }
 
-/* ── 时间线的右键菜单（§4.4）────────────────────────────────────────
- *
- * ⚠️★ 第一版**只放真能做的事**（设计稿 §4.4 的原话：
- *「一条菜单里放一堆点了没反应的东西，比没有菜单更坏」）。所以：
- * - ✅ 复制内容 —— 走壳的 `copy_to_clipboard`（页面碰不到系统剪贴板）；
- * - ✅ 复制链接 —— **只有文件条目**才有，给的是本地拼的 `/file/<uuid>/<name>`；
- * - ❌ **删除** —— 要服务端的 `/revoke`，而客户端**还没有**这个能力 → 不做；
- * - ❌ 编辑 / 收藏 / 置顶 —— 那是**网页版**的功能，桌面端是紧凑界面（§3.6）。
- *
- * ⚠️ 菜单是**自己画的 HTML**，不是系统原生菜单：这份界面其余部分都是手写的，
- * 混一个原生菜单进来就是两种视觉，而且它的样子我们控制不了。
- */
 
-let menuNode = null;
-
-function closeMenu() {
-  menuNode?.remove();
-  menuNode = null;
-}
-
-// 关菜单的三个触发：点别处、按 Esc、窗口失焦。
-// ⚠️ 三条都要 —— 少一条就会留下一个「关不掉」的浮层。
-document.addEventListener('mousedown', (event) => {
-  if (menuNode && !menuNode.contains(event.target)) closeMenu();
-});
-document.addEventListener('keydown', (event) => {
-  if (event.key === 'Escape') closeMenu();
-});
-window.addEventListener('blur', closeMenu);
-
-/** 在鼠标位置弹一个菜单。 */
-function openEntryMenu(entry, x, y) {
-  closeMenu();
-  const menu = h('div', 'ctxmenu');
-
-  const copyText = h('div', 'mi');
-  copyText.append(h('span', null, '📋'), h('span', null, t('复制内容')));
-  copyText.addEventListener('click', () => {
-    closeMenu();
-    // ⚠️★ 文本条目**不在页面里取正文**：页面手里的 `entry.text` 是**截断预览**
-    //（壳只给 4 KiB，见 `EntryView::for_snapshot`），传回去会把长文**复制成半截**，
-    // 而且不报错（用户粘出来才发现少了）。所以文本条目一律走 `copy_entry`：
-    // 全文在壳里取、在壳里写剪贴板，一个字节都不进 webview。
-    if (entry.kind === 'text') {
-      invoke('copy_entry', { id: entry.id }).catch((error) =>
-        showNotice('err', t('复制失败：{error}', { error: errorText(error) })),
-      );
-      return;
-    }
-    // ⚠️ 文件条目**没有正文**，能复制的是**文件名**（§4.4 表格里写着这一条）——
-    // 那是元数据，页面手里本来就有。
-    if (!entry.fileName) {
-      showNotice('skip', t('这条没有可复制的内容。'));
-      return;
-    }
-    invoke('copy_to_clipboard', { text: entry.fileName }).catch((error) =>
-      showNotice('err', t('复制失败：{error}', { error: errorText(error) })),
-    );
-  });
-  menu.append(copyText);
-
-  // ⚠️ 只有文件条目才有链接。文本条目**不画**这一项 —— 画一个点了没反应的项
-  // 比没有这一项更坏（§4.4 的原则）。
-  if (entry.kind === 'file' && entry.previewUrl) {
-    const copyLink = h('div', 'mi');
-    copyLink.append(h('span', null, '🔗'), h('span', null, t('复制链接')));
-    // ⚠️★ 这条地址**不带凭据**（凭据只走请求头，见 `endpoint.rs` 那段）——
-    // 有密码的房间拿这条链接是**打不开**的。照实说，别让用户以为能用。
-    copyLink.title = t('这条文件的下载地址。⚠️ 房间要密码的话，这条链接打不开（凭据只在请求头里）。');
-    copyLink.addEventListener('click', () => {
-      closeMenu();
-      invoke('copy_to_clipboard', { text: entry.previewUrl }).catch((error) =>
-        showNotice('err', t('复制失败：{error}', { error: errorText(error) })),
-      );
-    });
-    menu.append(copyLink);
-  }
-
-  document.body.append(menu);
-  menuNode = menu;
-  // ⚠️ 先挂上去**再**量尺寸：挂之前 `getBoundingClientRect()` 全是 0，
-  // 那样算出来的位置会贴到边上。
-  const rect = menu.getBoundingClientRect();
-  // ⚠️ 贴边往回收 —— 不然在最后一条上点右键时，菜单会有一半在窗口外、点不到。
-  // ⚠️ 用 `clientX/clientY` + `position: fixed`（**不要** `pageX/pageY`）。
-  const left = Math.max(8, Math.min(x, window.innerWidth - rect.width - 8));
-  const top = Math.max(8, Math.min(y, window.innerHeight - rect.height - 8));
-  menu.style.left = `${left}px`;
-  menu.style.top = `${top}px`;
-}
-
-el('timeline').addEventListener('contextmenu', (event) => {
-  const card = event.target.closest('.card');
-  if (!card) return;
-  // ⚠️ 必须拦：不拦的话 webview 会再弹一次它自己的菜单（两个叠在一起）。
-  event.preventDefault();
-  // ⚠️ 从**下标**找回那条 —— 见 `renderEntry` 那段（不把内容塞进 DOM 的理由）。
-  const entry = lastEntries[Number(card.dataset.index)];
-  if (entry) openEntryMenu(entry, event.clientX, event.clientY);
-});
+/* ⚠️ 时间线的**右键菜单整块删掉了**（2026-09-29，Jonny：「列表内容页移除右键菜单」）。
+ * 原来是一份自绘菜单（复制内容 / 复制链接），复制走 `copy_entry` / `copy_to_clipboard`
+ * 两条壳命令 —— 现在网页视图里的卡片自己带复制按钮，桌面这份紧凑列表不再需要。
+ * ⚠️ 连带清掉的：`lastEntries`（它存在的唯一理由就是「菜单从下标反查条目」）、
+ * 卡片上的 `data-index`、`.ctxmenu` 那段 CSS、菜单专属的几条文案。
+ * ⚠️ 壳里的 `copy_entry` / `copy_to_clipboard` 两条命令**留着**（有测试钉着，
+ * 而且网页视图之外将来未必不用）。 */
 
 /** 历史是**自动取**的 —— 所以界面上没有「刷新」按钮（界面稿里也没有）。
  *
@@ -1089,6 +1076,53 @@ el('input').addEventListener('keydown', (event) => {
     sendCurrentInput();
   }
 });
+
+/* 内容区那两个视图的切换（2026-09-29 的实验）。
+   ⚠️ 绑在文件末尾这一串里 —— 与其它 `el(…).addEventListener` 同一处：这份界面
+   没有模块体系，启动代码就是末尾这些顶层语句。 */
+el('view-list').addEventListener('click', () => {
+  mainView = 'timeline';
+  applyView();
+});
+
+el('view-web').addEventListener('click', () => {
+  mainView = 'spa';
+  // ⚠️ 地址的对齐就在 `applyView` 末尾那条（它也要服务启动时的那一次），这里不重复调。
+  applyView();
+});
+
+/* ── 桌面端自己的输入框藏不藏（2026-09-29）───────────────────────────
+   ⚠️★ 与主题 / 侧栏同一个规矩：**以 DOM 为准**（`data-composer`）—— `boot.js` 在
+   第一次绘制之前就贴好了，这里只管「点一下」和存起来。存储键在 `boot.js` 里另有一份
+   （判据 10 对着两处的值）。⚠️ 藏的是**整条输入区**：发消息改走网页视图里 SPA 自己的
+   输入区（那边在个性化里也有输入区开关，`?embed=1` 只是替用户**预置**成关，
+   用户随时可以在网页版里拨回来 —— 两边各关各的，用哪边由用户挑）。 */
+const COMPOSER_KEY = 'composer';
+
+const composerHidden = () => document.documentElement.dataset.composer === 'hidden';
+
+function setComposerHidden(hidden) {
+  const root = document.documentElement;
+  // ⚠️ `'shown'` 也显式写（跟 `data-sidebar` 写 `'wide'` 同一个理由：让「点了一下」在存储里看得见）。
+  if (hidden) root.dataset.composer = 'hidden';
+  else delete root.dataset.composer;
+  try {
+    localStorage.setItem(COMPOSER_KEY, hidden ? 'hidden' : 'shown');
+  } catch (error) {
+    // 存不上**照样生效**，只是下次启动记不住 —— 界面偏好不值得打断用户。
+  }
+  sqSet('sq-composer', !hidden);
+}
+
+// 启动对一次：`boot.js` 贴的是存储里的值，方块要跟它一致（不一致的表现是
+// 「输入区藏了、方块却亮着」）。
+sqSet('sq-composer', !composerHidden());
+el('composer-toggle').addEventListener('click', () => {
+  setComposerHidden(!composerHidden());
+});
+
+// ⚠️ 不 `await`：地址拿不到就一直留在时间线上 —— **不该**为它拦住 `tick()`（那是整个界面）。
+loadSpaBase();
 
 tick();
 
