@@ -11,6 +11,7 @@
 //! | [`store`] | 状态机 + 配置落盘 | ❌（所以能测） |
 //! | [`runtime`] | 线程 / 任务 / 句柄的接线 | ❌（所以能测） |
 //! | [`shell_text`] | 壳自己要说的那几句话（查表 + 填参数） | ❌（所以能测） |
+//! | [`window_state`] | 「上次关窗时多大」：怎么存、什么时候该写、物理→逻辑怎么换算 | ❌（所以能测） |
 //! | [`commands`] | 转发 | ✅ |
 //! | [`tray`] | 托盘菜单 | ✅ |
 //! | [`notify`] | 系统通知那一下（判据在 `runtime`） | ✅ |
@@ -39,9 +40,16 @@ mod server_process;
 mod shell_text;
 mod store;
 mod tray;
+mod window_state;
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::time::Instant;
+
+// ⚠️ `get_webview_window` 是 `Manager` 上的方法 —— 不 `use` 的话报的是
+// 「没有这个方法」（`E0599`），而提示里那句「也许你想 `use tauri::Manager`」
+// 排在最后一行，很容易被当成「方法名写错了」。
+use tauri::Manager;
 
 use store::{CONFIG_FILE, Store, default_data_dir, load_config};
 
@@ -110,6 +118,76 @@ fn parse_args() -> Result<Option<Args>, String> {
     }))
 }
 
+/** 当前那块屏幕的**逻辑**尺寸（拿不到就 `None`）。
+
+⚠️★ 为什么要它：用户在外接大屏上把窗口拖得很大、然后拔掉屏幕用笔记本时，
+存下来的尺寸比现在的屏幕还大 —— 贴回去就是一个**伸到屏幕外面**的窗口
+（标题栏在屏幕外，拖都拖不回来）。`window_state::fit_within` 就是收这件事的。
+
+⚠️★ `Monitor::size()` 给的是**物理**像素，而存下来那份是**逻辑**像素
+（见 `window_state` 的模块文档）—— 换算与坏值守卫都在
+[`window_state::from_physical`] 里（**只有那一处**：记窗口大小时走的是同一个函数）。
+不除的话在 Retina 上「屏幕」会被算成两倍大，那个收边就等于没做。
+*/
+fn current_screen(window: &tauri::WebviewWindow) -> Option<window_state::WindowSize> {
+    let monitor = window.current_monitor().ok().flatten()?;
+    let physical = monitor.size();
+    window_state::from_physical(physical.width, physical.height, monitor.scale_factor())
+}
+
+/** 把上次记下来的窗口大小贴回去。
+
+⚠️★ 读不出来（第一次运行 / 文件坏了）就**什么都不做** —— 窗口保持
+`tauri.conf.json` 里那双 760×520，与装完第一次打开完全一样。
+⚠️ 贴的是**逻辑**尺寸，与 `tauri.conf.json` 一个口径（那里也是逻辑像素）。
+
+⚠️★ 它必须在 `setup` 里**尽早**调用：晚于第一次绘制的话，用户会先看到窗口按
+760×520 画出来、再跳成他上次那个大小 —— 那个「跳」比记不住更让人不安。
+
+⚠️★ **`set_size` 是异步生效的**：贴完立刻去读 `inner_size()` 拿到的是**旧值**
+（2026-09-29 实测：要求 1396×875，贴完读回来还是默认的 760×520 —— 那是
+`1520×1040` 物理 ÷ 2.0）。所以**别写「贴完再读一下、顺手记下来」**那种代码：
+它记的是上一个尺寸，而且看起来完全正常。真正生效的回声是后面那个
+`WindowEvent::Resized`。
+
+⚠️ 同一趟实测（2880×1800 Retina，缩放比 2.0）把它对上了全链：读回 `1396×875` →
+`current_screen` 给 `1440×900`（**物理除过缩放比**）→ `fit_within` 装得下 → 一个像素
+没动 → 窗口事件回来的物理值是 `2792×1750`，÷2.0 正好是 `1396×875`。
+⚠️ 顺带：这个窗口的 `inner_size()` 与 `outer_size()` 报的是**同一个数**
+—— macOS 那一圈边框不计进 `outer`，所以不存在「存内尺寸、贴外尺寸」的错位。
+*/
+fn restore_window_size(app: &tauri::AppHandle, path: &Path) {
+    let Some(saved) = window_state::load(path) else {
+        return;
+    };
+    let Some(window) = app.get_webview_window("main") else {
+        return;
+    };
+    let wanted = match current_screen(&window) {
+        Some(screen) => saved.fit_within(screen),
+        None => saved,
+    };
+    if let Err(reason) = window.set_size(tauri::LogicalSize::new(
+        f64::from(wanted.width),
+        f64::from(wanted.height),
+    )) {
+        eprintln!("贴窗口大小失败（用默认尺寸继续）：{reason}");
+    }
+}
+
+/** 把窗口事件里的物理尺寸换算成要记下来的那一份（逻辑像素）。
+
+⚠️ 换算与「拿不到缩放比就 `None`」那两条都在 [`window_state::from_physical`] 里 ——
+这里只是把 tauri 的两个值拆出来喂进去。
+*/
+fn logical_size(
+    window: &tauri::WebviewWindow,
+    physical: tauri::PhysicalSize<u32>,
+) -> Option<window_state::WindowSize> {
+    let scale = window.scale_factor().ok()?;
+    window_state::from_physical(physical.width, physical.height, scale)
+}
+
 fn main() {
     let args = match parse_args() {
         Ok(Some(args)) => args,
@@ -129,6 +207,9 @@ fn main() {
         std::process::exit(1);
     }
     let config_path = args.data_dir.join(CONFIG_FILE);
+    // ⚠️★ 窗口大小**与配置并列、不塞进 `config.json`**（理由见 `window_state` 的模块文档）——
+    // 所以路径也在这里算一次，`.setup` 与退出那两处用的是**同一个** `PathBuf`。
+    let window_size_path = window_state::path_in(&args.data_dir);
     let config = match load_config(&config_path, &args.data_dir, &args.server) {
         Ok(config) => config,
         Err(reason) => {
@@ -323,7 +404,12 @@ fn main() {
             let store = Arc::clone(&store);
             let runtime = Arc::clone(&runtime);
             let shell = Arc::clone(&shell);
+            let window_size_path = window_size_path.clone();
             move |app| {
+                // ⚠️★ 把上次关窗时那个大小贴回去（读不出来就保持 `tauri.conf.json` 里那双）。
+                // ⚠️ 放在**通知器接线之前**：它要尽早，晚于第一次绘制的话用户会看到
+                // 窗口先按 760×520 画一次、再跳一下（理由见 `restore_window_size`）。
+                restore_window_size(app.handle(), &window_size_path);
                 // ⚠️★ **第一件做的事**：把窗口句柄接给通知器（见上面 `notifier` 那段）。
                 // 接晚了不会错，但那段窗口里的通知会**被丢掉**并打一行日志 ——
                 // 而它可能正是「默认房间连不上」那张最该被看到的通知。
@@ -354,16 +440,67 @@ fn main() {
     // `runtime`）—— 借用的话编译器会拒绝，而这个 `stop` 又必须在退出前真的发生。
     let on_exit = Arc::clone(&runtime);
     let server_on_exit = server.clone();
+    // ── 窗口大小的记忆（2026-09-29，Jonny：「记住客户端窗口调整的大小」）──────────
+    // ⚠️ 三个状态都在闭包外面：闭包要 `'static`，而且它们要**跨事件**累起来。
+    let mut gate = window_state::SaveGate::new();
+    let mut latest: Option<window_state::WindowSize> = None;
+    let started = Instant::now();
     app.run(move |_handle, _event| {
-        if let tauri::RunEvent::ExitRequested { .. } = _event {
-            on_exit.stop();
-            // ⚠️★ 本地服务端是**子进程**，它**不会**跟着父进程一起死 ——
-            // 不显式停的话，用户关掉客户端之后它还占着端口、还在同步，
-            // 而且下次启动会看到「端口被占」。
-            // ⚠️ `stop()` 只停**我们自己起的那个**（见它的文档）：用户手动跑的服务端不动。
-            if let Some(server) = &server_on_exit {
-                let _ = server.stop();
+        match _event {
+            // ⚠️★ 拖窗时这条**每帧**都来 —— 所以下面既有节流（`SaveGate`），
+            // 也有「这一拍根本不该记」的那两种情况（最大化 / 全屏）。
+            tauri::RunEvent::WindowEvent {
+                label,
+                event: tauri::WindowEvent::Resized(physical),
+                ..
+            } if label == "main" => {
+                let Some(window) = _handle.get_webview_window(&label) else {
+                    return;
+                };
+                // ⚠️★ **最大化 / 全屏时的尺寸不是用户选的大小，是屏幕的大小** ——
+                // 记了它，下次启动会开出一个「屏幕那么大、但**不是最大化状态**」的窗口：
+                // 用户得拖一下才发现它没最大化，而那个尺寸已经写进配置了。
+                // ⚠️ 这里**不写成一个纯函数**（`!max && !fullscreen`）：那种一行断言
+                // 是「打不红的假保护」—— 它测的是自己，而不是这两次系统调用。
+                let (maximized, fullscreen) = (
+                    window.is_maximized().unwrap_or(false),
+                    window.is_fullscreen().unwrap_or(false),
+                );
+                if maximized || fullscreen {
+                    return;
+                }
+                let Some(size) = logical_size(&window, physical) else {
+                    return;
+                };
+                // ⚠️ `latest` 每次都更新（内存里不花钱），写盘才走节流 ——
+                // 于是「最后一次微调」永远在 `latest` 里，退出那一拍一定写得下去。
+                latest = Some(size);
+                if gate.should_write(started.elapsed().as_millis() as u64, size)
+                    && let Err(reason) = window_state::save(&window_size_path, size)
+                {
+                    eprintln!("记窗口大小失败（不影响使用）：{reason}");
+                }
             }
+            tauri::RunEvent::ExitRequested { .. } => {
+                on_exit.stop();
+                // ⚠️★ 本地服务端是**子进程**，它**不会**跟着父进程一起死 ——
+                // 不显式停的话，用户关掉客户端之后它还占着端口、还在同步，
+                // 而且下次启动会看到「端口被占」。
+                // ⚠️ `stop()` 只停**我们自己起的那个**（见它的文档）：用户手动跑的服务端不动。
+                if let Some(server) = &server_on_exit {
+                    let _ = server.stop();
+                }
+                // ⚠️★ 退出时**再写一遍**：上面那个节流很可能刚好把最后几次微调挡掉了
+                //（手停下来到关窗之间通常不到 700ms）。
+                // 少了这一句，症状是「拖完立刻关掉 → 大小没记住」，而它**时好时坏**
+                //（取决于关窗前停了多久）—— 那是最难被当成 bug 的一种。
+                if let Some(size) = latest
+                    && let Err(reason) = window_state::save(&window_size_path, size)
+                {
+                    eprintln!("记窗口大小失败（不影响使用）：{reason}");
+                }
+            }
+            _ => {}
         }
     });
     runtime.stop();
