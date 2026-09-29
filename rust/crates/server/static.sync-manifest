@@ -1,24 +1,24 @@
 # clip9 前端产物的同步清单 —— 由 tools/sync-web-assets.mjs 生成，别手改。
-source cab7c7d891a1188ffa2f5afc766e955e745c0ce2353700578ea9ddb7f9366a5a
+source a8d6f771149fda6f3005f3196eccccc386bade23acc6dff22eeaf3f226617bef
 apple-touch-icon.png
+assets/ShareView-CxVYeOnb.js
+assets/ShareView-CxVYeOnb.js.br
+assets/ShareView-CxVYeOnb.js.gz
 assets/ShareView-DjLm0d4-.css
 assets/ShareView-DjLm0d4-.css.br
 assets/ShareView-DjLm0d4-.css.gz
-assets/ShareView-DqMLfCnm.js
-assets/ShareView-DqMLfCnm.js.br
-assets/ShareView-DqMLfCnm.js.gz
 assets/highlight-langs-Dt8YXhtn.js
 assets/highlight-langs-Dt8YXhtn.js.br
 assets/highlight-langs-Dt8YXhtn.js.gz
 assets/i18n-B2E8evwD.js
 assets/i18n-B2E8evwD.js.br
 assets/i18n-B2E8evwD.js.gz
-assets/index-CkStJdCK.js
-assets/index-CkStJdCK.js.br
-assets/index-CkStJdCK.js.gz
-assets/index-gWPCF52c.css
-assets/index-gWPCF52c.css.br
-assets/index-gWPCF52c.css.gz
+assets/index-CFznc_Vl.js
+assets/index-CFznc_Vl.js.br
+assets/index-CFznc_Vl.js.gz
+assets/index-ifumBe6s.css
+assets/index-ifumBe6s.css.br
+assets/index-ifumBe6s.css.gz
 assets/materialdesignicons-webfont-B7mPwVP_.ttf
 assets/materialdesignicons-webfont-CSr8KVlo.eot
 assets/materialdesignicons-webfont-Dp5v-WZN.woff2
