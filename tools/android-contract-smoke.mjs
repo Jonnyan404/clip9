@@ -8,11 +8,14 @@
 //   契约 A：ABI 清单（三处）
 //     ① tools/sync-android-jni-libs.mjs 的 TARGETS   —— abi → target，搬 `.so` 用
 //     ② tools/build-android.sh          的 TARGETS   —— abi → target → clang，编 `.so` 用
-//     ③ android/app/build.gradle.kts    的 abiFilters—— APK 要哪几个 ABI
+//     ③ android/app/build.gradle.kts 的 splits.abi.include —— APK 拆哪几个 ABI
 //     · ①② 的 abi→target 不一致 → 产物落在 A 目录、同步脚本去 B 目录找 → **搬不到**
 //       （`sync-android-jni-libs.mjs` 找不到 `.so` 时的表现是「跳过」，不是失败）
-//     · ③ 多一个 ABI → `abiFilters` 列着、`jniLibs/<abi>/` 里没有 `.so` → 那一版 APK
+//     · ③ 多一个 ABI → `splits` 列着、`jniLibs/<abi>/` 里没有 `.so` → 那一版 APK
 //       编得出、装得上，**只在 `System.loadLibrary` 那一步炸**
+//       （⚠️ 2026-09-29 之前这里写的是 `abiFilters`；那件事本身没变，只是「要哪几个 ABI」
+//        现在由 `splits.abi.include` 说了 —— 二者并存会让 AGP 报 Conflicting configuration，
+//        所以下面那第 4 条判据专门盯着「`abiFilters` 不许再出现」。）
 //     · ③ 少一个 ABI → 白编一个 `.so`，完全没有症状
 //
 //   契约 B：native 库名与 JNI 符号名（六处）
@@ -33,7 +36,10 @@
 //   node tools/android-contract-smoke.mjs
 //   node tools/android-contract-smoke.mjs --root <别的仓库根>   # 变异验证用
 //
-// 判据 12 条；其中 4 条是**反向**的（参考物读不到 → 失败，不是跳过）。
+// ⚠️★ 判据条数**不在这里写**（脚本自己数，见最后一行）。这里原来写着「12 条」，
+//    而实际只打印 11 个 ✓ —— 因为「读不到就失败」那条只在**失败时**才出声。
+//    写死的数字就是这么变成假话的：改判据的人不会记得回头改它。
+// 其中有 4 条是**反向**的（参考物读不到 → 失败，不是跳过）。
 
 import { readFileSync, existsSync, readdirSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
@@ -55,8 +61,13 @@ if (rootFlag >= 0) {
 
 const failures = [];
 const notes = [];
+/** 通过的判据条数。⚠️ 由 `ok()` 自己数 —— 别在报告里写死一个数字。 */
+let okCount = 0;
 const fail = (label, detail) => failures.push({ label, detail });
-const ok = (label) => console.log(`✓ ${label}`);
+const ok = (label) => {
+  okCount += 1;
+  console.log(`✓ ${label}`);
+};
 
 const read = (rel) => {
   const path = join(ROOT, rel);
@@ -103,11 +114,29 @@ function buildAbiTargets() {
   return parsed;
 }
 
-/** ③ `build.gradle.kts`：`abiFilters += listOf("…", "…")`。 */
-function gradleAbiFilters() {
+/**
+ * `build.gradle.kts` 的**代码行**（注释全部剔掉）。
+ *
+ * ⚠️★ 2026-09-29 加的这个函数不是洁癖，是被咬过：这个文件的注释里专门写了
+ *    「别加回 `ndk { abiFilters += … }`」和反例 `splits { abi { … } }`，
+ *    拿**全文**去跑那两条判据的正则，会命中注释里的例子 —— 下面那个取 ABI 清单的正则
+ *    第一版就是这么错的：它匹配到注释里那句 `splits { abi { … } }`，再往下一行
+ *    「`splits.abi.include(...)`」里捞出了 `...` 三个点当 ABI 名。
+ *    （同一类自伤在本仓库发生过多次：判据本身对了，扫到了注释。）
+ */
+function gradleCodeWithoutComments() {
   const text = read('android/app/build.gradle.kts');
   if (text === null) return null;
-  const block = /abiFilters\s*\+=\s*listOf\(([^)]*)\)/.exec(text);
+  return text.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*$/gm, '');
+}
+
+/** ③ `build.gradle.kts`：`splits { abi { include("…", "…") } }`。 */
+function gradleAbiSplits() {
+  const text = gradleCodeWithoutComments();
+  if (text === null) return null;
+  // ⚠️ 从 `splits` 一路框到 `abi` 再取 `include(...)`：`include` 这个名字在 Gradle 脚本里
+  //    到处都是（`settings.gradle.kts` 也有），不加这两层前缀会去匹配不相干的那些。
+  const block = /splits\s*\{[\s\S]*?\babi\s*\{[\s\S]*?\binclude\(([^)]*)\)/.exec(text);
   if (!block) return null;
   const items = block[1]
     .split(',')
@@ -175,12 +204,12 @@ function proguardKeeps() {
 
 const sync = syncAbiTargets();
 const build = buildAbiTargets();
-const gradle = gradleAbiFilters();
+const gradle = gradleAbiSplits();
 
 const unread = [];
 if (!sync) unread.push('tools/sync-android-jni-libs.mjs 的 TARGETS');
 if (!build) unread.push('tools/build-android.sh 的 TARGETS');
-if (!gradle) unread.push('android/app/build.gradle.kts 的 abiFilters');
+if (!gradle) unread.push('android/app/build.gradle.kts 的 splits.abi.include');
 if (unread.length) {
   // ⚠️★ 读不到 = **失败**，不是跳过。参考物不在就 skip 的门禁，会在有人改了写法、
   // 挪了文件之后静默全绿 —— 那比没有更糟（它给了一个「查过了」的假信号）。
@@ -197,7 +226,7 @@ const gradleSet = new Set(gradle);
 
 {
   const same = (a, b) => a.size === b.size && [...a].every((x) => b.has(x));
-  const label = '三处的 ABI 集合一致（① 同步脚本 ② 构建脚本 ③ abiFilters）';
+  const label = '三处的 ABI 集合一致（① 同步脚本 ② 构建脚本 ③ splits.abi.include）';
   if (same(syncSet, buildSet) && same(syncSet, gradleSet)) {
     ok(`${label} —— ${[...syncSet].sort().join('/')}`);
   } else {
@@ -205,8 +234,31 @@ const gradleSet = new Set(gradle);
       label,
       `① sync=${[...syncSet].sort().join(',') || '(空)'}\n` +
         `    ② build=${[...buildSet].sort().join(',') || '(空)'}\n` +
-        `    ③ abiFilters=${[...gradleSet].sort().join(',') || '(空)'}`,
+        `    ③ splits.abi.include=${[...gradleSet].sort().join(',') || '(空)'}`,
     );
+  }
+}
+
+// ── 判据 3b：`abiFilters` 不许再出现（它与 `splits.abi` 并存会让 AGP 直接报错）──
+//
+// ⚠️★ 2026-09-29 加的。这条判的是一个**只在真跑 Gradle 时才会炸**的形状：
+//    AGP 原话是 "Conflicting configuration : '…' in ndk abiFilters cannot be present
+//    when splits abi filters are set : …"。本机跑不了 Gradle 的时候，这里是唯一能提前
+//    问一句的地方 —— 否则它要等到 CI 打 APK 那一步才响（那条路一次好几分钟）。
+{
+  const label = 'build.gradle.kts 里没有 abiFilters（与 splits.abi 并存会被 AGP 拒）';
+  const code = gradleCodeWithoutComments();
+  if (code === null) {
+    fail(label, '读不到 android/app/build.gradle.kts');
+  } else if (/\babiFilters\b/.test(code)) {
+    fail(
+      label,
+      '代码里还有 `abiFilters` —— 它与 `splits.abi` 并存时 AGP 会报\n' +
+        '    "Conflicting configuration : … in ndk abiFilters cannot be present when splits\n' +
+        '     abi filters are set : …"，两个都不会生效。要改 ABI 清单就改 `splits.abi.include`。',
+    );
+  } else {
+    ok(label);
   }
 }
 
@@ -570,7 +622,7 @@ function report() {
     console.error(`\n✗ ${failures.length} 条判据没过。`);
     process.exit(1);
   }
-  console.log('\n✓ Android 契约自检通过（12 条判据）。');
+  console.log(`\n✓ Android 契约自检通过（${okCount} 条判据）。`);
 }
 
 report();

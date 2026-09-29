@@ -12,7 +12,7 @@ name: Release
 # 覆盖：`overwrite_files: true`（重跑同一标签时**替换**同名资产，而不是失败在「已存在」上）。
 # ⚠️ 刻意**不传 `generate_release_notes`**：那是你写的发布说明，不该被自动生成的盖掉。
 #
-# 产物（2026-09-28 定）：
+# 产物（2026-09-29 更新）：
 #   `clip9-cli-<平台>-<架构>.tar.gz`（Windows 那份是 `.zip`）—— 服务端二进制，
 #   **前端已编在里面**（一个文件丢过去就能跑）。`<平台>-<架构>` 只有这几种：
 #     linux-x86_64 / linux-aarch64 / linux-armv7
@@ -28,7 +28,9 @@ name: Release
 #   clip9-server-openwrt-<架构>-v<版本>.ipk       OpenWrt 服务端包，7 个架构
 #   clip9-server-openwrt-apk-<设备架构>-v<版本>.apk            8 个设备架构
 #   clip9-luci-openwrt-all-v<版本>.ipk / …-apk-noarch-v<版本>.apk  LuCI 界面包
-#   clip9-android-v<版本>.apk                    Android 外壳（三个 ABI 一个包）
+#   clip9-android-v<版本>.apk                    Android **合并包**（三个 ABI 都在）
+#   clip9-android-v<版本>-<abi>.apk              Android **单 ABI 包**，3 个：
+#                                                arm64-v8a / armeabi-v7a / x86_64
 #   ⚠️ 后三组由 `openwrt.yml` / `android.yml` 两个**可复用工作流**构建（它们也能单独手动跑，
 #      那样会自己覆盖上传）。见下面那两个 `uses:` 与 `publish-openwrt` / `publish-android`。
 #
@@ -636,9 +638,13 @@ jobs:
         run: |
           set -euo pipefail
           ls -l extra
+          # ⚠️★ 期望 **4** 个：三个 ABI 各一个拆分包 + 一个合并包（`splits.abi` +
+          #    `isUniversalApk`，见 `android.yml`）。这里写死个数是**故意的** ——
+          #    个数对不上通常意味着「那边少了一个 ABI 的包」或「upload 的 name 改了」，
+          #    而那些都是**没有别的症状**的错。
           n="$(find extra -type f -name '*.apk' | wc -l)"
-          echo "共 ${n} 个 APK"
-          [ "$n" -gt 0 ] || { echo "::error::没取到 APK —— artifact 名字对不上了？"; exit 1; }
+          echo "共 ${n} 个 APK（期望 4：三个单 ABI + 一个合并包）"
+          [ "$n" = 4 ] || { echo "::error::APK 有 ${n} 个，应当是 4 —— artifact 名字对不上？还是某个 ABI 没打出来？"; exit 1; }
 
       - uses: softprops/action-gh-release@v3
         with:
