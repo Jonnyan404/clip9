@@ -692,10 +692,18 @@ table.ra td.tiny, table.ra th.tiny { width: 30px; text-align: center; }
 /* ⚠️ 窄列（图标 / ↑ / ↓ / 删除）的内边距从 6px 收到 3px：那一列一共才 7% 宽
    （660px 的窗口上约 46px），原来那 12px 的横向内边距去掉之后，
    图标那个框里只剩十几像素放一个 emoji + 光标。
-   ⚠️ 只改**表格里**那一条（`table.ra td` 那条公共规则还要给名字/地址那些格子用）；
-   ⚠️ 图标那一格里的 `<input>` 自己还有一层 6px 内边距，再收一次 —— 它比别的格子窄得多。 */
+   ⚠️ 只改**表格里**那一条（`table.ra td` 那条公共规则还要给名字/地址那些格子用）。 */
 #rooms-body td.tiny { padding-left: 3px; padding-right: 3px; }
-#rooms-body td.tiny input { padding-left: 2px; padding-right: 2px; text-align: center; }
+/* 图标那一格现在是**点选**（`<select>`，见 `cellEmoji`）——
+   原来这条是给那个文本框的（`td.tiny input`）。⚠️ 不改成 `select` 的话它就是一条
+   死规则：`input` 已经不在那个格子里了，而「留一条没人用的规则」就是留一份会漂的第二定义。
+   ⚠️ 用原生外观（**不写 `appearance: none`**）：那条下拉箭头是「这一格能点」的唯一提示，
+   去掉它就得自己再画一个。 */
+#rooms-body td.tiny select.ico {
+    width: 100%; border: 1px solid var(--border); border-radius: 7px;
+    background: var(--bg); color: var(--text); font: inherit; font-size: 11.5px;
+    padding: 3px 0 3px 2px; text-align: center;
+}
 #roomauth-table { table-layout: fixed; }
 #roomauth-table th:nth-child(1) { width: 18%; } /* 房间 */
 #roomauth-table th:nth-child(2) { width: 24%; } /* 密码 */
@@ -704,11 +712,30 @@ table.ra td.tiny, table.ra th.tiny { width: 30px; text-align: center; }
 #roomauth-table th:nth-child(5) { width: 9%; }  /* 开放 */
 #roomauth-table th:nth-child(6) { width: 13%; } /* 删除 */
 /* 表格里可编辑的文本框 —— 稿 2 画的是静态 .inp，编辑态得是真 <input> */
-table.ra td input[type='text'], table.ra td input[type='number'] {
+/* ⚠️★ `password` 必须一起列进来（2026-09-29）：凭据那一格改成 `type="password"` 之后，
+   只写 `text` 的话它就**掉出这条规则** —— 宽度回落到 `input` 的固有宽度、
+   边框和内边距全没了，而表格是 `table-layout: fixed`，表现出来是「那一格看着像坏了」。
+   ⚠️ 这类「换了 type 就丢样式」的错不报错，只有在真渲染里才看得见。 */
+table.ra td input[type='text'], table.ra td input[type='number'], table.ra td input[type='password'] {
     width: 100%; border: 1px solid var(--border); border-radius: 7px;
     background: var(--bg); padding: 3px 6px; font: inherit; font-size: 11.5px; color: var(--text);
 }
 table.ra td input[type='checkbox'] { margin: 0; }
+/* 凭据那一格：输入框 + 旁边一个「看一眼」（`cellSecret`）。
+   ⚠️ `min-width: 0` 不能少：flex 子项默认 `min-width: auto`，而 <input> 有自己的
+   固有宽度 —— 少了它，那一格会把 18% 的列撑开（`table-layout: fixed` 下就是溢出）。 */
+.secret { display: flex; align-items: center; gap: 3px; }
+.secret input { flex: 1; min-width: 0; }
+.secret .rv {
+    flex: none; width: 20px; height: 20px; padding: 0; cursor: pointer;
+    display: grid; place-items: center; font-size: 11px; line-height: 1;
+    border: 1px solid var(--border); border-radius: 6px;
+    background: transparent; color: var(--text-2);
+}
+.secret .rv:hover { border-color: var(--accent); color: var(--accent); }
+/* ⚠️ 按开时（= 正在明文显示）给个**看得见**的状态：不给的话，用户没法一眼看出
+   这一格现在是掩着的还是露着的 —— 而那正是这个按钮唯一的信息。 */
+.secret .rv.on { background: var(--accent); border-color: var(--accent); color: #fff; }
 /* ⚠️ 稿 2 的 `.inp` 是 <div>（块级，天然占满一行）；app 里得是真 <input>，
    而 input 有自己的固有宽度 → 不写死 100% 的话表单是一排短框，
    跟稿子差很远（`.row2` 的两列也会不等宽）。 */

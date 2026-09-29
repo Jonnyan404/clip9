@@ -113,6 +113,15 @@
       //    ⚠️★ 它是**符号键**（键里没有汉字，只有省略号）—— 所以中文这份也得有一条。
       '{label}…': '{label}…',
 
+      // ── ★ 房间图标那一格的「自动」项（2026-09-29）──
+      //    ⚠️★ 它**必须**是符号键，不能用中文原文 `'自动'` 当键：那个键在英文那份里
+      //    已经占给了**卡片上那个定时标签**（`'自动': 'Scheduled'`）。两处共用一个键
+      //    的后果是「图标那一项在英文界面里写成 Scheduled」—— 而它**不报错**：
+      //    两边查的是同一个键，字典也真的有那一条。
+      //    ⚠️ 这是「中文原文即键」这套规矩唯一咬人的地方：**同一个中文词有两种意思**。
+      //    所以这里退回符号键（键里没有汉字 ⇒ 两份都要有，判据 14 两边都管）。
+      'room.iconAuto': '自动',
+
       // ── ★ 列表参数的分隔符：**它是译文，不是常量** ──
       //    ⚠️★ 中文用顿号、英文用「逗号 + 空格」，所以它必须住在字典里。
       //    壳那边（`rust/crates/desktop/src/shell_text.rs` 的 `LIST_SEP_KEY`）查的是**同一个键**：
@@ -562,11 +571,23 @@
       '正在重启…': 'Restarting…',
       '已保存并重启': 'Saved and restarted',
       '保存了，但重启失败：{error}': 'Saved, but the restart failed: {error}',
-      '房间图标：填一个 emoji；留空 = 自动挑一个不重样的（侧栏那个就是）':
-        'Room icon: put in one emoji; empty = pick a unique one automatically (that is the one in the sidebar)',
+      // ⚠️★ 房间图标那一格现在是**点选**（`<select>`，见 `cellEmoji`），
+      //    所以这一条说的是「点开之后那个下拉里有什么」，不再是「往框里填什么」。
+      //    ⚠️ 改原文要**同时改这里**：键就是中文原文，改了一半等于这一句没有译文
+      //    （判据 14 会红，而它红得对）。
+      '房间图标：不选就是自动挑一个不重样的（侧栏那个就是）':
+        'Room icon: pick one, or leave it on Auto to get a unique one (that is the one in the sidebar)',
+      // ⚠️ 与 `zh` 那份**同一个键**（符号键，两份都要有）—— 见那一条的注释：
+      //    它与卡片上那个定时的 `'自动'` 是**两个意思**，所以不能共用中文原文当键。
+      'room.iconAuto': 'Auto',
       '还没有房间。点下面的「添加房间」—— 服务端留空就是本机那个。':
         'No rooms yet. Use "Add room" below — leaving the server empty means this machine\'s own.',
       '（空 = 无密码）': '(empty = no password)',
+      // ⚠️ 凭据那一格旁边那个 👁 的提示（`cellSecret`）。两条**互为反义**，
+      //   说的是「按下去会发生什么」：掩着时写「看一眼」、露着时写「藏起来」。
+      //   按完必须换一条 —— 不换的话它写的是**上一个状态**。
+      '看一眼': 'Reveal',
+      '藏起来': 'Hide',
       '删': 'Delete',
       '没有': 'none',
       '没开：哪个房间的内容都收不到': 'off: content from no room is received',

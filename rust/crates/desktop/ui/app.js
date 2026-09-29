@@ -1527,6 +1527,15 @@ el('cfg-save-restart').addEventListener('click', async () => {
 
 let roomDraft = [];
 
+/** 「自动挑一个图标」那个池子（**壳递过来的** —— `SettingsView::emoji_pool`）。
+ *
+ * ⚠️★ 它必须在 `renderRoomRows()` **之前**填好（见 `openSettings` 里的顺序）：
+ * 那一格是照它铺出来的，空着的话用户打开设置页只看到一项「自动」。
+ * ⚠️ 初值是空数组而不是 `null`：`for…of` 对 `null` 会抛，而抛在渲染里 =
+ * 整个设置页空白（这一版连控制台都不给用户看）。
+ */
+let emojiPool = [];
+
 /** 一个单元格里的文本框。⚠️ 用 `input` 事件更新草稿，不重渲染 ——
  *  每次重渲染都把 `value` 重设会把用户正在输入的光标顶掉。
  *
@@ -1544,6 +1553,56 @@ function cellInput(value, onChange, placeholder) {
   if (placeholder) input.placeholder = placeholder;
   input.addEventListener('input', () => onChange(input.value));
   td.append(input);
+  return td;
+}
+
+/** 凭据那一格：**不明文显示**（`type="password"`），旁边带一个「看一眼」。
+ *
+ * ⚠️★ 2026-09-29，Jonny：「客户端的添加房间里凭据要密码格式，不要明文显示」。
+ *
+ * ⚠️★ 为什么要那个 👁：掩上之后**没法核对**自己填了什么 —— 而这一格恰恰是
+ * 「填错了就连不上」的地方（一个字符都不能差）。桌上摆着一张**看不清的表**，
+ * 用户只能整段重打一遍。所以默认掩上、但给一个**当场能按**的开关。
+ *
+ * ⚠️★ 它**也要** `autocapitalize="off"`：按开之后它就是个普通文本框，那时
+ * macOS 照样会把首字母大写 —— 而这一格同样是「不许改字面」的。
+ * ⚠️ 判据 4 因此要把 `type='password'` 一起数进去（见 `tools/desktop-ui-smoke.mjs`）：
+ * 只数 `text` 的话，这一格就是那条自检**看不见**的一处。
+ */
+function cellSecret(value, onChange, placeholder) {
+  const td = h('td');
+  const wrap = h('span', 'secret');
+  const input = document.createElement('input');
+  input.type = 'password';
+  input.setAttribute('autocapitalize', 'off');
+  input.value = value ?? '';
+  if (placeholder) input.placeholder = placeholder;
+  input.addEventListener('input', () => onChange(input.value));
+
+  const peek = h('button', 'rv', '👁');
+  peek.type = 'button';
+  peek.setAttribute('aria-pressed', 'false');
+  // ⚠️ 写成两个**直接**的取值、不要写成「条件 ? 甲 : 乙」塞进一次调用里：
+  // 判据 15 找的是「字面量**紧跟在**调用名与左括号之后」，三元里那一半会被它判成
+  // 「中文没走 t()」。⚠️ 注释里也**别写出带引号的调用样子**（判据 14 读的是**原文**、
+  // 不剥注释，于是它会把这个例子当成一个真的键、要求字典里有它）。
+  const label = () => (input.type === 'password' ? t('看一眼') : t('藏起来'));
+  peek.title = label();
+  peek.addEventListener('click', () => {
+    const showing = input.type === 'text';
+    input.type = showing ? 'password' : 'text';
+    peek.setAttribute('aria-pressed', showing ? 'false' : 'true');
+    if (showing) peek.classList.remove('on');
+    else peek.classList.add('on');
+    // ⚠️ 提示语要跟着换：不换的话按下去之后那行字说的是**上一个状态**。
+    peek.title = label();
+    // ⚠️ 焦点留在输入框上：用户按完 👁 多半是要接着改那一格，
+    //   焦点跑到按钮上的话他还得再点一下。
+    input.focus();
+  });
+
+  wrap.append(input, peek);
+  td.append(wrap);
   return td;
 }
 
@@ -1567,22 +1626,58 @@ function cellDir(on, kind, title, onToggle) {
   return td;
 }
 
-/** 房间图标那一格（表格里唯一一个**故意很窄**的文本框）。
+/** 房间图标那一格：**点选**，不是输入框。
  *
- * ⚠️★ 它画的**只是用户填的那个**（`Channel::emoji`）；留空 = 自动。
- * ⚠️ 留空时**不显示**壳自动挑的那个图标，占位符就是两个字「自动」——
- * 显示出来会变成第二份定义：那一格看起来像「他选的」，而保存时又真的会被当成
- * 「他选的」发回去（于是**打开过一次设置页**就把「自动」钉死了）。
- * 「现在用的是哪一个」在侧栏那一格上（`RoomView::emoji`，壳算好的那一份）。
- * ⚠️ 复用 `cellInput` 而不是再抄一遍 `createElement('input')`：
- * 静态自检第 4 条是**数数**的（造了几个文本框就得关几个自动大写），
- * 抄一份就多一处要对齐；而且 `autocapitalize="off"` 在这一格同样不能少
- *（它收的是要粘进来的 emoji，界面不许替用户改字面）。
+ * ⚠️★ 2026-09-29，Jonny：「客户端的添加房间里图标可以点选，不要输入，用户又不懂输入
+ * 啥」。原来它是一个文本框（留空 = 自动，占位符写着「自动」）—— 那要求用户
+ * **自己知道去哪儿复制一个 emoji 过来**，而他多半只会打字（`work` / `room1`），
+ * 而 `clean_emoji` 只收 1–2 个非 ASCII 字符 → 打了也等于没填。
+ *
+ * ⚠️★ 用**原生 `<select>`**，不自己拿 div 画一个下拉：
+ *  · 这一格只有 7% 宽（660px 的窗口上约 46px），自己画就要处理「弹出层被表格裁掉」
+ *    那类定位问题 —— 而它在窄窗口上才现形；
+ *  · 原生控件自带键盘操作、读屏、点外面收起这些行为，自己写要再补一遍；
+ *  · 这个项目对「平台已经有的东西」一律不重造（同一个判据见 `Cargo.toml` 里
+ *    那几个插件的取舍）。
+ *
+ * ⚠️★ 选项来自**壳递过来的那份池子**（`SettingsView::emoji_pool` ←
+ * `clip9_client::EMOJI_POOL`）—— **不在这里抄一份**。
+ * ⚠️ 第一项是**空值 = 自动**：它对应 `Channel::emoji` 里「用户没选过」那件事
+ *（不是「选了某一项」）—— 见 `SettingsView::rooms` 那段注释。
  */
 function cellEmoji(value, onChange) {
-  const td = cellInput(value, onChange, t('自动'));
-  td.className = 'tiny';
-  td.firstElementChild.title = t('房间图标：填一个 emoji；留空 = 自动挑一个不重样的（侧栏那个就是）');
+  const td = h('td', 'tiny');
+  const pick = document.createElement('select');
+  pick.className = 'ico';
+  // ⚠️ 第一项固定是「自动」（`value=''`）—— 顺序不跟着池子走。
+  // ⚠️★ 这里用的是**符号键**（`room.iconAuto`）而不是中文原文「自动」：后者在字典里
+  // 已经被**卡片上那个定时标签**占了（`'自动': 'Scheduled'`）—— 共用的话，英文界面里
+  // 这一项会写成 `Scheduled`，而且不报错。理由与代价写在 `i18n.js` 那一条上。
+  const auto = document.createElement('option');
+  auto.value = '';
+  auto.textContent = t('room.iconAuto');
+  pick.append(auto);
+  for (const glyph of emojiPool) {
+    const option = document.createElement('option');
+    option.value = glyph;
+    option.textContent = glyph;
+    pick.append(option);
+  }
+  pick.value = value ?? '';
+  // ⚠️★ 「用户填过一个**不在池子里**的图标」（老配置 / 手改过配置文件）要单独补一个
+  // option：`select.value = X` 在没有那个 option 时**静默落空**（`value` 变成 `''`），
+  // 于是控件显示「自动」、而草稿里还是原来那个字符 —— 用户看着「自动」、保存下去却不是。
+  // ⚠️ 这也是「`select` 的 value 只在选项里挑」这条 HTML 规矩唯一咬人的地方。
+  if (pick.value !== (value ?? '')) {
+    const option = document.createElement('option');
+    option.value = value;
+    option.textContent = value;
+    pick.append(option);
+    pick.value = value;
+  }
+  pick.title = t('房间图标：不选就是自动挑一个不重样的（侧栏那个就是）');
+  pick.addEventListener('change', () => onChange(pick.value));
+  td.append(pick);
   return td;
 }
 
@@ -1607,7 +1702,8 @@ function renderRoomRows() {
     tr.append(cellInput(room.name, (v) => { roomDraft[index].name = v; }));
     tr.append(cellInput(room.server, (v) => { roomDraft[index].server = v; }, 'http://127.0.0.1:9502'));
     tr.append(cellInput(room.room, (v) => { roomDraft[index].room = v; }, 'default'));
-    tr.append(cellInput(room.auth_token, (v) => { roomDraft[index].auth_token = v; }, t('（空 = 无密码）')));
+    // ⚠️★ 凭据走 `cellSecret`（**不明文显示**，2026-09-29）—— 别改回 `cellInput`。
+    tr.append(cellSecret(room.auth_token, (v) => { roomDraft[index].auth_token = v; }, t('（空 = 无密码）')));
     // ⚠️ ↓ 是**全局单选**：点开一个，别的自动关掉。做成多选再靠后端「取第一个」
     // 的话，用户点第二个会**没反应** —— 那正是「配了不生效」。
     // ⚠️★ 悬停提示与侧栏那两个开关**逐字一致**（Jonny 2026-09-26 给的文案）——
@@ -1705,6 +1801,9 @@ async function openSettings() {
   showPane('rooms');
   try {
     const view = await invoke('settings_view');
+    // ⚠️★ **顺序要紧**：图标那一格是照池子铺出来的，`renderRoomRows()` 之前没填好
+    // 的话，用户打开设置页只能看到一项「自动」—— 而那是「功能没做」，不是报错。
+    emojiPool = view.emojiPool;
     // ⚠️ 深拷贝一份草稿：`view` 是 IPC 回来的对象，改它不会影响壳，
     // 但「草稿」这个概念要在代码里看得出来（下面保存时才发出去）。
     roomDraft = view.rooms.map((room) => ({ ...room }));
@@ -1905,7 +2004,9 @@ function renderRoomAuthRows() {
       delete roomAuthDraft[room];
       renderRoomAuthRows();
     }, 'work'));
-    tr.append(cellInput(entry.password, (v) => { entry.password = v; }, t('（空 = 无密码）')));
+    // ⚠️★ 同一件事的第二处：这儿的「密码」也不明文（见 `cellSecret`）。
+    // 两处一起改，别只改「添加房间」那一张表 —— 那是同一个秘密的两个入口。
+    tr.append(cellSecret(entry.password, (v) => { entry.password = v; }, t('（空 = 无密码）')));
     // ⚠️ 「留空 = 不改」：这个键在配置里可以缺省，而清空它会让服务端解析失败。
     tr.append(cellInput(entry.fileExpire, (v) => { entry.fileExpire = v; }, t('（留空 = 不改）')));
     tr.append(cellInput(entry.automation, (v) => { entry.automation = v; }, t('（留空 = 跟随）')));

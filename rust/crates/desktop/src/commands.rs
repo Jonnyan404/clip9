@@ -170,6 +170,15 @@ pub struct SettingsView {
     /// ⚠️ 界面那一格因此在留空时显示一个灰色的「自动」，它对应的就是这条规则
     /// （`clip9_client::resolve_emojis`）—— 那里是**唯一**算这件事的地方。
     pub rooms: Vec<clip9_client::Channel>,
+    /// 「自动挑一个图标」那个池子 —— 界面把它画成**点选**的一项一项
+    /// （2026-09-29，Jonny：「添加房间里图标可以点选，不要输入，用户又不懂输入啥」）。
+    ///
+    /// ⚠️★ **从壳递过去，不让界面自己抄一份**：池子只有一处定义
+    /// （[`clip9_client::EMOJI_POOL`]，`resolve_emojis` 挑的就是它）。
+    /// 界面抄一份的后果不是报错，而是**两边慢慢不一样**：
+    /// 壳那边加了新图标、界面这一格选不到 —— 于是「自动挑得出来的，用户自己选不了」。
+    /// ⚠️ 给的是 `&'static str` 的切片（池子本来就是编译期常量），序列化出去是字符串数组。
+    pub emoji_pool: Vec<&'static str>,
     pub enable_text: bool,
     pub enable_file: bool,
     pub enable_text_download: bool,
@@ -203,6 +212,9 @@ pub fn settings_view(app: tauri::AppHandle, store: State<'_, Arc<Store>>) -> Set
     let snapshot = store.snapshot();
     SettingsView {
         rooms: config.channels,
+        // ⚠️★ 直接给池子本身（`EMOJI_POOL` 是 `[&str; 24]`）—— 不在这里过滤、也不排序：
+        // 界面那一格是「照着壳说的一字排开」，顺序也是壳那一份的顺序。
+        emoji_pool: clip9_client::EMOJI_POOL.to_vec(),
         enable_text: config.enable_text,
         enable_file: config.enable_file,
         enable_text_download: config.enable_text_download,
