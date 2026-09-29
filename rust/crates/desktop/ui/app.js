@@ -1138,6 +1138,99 @@ el('composer-toggle').addEventListener('click', () => {
   setComposerHidden(!composerHidden());
 });
 
+/* ── 输入区拖高（2026-09-29）─────────────────────────────────────────
+   Jonny：「允许自由调整桌面端发送窗口的高度」。
+
+   ⚠️★ 改的是**整条输入区**（`#composer` 的高度），**不是**给 `.box` / textarea 加
+   `resize`：那两个只能改自己，改完下面那排按钮与边框的间距不跟着走（看着像「框破了」）。
+
+   ⚠️ 高度挂在 `<html>` 的 `--composer-h` 上（`style` 属性），只有 `index.html` 里
+   `.composer` 的 `height` 读它 —— 一处写、一处读，与 `data-theme` / `data-sidebar` 同族。
+   ⚠️ `boot.js` 另有一份 `COMPOSER_H_KEY`（它要在第一次绘制之前先贴一次，判据 10 对着）。 */
+const COMPOSER_H_KEY = 'composerHeight';
+
+/** 再矮就放不下「一行输入 + 那排按钮 + 边框」。 */
+const COMPOSER_H_MIN = 64;
+
+/** 上界 = 屏高的 7 成。再高时间线就只剩一两行 —— 那是把主区挤没了，不叫「自由」。 */
+function composerMaxHeight() {
+  return Math.max(COMPOSER_H_MIN, Math.round(window.innerHeight * 0.7));
+}
+
+const composerCurrentHeight = () => el('composer').getBoundingClientRect().height;
+
+/**
+ * 把高度贴到 `<html>` 上（并可选地记下来）。
+ *
+ * ⚠️★ `save` 分开是**故意的**：窗口变小那一拍只**收边界、不记** —— 记了的话，
+ * 「在大窗口下拖到 400」这个意图就被一个临时的小窗口覆盖掉，之后拉大也不再恢复。
+ *
+ * ⚠️ 拖动 / 键盘 / 窗口变化**三处都走它**：夹取只写一遍（三处各写一遍必然漂，
+ * 而漂出来的表现是「拖到头了还能再拖一点」这种说不清的东西）。
+ */
+function applyComposerHeight(height, save) {
+  const clamped = Math.min(Math.max(Math.round(height), COMPOSER_H_MIN), composerMaxHeight());
+  document.documentElement.style.setProperty('--composer-h', `${clamped}px`);
+  if (save) {
+    try {
+      localStorage.setItem(COMPOSER_H_KEY, String(clamped));
+    } catch (error) {
+      // 存不上**照样生效**（同 `setComposerHidden`）—— 只是下次启动记不住。
+    }
+  }
+  return clamped;
+}
+
+// 拖拽带：`pointerdown` 之后**捕获**指针 ——
+// ⚠️★ 往上拖时指针会跑进上面的 **iframe**（网页视图）里，而跨源 iframe 会把
+// `pointermove` 吃掉（不冒泡到外层）→ 不捕获的话是「一拖进网页区就断」。
+// ⚠️ 监听**仍挂在 `window` 上**（两层保险）：捕获成功时事件从拖拽带冒泡上来照样收到；
+// 捕获失败时至少没跑出输入区这一段还能拖。
+// ⚠️★ `setPointerCapture` 在**合成的 pointer 事件**上会抛 `NotFoundError` ——
+// 所以必须包 `try`，而且它要放在**注册监听之前**：一次异常把监听器一起带走的话，
+// 表现成「按下去拖不动」而控制台里那句话跟拖动一点关系都没有。
+el('composer-resize').addEventListener('pointerdown', (event) => {
+  event.preventDefault(); // 拖动时别把页面文字选中
+  const startY = event.clientY;
+  const startHeight = composerCurrentHeight();
+  // ⚠️ 往上拖 = 变高，所以是 `startY - 当前`（反过来就是「往上拖反而变矮」）。
+  const onMove = (moveEvent) =>
+    applyComposerHeight(startHeight + (startY - moveEvent.clientY), true);
+  const onEnd = () => {
+    window.removeEventListener('pointermove', onMove);
+    window.removeEventListener('pointerup', onEnd);
+    window.removeEventListener('pointercancel', onEnd);
+  };
+  try {
+    event.currentTarget.setPointerCapture(event.pointerId);
+  } catch (error) {
+    // 捕不上就退化成「只在输入区这一块能拖」—— 比整个拖不动好。
+  }
+  window.addEventListener('pointermove', onMove);
+  window.addEventListener('pointerup', onEnd);
+  window.addEventListener('pointercancel', onEnd);
+});
+
+// ⚠️ 键盘也走同一条路（拖拽带是 `tabindex="0"` 的，见 `index.html`）：
+// 一个**只能用鼠标**的功能不算做完了。
+// ⚠️ 只在这个元素**自己有焦点**时响应 —— 挂到 `window` 上的话，输入框里按方向键
+// 也会跟着改高度（而方向键在输入框里本来是有含义的）。
+el('composer-resize').addEventListener('keydown', (event) => {
+  const step = event.key === 'ArrowUp' ? 16 : event.key === 'ArrowDown' ? -16 : 0;
+  if (!step) return;
+  event.preventDefault();
+  applyComposerHeight(composerCurrentHeight() + step, true);
+});
+
+// ⚠️ 窗口变小之后，存下来的高度可能已经超过上界 —— 那一拍收一次（**不记**）。
+// 不收的表现：输入区把时间线挤到 0 高，最下面那颗「发送」被顶出可视区（点不到了）。
+// ⚠️ 只在**真的设过**的时候收：`documentElement.style` 里没有这个变量 = 用户没拖过
+//（`boot.js` 也没贴）= 让它按内容自然高，别凭空给它一个高度。
+window.addEventListener('resize', () => {
+  if (!document.documentElement.style.getPropertyValue('--composer-h')) return;
+  applyComposerHeight(composerCurrentHeight(), false);
+});
+
 // ⚠️ 不 `await`：地址拿不到就一直留在时间线上 —— **不该**为它拦住 `tick()`（那是整个界面）。
 loadSpaBase();
 
