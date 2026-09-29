@@ -31,7 +31,13 @@
 //
 //   契约 C：配置页的「控件 ↔ JSON 字段名」表 ↔ `clip9-core` 的 `Config`
 //     见判据 13/14 抬头那段（**静默失败**，所以它比上面两条更需要门禁）。
-//   契约 D：资源引用是否存在（`R.id` / `R.string` / `R.color`）—— 编不过，只是提前问一句。
+//   契约 D：资源引用是否存在 —— 编不过，只是提前问一句。
+//     两个方向：Kotlin 的 `R.id` / `R.string` / `R.color`，以及布局里的
+//     `@id` / `@string` / `@color` / `@drawable` / `@mipmap` / `@style`。
+//     ⚠️★ 扫之前**一律剥掉注释**（`stripXmlComments` / `scanKotlin`）—— 注释里的
+//        引用不是引用（编译器也看不见它），注释里的 `<string name="…">` 也不是定义。
+//        不剥的话，文档里写个例子就会被判成「引用了一个不存在的资源」，
+//        而修法会退化成「把注释写残」—— 那是拿文档换绿灯。
 //   契约 E：跨端桥名（`clip9Auth` / `roomAuth` / `__default__`）—— 对不上就「什么都没发生」。
 //
 // ⚠️★ 这几处都**没有测试运行器**（两个构建脚本、一个 Gradle 配置、一堆字符串），
@@ -78,6 +84,140 @@ const read = (rel) => {
   const path = join(ROOT, rel);
   return existsSync(path) ? readFileSync(path, 'utf8') : null;
 };
+
+/**
+ * 把 XML 的注释内容**换成等长空格**（`<!-- … -->` → 一串空格）。
+ *
+ * ⚠️★ 为什么必须做这一步：注释里的 `@color/foo` **不是引用** —— aapt2 看不见它，
+ *   编译器也看不见。拿全文去跑正则，等于把「文档里写的例子」当成真的引用。
+ *   这条在 2026-09-29 一连咬了三次，而且每次的修法都是**去把注释写残**
+ *   （把 `@color/console_*` 改写成「console_* 那一组颜色」）——
+ *   那是拿「文档说不清楚」换「判据不误报」，方向反了。
+ *   正解是让判据与编译器一样**无视注释**：改完之后注释反而能正常写出资源名。
+ *
+ * ⚠️ 等长（不是删掉）是刻意的：报错时的行号仍然是**原文的行号**，
+ *   可以照着行号直接去文件里找。
+ * ⚠️ XML 注释**不能嵌套**（`--` 在注释正文里本身就是非法的），所以非贪婪匹配就够。
+ */
+function stripXmlComments(text) {
+  return text.replace(/<!--[\s\S]*?-->/g, (m) => m.replace(/[^\n]/g, ' '));
+}
+
+/**
+ * 扫一遍 Kotlin，把注释的**位置**找出来，同时给出「注释已挖空」的等长副本。
+ *
+ * ⚠️★ 与 `stripXmlComments` 同源：Kotlin 注释里的 `R.string.foo` 不是引用。
+ * ⚠️ 状态机有意写简单：字符串模板里嵌套字符串（`"${"a"}"`）不处理。分不清时
+ *   **宁可判成字符串**（漏报）也不要把字符串里的 `//` 当成注释开头（误报）——
+ *   后者会把 `"https://…"` 后面的半行代码一起挖掉，而那是真的会用错地方。
+ *
+ * ⚠️★ 下面这段说明里**一个注释符号都不写**（用「斜杠 + 星号」/「星号 + 斜杠」代替）：
+ *   这份文件就是 `android-contract-smoke.mjs`，判据 11 盯的正是「Kotlin 块注释里
+ *   不能出现那两个组合字面量」；而**这一段自己就是第一版踩坑** —— 在 JSDoc 正文里
+ *   写了「星号 + 斜杠」的引号形式，块注释当场在那一行闭合，后半段注释变成顶层代码，
+ *   Node 报 `SyntaxError: Unexpected identifier`（行号指向注释里那几行）。
+ *   和判据 11 抬头记的两个 Kotlin 例子是**同一个错**。
+ *
+ * @returns `{stripped, nested, strays, unclosed, unclosedDepth}`
+ *   `stripped` 与原文等长；`nested` 是嵌套块注释里**内层开头**那个组合的偏移；
+ *   `strays` 是注释**外面**出现的闭合组合（只可能来自「注释被提前关掉」）；
+ *   `unclosed` 是到文件末尾都没闭合时最外层开头那个组合的偏移（没闭合则 null）。
+ */
+function scanKotlin(text) {
+  // ⚠️ `split('')` 按 UTF-16 码元切，下标与 `text[i]` 完全一致（`[...text]` 按码点切，
+  //    遇到 emoji 之类就错位了 —— 而偏移正是这里报错要用的东西）。
+  const out = text.split('');
+  const blank = (from, to) => {
+    for (let k = from; k < to && k < out.length; k += 1) {
+      if (out[k] !== '\n') out[k] = ' ';
+    }
+  };
+
+  const nested = [];
+  const strays = [];
+  let i = 0;
+  let depth = 0;
+  let opened = -1;
+
+  while (i < text.length) {
+    const c = text[i];
+    if (depth > 0) {
+      if (c === '/' && text[i + 1] === '*') {
+        nested.push(i);
+        i += 2;
+        depth += 1;
+        continue;
+      }
+      if (c === '*' && text[i + 1] === '/') {
+        depth -= 1;
+        if (depth === 0) {
+          blank(opened, i + 2);
+          opened = -1;
+        }
+        i += 2;
+        continue;
+      }
+      i += 1;
+      continue;
+    }
+    if (c === '/' && text[i + 1] === '/') {
+      const nl = text.indexOf('\n', i);
+      const end = nl < 0 ? text.length : nl;
+      blank(i, end);
+      i = nl < 0 ? text.length : nl + 1;
+      continue;
+    }
+    if (c === '/' && text[i + 1] === '*') {
+      depth = 1;
+      opened = i;
+      i += 2;
+      continue;
+    }
+    // ⚠️ 这个分支必须在 `/*` 之后判：`/` 开头的两种都已经在前面 continue 掉了。
+    if (c === '*' && text[i + 1] === '/') {
+      strays.push(i);
+      i += 2;
+      continue;
+    }
+    if (c === '"') {
+      if (text.startsWith('"""', i)) {
+        const end = text.indexOf('"""', i + 3);
+        i = end < 0 ? text.length : end + 3;
+        continue;
+      }
+      i += 1;
+      while (i < text.length && text[i] !== '"' && text[i] !== '\n') {
+        if (text[i] === '\\') i += 1;
+        i += 1;
+      }
+      i += 1;
+      continue;
+    }
+    if (c === "'") {
+      i += 1;
+      while (i < text.length && text[i] !== "'" && text[i] !== '\n') {
+        if (text[i] === '\\') i += 1;
+        i += 1;
+      }
+      i += 1;
+      continue;
+    }
+    i += 1;
+  }
+
+  // 没闭合的块注释一路吃到文件末尾 —— 编译器就是这么看的，所以也挖空它。
+  const unclosedDepth = depth;
+  const unclosed = depth > 0 ? opened : null;
+  if (unclosed !== null) blank(opened, text.length);
+
+  return { stripped: out.join(''), nested, strays, unclosed, unclosedDepth };
+}
+
+/** 读一个 `.kt` 文件并返回「注释已挖空」的正文（读不到返回 `null`）。 */
+function readKotlinCode(rel) {
+  const text = read(rel);
+  return text === null ? null : scanKotlin(text).stripped;
+}
 
 // ── 提取：契约 A（三处 ABI 清单）──────────────────────────────────────────────
 
@@ -189,7 +329,8 @@ function rustSymbols() {
 function kotlinBridge(dir) {
   const path = join(dir, 'ServerBridge.kt');
   if (!existsSync(path)) return null;
-  const text = readFileSync(path, 'utf8');
+  // ⚠️ 剥注释：这份文件里解释 JNI 命名规则时，正列举过 `object` / `external fun` 的真名字。
+  const text = scanKotlin(readFileSync(path, 'utf8')).stripped;
   const lib = /const val LIBRARY = "([^"]+)"/.exec(text);
   const methods = [...text.matchAll(/^\s*private external fun (\w+)\(/gm)].map((m) => m[1]);
   const objects = [...text.matchAll(/^\s*object (\w+)\b/gm)].map((m) => m[1]);
@@ -500,9 +641,7 @@ if (unreadB.length) {
 // ⚠️ 这是「替编译器做它能做的那一小部分」。真编一次当然更彻底，但本机没有 Kotlin
 // 编译器、CI 也没接 Android 构建 —— 而这一条是毫秒级的，且抓的正是最隐蔽的那类。
 //
-// ⚠️ 状态机有意写简单：字符串模板里嵌套字符串（`"${"a"}"`）不处理。Kotlin 的
-// 字符串与非字符串分不清时，**宁可判成字符串**（漏报）也不要把字符串里的
-// 「斜杠 + 星号」当成注释（误报）—— 后者会让这条判据被删掉。
+// ⚠️ 状态机在 `scanKotlin()` 里（与「剥注释」共用同一份）—— 两处各写一份必然分叉。
 function kotlinComments() {
   const dir = join(ROOT, 'android/app/src/main/java/com/clip9/app');
   if (!existsSync(dir)) return null;
@@ -513,77 +652,12 @@ function kotlinComments() {
   for (const name of files) {
     const text = readFileSync(join(dir, name), 'utf8');
     const lineOf = (offset) => text.slice(0, offset).split('\n').length;
+    const { nested, strays, unclosed, unclosedDepth } = scanKotlin(text);
 
-    let i = 0;
-    let depth = 0;
-    let opened = -1;
-    const nested = [];
-    // ② 的落点：**不在任何注释里**出现的闭合符。它只可能来自「注释被提前关掉」，
-    // 因为 Kotlin 代码里不会有这种写法（`a * /b` 不是合法表达式）。
-    const strays = [];
-    while (i < text.length) {
-      const c = text[i];
-      if (depth > 0) {
-        if (c === '/' && text[i + 1] === '*') {
-          nested.push(i);
-          i += 2;
-          depth += 1;
-          continue;
-        }
-        if (c === '*' && text[i + 1] === '/') {
-          depth -= 1;
-          if (depth === 0) opened = -1;
-          i += 2;
-          continue;
-        }
-        i += 1;
-        continue;
-      }
-      if (c === '/' && text[i + 1] === '/') {
-        const nl = text.indexOf('\n', i);
-        i = nl < 0 ? text.length : nl + 1;
-        continue;
-      }
-      if (c === '/' && text[i + 1] === '*') {
-        depth = 1;
-        opened = i;
-        i += 2;
-        continue;
-      }
-      // ⚠️ 这个分支必须在 `/*` 之后判：`/` 开头的两种都已经在前面 continue 掉了。
-      if (c === '*' && text[i + 1] === '/') {
-        strays.push(i);
-        i += 2;
-        continue;
-      }
-      if (c === '"') {
-        if (text.startsWith('"""', i)) {
-          const end = text.indexOf('"""', i + 3);
-          i = end < 0 ? text.length : end + 3;
-          continue;
-        }
-        i += 1;
-        while (i < text.length && text[i] !== '"' && text[i] !== '\n') {
-          if (text[i] === '\\') i += 1;
-          i += 1;
-        }
-        i += 1;
-        continue;
-      }
-      if (c === "'") {
-        i += 1;
-        while (i < text.length && text[i] !== "'" && text[i] !== '\n') {
-          if (text[i] === '\\') i += 1;
-          i += 1;
-        }
-        i += 1;
-        continue;
-      }
-      i += 1;
-    }
-
-    if (depth > 0) {
-      problems.push(`${name}:${lineOf(opened)} 块注释没闭合（到文件末尾还差 ${depth} 个闭合符）`);
+    if (unclosed !== null) {
+      problems.push(
+        `${name}:${lineOf(unclosed)} 块注释没闭合（到文件末尾还差 ${unclosedDepth} 个闭合符）`,
+      );
     }
     for (const at of nested) {
       problems.push(
@@ -625,6 +699,9 @@ function kotlinComments() {
 //   契约 D：资源引用（`R.id.*` / `R.string.*` / `R.color.*` / `@string/*`）
 //     ⚠️ 这一类的失败**不是静默的**（编不过），所以它更像「提前问一句」：
 //     本机跑不了 Gradle，而这几条是毫秒级的，能省掉一次 CI 往返。
+//     ⚠️★ 扫之前**一律剥注释**（见 `stripXmlComments` / `scanKotlin` 抬头）——
+//        不剥的话，注释里写一个资源名就会被判成「引用了一个不存在的资源」，
+//        而人会因此把注释写残来迁就判据。2026-09-29 一连咬了三次。
 //     ⚠️ 但**反向**（定义了没人读）只记提示不失败 —— 那确实只是噪音，不是坏事。
 //   契约 E：跨端桥名（Android ↔ 两份 `web-vue3`）
 //     · `clip9Auth` / `roomAuth` / `__default__` 三处对不上 →
@@ -692,7 +769,9 @@ function braceBody(text, open) {
  * ⚠️ 这张表是**唯一**该出现字段名的地方（类文档里写着），所以扫它一个文件就够。
  */
 function configPageFields() {
-  const text = read('android/app/src/main/java/com/clip9/app/ConfigPage.kt');
+  // ⚠️ 剥注释：类文档里若举一个 `Field(R.id.…, "a.b", Kind.X)` 的例子，
+  //    全文扫描会把它当成表里真有一行。
+  const text = readKotlinCode('android/app/src/main/java/com/clip9/app/ConfigPage.kt');
   if (text === null) return null;
   const rows = [
     ...text.matchAll(/Field\(\s*R\.id\.(\w+)\s*,\s*"([^"]+)"\s*,\s*Kind\.(\w+)\s*\)/g),
@@ -702,7 +781,7 @@ function configPageFields() {
 
 /** `ConfigPage.kt` 的开关表：`R.id.控件 to "块.字段"`。 */
 function configPageSwitches() {
-  const text = read('android/app/src/main/java/com/clip9/app/ConfigPage.kt');
+  const text = readKotlinCode('android/app/src/main/java/com/clip9/app/ConfigPage.kt');
   if (text === null) return null;
   // ⚠️ 框在 `switches` 那个 `listOf(` 里：`to` 这个写法在 Kotlin 里到处都是。
   const block = /val switches: List<Pair<Int, String>> = listOf\(([\s\S]*?)\n    \)/.exec(text);
@@ -714,15 +793,70 @@ function configPageSwitches() {
   return rows.length ? rows : null;
 }
 
-/** 某个 `values/*.xml` 里定义的名字（`<string name="…">` / `<color name="…">`）。 */
+/**
+ * 某个 `values/*.xml` 里定义的名字（`<string name="…">` / `<color name="…">`）。
+ *
+ * ⚠️★ `color` 还有**第二个住址**：`res/color/*.xml`。那边放的是 `ColorStateList`
+ * （比如三个页签按钮那种「按 `state_checked` 换底色」的背景），而它的规则是
+ * **一个文件就是一个 `@color/` 资源**、名字取自文件名 —— 靠 `<color name="…">` 扫不到，
+ * 必须按目录补。
+ * ⚠️ 2026-09-29 踩：`@color/console_seg_button` / `@color/console_seg_text` 指的正是
+ * `res/color/` 下那两个文件，而这条判据只读 `values/`，于是把三个**合法**的引用
+ * 报成了「没有定义」—— 覆盖面止于扫描范围，这一条旧的扫描范围是错的。
+ */
 function definedNames(tag) {
-  const text = read('android/app/src/main/res/values/' + (tag === 'string' ? 'strings' : 'colors') + '.xml');
-  if (text === null) return null;
+  const raw = read('android/app/src/main/res/values/' + (tag === 'string' ? 'strings' : 'colors') + '.xml');
+  if (raw === null) return null;
+  // ⚠️ 先剥注释：`<!-- <string name="x"> -->` 里的那个名字**不是定义**。
+  const text = stripXmlComments(raw);
   const rows = [...text.matchAll(new RegExp(`<${tag} name="([A-Za-z_]\\w*)"`, 'g'))].map((m) => m[1]);
+  if (tag === 'color') {
+    const dir = join(ROOT, 'android/app/src/main/res/color');
+    if (existsSync(dir)) {
+      for (const file of readdirSync(dir)) {
+        if (file.endsWith('.xml')) rows.push(file.slice(0, -'.xml'.length));
+      }
+    }
+  }
   return rows.length ? new Set(rows) : null;
 }
 
-/** 所有布局里 `@+id/…` 定义出来的 id。 */
+/**
+ * `res/drawable*` / `res/mipmap*` 下的文件名（去掉扩展名）—— `@drawable/x` / `@mipmap/x` 的定义。
+ *
+ * ⚠️★ 与 `definedNames` 是同一类：布局里把一个 drawable 的名字写错**同样编不过**，
+ * 而本机跑不了 Gradle，这条判据是唯一能提前问一句的地方。
+ * ⚠️ 要扫**所有**变体目录（`drawable-v24`、`mipmap-anydpi-v26`…），不能只看没有后缀那个 ——
+ * 本仓库的启动图标就只在 `mipmap-anydpi-v26/` 里有一份 `.xml`。
+ * ⚠️ 不过滤扩展名：`mipmap-hdpi/ic_launcher.png` 也是 `@mipmap/ic_launcher` 的定义。
+ */
+function fileResourceNames(kind) {
+  const root = join(ROOT, 'android/app/src/main/res');
+  if (!existsSync(root)) return null;
+  const out = new Set();
+  for (const entry of readdirSync(root)) {
+    if (entry !== kind && !entry.startsWith(kind + '-')) continue;
+    for (const file of readdirSync(join(root, entry))) {
+      out.add(file.replace(/\.[^.]+$/, ''));
+    }
+  }
+  return out.size ? out : null;
+}
+
+/** `values/*.xml` 里 `<style name="…">` 的名字（可以带 `.`，比如 `Widget.Clip9.SegButton`）。 */
+function styleNames() {
+  const dir = join(ROOT, 'android/app/src/main/res/values');
+  if (!existsSync(dir)) return null;
+  const out = new Set();
+  for (const file of readdirSync(dir)) {
+    if (!file.endsWith('.xml')) continue;
+    const text = stripXmlComments(readFileSync(join(dir, file), 'utf8'));
+    for (const m of text.matchAll(/<style name="([A-Za-z_][\w.]*)"/g)) out.add(m[1]);
+  }
+  return out.size ? out : null;
+}
+
+/** 所有布局里 `@+id/…` 定义出来的 id，以及它们引用的各种资源。 */
 function layoutIds() {
   const dir = join(ROOT, 'android/app/src/main/res/layout');
   if (!existsSync(dir)) return null;
@@ -731,13 +865,48 @@ function layoutIds() {
   const defined = new Set();
   const refs = [];
   for (const name of files) {
-    const text = readFileSync(join(dir, name), 'utf8');
+    // ⚠️★ 剥注释（`stripXmlComments` 抬头那段）：注释里的 `@string/x` 不是引用、
+    //    注释掉的 `@+id/y` 也不是定义 —— 后者正是一份「被注释掉的控件」该有的样子。
+    const text = stripXmlComments(readFileSync(join(dir, name), 'utf8'));
     for (const m of text.matchAll(/@\+id\/([A-Za-z_]\w*)/g)) defined.add(m[1]);
     for (const m of text.matchAll(/@id\/([A-Za-z_]\w*)/g)) refs.push({ name: m[1], where: name });
     for (const m of text.matchAll(/@string\/([A-Za-z_]\w*)/g)) refs.push({ name: m[1], where: name, kind: 'string' });
     for (const m of text.matchAll(/@color\/([A-Za-z_]\w*)/g)) refs.push({ name: m[1], where: name, kind: 'color' });
+    // ⚠️ `@android:color/white` 那种**系统**资源不会命中上面几条（前缀是 `android:`）——
+    //    这是想要的：我们只管自家 res/ 下的名字。
+    for (const m of text.matchAll(/@(drawable|mipmap)\/([A-Za-z_]\w*)/g)) {
+      refs.push({ name: m[2], where: name, kind: m[1] });
+    }
+    for (const m of text.matchAll(/@style\/([A-Za-z_][\w.]*)/g)) {
+      refs.push({ name: m[1], where: name, kind: 'style' });
+    }
   }
   return { defined, refs };
+}
+
+/**
+ * `res/drawable/*.xml` 与 `res/color/*.xml` 里的资源引用。
+ *
+ * ⚠️★ 判「有没有人读」时**必须**把它们算进来：控制台那一组颜色绝大多数只出现在
+ * drawable 里（`bg_console_panel` 的渐变端点就是两个颜色，`bg_console_dirty` 的
+ * `solid` 是第三个），布局上一个都不提。
+ * ⚠️ 漏了这一步的后果不是「少报」，而是「**瞎报**」：26 个正在用的颜色被列成
+ * 「没人读的顏色」—— 而假的提示比没有提示更坏，它教人以后直接忽略这条提示。
+ * （2026-09-29 踩，与上面 `definedNames` 那条是同一类：覆盖面止于扫描范围。）
+ */
+function drawableResRefs() {
+  const out = { strings: new Set(), colors: new Set() };
+  for (const sub of ['drawable', 'color']) {
+    const dir = join(ROOT, 'android/app/src/main/res/' + sub);
+    if (!existsSync(dir)) continue;
+    for (const file of readdirSync(dir)) {
+      if (!file.endsWith('.xml')) continue;
+      const text = stripXmlComments(readFileSync(join(dir, file), 'utf8'));
+      for (const m of text.matchAll(/@string\/([A-Za-z_]\w*)/g)) out.strings.add(m[1]);
+      for (const m of text.matchAll(/@color\/([A-Za-z_]\w*)/g)) out.colors.add(m[1]);
+    }
+  }
+  return out;
 }
 
 /** 所有 `.kt` 里的 `R.id.*` / `R.string.*` / `R.color.*`。 */
@@ -752,8 +921,10 @@ function kotlinResRefs() {
   // ⚠️★ 前面那个 `(?<![\w.])` 是必须的：`android.R.id.content` 里的 `R.id.content`
   // 也匹配得上，而它是**框架的** id（不是我们的布局里的），于是判据会误报「没有 @+id」。
   // 2026-09-29 真踩到：`findViewById<View>(android.R.id.content)`。
+  // ⚠️ 还要剥注释：`// 原来是 R.string.show_qr，现在叫 …` 这种说明句里的旧名字
+  //    会被当成真引用，于是报「没有定义」—— 而它只是历史。见 `stripXmlComments` 抬头。
   for (const name of files) {
-    const text = readFileSync(join(dir, name), 'utf8');
+    const text = scanKotlin(readFileSync(join(dir, name), 'utf8')).stripped;
     for (const m of text.matchAll(/(?<![\w.])R\.id\.([A-Za-z_]\w*)/g)) ids.add(m[1]);
     for (const m of text.matchAll(/(?<![\w.])R\.string\.([A-Za-z_]\w*)/g)) strings.add(m[1]);
     for (const m of text.matchAll(/(?<![\w.])R\.color\.([A-Za-z_]\w*)/g)) colors.add(m[1]);
@@ -776,7 +947,8 @@ function spaBridge(rel) {
 
 /** `WebAppActivity.kt` 里那两处（对象名 + 方法名）。 */
 function kotlinBridgeNames() {
-  const text = read('android/app/src/main/java/com/clip9/app/WebAppActivity.kt');
+  // ⚠️ 剥注释：这份文件的注释里解释过那三个桥名，而「解释」用的正是它们的字面量。
+  const text = readKotlinCode('android/app/src/main/java/com/clip9/app/WebAppActivity.kt');
   if (text === null) return null;
   const bridge = /const val AUTH_BRIDGE = "([^"]+)"/.exec(text);
   const method = /fun (\w+)\(\): String\? = authCache/.exec(text);
@@ -879,13 +1051,19 @@ const pageSwitches = configPageSwitches();
 // ── 契约 D：资源引用都要存在 ───────────────────────────────────────────────
 
 {
-  const label = '契约 D：所有 R.id / @id / R.string / @string / R.color / @color 都有定义';
+  const label =
+    '契约 D：布局里的 @id / @string / @color / @drawable / @mipmap / @style 与 Kotlin 的 R.* 都有定义';
   const layouts = layoutIds();
   const kotlin = kotlinResRefs();
   const strings = definedNames('string');
   const colors = definedNames('color');
-  if (!layouts || !kotlin || !strings || !colors) {
-    fail(label, '读不到布局 / Kotlin / strings.xml / colors.xml 里的某一份');
+  const shapes = {
+    drawable: fileResourceNames('drawable'),
+    mipmap: fileResourceNames('mipmap'),
+  };
+  const styles = styleNames();
+  if (!layouts || !kotlin || !strings || !colors || !shapes.drawable || !shapes.mipmap || !styles) {
+    fail(label, '读不到布局 / Kotlin / strings.xml / colors.xml / drawable / mipmap / style 里的某一份');
   } else {
     const problems = [];
     // 布局里引用别的布局定义的 id 也要在（同一份或跨文件都行）。
@@ -894,6 +1072,12 @@ const pageSwitches = configPageSwitches();
         problems.push(`layout/${ref.where}: @string/${ref.name} 没有定义`);
       } else if (ref.kind === 'color' && !colors.has(ref.name)) {
         problems.push(`layout/${ref.where}: @color/${ref.name} 没有定义`);
+      } else if (ref.kind === 'drawable' || ref.kind === 'mipmap') {
+        if (!shapes[ref.kind].has(ref.name)) {
+          problems.push(`layout/${ref.where}: @${ref.kind}/${ref.name} 没有定义`);
+        }
+      } else if (ref.kind === 'style' && !styles.has(ref.name)) {
+        problems.push(`layout/${ref.where}: @style/${ref.name} 没有定义`);
       } else if (!ref.kind && !layouts.defined.has(ref.name)) {
         problems.push(`layout/${ref.where}: @id/${ref.name} 没有任何 @+id 定义它`);
       }
@@ -908,7 +1092,10 @@ const pageSwitches = configPageSwitches();
       if (!colors.has(name)) problems.push(`Kotlin: R.color.${name} 没有定义`);
     }
     if (!problems.length) {
-      ok(`${label} —— ${kotlin.ids.size} 个 id · ${kotlin.strings.size} 条文案 · ${kotlin.colors.size} 个颜色`);
+      ok(
+        `${label} —— ${kotlin.ids.size} 个 id · ${kotlin.strings.size} 条文案 · ` +
+          `${kotlin.colors.size} 个颜色 · 布局里 ${layouts.refs.length} 处引用`,
+      );
     } else {
       fail(
         label,
@@ -920,11 +1107,20 @@ const pageSwitches = configPageSwitches();
 
     // ⚠️ 反向只记提示：定义了没人读确实只是噪音，不是坏事（`isShrinkResources` 会剥掉它们）。
     //    但它值得说一声 —— 没人读的条目多了之后，这份表就没人敢动了。
+    // ⚠️★ 三处读者都要算上：Kotlin、布局、以及 **drawable / color 目录**（后者见
+    //    `drawableResRefs` 的注释 —— 少了它这条提示会变成假信号）。
+    const shapeRefs = drawableResRefs();
     const unusedStrings = [...strings].filter(
-      (n) => !kotlin.strings.has(n) && !layouts.refs.some((r) => r.kind === 'string' && r.name === n),
+      (n) =>
+        !kotlin.strings.has(n) &&
+        !layouts.refs.some((r) => r.kind === 'string' && r.name === n) &&
+        !shapeRefs.strings.has(n),
     );
     const unusedColors = [...colors].filter(
-      (n) => !kotlin.colors.has(n) && !layouts.refs.some((r) => r.kind === 'color' && r.name === n),
+      (n) =>
+        !kotlin.colors.has(n) &&
+        !layouts.refs.some((r) => r.kind === 'color' && r.name === n) &&
+        !shapeRefs.colors.has(n),
     );
     if (unusedStrings.length || unusedColors.length) {
       notes.push(
