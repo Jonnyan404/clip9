@@ -192,6 +192,12 @@
 
     .tl { flex: 1; overflow-y: auto; padding: 12px 14px; display: flex; flex-direction: column; gap: 9px; }
 
+    /* ── 内容区的第二个视图：嵌进来的 SPA（2026-09-29 的实验）──────────────
+       ⚠️ 与 `.tl` 同一个位置、同一个 `flex: 1` —— 它俩就是 `.main` 里**二选一**的那一块。
+       ⚠️★ 背景给 `--bg`（不是浏览器默认的白）：服务端没起、或者地址还没拿到时
+       iframe 是一片空白，深色主题下那块白会很扎眼。 */
+    .spa { flex: 1; border: 0; width: 100%; background: var(--bg); }
+
     .card {
         background: var(--bg); border: 1px solid var(--border);
         border-radius: 9px; padding: 9px 11px; max-width: 88%;
@@ -477,6 +483,22 @@ body {
     font: 13px/1.55 -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", sans-serif;
     -webkit-font-smoothing: antialiased;
 }
+
+/* ──★ `hidden` 属性**必须真的能藏住**（2026-09-29 踩到的坑，一句话版）──────
+   `el('x').hidden = true` 只是把**属性**加上去，藏不藏得住看有没有人用**作者样式表**
+   给它写了 `display`。本文件里 `.tl` / `.view-switch` / `.overlay` / `.notice` 这些都写了
+   `display: flex` —— 而**作者样式表赢过**浏览器自带的 `[hidden] { display: none }`，
+   于是那句 `hidden = true` **一点视觉效果都没有**（属性在、元素照样占位）。
+
+   ⚠️★ 2026-09-29 的实际症状：内容区的「列表 / 网页」两个视图是**同一个位置二选一**
+   （`.tl` 与 `.spa`，都 `flex: 1`），本该藏起来的那个没藏 → 两个都摊开 → 内容区
+   **上下对半平分**（一人一半，各 50% 高）。不报错、控制台干干净净，静态自检也扫不到
+   （那是「id 对得上」的检查，看不见 CSS 与属性的这层交互）。
+   ⚠️ 原来这里只有一条 `.overlay[hidden]`（浮层当年就是这么踩的），**逐处补是补不完的** ——
+   新加一个 `display: flex` 的元素就静默复发。所以收敛成**这一条**：
+   ⚠️ 顺序不顶用（`.view-switch` 排在这条之后、同级选择器会赢），必须 `!important`。
+   ⚠️ 这也是本文件里**唯一**一处 `!important`（别的地方都不要）。 */
+[hidden] { display: none !important; }
 /* ⚠️★ 主窗口**没有标题栏**（Jonny 2026-09-26）—— 整条 `.titlebar` 删掉了。
    原来是靠一条 `body > .titlebar { height: 38px }` 把稿 1 那个 38px 改回来的
    （稿 2 的 34px 会赢），现在那条规则**没有对象了**，删掉。
@@ -505,6 +527,45 @@ body {
    ⚠️ 原来这里还有第五样「状态胶囊」，2026-09-26 删掉了（见 `index.html` 那段注释）。 */
 .main-head { flex-wrap: wrap; row-gap: 6px; }
 
+/* ── 侧栏里那块「列表 / 网页」切换（2026-09-29 的实验）──────────────────
+   ⚠️ 原来塞在 `.main-head` 的右上角 —— Jonny 看了实跑效果：顶部的手写状态栏和
+   SPA 自己的菜单栏已经叠在一起，切换再挤在中间更乱 → 挪进侧栏（`#rooms` 下面）。
+   ⚠️ 样式**不沿用 `.btn` 的卡片底**：这一块长在侧栏里（`--sidebar-bg`），
+   主区那套白底会浮出来 —— 这里贴着 `.sidebar-foot button` 那族的观感（透明底 + 细线）。
+   ⚠️ 选中态仍走 `.on` 那个通用写法（accent 底 + 白字），与 `.room.on` / `.it.on` 一致。 */
+.view-switch {
+    border-top: 1px solid var(--sidebar-line);
+    padding: 6px; display: flex; flex-direction: column; gap: 5px;
+}
+
+.view-switch .vs-row { display: flex; gap: 5px; }
+
+.view-switch .btn {
+    flex: 1; padding: 4px 0; font-size: 11.5px;
+    background: transparent; border-color: var(--sidebar-line); color: var(--sidebar-fg);
+}
+
+.view-switch .btn.on { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 500; }
+
+/* ⚠️ 「桌面输入框」那行：一个 `.sq` 方块 + 一句字。整行可点（点击处理在 app.js）。 */
+.view-switch .vs-chk {
+    cursor: default; font-size: 11.5px; color: var(--sidebar-fg);
+    padding: 2px 0; gap: 7px; align-items: center;
+}
+
+/* ⚠️★ 收起侧栏（56px）时两颗按钮改成上下叠；这行字藏掉，悬停提示顶上（`data-i18n-title`）。
+   挤是挤，但**不能整块藏掉** —— 「切不回去」比挤更坏。 */
+:root[data-sidebar='narrow'] .view-switch { padding: 4px; }
+
+:root[data-sidebar='narrow'] .view-switch .vs-row { flex-direction: column; }
+
+:root[data-sidebar='narrow'] .view-switch .vs-chk .vs-lbl { display: none; }
+
+/* ⚠️★ 「桌面输入框」关掉 = 整条输入区不画。属性由 `boot.js` 在**第一次绘制之前**贴
+   （跟 `data-sidebar` 同一个道理：晚一步就是先画一条输入区再跳没），`app.js` 点按时写。
+   ⚠️ 这里**只**认 `'hidden'` 这一个值：读不到、值不认得一律当显示 —— 跟 `data-sidebar` 同款。 */
+:root[data-composer='hidden'] .composer { display: none; }
+
 /* ⚠️★ 同名不同义的两处，显式改回来。
    稿 1 的 `.field` / `.chk` / `.divider` 是给它那个**已被稿 2 取代的旧设置面板**用的，
    稿 2 又定义了同一批类名。拼接顺序让稿 2 的声明生效，但稿 1 的
@@ -519,7 +580,9 @@ body {
     display: flex; align-items: center; justify-content: center;
     background: color-mix(in srgb, #0f172a 45%, transparent);
 }
-.overlay[hidden] { display: none; }
+/* ⚠️ 「藏起来」那条规则**搬家了**：原来是这里的一条 `.overlay[hidden] { display: none; }`
+   （浮层 `display: flex`，`hidden` 属性自己不管用），现在并进文件上方那条**基础规则**
+   `[hidden] { display: none !important; }` —— 逐处补是补不完的。 */
 /* 稿 1 的 .win 写死了 760×520（演示用）—— 浮层里的窗口按稿 2 自己的尺寸走，只加视口上限。 */
 .overlay .win { width: auto; height: auto; max-width: calc(100vw - 32px); max-height: calc(100vh - 32px); }
 .overlay .win.settings { width: 640px; height: 470px; }
@@ -767,21 +830,6 @@ table.ra td input[type='checkbox'] { margin: 0; }
    的话 `overflow: hidden` 根本不起作用（这是 flex 里最容易漏的一条）。 */
 .room .nm { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
-/* ⚠️★ 时间线的右键菜单（设计稿 §4.4）。
-   稿子**没画**它 —— 但稿 1 里有一套**同视觉**的菜单（托盘那张 `.tray`：
-   圆角 9px / 一行 7px 12px / 悬停底色 / 1px 分隔线）。这里照抄那一套，
-   **不另发明一种菜单长相**（同一个 app 里两种菜单是最没必要的第二套设计）。 */
-.ctxmenu {
-    position: fixed; z-index: 40; min-width: 176px;
-    background: var(--card-bg); border: 1px solid var(--border);
-    border-radius: 9px; box-shadow: var(--shadow); overflow: hidden;
-    padding: 4px 0;
-}
-.ctxmenu .mi { padding: 7px 12px; display: flex; align-items: center; gap: 9px; font-size: 12.5px; cursor: default; }
-.ctxmenu .mi:hover { background: var(--sidebar-hover); }
-.ctxmenu .mi .k { margin-left: auto; color: var(--text-2); font-size: 11px; }
-.ctxmenu .sep { height: 1px; background: var(--border); margin: 4px 0; }
-
 /* 主界面的即时提示（发不出去 / 存不上 / 配置有毛病）—— 稿子里没有，但 app 必须说 */
 .notice {
     flex: none; padding: 5px 14px; font-size: 11.5px;
@@ -833,6 +881,28 @@ table.ra td input[type='checkbox'] { margin: 0; }
                 </div>
             </div>
             <div class="rooms" id="rooms"></div>
+            <!-- ⚠️★ 2026-09-29 的实验：内容区可以在「手写时间线」与「嵌进来的 SPA」之间切。
+                 ⚠️ 放在**侧栏**而不是主区顶栏（Jonny 看了实跑效果：顶部已经有手写状态栏
+                 和 SPA 自己的菜单栏叠在一起，切换再挤进去更乱）。
+                 ⚠️ **没有自带服务端**（找不到那个二进制）时整块不显示 ——
+                 `hidden` 是初值，由 `app.js` 的 `loadSpaBase()` 摘掉。
+                 ⚠️ 只有这两颗：**模式不归桌面端管**（Jonny 2026-09-29：「模式切换网页带的有」）——
+                 SPA 自己有整套模式切换，桌面端再摆一份就是第二份要跟着漂的东西。
+                 ⚠️ 样式见 `.view-switch` 那一段（贴着 `.sidebar-foot` 那族的观感）。 -->
+            <div class="view-switch" id="view-switch" hidden>
+                <div class="vs-row">
+                    <button class="btn" id="view-list" type="button" data-i18n="列表">列表</button>
+                    <button class="btn" id="view-web" type="button" data-i18n="网页">网页</button>
+                </div>
+                <!-- ⚠️★ 桌面端自己的输入框开不开（2026-09-29）。默认开；关掉之后发消息
+                     走网页视图里 SPA 自己的输入区（它在个性化里也有输入区开关，
+                     两边各关各的 —— 用户自己挑用哪边的）。⚠️ 与「列表 / 网页」放同一块：
+                     都是「内容区长什么样」的开关，散到设置页里反而找不到。
+                     ⚠️ `title` 给收起侧栏时用（那时文字藏掉，只剩一个方块）。 -->
+                <div class="vs-row vs-chk" id="composer-toggle" data-i18n-title="桌面输入框">
+                    <span class="sq" id="sq-composer"></span><span class="vs-lbl" data-i18n="桌面输入框">桌面输入框</span>
+                </div>
+            </div>
             <!-- ⚠️★ 收起侧栏时这一块只画一个 `⚠`（56px 放不下那句话），全文挂在它的
                  `title` 上（`render` 里同时设的）—— **不能整块藏掉**：
                  那是「配置有毛病」，藏起来就成静默失败了。 -->
@@ -853,7 +923,12 @@ table.ra td input[type='checkbox'] { margin: 0; }
         </div>
 
         <div class="main">
-            <div class="main-head">
+            <!-- ⚠️★ 这一条有 id：**「网页」视图里整条藏掉**（`app.js` 的 `applyView`）——
+                 Jonny 2026-09-29：「列表的右侧状态栏和网页的顶部菜单栏叠一起了」。
+                 藏掉的是**整条**（房间名 / 条数 / 设备圆圈）：SPA 自己的头部有房间名，
+                 桌面端再挂一条就是上下两根横杆；「N 台在线」在网页视图里暂时没地方看 ——
+                 那是拿「看得见」换「不叠」，真要两全得往桥那边想（见设计稿）。 -->
+            <div class="main-head" id="main-head">
                 <span class="room-nm" id="room-name">—</span>
                 <span class="meta" id="room-meta"></span>
                 <div class="spacer"></div>
@@ -862,6 +937,9 @@ table.ra td input[type='checkbox'] { margin: 0; }
 
             <div class="notice" id="notice" hidden></div>
             <div class="tl" id="timeline"></div>
+            <!-- 「网页」那个视图。⚠️ 地址**不在这里写死** —— 端口是运行时从服务端配置里
+                 读出来的（`spa_url` 命令），写死一个端口迟早会指错。 -->
+            <iframe class="spa" id="spa" title="SPA" hidden></iframe>
 
             <div class="composer">
                 <div class="box">

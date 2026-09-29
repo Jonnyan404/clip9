@@ -250,6 +250,13 @@
       '选图片发到房间': 'Choose images to send to the room',
       '回车发送 · Shift+回车换行': 'Enter sends · Shift+Enter makes a new line',
 
+      // ── 内容区的两个视图（2026-09-29 的实验：把 SPA 嵌进来）──
+      // ⚠️ 模式名（速览 / 标准 / 便签 / 看板 / 动作台）**不收进这份字典**：
+      // 模式选择是 SPA 自己的事（桌面端那段下拉 2026-09-29 删了），两个界面各念各的。
+      '列表': 'List',
+      '网页': 'Web',
+      '桌面输入框': 'Desktop input',
+
       // ══════════ 设置窗口：标题与左侧导航 ══════════
       '设置': 'Settings',
       '连接': 'Connection',
@@ -519,12 +526,8 @@
       '取不到状态：{error}': 'Could not fetch the state: {error}',
       '发不出去：{error}': 'Could not send: {error}',
       '打不开文件选择框：{error}': 'Could not open the file picker: {error}',
-      '复制内容': 'Copy text',
-      '复制失败：{error}': 'Copy failed: {error}',
-      '这条没有可复制的内容。': 'This entry has nothing to copy.',
-      '复制链接': 'Copy link',
-      '这条文件的下载地址。⚠️ 房间要密码的话，这条链接打不开（凭据只在请求头里）。':
-        'Download URL of this file. ⚠️ With a password-protected room the link will not open (credentials only travel in request headers).',
+      // ⚠️ 2026-09-29：右键菜单整块删了，菜单专属的几条文案（复制内容 / 复制链接 /
+      // 复制失败…）一并下掉 —— 时间线右键现在交给 WebView 自己的默认菜单。
 
       // ══════════ app.js：本地服务端 ══════════
       '不到 1 分钟': 'under a minute',

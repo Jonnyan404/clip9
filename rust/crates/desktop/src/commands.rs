@@ -414,6 +414,27 @@ fn local_server_url(server: &ServerProcess, config_path: &Path) -> String {
     crate::server_process::client_url(&host, server.port(), &prefix, tls)
 }
 
+/// 「内容区里嵌的那个网页版」该指向哪 —— **就是上面那一个地址**（`open_web` 用的同一个），
+/// 只是**返回给页面**而不是丢给系统浏览器。
+///
+/// ⚠️★ 与 [`open_web`] 共用 [`local_server_url`] 是刻意的：两处各拼一份的话，
+/// 「配了证书 / 配了路径前缀」时必然漂 —— 而那种漂**不报错**，只是一个白屏。
+///
+/// ⚠️ 返回 `Option`：**找不到自带服务端那个二进制**时是 `None`。那不是错误 ——
+/// 页面该做的是留在手写时间线上（它本来就在），而不是弹一条红条。
+///
+/// ⚠️★ **服务端没在跑时这个地址照样返回**（[`ServerProcess::port`] 从它自己的配置里读，
+/// 不探活）：那一拍 iframe 是白屏。这是接受的 —— 探活要最多 800ms，而页面每次初始化
+/// 都要问一次；「白屏」与「服务端没起」在页面上本来就长得一样，多花那 800ms 换不来区别。
+#[tauri::command]
+pub fn spa_url(
+    server: State<'_, Option<Arc<ServerProcess>>>,
+    config: State<'_, ServerConfigFile>,
+) -> Option<String> {
+    let server = server.as_ref()?;
+    Some(local_server_url(server, config.path()))
+}
+
 /// 把一次**阻塞**的起 / 停丢进线程池，等它回来。
 ///
 /// ⚠️★ 为什么必须这样：起服务端最多要等 `START_TIMEOUT`（**15 秒**）。

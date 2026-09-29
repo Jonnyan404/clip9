@@ -22,7 +22,7 @@
 // `cloud-clip/tools/page-smoke.mjs`，**只有手写 UI 这一侧是裸奔的**
 //（见 `docs/specs/desktop-client.md` §1.1 缺口 C）。
 //
-// # 判据（**第 1、2、4、5、6、7、8、9、10、11、12、13、14、15、16、17、18、19 条算失败**）
+// # 判据（**第 1、2、4、5、6、7、8、9、10、11、12、13、14、15、16、17、18、19、20 条算失败**）
 //
 // 1. `app.js` 引用到的每一个 id，`index.html` 里必须存在 —— 不通过 = 退出码 1；
 // 2. `index.html` 真的加载了**每一个**该加载的脚本（`boot.js` / `i18n.js` / `app.js`）；
@@ -58,6 +58,8 @@
 //     —— 不通过 = 退出码 1。理由见下。
 // 19. **快照里每条条目的字段（`EntryView`），`renderEntry` 都要读**（与第 8 条同族，
 //     但管的是**卡片**那一个形状）—— 不通过 = 退出码 1。理由见下。
+// 20. **`hidden` 属性要真的能藏住**（样式表里恰好一条 `[hidden] { display: none !important; }`，
+//     且全表只有这一处 `!important`）—— 不通过 = 退出码 1。理由见下。
 //
 // # ⚠️ 第 4 条为什么算失败，而不是「提一句」
 //
@@ -248,6 +250,35 @@
 // ⚠️ 判「样式读到了没有」用的是**剥掉注释之后的 `<style>`**：注释里写一句
 // `[data-sidebar='narrow']` 不算读过（判据 8 就在这上面栽过，见那段注释）。
 //
+// # ⚠️ 第 20 条为什么算失败（`hidden` 属性要真的能藏住）
+//
+// 2026-09-29 的真实 bug：内容区想在「手写时间线」与「嵌进来的 SPA」之间二选一
+// （`.tl` 与 `iframe` 同一个位置、都 `flex: 1`），JS 那边是 `el('timeline').hidden = true` ——
+// 结果**两个都摊开着、上下各占一半**。
+//
+// ⚠️★ 根因不是写错了属性，而是**属性管不了作者样式表**：`hidden` 只是浏览器自带那条
+// `[hidden] { display: none }` 的开关，而**作者样式表的 `display` 赢过它** ——
+// `.tl { … display: flex; … }` 一写，那个元素就再也藏不住了。
+// 同类：`.view-switch`（`display: flex`）、`.overlay`（当年就是它，所以那时补了一条
+// `.overlay[hidden] { display: none; }`）。
+//
+// ⚠️★ 这类错**三样都齐**：不报错、控制台干净、**静态自检也扫不到**（第 1 条判的是
+// 「id 对得上」，看不见 CSS 与属性的这层交互）。所以只能在**这一侧**钉一条。
+//
+// ⚠️ 判法（收敛成两句，**不是**逐处去查「这个类有没有 display」——那样每加一个
+// `display: flex` 的元素就静默复发）：
+//   ① 样式表里必须有**恰好一条** `[hidden] { … display: none !important; }`；
+//   ② 全表 `!important` **只许这一处** —— 多一处就可能盖掉它。
+// ⚠️ 为什么非要 `!important`：靠**顺序**没用。`[hidden]` 与 `.tl` 的选择器权重相同
+// （都是「一个类 / 一个属性选择器」），谁写在后面谁赢 —— 而 `.view-switch` 恰好就写在
+// 那条基础规则**后面**。顺序一改就悄悄失效，`!important` 才与位置无关。
+//
+// ⚠️ 边界（这一条**管不到**的地方，别当成漏检）：
+//   · 它只管「`hidden` 藏不藏得住」；**该藏谁**（哪个模式可见）是运行时的事，
+//     由「真渲染一遍看计算样式」那种验法管（2026-09-29 就是这么验的）。
+//   · `<style>` 之外的样式（行内 `style=`）不归它 —— 而 `!important` 也赢过行内，
+//     所以真有人用行内 `display` 去藏东西，那是另一类问题（本仓库没有这种写法）。
+
 // # ⚠️ 三条「看不见」的地方（写在这里，免得下次以为是漏检）
 //
 // · **只认字符串字面量**：`el('row-' + i)` 这种拼出来的看不见 ——
@@ -261,10 +292,10 @@
 //   ⚠️ 所以嵌进去的字段漏了，这一条拦不住（先把边界写清，免得下次以为是漏检）。
 //   ⚠️ `Vec<Channel>` 那种**同构列表**已经由第 12 条补上了（它直接去读 `Channel` 的字段），
 //   但 `SyncScopePatch` 还没人管 —— 加它的字段时仍然只能靠人。
-// · 第 19 条**只看 `renderEntry` 的函数体**：字段在**别处**（右键菜单那一段）读也算没读。
+// · 第 19 条**只看 `renderEntry` 的函数体**：字段在**函数体外**读也算没读。
 //   ⚠️ 这是**故意偏严**的一侧：漏的那个方向是「红一次、看一眼就明白」，而放宽的方向是
 //   「注释里写一句 `entry.x` 就满足了」—— 判据 8 就是那样栽的。
-//   哪天真的有个字段只在菜单里用，**要么在卡片上也读它、要么把这里的边界写宽并说明**，
+//   哪天真的有个字段只在函数体外用，**要么在卡片上也读它、要么把这里的边界写宽并说明**，
 //   别默默加白名单（白名单里的字段从此没人看）。
 // · **`boot.js` 不参与第 1 条**（id 引用）：它跑在 `<body>` 解析之前，本来就碰不到任何
 //   元素 —— 里面出现一个 `getElementById('x')` 才是错的。它只被第 10 条读（比对常量）。
@@ -1454,12 +1485,12 @@ if (entryViewFiles.length !== 1) {
   /** ⚠️★ 判的是 **`renderEntry` 的函数体**（而且**去掉注释**之后的那一份，见 `stripComments`），
    * 不是全文 grep —— 判据 8 在这上面栽过：注释里写一句 `entry.text` 就能满足全文 grep
    *（这个文件里**真的有**那样一句注释），而「读法只有一种」（`entry.X`）本来就是想要的。 */
-  const renderEntryBody = js.match(/function renderEntry\(entry, index\)\s*\{[\s\S]*?\n\}/);
+  const renderEntryBody = js.match(/function renderEntry\(entry\)\s*\{[\s\S]*?\n\}/);
   if (!entryFields || !renderEntryBody) {
     failed = true;
     console.error('✗ 判据 19 找不到要比对的东西 —— 这条自检要跟着代码改：');
     if (!entryFields) console.error('    · `EntryView` 上找不到带 camelCase 的字段（属性被删了？）');
-    if (!renderEntryBody) console.error('    · `app.js` 里找不到 `function renderEntry(entry, index)`');
+    if (!renderEntryBody) console.error('    · `app.js` 里找不到 `function renderEntry(entry)`');
   } else {
     const notRead = entryFields.filter((name) =>
       !stripComments(renderEntryBody[0]).includes(`entry.${name}`)
@@ -1475,6 +1506,33 @@ if (entryViewFiles.length !== 1) {
     } else {
       console.log(`· 判据 19：\`EntryView\` 的 ${entryFields.length} 个字段，卡片渲染都读了。`);
     }
+  }
+}
+
+// ── 判据 20：`hidden` 属性要真的能藏住（理由见文件头）──────────────────────────
+//
+// ⚠️ 读的是 `styleText`（判据 13 那一段剥好注释的 `<style>`）—— 注释里写一句
+// `[hidden] { display: none }` **不算**有这条规则（判据 8 就是被注释喂饱的）。
+{
+  /** 所有带 `!important` 的规则（选择器 + 声明）。 */
+  const importantRules = [];
+  for (const match of styleText.matchAll(/([^{}]+)\{([^{}]*)\}/g)) {
+    if (match[2].includes('!important')) importantRules.push([match[1].trim(), match[2].replace(/\s+/g, ' ')]);
+  }
+  const base = importantRules.filter(([selector, decl]) =>
+    selector === '[hidden]' && /display\s*:\s*none/.test(decl)
+  );
+  if (importantRules.length !== 1 || base.length !== 1) {
+    failed = true;
+    console.error(`✗ 判据 20：\`hidden\` 属性不一定藏得住 —— 样式表里带 \`!important\` 的规则有 ${importantRules.length} 条：`);
+    for (const [selector, decl] of importantRules) console.error(`    ${selector} { ${decl} }`);
+    console.error('  ⚠️★ 症状：`el(\'x\').hidden = true` **一点视觉效果都没有**（属性加上了、元素照样占位）——');
+    console.error('    不报错、控制台干干净净，第 1 条那种「id 对得上」的检查也看不见。');
+    console.error('    2026-09-29 的实际表现：「时间线和嵌进来的 SPA 上下对半平分内容区」。');
+    console.error('  ⚠️ 要求**恰好一条**，而且长的就是这一条：`[hidden] { display: none !important; }`。');
+    console.error('    别处不要用 `!important`（那会盖掉它），也别靠**顺序**去赢 —— 顺序一改就悄悄失效。');
+  } else {
+    console.log('· 判据 20：`hidden` 藏得住（全表唯一一处 `!important` 就是 `[hidden]` 那条）。');
   }
 }
 
