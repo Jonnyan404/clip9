@@ -1,24 +1,24 @@
 # clip9 前端产物的同步清单 —— 由 tools/sync-web-assets.mjs 生成，别手改。
-source d4340df464c0e840094e43c67b9ff3b95823c6cf61f7ab36889eb5942716832f
+source cab7c7d891a1188ffa2f5afc766e955e745c0ce2353700578ea9ddb7f9366a5a
 apple-touch-icon.png
-assets/ShareView-B-vLfRrZ.js
-assets/ShareView-B-vLfRrZ.js.br
-assets/ShareView-B-vLfRrZ.js.gz
 assets/ShareView-DjLm0d4-.css
 assets/ShareView-DjLm0d4-.css.br
 assets/ShareView-DjLm0d4-.css.gz
+assets/ShareView-DqMLfCnm.js
+assets/ShareView-DqMLfCnm.js.br
+assets/ShareView-DqMLfCnm.js.gz
 assets/highlight-langs-Dt8YXhtn.js
 assets/highlight-langs-Dt8YXhtn.js.br
 assets/highlight-langs-Dt8YXhtn.js.gz
 assets/i18n-B2E8evwD.js
 assets/i18n-B2E8evwD.js.br
 assets/i18n-B2E8evwD.js.gz
-assets/index-CVV4eSNY.css
-assets/index-CVV4eSNY.css.br
-assets/index-CVV4eSNY.css.gz
-assets/index-ymABmBZl.js
-assets/index-ymABmBZl.js.br
-assets/index-ymABmBZl.js.gz
+assets/index-CkStJdCK.js
+assets/index-CkStJdCK.js.br
+assets/index-CkStJdCK.js.gz
+assets/index-gWPCF52c.css
+assets/index-gWPCF52c.css.br
+assets/index-gWPCF52c.css.gz
 assets/materialdesignicons-webfont-B7mPwVP_.ttf
 assets/materialdesignicons-webfont-CSr8KVlo.eot
 assets/materialdesignicons-webfont-Dp5v-WZN.woff2
