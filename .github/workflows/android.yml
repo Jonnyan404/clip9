@@ -1,15 +1,23 @@
 name: Android APK
 
-# 一个 APK —— `app/build.gradle.kts` 的 `abiFilters` 列着三个 ABI，`jniLibs/` 里也打三个
-# 进去，所以**不按 ABI 拆包**（那个文件里写着为什么不许 `splits { abi { … } }`）。
-# ⚠️ 代价是包大：三个 `.so` 一起约 52 MB（arm64-v8a 17.6 + armeabi-v7a 15.1 + x86_64 18.7）。
-#    要拆成三个小包，得给 `abiFilters` 加一个 `-P` 覆盖并改那条判据 —— 那是**另一件事**，
-#    这里没有顺手做。
+# 产物是**四个包**（靠 `android/app/build.gradle.kts` 的 `splits.abi` + `isUniversalApk`）：
+#   clip9-android-v<版本>-arm64-v8a.apk      真机（绝大多数）
+#   clip9-android-v<版本>-armeabi-v7a.apk    32 位真机 / 老设备
+#   clip9-android-v<版本>-x86_64.apk         模拟器
+#   clip9-android-v<版本>.apk                合并包：三个 ABI 都在（谁都能装，但最大）
+# ⚠️ 2026-09-29 改的：在那之前**只有一个合并包**（三个 `.so` 一起约 52 MB），而单 ABI 包
+#    只要 18 MB 左右。现在两种都给 —— 合并包沿用原来那个名字。
+# ⚠️★ 四个包**共用同一个 `versionCode`**，这是**故意的**：它们本来就是「同一个版本的
+#    四种装法」，换着装（先装合并包、再换单 ABI 包）不会被版本号挡住。
+#    依据不是推测：父仓库 Go 版那份分包出来的四个包里 `versionCode` 也是同一个
+#    （`output-metadata.json` 里四条都是 `ONE_OF_MANY` / 同一个号）。
+#    要给每个 ABI 单独的号就得自己写 `versionCodeOverride` —— 那反而会把「换着装」
+#    变成一次降级安装。
 #
 # 两个入口：
 #   · `workflow_call`     —— `release.yml` 发版时调它（**构建归这里，上传归 release.yml**）。
-#   · `workflow_dispatch` —— 单独手动跑。⚠️ 填了 tag 就**覆盖上传**
-#     `clip9-android-v<版本>.apk`（`overwrite_files: true`）。
+#   · `workflow_dispatch` —— 单独手动跑。⚠️ 填了 tag 就**覆盖上传**这四个包
+#     （`overwrite_files: true`）。
 #
 # ⚠️★ 上传只有两处：**这里（仅手动触发时）** 与 `release.yml` 的 `publish-android`。
 # 下面那条 `if: github.event_name == 'workflow_dispatch'` 不是装饰。
@@ -185,12 +193,26 @@ jobs:
             "-Psigning.key.alias=${KEY_ALIAS}" \
             "-Psigning.key.password=${KEY_PASSWORD}"
 
-      # ── 收产物：改名 + **验签** ────────────────────────────────────────────
+      # ── 收产物：改名 + **逐包核对原生库** + **验签** ──────────────────────
       #
-      # ⚠️★ 名字里带不带 `unsigned` 是唯一能看出「签名没生效」的地方，所以这里不是只看
-      #    文件名就完事：找不到就报红并把实际有什么列出来，再用 `apksigner verify`
-      #    真的验一次 —— 那个才是「装到手机上会不会失败」的判据。
-      - name: 收 APK（并验签）
+      # ⚠️★ 三条判据，缺一不可，而且**都只在这里能问**：
+      #
+      #   ① **验签**。名字里带不带 `unsigned` 是唯一能看出「签名没生效」的地方，但**不能
+      #      只看文件名** —— 再用 `apksigner verify` 真的验一次（那才是「装到手机上会不会
+      #      失败」的判据）。找不到 `apksigner` 就**报红**，不要跳过：跳过会给出一个
+      #      「查过了」的假信号。
+      #
+      #   ②★ **逐包数原生库**。这是 2026-09-29 拆包时**新加**的那一条：拆开之后
+      #      「APK 装上了但那个 ABI 没有 `.so`」会变成一件看起来正常的事 —— 而它在设备上
+      #      的表现是 `System.loadLibrary` 抛 `UnsatisfiedLinkError`（编得过、装得上、
+      #      图标点得开）。所以这里直接**读 zip 里的条目**：单 ABI 包必须恰好一个
+      #      `lib/<abi>/libclip9_android.so`，合并包必须恰好是全部。⚠️ 不读
+      #      `output-metadata.json`（那份是 AGP 的元数据，说的是「它打算打什么」）；
+      #      这里要的是「包里**真的**有什么」。
+      #
+      #   ③ 期望的 ABI 清单**不在这里另写一份**：它就是 `android/app/src/main/jniLibs/`
+      #      下真实存在的目录 —— 那也是 Gradle 真正打进包里的东西。另写一份 = 又一处会漂。
+      - name: 收 APK（逐包核原生库 + 验签）
         shell: bash
         env:
           VERSION: ${{ needs.version.outputs.version }}
@@ -200,26 +222,117 @@ jobs:
           #    工作流里静态写的 env，而上面那一步是往 `$GITHUB_ENV` **运行时**追加的 ——
           #    取到的是空串。`$GITHUB_ENV` 的东西在后续步骤里是**环境变量**，用 `$SDK` 取。
           SDK="${ANDROID_SDK_ROOT:?上一步没把 ANDROID_SDK_ROOT 写进 GITHUB_ENV}"
-          apk="$(find android/app/build/outputs/apk/release -type f -name 'app-release.apk' | head -1 || true)"
-          if [ -z "$apk" ]; then
-            echo "::error::没找到已签名的 app-release.apk —— 签名材料齐了却拿不到，说明别处出了问题。"
-            echo "目录里实际有："
-            find android/app/build/outputs/apk -type f 2>/dev/null | sort || true
-            exit 1
-          fi
-          out="dist/clip9-android-v${VERSION}.apk"
-          mkdir -p dist
-          cp "$apk" "$out"
-
-          # ⚠️ 找不到 apksigner 就**报红**，不要跳过：跳过会给出一个「查过了」的假信号。
           signer="$(find "$SDK/build-tools" -type f -name apksigner 2>/dev/null | sort | tail -1 || true)"
           if [ -z "$signer" ]; then
             echo "::error::$SDK/build-tools 下没有 apksigner —— 没法验签，别把一个没验过的包传上去"
             ls -l "$SDK" || true
             exit 1
           fi
-          "$signer" verify --print-certs "$out"
-          ls -lh "$out"
+
+          src=android/app/build/outputs/apk/release
+          jni=android/app/src/main/jniLibs
+
+          # 列 zip 里的条目名。`unzip` / `jar` 任一个都行；**两个都没有就报红** ——
+          # 别静默跳过（那等于这条判据从来没跑过）。
+          zip_list() {
+            if command -v unzip >/dev/null 2>&1; then
+              unzip -Z1 "$1"
+            elif command -v jar >/dev/null 2>&1; then
+              jar tf "$1"
+            else
+              echo "::error::runner 上既没有 unzip 也没有 jar，没法核对 APK 里有没有原生库" >&2
+              return 1
+            fi
+          }
+
+          # ⚠️ 期望的 ABI 清单 = `jniLibs/` 下真实存在的目录（见上面第 ③ 条）。
+          expected="$(ls -d "$jni"/*/ 2>/dev/null | xargs -n1 basename | sort | tr '\n' ' ' || true)"
+          expected="${expected% }"
+          if [ -z "$expected" ]; then
+            echo "::error::$jni 下一个 ABI 目录都没有 —— 先跑 node tools/sync-android-jni-libs.mjs"
+            exit 1
+          fi
+          echo "期望的 ABI（来自 jniLibs/）：$expected"
+
+          shopt -s nullglob
+          apks=("$src"/*.apk)
+          if [ "${#apks[@]}" -eq 0 ]; then
+            echo "::error::在 $src 下没找到 .apk —— 签名材料齐了却拿不到，说明别处出了问题。"
+            echo "目录里实际有："
+            find android/app/build/outputs/apk -type f 2>/dev/null | sort || true
+            exit 1
+          fi
+
+          # ⚠️★ 这一段**刻意不用关联数组**（`declare -A` / `${arr[..]}`）：那要 bash 4+，
+          #    而本机 macOS 自带的是 **bash 3.2** —— 用上之后这一段就**没法在本机验**，
+          #    只能推上去等 CI 给答案。中间结果落在一个临时 TSV 里，一样清楚。
+          rows="$(mktemp)"
+          trap 'rm -f "$rows"' EXIT
+
+          n_expected="$(printf '%s\n' $expected | wc -l | tr -d ' ')"
+          for apk in "${apks[@]}"; do
+            abis="$(zip_list "$apk" | sed -n 's|^lib/\([^/]*\)/libclip9_android\.so$|\1|p' | sort -u | tr '\n' ' ')"
+            abis="${abis% }"
+            if [ -z "$abis" ]; then
+              echo "::error::$(basename "$apk") 里没有 lib/*/libclip9_android.so —— 装上去会在 System.loadLibrary 那一步炸"
+              exit 1
+            fi
+            # 每一项都必须在期望清单里。
+            for abi in $abis; do
+              case " $expected " in
+                *" $abi "*) ;;
+                *) echo "::error::$(basename "$apk") 里有 $abi 的原生库，而 jniLibs/ 里没有这个 ABI（${expected}）"
+                   exit 1 ;;
+              esac
+            done
+            n_abi_in_apk="$(printf '%s\n' $abis | wc -l | tr -d ' ')"
+            if [ "$n_abi_in_apk" != 1 ] && [ "$n_abi_in_apk" != "$n_expected" ]; then
+              echo "::error::$(basename "$apk") 里有 ${n_abi_in_apk} 个 ABI（${abis}）—— 只允许两种形状：单个（拆分包）或全部 ${n_expected} 个（合并包）"
+              exit 1
+            fi
+            printf '%s\t%s\n' "$abis" "$apk" >> "$rows"
+          done
+
+          # ⚠️ 只数**恰好**等于某个集合的行数：多一个、少一个都要报出来。
+          count_rows() { awk -F'\t' -v v="$1" '$1 == v' "$rows" | wc -l | tr -d ' '; }
+          first_row() { awk -F'\t' -v v="$1" '$1 == v { print $2; exit }' "$rows"; }
+
+          n_universal="$(count_rows "$expected")"
+          if [ "$n_universal" != 1 ]; then
+            echo "::error::合并包（含全部 [$expected]）应当恰好 1 个，实际 ${n_universal} 个 —— isUniversalApk 被关掉了？"
+            exit 1
+          fi
+          bad=''
+          for abi in $expected; do
+            n="$(count_rows "$abi")"
+            [ "$n" = 1 ] || bad="$bad ${abi}(${n}个)"
+          done
+          if [ -n "$bad" ]; then
+            echo "::error::这些 ABI 的拆分包不是恰好 1 个：$bad —— splits.abi.include 与 jniLibs/ 对不上了？"
+            exit 1
+          fi
+
+          # ── 改名落盘 ────────────────────────────────────────────────────
+          # ⚠️ 拆分包的名字把 abi 接在后面；合并包沿用以前那个名字（不带 abi）。
+          mkdir -p dist
+          for abi in $expected; do
+            cp "$(first_row "$abi")" "dist/clip9-android-v${VERSION}-${abi}.apk"
+          done
+          cp "$(first_row "$expected")" "dist/clip9-android-v${VERSION}.apk"
+
+          # ── 逐个验签 ────────────────────────────────────────────────────
+          cert=''
+          for f in dist/*.apk; do
+            if ! "$signer" verify --print-certs "$f" > /tmp/signer.txt 2>&1; then
+              echo "::error::验签失败：$f"
+              cat /tmp/signer.txt
+              exit 1
+            fi
+            [ -n "$cert" ] || cert="$(grep -m1 -i 'SHA-256 digest' /tmp/signer.txt || true)"
+            echo "✓ 已验签 $(basename "$f")  $(du -h "$f" | cut -f1)"
+          done
+          echo "签名证书：${cert:-（apksigner 没打印 SHA-256 摘要 —— 去看它自己的输出）}"
+          ls -lh dist
 
       - uses: actions/upload-artifact@v7
         with:

@@ -49,7 +49,12 @@ if (rootFlag >= 0) {
 
 const failures = [];
 const fail = (label, detail) => failures.push({ label, detail });
-const ok = (label) => console.log(`✓ ${label}`);
+/** 通过的判据条数。⚠️ 由 `ok()` 自己数 —— 别在报告里写死一个数字（写了就会变成假话）。 */
+let okCount = 0;
+const ok = (label) => {
+  okCount += 1;
+  console.log(`✓ ${label}`);
+};
 
 const read = (rel) => {
   const path = join(ROOT, rel);
@@ -232,6 +237,8 @@ const gradle = read('android/app/build.gradle.kts');
 const syncJs = read('tools/sync-android-jni-libs.mjs');
 const buildSh = read('openwrt/scripts/build.sh');
 const toolchain = read('rust/rust-toolchain.toml');
+const pkgIpk = read('openwrt/scripts/package-openwrt.sh');
+const pkgApk = read('openwrt/scripts/package-openwrt-apk.sh');
 
 // ── 判据 1：release.yml 取的东西，两个可复用工作流真的传了 ─────────────────
 //
@@ -328,6 +335,41 @@ const toolchain = read('rust/rust-toolchain.toml');
   else ok(label);
 }
 
+// ── 判据 2b：android 的包数 = `splits.abi.include` 的 ABI 数 + 1（合并包）────
+//
+// ⚠️ 这条的两半各在一处：`release.yml` 的 `publish-android` 里写死了**期望个数**，
+//    而实际会出几个包由 `android/app/build.gradle.kts` 的 `splits.abi.include` +
+//    `isUniversalApk` 决定。⚠️ 期望个数**不在这里存一份**（存了就是又一处会漂的地方）：
+//    从 gradle 那处清单数出来，加一。
+// ⚠️ 断了的症状：ABI 多一个 / 少一个时，那边只会在**发版那一刻**红（或者更糟 ——
+//    `-gt 0` 那种写法下**根本不红**，少一个包也照发）。
+{
+  const label = 'android 的包数 ↔ release.yml 里那句 [ "$n" = N ]';
+  const problems = [];
+  const pa = release === null ? null : jobBlock(release, 'publish-android');
+  let abis = null;
+  if (pa === null || gradle === null) {
+    problems.push('读不到 release.yml 的 publish-android 或 android/app/build.gradle.kts');
+  } else {
+    const code = gradle.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*$/gm, '');
+    const filters = /splits\s*\{[\s\S]*?\babi\s*\{[\s\S]*?\binclude\(([^)]*)\)/.exec(code);
+    abis = filters ? [...filters[1].matchAll(/"([^"]+)"/g)].map((m) => m[1]) : null;
+    // ⚠️ 只看 `publish-android` 这个 job 块里的那一句 —— `publish-openwrt` 里也有同形状的
+    //    判据（`[ "$n_ipk" = 7 ]` 那些），变量名不同，但别把范围放大到整个文件。
+    const want = /\[ "\$n" = (\d+) \]/.exec(pa);
+    if (!abis || !abis.length) problems.push('读不到 gradle 的 splits.abi.include');
+    else if (!want) problems.push('读不到 publish-android 里那句 `[ "$n" = N ]`（被改写过了？）');
+    else if (Number(want[1]) !== abis.length + 1) {
+      problems.push(
+        `ABI 有 ${abis.length} 个（${abis.join('/')}），加上合并包应当期望 ${abis.length + 1} 个，` +
+          `而 release.yml 的 publish-android 写的是 ${want[1]}`,
+      );
+    }
+  }
+  if (problems.length) fail(label, problems.join('\n    '));
+  else ok(`${label} —— ${abis.length} 个 ABI + 1 个合并包 = ${abis.length + 1}`);
+}
+
 // ── 判据 3：`assets` **不能** needs openwrt / android ─────────────────────
 //
 // ⚠️★ 这是**刻意**的：`assets` 是 `publish` 的前置，把它俩加进 needs 之后，
@@ -382,24 +424,29 @@ const toolchain = read('rust/rust-toolchain.toml');
   else ok(label);
 }
 
-// ── 判据 5：`abiFilters` 的每个 ABI 都在 `rust-toolchain.toml` 里备好了 target ──
+// ── 判据 5：`splits.abi.include` 的每个 ABI 都在 `rust-toolchain.toml` 里备好了 target ──
 //
 // ⚠️★ 少一个的症状：`tools/build-android.sh` **跳过**那个 ABI（不报错），
 //    而 Gradle 照样编出一个缺那个原生库的包。CI 那边靠 `--require-all` 兜，
 //    但「该不该有那个 target」这件事只有这里判。
 // ⚠️ abi → target 的映射**不在这里抄**：从 `tools/sync-android-jni-libs.mjs` 的 TARGETS 取。
+// ⚠️★ 2026-09-29：ABI 清单的出处从 `abiFilters` 改成了 `splits.abi.include`（拆包那次改动）。
+//    所以这里要先**把注释剔掉**再解析 —— 新的 `build.gradle.kts` 注释里就写着反例
+//    `splits { abi { … } }`，拿全文去匹配会捞到注释里的 `...`
+//    （`tools/android-contract-smoke.mjs` 里那个取清单的函数第一版正是这么错的）。
 {
-  const label = 'abiFilters 的每个 ABI 在 rust-toolchain.toml 里都有对应 target';
+  const label = 'splits.abi.include 的每个 ABI 在 rust-toolchain.toml 里都有对应 target';
   const problems = [];
   if (gradle === null || syncJs === null || toolchain === null) {
     problems.push('读不到 gradle / sync 脚本 / rust-toolchain.toml 之一');
   } else {
-    const filters = /abiFilters \+= listOf\(([^)]*)\)/.exec(gradle);
+    const code = gradle.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*$/gm, '');
+    const filters = /splits\s*\{[\s\S]*?\babi\s*\{[\s\S]*?\binclude\(([^)]*)\)/.exec(code);
     const abis = filters ? [...filters[1].matchAll(/"([^"]+)"/g)].map((m) => m[1]) : null;
     const body = /const TARGETS = \[([\s\S]*?)\n\];/.exec(syncJs);
     const rows = body ? [...body[1].matchAll(/\{\s*target:\s*'([^']+)',\s*abi:\s*'([^']+)'/g)] : [];
     // ⚠️ 条目数必须等于 `{` 的个数 —— 否则就是**静默少解析了几条**。
-    if (!abis || !abis.length) problems.push('读不到 gradle 的 abiFilters');
+    if (!abis || !abis.length) problems.push('读不到 gradle 的 splits.abi.include');
     else if (!rows.length || rows.length !== ((body?.[1].match(/\{/g) || []).length)) {
       problems.push('sync 脚本的 TARGETS 读不全（条目数与花括号个数对不上）');
     } else {
@@ -411,9 +458,9 @@ const toolchain = read('rust/rust-toolchain.toml');
       } else {
         for (const abi of abis) {
           const t = abiToTarget.get(abi);
-          if (!t) problems.push(`abiFilters 里的 ${abi} 在 sync 脚本的 TARGETS 里没有对应 target`);
+          if (!t) problems.push(`splits.abi.include 里的 ${abi} 在 sync 脚本的 TARGETS 里没有对应 target`);
           else if (!targets.includes(t)) {
-            problems.push(`abiFilters 里的 ${abi} 要 target ${t}，而 rust-toolchain.toml 的 targets 里没有它`);
+            problems.push(`splits.abi.include 里的 ${abi} 要 target ${t}，而 rust-toolchain.toml 的 targets 里没有它`);
           }
         }
         if (problems.length === 0) {
@@ -618,4 +665,4 @@ if (failures.length) {
   console.error(`\n✗ ${failures.length} 条判据没过。`);
   process.exit(1);
 }
-console.log('\n✓ 工作流之间的跨文件约定自检通过（9 条判据）。');
+console.log(`\n✓ 工作流之间的跨文件约定自检通过（${okCount} 条判据）。`);
