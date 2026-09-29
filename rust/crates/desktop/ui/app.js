@@ -539,16 +539,33 @@ function renderEntry(entry) {
   const foot = h('div', 'ft');
   // ⚠️ 发送端没给设备信息时（老条目 / 定时消息）**不编一个名字** ——
   // 服务端专门为无 UA 的定时消息塞了 `type: "Automation"`，这里照它给的显示。
-  foot.append(h('span', null, entry.mine ? t('本机') : entry.device || t('未知设备')));
+  //
+  // ⚠️★ 自己发的**也显示客户端名**（2026-09-29，Jonny：「桌面客户端的列表页把我发的也
+  // 改为对应客户端」）：壳现在会把「macOS 桌面客户端」这类名字带上去（`?name=`，
+  // 见 `rust/crates/desktop/src/store.rs` 的 `default_device_name`），
+  // 所以自己那条的 `entry.device` 也是有值的 —— 从前写死的「本机」只留作兜底。
+  //
+  // ⚠️★ `Automation` 是服务端给「既没有 UA 又没有名字」的来源塞的**类型名**
+  //（`handlers.rs` 的 `sender_base`）：桌面端在 2026-09-29 之前正是这个样子，
+  // 所以**自己**的历史条目里躺着一批。对它来说 `Automation` 就是「没名字」，
+  // 照实显示会变成一行 `Automation · 19:20` —— 看着像**另一个人**发的。
+  // 别人发的照实显示（定时 / 补发那些消息靠的就是它，见上一段）。
+  const senderName = entry.mine && entry.device === 'Automation' ? '' : entry.device;
+  foot.append(h('span', null, senderName || (entry.mine ? t('本机') : t('未知设备'))));
   foot.append(h('span', null, '·'));
   foot.append(h('span', null, timeLabel(entry.timestamp)));
-  if (entry.mine) {
+  // ⚠️★ **只剩「剪贴板同步」这一条标签了**（2026-09-29，Jonny：「把桌面客户端列表页的
+  // 「我发的」删掉」）。原来是二选一（`fromClipboard` 决定画哪一条）——
+  // 「我发的」现在**一点信息量都没有**：脚注第一格已经写着客户端名（`macOS 桌面客户端`），
+  // 而卡片本身还有 `me` 那个类管外观。留着它，等于每条自己的消息后面都跟四个字的废话。
+  //
+  // ⚠️★ 但「剪贴板同步」**不能跟着一起删**：它说的是「这条不是在这个窗口里敲的 /
+  // 拖进来的，而是本机剪贴板被复制之后同步过去的」—— 服务端**不知道**这件事，是本机记的
+  //（`EntryView::from_clipboard`）。少了它，用户看着一条自己刚复制的东西被列出来
+  // 会以为是自己误发的。
+  if (entry.mine && entry.fromClipboard) {
     foot.append(h('span', 'spacer'));
-    // ⚠️★ 这两条标签**二选一**：`fromClipboard` 说的是「这条不是在这个窗口里敲的 /
-    // 拖进来的，而是本机剪贴板被复制之后同步过去的」（壳算好递过来，见 `EntryView`
-    // 那个字段 —— 服务端不知道这件事，是本机记的）。
-    // 少了它，用户看着一条自己刚复制的东西被标成「我发的」会以为是自己误点的。
-    foot.append(h('span', 'tag', entry.fromClipboard ? t('剪贴板同步') : t('我发的')));
+    foot.append(h('span', 'tag', t('剪贴板同步')));
   }
   // ⚠️ 定时 / 补发**必须**标出来：`source` / `late` / `scheduledAt` 三个字段是
   // 2026-09-26 才补进 `/content` 投影的，漏掉它们的症状是「看不出这条是自动发的」。
