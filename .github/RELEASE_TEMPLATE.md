@@ -1,10 +1,11 @@
 # Release 说明模板
 
-发版时**照这份写**，写完贴到 GitHub Release 的正文里。
+发版前**照这份写这一版的说明**；写进 `CHANGELOG.md` 就算完事 —— **Release 正文会自动从那里
+抽出来**（`release.yml` 的 `release-notes` job 调 `tools/release-notes.mjs`），不用再贴一次。
 
-⚠️★ **这份文件不会自动生效**。GitHub 里能「自动套用」的那个东西叫 `.github/release.yml`
-（它的作用是给**自动生成**的 notes 分类）——而 `release.yml` 刻意**没传**
-`generate_release_notes`，就是为了不让自动生成的内容盖掉你写的。所以：**这是给人照着抄的**。
+⚠️★ 这个「自动」只到**贴**为止：**正文内容仍然要人写**（骨架在第二节）。GitHub 里那个能
+自动生成说明的开关叫 `generate_release_notes`，`release.yml` 刻意**没传**它 —— 所以别指望
+它，也别在网页上点「Generate release notes」（那份自动生成的分类内容会盖掉手写的）。
 
 ⚠️★ 正文用**中文**（拿到包的人看的是这里）；**提交信息仍然一律英文**
 （`tools/check-commit-msg.mjs`）。「注释与文档中文、提交英文」是有意的分工，别混。
@@ -17,20 +18,25 @@
    「手动触发、没填 tag」时兜底，见 `tools/release-version.mjs`）——所以发版时
    **没有任何文件需要改版本号**。
 
-2. **写这一版的说明**：照下面的骨架写中文变动。先写在草稿里就行，不用急着贴。
+2. **写这一版的说明**：照第二节的骨架写中文变动。⚠️ 直接写进 `CHANGELOG.md`（第 3 步），
+   不用先打在别处 —— Release 正文就是从那里抽的。
 
-3. **commit 一条空的版本记录**：往 `CHANGELOG.md` 顶上加一条只有**版本号与日期**的记录
-   （变动留空），提交信息形如 `docs(changelog): v0.1.0-beta4`，push。
+3. **往 `CHANGELOG.md` 顶上写这一版**（版本号 + 日期 + 中文变动）并 commit、push。
+   提交信息形如 `docs(changelog): v0.1.0`。
 
-   ⚠️★ 为什么先空着也要提交：**tag 指向的那个提交必须能在 `CHANGELOG.md` 里查到自己** ——
-   否则 checkout 到某个 tag 上，谁也说不清「这一版是什么」。变动在第 6 步补，
-   但「哪一版落在哪一天」这个事实不能等到最后才想起来。
+   ⚠️★ **内容要在这里一次写全** —— 这一步是「这一版说明」**唯一**的地方（Release 正文抽它）。
+   以前是「先提交一条只有版本号与日期的空记录、发完再回填」，**2026-09-29 起不用了**：
+   那个「回填」十有八九会被忘掉（`v0.1.0` 那次就没做），而现在正文是抽出来的 ——
+   抽到那条空记录会**直接报错**（`tools/release-notes.mjs` 认「变动留空」/「待发布」这类占位）。
+
+   ⚠️★ 仍然是**先提交、再打 tag**：**tag 指向的那个提交必须能在 `CHANGELOG.md` 里查到自己**
+   —— 否则 checkout 到某个 tag 上，谁也说不清「这一版是什么」。
 
 4. **打 tag 并推**：
 
    ```sh
-   git tag v0.1.0-beta4
-   git push origin v0.1.0-beta4
+   git tag v0.2.0
+   git push origin v0.2.0
    ```
 
    ⚠️ 触发发布的是**`release: published`**（建好 Release 并点发布那一刻），**不是**
@@ -38,18 +44,20 @@
 
 5. **建 Release**（GitHub 的 New release → 选中刚推的 tag）：
 
-   - 正文贴第 2 步写好的中文说明；
+   - **正文留空** —— 会自动从 `CHANGELOG.md` 抽（发布后刷一下页面看）。
+     ⚠️ 页面刚出来那几秒可能显示一段英文：那是 GitHub 在正文为空时拿 tag 指向的**提交信息**
+     顶上去的（提交信息是英文的）。`release-notes` job 跑完就换成中文了；
    - ⚠️★ 预发布（`-beta*` / `-rc*`）**必须勾** `Set as a pre-release`：`release.yml`
      用它决定容器镜像**只推 tag、不推 `latest`**，也没法事后再补（`info` job 是按
      release 对象问出来的）；
    - ⚠️ **不要**点「Generate release notes」；
-   - 点发布 → `release.yml` 开跑，产物自动上传（`overwrite_files: true`，重跑不会
-     卡在「资产已存在」）。
+   - 点发布 → `release.yml` 开跑：产物自动上传（`overwrite_files: true`，重跑不会
+     卡在「资产已存在」），`release-notes` job 把正文补上。
 
-6. **回填 `CHANGELOG.md`**：把第 3 步那条空记录补成中文变动（与 Release 正文**同一份**），
-   commit。
+   ⚠️ 补正文那一步红了（比如忘了写第 3 步的说明）**不会**回滚已经传上去的资产 ——
+   单独重跑那个 job 就行，不必重发一遍。
 
-7. （按需）OpenWrt 与 Android 各有自己的入口：`openwrt.yml` / `android.yml` 都带
+6. （按需）OpenWrt 与 Android 各有自己的入口：`openwrt.yml` / `android.yml` 都带
    `workflow_dispatch`，填上 tag 就能**覆盖上传**那两个包 —— 它们**不在**主发布链路里，
    所以主发布不会因为它们缺个 secret 而卡住。
 
@@ -83,10 +91,14 @@
 
 | 我要装在哪 | 下哪个 |
 | --- | --- |
-| 服务端（VPS / NAS / 树莓派） | `clip9-cli-<平台>-<架构>.tar.gz`（Windows 上是 `.zip`） |
-| 桌面客户端 | `clip9-desktop-<平台>-<架构>` 打头的那个（`.dmg` / `.msi` / `.exe` / `.AppImage` / `.deb`） |
+| 服务端（VPS / NAS / 树莓派） | `clip9-cli-v<版本>-<平台>-<架构>.tar.gz`（Windows 上是 `.zip`） |
+| 桌面客户端 | `clip9-desktop-v<版本>-<平台>-<架构>` 打头的那个（`.dmg` / `.msi` / `.exe` / `.AppImage` / `.deb`） |
 | Android 手机 | `clip9-android-v<版本>.apk`（一个包装齐三个架构；想要小包可以下 `-<abi>` 那三个之一） |
-| OpenWrt 路由器 | `clip9-server-openwrt-*`（服务端）与 `clip9-luci-openwrt-*`（界面），`.ipk` 或 `.apk` 按系统挑 |
+| OpenWrt 路由器 | `clip9-openwrt-v<版本>-*`（服务端）与 `clip9-luci-openwrt-*`（界面），`.ipk` 或 `.apk` 按系统挑 |
+
+⚠️★ **产物名里一律带版本号**，而且 `v<版本>` **紧跟在 `clip9-<东西>` 之后** ——
+   Jonny 2026-09-29：「要么都带版本号要么都不」。加新产物时照这条排，别把
+   `linux-x86_64` 那种标签插到版本号前面去（`release.yml` 的文件头写着这条规则）。
 
 `<平台>-<架构>` 是实的：CLI 有 `linux-{x86_64,aarch64,armv7}`、
 `macos-{x86_64,aarch64}`、`windows-{x86_64,aarch64}`；桌面端少一些（`linux` 只有 `x86_64`、

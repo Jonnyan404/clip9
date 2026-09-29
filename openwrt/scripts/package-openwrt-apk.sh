@@ -35,7 +35,7 @@ PKG_VERSION="$(printf '%s' "$VERSION" | sed -E 's/-([a-zA-Z]+)\.([0-9]+)/_\1\2/g
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 BASE_DIR="$(dirname "$SCRIPT_DIR")"
-BINARY="$BASE_DIR/build/clip9-server-$VERSION-$ARCH"
+BINARY="$BASE_DIR/build/clip9-server-v$VERSION-$ARCH"
 PKG_DIR="$BASE_DIR/build/apk-$ARCH"
 ROOTFS_DIR="$BASE_DIR/ipk/rootfs"
 CONTROL_DIR="$BASE_DIR/ipk/control"
@@ -68,7 +68,7 @@ resolve_package_arch
 # 包**里面**那个程序仍然叫 `clip9-server`。⚠️ 这个字符串同时被
 # `.github/workflows/openwrt.yml`（`ls -l` 与 upload 的 path）和
 # `.github/workflows/release.yml`（`publish-openwrt` 里那句 `find … -name`）认着。
-APK_NAME="clip9-openwrt-apk-${PACKAGE_ARCH}-v${VERSION}.apk"
+APK_NAME="clip9-openwrt-apk-v${VERSION}-${PACKAGE_ARCH}.apk"
 
 to_container_path() {
     local host_path=$1

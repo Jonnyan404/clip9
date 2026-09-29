@@ -6,20 +6,20 @@
 
 | OpenWrt 版本 | 包格式 | 怎么装 |
 |---|---|---|
-| 25.12 及以上 | `.apk` | `apk add --allow-untrusted /tmp/clip9-openwrt-apk-<架构>-v<版本>.apk` |
-| 24.10 及以下 | `.ipk` | `opkg install /tmp/clip9-openwrt-<架构>-v<版本>.ipk` |
+| 25.12 及以上 | `.apk` | `apk add --allow-untrusted /tmp/clip9-openwrt-apk-v<版本>-<架构>.apk` |
+| 24.10 及以下 | `.ipk` | `opkg install /tmp/clip9-openwrt-v<版本>-<架构>.ipk` |
 
 LuCI 界面是**单独的包**（`clip9-luci-openwrt-*`），要一起装才有网页可点。
 两个包都是先传到设备再装：
 
 ```sh
-scp clip9-openwrt-aarch64-v0.1.0.ipk root@192.168.1.1:/tmp/
-scp clip9-luci-openwrt-all-v0.1.0.ipk root@192.168.1.1:/tmp/
+scp clip9-openwrt-v0.1.0-aarch64.ipk root@192.168.1.1:/tmp/
+scp clip9-luci-openwrt-v0.1.0-all.ipk root@192.168.1.1:/tmp/
 ```
 
 ⚠️ 产物文件名里**不带 `server`**，但装上去之后那个程序仍然叫 `clip9-server`
 （`/usr/bin/clip9-server`，init 脚本 `/etc/init.d/clip9`）。
-⚠️ Release 上**只有这些 ipk / apk**：裸二进制（`clip9-server-<版本>-<架构>`）是构建的
+⚠️ Release 上**只有这些 ipk / apk**：裸二进制（`clip9-server-v<版本>-<架构>`）是构建的
 中间产物，不发。
 
 ## 2. 架构：**7 个**

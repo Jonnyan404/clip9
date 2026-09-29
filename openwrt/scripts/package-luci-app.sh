@@ -23,7 +23,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 BASE_DIR="$(dirname "$SCRIPT_DIR")"
 LUCI_DIR="$BASE_DIR/luci-app-clip9"
 PKG_DIR="$BASE_DIR/build/luci-app"
-IPK_NAME="clip9-luci-openwrt-all-v${VERSION}.ipk"
+IPK_NAME="clip9-luci-openwrt-v${VERSION}-all.ipk"
 
 echo "=== 打包 LuCI 应用 $VERSION 为 OpenWrt IPK ==="
 echo "SCRIPT_DIR: $SCRIPT_DIR"

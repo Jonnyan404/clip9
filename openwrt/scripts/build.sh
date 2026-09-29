@@ -175,7 +175,11 @@ for entry in "${ARCH_MAP[@]}"; do
     #    改成在**该 target 自己的目录里找**，不再猜中间那几层；找不到时把目录里
     #    有什么一并打出来（比一句「找不到」有用得多）。
     src="$(find "$CROSS_TARGET_DIR_PREFIX$target" -type f -name clip9-server -path '*/release/*' -print -quit 2>/dev/null || true)"
-    dst="$OUTPUT_DIR/clip9-server-$VERSION-$arch"
+    # ⚠️★ 裸二进制的名字里 `v<版本>` 紧跟在 `clip9-server` 之后 —— 与发布出去的那几组
+    #    产物同一条规则（见 `.github/workflows/release.yml` 的文件头）。
+    #    ⚠️ 这个文件**不是资产**，它只是给 ipk / apk 两个打包脚本当输入；
+    #    但 `package-openwrt*.sh` 按名字找它，所以三处必须一起改。
+    dst="$OUTPUT_DIR/clip9-server-v$VERSION-$arch"
     if [ -z "$src" ]; then
         echo "错误: cross 跑完了，但在 $CROSS_TARGET_DIR_PREFIX$target 下找不到 release 产物" >&2
         echo "  这个 target 目录里实际的二进制（最多 20 条）：" >&2
@@ -188,4 +192,4 @@ done
 
 echo
 echo "=== 完成：$OUTPUT_DIR ==="
-ls -1 "$OUTPUT_DIR"/clip9-server-"$VERSION"-*
+ls -1 "$OUTPUT_DIR"/clip9-server-v"$VERSION"-*

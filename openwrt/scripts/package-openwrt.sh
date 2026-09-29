@@ -3,7 +3,7 @@
 #
 # ⚠️ 架构名用的是 **OpenWrt 那一套**（`arm_cortex-a7` 这种），不是 Rust 的三元组 ——
 #    它是**包的 Architecture 字段**，`opkg install` 会拿它跟设备的架构对。
-#    二进制本身是 build.sh 摊平出来的 `build/clip9-server-<版本>-<架构名>`。
+#    二进制本身是 build.sh 摊平出来的 `build/clip9-server-v<版本>-<架构名>`。
 #
 # ⚠️★ 这个包**不含 LuCI 界面**：界面是另一个包（`scripts/package-luci-app.sh`），
 #    它的 control 里 `Depends: … clip9 …`，两个包要一起装才有网页可点。
@@ -35,7 +35,7 @@ fi
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 BASE_DIR="$(dirname "$SCRIPT_DIR")"
-BINARY="$BASE_DIR/build/clip9-server-$VERSION-$ARCH"
+BINARY="$BASE_DIR/build/clip9-server-v$VERSION-$ARCH"
 PKG_DIR="$BASE_DIR/build/pkg-$ARCH"
 CONTROL_DIR="$BASE_DIR/ipk/control"
 ROOTFS_DIR="$BASE_DIR/ipk/rootfs"
@@ -44,7 +44,7 @@ ROOTFS_DIR="$BASE_DIR/ipk/rootfs"
 # 发到 Release 上的那个文件名。⚠️ 这个字符串同时被
 # `.github/workflows/openwrt.yml`（`ls -l` 与 upload 的 path）和
 # `.github/workflows/release.yml`（`publish-openwrt` 里那句 `find … -name`）认着。
-IPK_NAME="clip9-openwrt-$ARCH-v$VERSION.ipk"
+IPK_NAME="clip9-openwrt-v$VERSION-$ARCH.ipk"
 
 echo "脚本目录: $SCRIPT_DIR"
 echo "根目录: $BASE_DIR"

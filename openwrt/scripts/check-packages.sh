@@ -41,9 +41,9 @@ echo "=== ① 造替身二进制并打包 ==="
 mkdir -p "$BUILD"
 # ⚠️ aarch64 那一次只为验「第三个参数（包架构）真的进了 control」，所以也用宿主二进制 ——
 #    这一步不验二进制内容，只验字段。
-cp -f "$HOST_BIN" "$BUILD/clip9-server-$VER-x86_64"
-cp -f "$HOST_BIN" "$BUILD/clip9-server-$VER-aarch64"
-echo "  替身: $BUILD/clip9-server-$VER-x86_64 ($(du -h "$BUILD/clip9-server-$VER-x86_64" | cut -f1))"
+cp -f "$HOST_BIN" "$BUILD/clip9-server-v$VER-x86_64"
+cp -f "$HOST_BIN" "$BUILD/clip9-server-v$VER-aarch64"
+echo "  替身: $BUILD/clip9-server-v$VER-x86_64 ($(du -h "$BUILD/clip9-server-v$VER-x86_64" | cut -f1))"
 
 ./openwrt/scripts/package-openwrt.sh  "$VER" x86_64                     >"$WORK.p1.log" 2>&1 || { echo "  ❌ package-openwrt.sh 失败"; tail -20 "$WORK.p1.log"; exit 1; }
 echo "  ✅ package-openwrt.sh  x86_64"
@@ -52,9 +52,9 @@ echo "  ✅ package-openwrt.sh  aarch64 + 包架构 aarch64_cortex-a53"
 ./openwrt/scripts/package-luci-app.sh "$VER"                            >"$WORK.p3.log" 2>&1 || { echo "  ❌ package-luci-app.sh 失败"; tail -20 "$WORK.p3.log"; exit 1; }
 echo "  ✅ package-luci-app.sh"
 
-SRV="$BUILD/clip9-openwrt-x86_64-v$VER.ipk"
-SRV2="$BUILD/clip9-openwrt-aarch64-v$VER.ipk"
-LUC="$BUILD/clip9-luci-openwrt-all-v$VER.ipk"
+SRV="$BUILD/clip9-openwrt-v$VER-x86_64.ipk"
+SRV2="$BUILD/clip9-openwrt-v$VER-aarch64.ipk"
+LUC="$BUILD/clip9-luci-openwrt-v$VER-all.ipk"
 
 echo
 echo "=== ② 服务端 ipk: ${SRV} ==="
@@ -113,7 +113,7 @@ chk "界面包 Depends 含 clip9" "$(grep -m1 '^Depends:' "$L/control" | grep -c
 
 echo
 echo "=== ⑤ gitignore 真的挡住了产物 ==="
-chk "build/ 被忽略" "$(git check-ignore "$BUILD/clip9-openwrt-x86_64-v$VER.ipk" >/dev/null 2>&1 && echo ignored || echo tracked)" "ignored"
+chk "build/ 被忽略" "$(git check-ignore "$BUILD/clip9-openwrt-v$VER-x86_64.ipk" >/dev/null 2>&1 && echo ignored || echo tracked)" "ignored"
 
 echo
 printf '=== 合计：\033[32m%d 通过\033[0m / \033[31m%d 失败\033[0m ===\n' "$PASS" "$FAIL"
