@@ -1214,6 +1214,45 @@ impl Room {
     }
 }
 
+/// 桌面端的默认设备名（上行 `?name=`）。
+///
+/// ⚠️★ 为什么非要自己声明一个：客户端**不发 User-Agent**，服务端于是走
+/// `handlers.rs` 的 `sender_base` 里「没有 UA」那条分支 —— 设备信息只剩
+/// `{name: "", type: "Automation"}`。后果是**两头都看不出这是哪台机器**：
+/// 别人看到你的消息写着「Automation」（`deviceLabel` 取 `name → os → type`，
+/// 前两个都空就露出那个 `type`），而自己的列表靠 `mine` 硬写成「本机」。
+/// Jonny 2026-09-29：「桌面端发送自带 name 名称，mac 客户端就显示 mac 桌面客户端…」。
+///
+/// ⚠️ 它是**数据**不是界面文案：会落到服务端、会被别的客户端看到，
+/// 所以**不跟界面语言变**（逐行 `i18n-ok` 标着，判据 16 会把它印出来）。
+///
+/// ⚠️ 用「平台 + 桌面客户端」，不用主机名：主机名一台一个，而这里要一眼看出的是
+/// 「**哪一类**客户端发的」—— 服务端那边认出来的浏览器 / 手机 / `Automation`
+/// 也是同一套口径（`user_agent.rs` 的三种 `kind`）。
+#[must_use]
+fn default_device_name() -> String {
+    // ⚠️ 平台标签是**产品名**，不翻（`macOS` / `Windows` / `Linux` 在哪种语言里都这么写）。
+    let platform = if cfg!(target_os = "macos") {
+        "macOS"
+    } else if cfg!(target_os = "windows") {
+        "Windows"
+    } else if cfg!(target_os = "linux") {
+        "Linux"
+    } else {
+        "Desktop"
+    };
+    // i18n-ok: 设备名是**数据**（会写到服务端、被别的客户端看到），不跟界面语言变。
+    format!("{platform} 桌面客户端")
+}
+
+/// 设备名空着就填上默认的（⚠️ 用户自己设过的**一个字都不动** —— 这是补默认值，不是改名）。
+fn with_default_device_name(mut config: ClientConfig) -> ClientConfig {
+    if config.device_name.trim().is_empty() {
+        config.device_name = default_device_name();
+    }
+    config
+}
+
 /// 读配置；没有就造一份**默认的、并立刻写盘**。
 ///
 /// ⚠️⚠️ 第一次运行**必须写盘**，不是「等用户改了再写」：因为 `ClientConfig::client_id`
@@ -1269,7 +1308,10 @@ pub fn load_config(
                 ..ClientConfig::default()
             };
             save_config(config_path, &config)?;
-            return Ok(config);
+            // ⚠️★ 设备名**在这之后**才填：它不写进 `client.json`。
+            // 写进去的话，它就成了「用户设过的值」，换台机器（或换个系统跑）也跟着走 ——
+            // 而它本来只是**这个平台上**的默认值。（用户真在设置里存过一次，那才会落盘。）
+            return Ok(with_default_device_name(config));
         }
     };
 
@@ -1277,7 +1319,7 @@ pub fn load_config(
     // 所以每次读配置都要重新挂上：少了这一步，相对下载目录会说不出路径
     // （`ClientConfig::download_dir` 的那条报错就是「没有数据目录就说不出相对路径」）。
     config.base_dir = Some(data_dir.to_path_buf());
-    Ok(config)
+    Ok(with_default_device_name(config))
 }
 
 /// **原子写**：临时文件 + rename。
@@ -2966,6 +3008,37 @@ mod tests {
         assert_eq!(config.base_dir.as_deref(), Some(dir.path()));
         // 配置文件里**不该**留下数据目录。
         assert!(!std::fs::read_to_string(&path).unwrap().contains("base_dir"));
+    }
+
+    /// 设备名（`?name=`）：没设过就填桌面端的默认名，设过就**一个字都不动**。
+    ///
+    /// ⚠️ 两个方向都要测：只测「填上了」的话，「把用户自己起的名覆盖掉」也能绿 ——
+    /// 而那个方向的后果更坏（用户设过的名字每次启动悄悄变回默认）。
+    #[test]
+    fn the_device_name_falls_back_to_the_platform_default_but_never_overrides_the_user() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("client.json");
+
+        // ① 第一次运行：造出来的配置就带着默认名（否则上行 `?name=` 是空的，
+        //    服务端只能塞 `{name:"", type:"Automation"}`，别的客户端会看到「Automation」）。
+        let first = load_config(&path, dir.path(), "http://127.0.0.1:9501").unwrap();
+        assert_eq!(first.device_name, default_device_name());
+        assert!(!first.device_name.is_empty());
+        // ⚠️ 它**不落盘**：落盘就等于「用户设过的值」，换台机器也跟着走。
+        // （`device_name` 没有 `skip_serializing_if`，所以文件里那一格是**空串**。）
+        assert!(
+            std::fs::read_to_string(&path)
+                .unwrap()
+                .contains(r#""device_name": """#),
+            "默认设备名不该写进 client.json（那里应该还是空串）"
+        );
+
+        // ② 用户自己起过名字 —— 读回来必须是他的那一个。
+        let mut renamed = first;
+        renamed.device_name = "书房的 Mac".to_owned();
+        save_config(&path, &renamed).unwrap();
+        let second = load_config(&path, dir.path(), "http://127.0.0.1:9501").unwrap();
+        assert_eq!(second.device_name, "书房的 Mac");
     }
 
     /// 数据目录的形状（macOS / Linux 各一条），⚠️ 相对下载目录要落在它下面（§5）。

@@ -480,9 +480,11 @@
       // ══════════ app.js：侧栏 / 主区动态文案 ══════════
       '(没有文件名)': '(no file name)',
       '未知设备': 'Unknown device',
-      '我发的': 'Sent by me',
-      // ⚠️ 与上面那条**二选一**（`entry.mine` 为真时才画，`fromClipboard` 决定画哪个）：
-      //   它说的是「不是我在这里敲的，是剪贴板同步过去的」（见 `EntryView::from_clipboard`）。
+      // ⚠️ 它**只在**「本机剪贴板复制过去的那一条」上画（`entry.mine && entry.fromClipboard`）：
+      //   说的是「不是我在这里敲的，是剪贴板同步过去的」（见 `EntryView::from_clipboard`）。
+      // ⚠️ 原来与它并列还有一条「我发的」（`entry.mine` 就画）—— 2026-09-29 删了
+      //   （Jonny：「把桌面客户端列表页的「我发的」删掉」）：脚注第一格已经写着客户端名，
+      //   那一格没有任何信息量。
       '剪贴板同步': 'Clipboard sync',
       '自动·补发': 'Scheduled · late',
       '自动': 'Scheduled',
