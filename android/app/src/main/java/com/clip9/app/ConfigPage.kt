@@ -234,7 +234,20 @@ class ConfigPage(
 
         val server = config.optJSONObject("server") ?: JSONObject().also { config.put("server", it) }
         val merged = mergeRooms(origin, readRooms())
-        if (merged.length() == 0) server.remove("roomAuth") else server.put("roomAuth", merged)
+        // ⚠️★ 「没有房间」与「这个键本来就不在」是两件事（2026-09-29，Jonny 在真机上看到
+        // 底部那条「未生效的更改」**永远挂着**——他什么都没改）：
+        // 服务端的默认配置里就写着 `"roomAuth": {}`（`RoomAuthConfig` 是空 map，
+        // `#[serde(transparent)]` 序列化成空对象），而「空就删」会把它删掉 ——
+        // 与装载时那份比**永远不同**，`changed()` 恒为 true，横栏常显，
+        // 而且一按「保存并重启」还会把这个键从文件里抹掉。
+        // ⚠️ 所以「空就删」只对**装载时就没有这个键**的那份成立；装载时有（哪怕是空的）
+        // 就得原样放回去 —— 放一个空对象与不写这个键，在服务端眼里语义相同，但只有前者
+        // 能让「没改就是没改」成立。用 Node 逐行复刻过这条往返（`/tmp` 夹具，§0.4）。
+        if (merged.length() > 0 || at(origin, "server.roomAuth") != null) {
+            server.put("roomAuth", merged)
+        } else {
+            server.remove("roomAuth")
+        }
 
         return config
     }
