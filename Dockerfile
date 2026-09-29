@@ -32,8 +32,9 @@ COPY entrypoint.sh /app/entrypoint.sh
 # 三元组 —— 发布出去的文件名就是 `<平台>-<架构>`（见 release.yml 的产物清单）。
 # ⚠️ armv7 时 TARGETARCH=arm 且 TARGETVARIANT=v7 —— **两个都要看**，只看 arch 会把
 # 32 位设备喂给 64 位的包。
-# ⚠️ 包里的二进制在 `clip9-cli-<平台>-<架构>/` 下（发布时就这么打的），所以解到 /tmp 再搬到
-# 目标位置；不用 `--strip-components`（busybox 的 tar 没有这个 GNU 选项）。
+# ⚠️ 包里的二进制在 `clip9-cli-v<版本>-<平台>-<架构>/` 下（发布时就这么打的 ——
+# 那个顶层目录名**与归档文件名同名**，所以 `VERSION` 一变这里也要跟着变），
+# 所以解到 /tmp 再搬到目标位置；不用 `--strip-components`（busybox 的 tar 没有这个 GNU 选项）。
 # 末尾那下 `-v` 是**构建期**的核对：跑不起来（架构不对 / 不是静态）就当场编不出来，
 # 而不是等容器起来了才发现。
 RUN chmod +x /app/entrypoint.sh \
@@ -43,10 +44,10 @@ RUN chmod +x /app/entrypoint.sh \
       arm-v7)  B="linux-armv7";; \
       *) echo "不支持的平台: ${TARGETARCH}-${TARGETVARIANT}"; exit 1;; \
     esac \
- && wget -q -O - "https://github.com/Jonnyan404/clip9/releases/download/${VERSION}/clip9-cli-${B}.tar.gz" \
-      | tar -xz -C /tmp "clip9-cli-${B}/clip9-cli" \
- && mv "/tmp/clip9-cli-${B}/clip9-cli" /app/server-node/clip9-cli \
- && rm -rf "/tmp/clip9-cli-${B}" \
+ && wget -q -O - "https://github.com/Jonnyan404/clip9/releases/download/${VERSION}/clip9-cli-${VERSION}-${B}.tar.gz" \
+      | tar -xz -C /tmp "clip9-cli-${VERSION}-${B}/clip9-cli" \
+ && mv "/tmp/clip9-cli-${VERSION}-${B}/clip9-cli" /app/server-node/clip9-cli \
+ && rm -rf "/tmp/clip9-cli-${VERSION}-${B}" \
  && chmod +x /app/server-node/clip9-cli \
  && /app/server-node/clip9-cli -v
 

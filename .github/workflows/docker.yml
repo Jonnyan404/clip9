@@ -69,8 +69,11 @@ jobs:
               linux/arm/v7) label=linux-armv7 ;;
               *) echo "::error::不认识的平台 $p"; exit 1 ;;
             esac
-            grep -qx "clip9-cli-${label}.tar.gz" assets.txt \
-              || { echo "::error::$TAG 这个 Release 里没有 clip9-cli-${label}.tar.gz —— 镜像里的 wget 会 404"; exit 1; }
+            # ⚠️★ 产物名里带版本号（`v<版本>` 紧跟 `clip9-cli` 之后），而 `TAG` 本身就是
+            #    `v0.1.0` 那个形态 → 直接用 `$TAG` 拼。与 `Dockerfile` 里那句 `wget`
+            #    认的是同一个名字，改一处必须改两处。
+            grep -qx "clip9-cli-${TAG}-${label}.tar.gz" assets.txt \
+              || { echo "::error::$TAG 这个 Release 里没有 clip9-cli-${TAG}-${label}.tar.gz —— 镜像里的 wget 会 404"; exit 1; }
           done
 
       - name: 算镜像标签

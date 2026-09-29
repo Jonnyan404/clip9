@@ -14,14 +14,15 @@ name: OpenWrt Packages
 # 调用时 `inputs.tag` 同样是填了的，少了这个条件两个 job 会同时往同一个 Release 传资产。
 #
 # 产物名（`release.yml` 的 `assets` job 会逐条核这几个名字；`openwrt/README.md` §1 也有）：
-#   clip9-openwrt-<架构>-v<版本>.ipk               7 个架构
-#   clip9-openwrt-apk-<设备架构>-v<版本>.apk        8 个设备架构
-#   clip9-luci-openwrt-all-v<版本>.ipk              界面（与架构无关）
-#   clip9-luci-openwrt-apk-noarch-v<版本>.apk
+# ⚠️★ `v<版本>` **紧跟在 `clip9-<东西>` 之后** —— 全仓库一条规则（见 `release.yml` 的文件头）。
+#   clip9-openwrt-v<版本>-<架构>.ipk               7 个架构
+#   clip9-openwrt-apk-v<版本>-<设备架构>.apk        8 个设备架构
+#   clip9-luci-openwrt-v<版本>-all.ipk              界面（与架构无关）
+#   clip9-luci-openwrt-apk-v<版本>-noarch.apk
 # ⚠️ 前三组的服务端包名里**不带 `server`**（2026-09-29 改的）—— 与
 #    `openwrt/scripts/package-openwrt{,-apk}.sh` 里那两个 `*_NAME=` 是同一处约定的两端。
 #    包**里面**那个程序仍然叫 `clip9-server`（`/usr/bin/clip9-server`）。
-# ⚠️★ 裸二进制（`build.sh` 摊平出来的 `clip9-server-<版本>-<架构>`）**不是资产**，
+# ⚠️★ 裸二进制（`build.sh` 摊平出来的 `clip9-server-v<版本>-<架构>`）**不是资产**，
 #    它只是下面 ipk / apk 两个 job 的输入（`openwrt-binaries` 这个 artifact）。
 #
 # ⚠️★ **「二进制架构」与「包的架构」不是一回事**，本文件里有三套名字，别互相抄：
@@ -130,7 +131,7 @@ jobs:
       - uses: actions/upload-artifact@v7
         with:
           name: openwrt-binaries
-          path: openwrt/build/clip9-server-*
+          path: openwrt/build/clip9-server-v*
           if-no-files-found: error
 
   # ── IPK（OpenWrt 24.10 及以下走这条）────────────────────────────────────
@@ -166,12 +167,12 @@ jobs:
         run: |
           set -euo pipefail
           ./openwrt/scripts/package-openwrt.sh "$VERSION" "$ARCH"
-          ls -l "openwrt/build/clip9-openwrt-${ARCH}-v${VERSION}.ipk"
+          ls -l "openwrt/build/clip9-openwrt-v${VERSION}-${ARCH}.ipk"
 
       - uses: actions/upload-artifact@v7
         with:
           name: openwrt-pkg-ipk-${{ matrix.arch }}
-          path: openwrt/build/clip9-openwrt-*.ipk
+          path: openwrt/build/clip9-openwrt-v*.ipk
           if-no-files-found: error
 
   # ── APK（OpenWrt 25.12 起用 apk 取代 opkg）──────────────────────────────
@@ -224,12 +225,12 @@ jobs:
         run: |
           set -euo pipefail
           ./openwrt/scripts/package-openwrt-apk.sh "$VERSION" "$ARCH" "$PKG_ARCH"
-          ls -l "openwrt/build/clip9-openwrt-apk-${PKG_ARCH}-v${VERSION}.apk"
+          ls -l "openwrt/build/clip9-openwrt-apk-v${VERSION}-${PKG_ARCH}.apk"
 
       - uses: actions/upload-artifact@v7
         with:
           name: openwrt-pkg-apk-${{ matrix.pkg_arch }}
-          path: openwrt/build/clip9-openwrt-apk-*.apk
+          path: openwrt/build/clip9-openwrt-apk-v*.apk
           if-no-files-found: error
 
   # ── LuCI 界面：与架构无关，一个 ipk 一个 apk ─────────────────────────────
@@ -262,8 +263,8 @@ jobs:
         with:
           name: openwrt-pkg-luci
           path: |
-            openwrt/build/clip9-luci-openwrt-all-*.ipk
-            openwrt/build/clip9-luci-openwrt-apk-noarch-*.apk
+            openwrt/build/clip9-luci-openwrt-v*-all.ipk
+            openwrt/build/clip9-luci-openwrt-apk-v*-noarch.apk
           if-no-files-found: error
 
   # ── 手动触发时：把这批包**覆盖**传到那个 Release ────────────────────────

@@ -12,35 +12,48 @@ name: Release
 # 覆盖：`overwrite_files: true`（重跑同一标签时**替换**同名资产，而不是失败在「已存在」上）。
 # ⚠️ 刻意**不传 `generate_release_notes`**：那是你写的发布说明，不该被自动生成的盖掉。
 #
-# 产物（2026-09-29 更新）：
-#   `clip9-cli-<平台>-<架构>.tar.gz`（Windows 那份是 `.zip`）—— 服务端二进制，
-#   **前端已编在里面**（一个文件丢过去就能跑）。`<平台>-<架构>` 只有这几种：
-#     linux-x86_64 / linux-aarch64 / linux-armv7
-#     macos-x86_64 / macos-aarch64
-#     windows-x86_64 / windows-aarch64
-#   ⚠️★ 写的是**这几个短名字**，不是 `x86_64-unknown-linux-musl` 那种三元组 ——
-#   三元组只在 CI 内部给 cargo 用（矩阵里的 `target`），产物名用 `label`。
-#   用它的地方有两处：`Dockerfile` 的 `wget` 与 homebrew 那步。
-#   ‼️ **不再发 `.sha256`**（Jonny 2026-09-29：「不要 sha256」）。所以那三个 job 只
-#      `tar`/`zip` 一份产物，`upload-artifact` 的 path 里也不再带 `*.sha256`。
-#      ⚠️ homebrew 那个 job **不受影响** —— 它一直是自己 `gh release download` 下来现算
-#      sha256 的（formula/cask 里的 `sha256` 字段是**必填**，与「发不发校验文件」是两件事）。
-#   `clip9-desktop-<平台>-<架构>.<dmg|deb|AppImage|msi|exe>`
-#                                                桌面端，**含服务端**（见 desktop job 的注释）
-#   clip9:…（容器镜像）                          由 Release 里那份二进制做的，**镜像里不编译**
+# 产物名（2026-09-29 定稿）：
+#
+#   ‼️★ **一条规则**：`v<版本>` **紧跟在 `clip9-<东西>` 之后**，其余限定词排在它后面。
+#     Jonny 2026-09-29：「release 产物要么都带版本号要么都不」→ 那就**都带**（下载到本地
+#     多版本分得清；而且没有任何地方依赖 `latest/download/<固定名>` 那种稳定链接）。
+#     于是 `linux-x86_64` 这类词一律排在版本号**之后**。
+#
+#   服务端二进制（**前端已编在里面**，一个文件丢过去就能跑）：
+#     `clip9-cli-v<版本>-<平台>-<架构>.tar.gz`（Windows 那份是 `.zip`）
+#       `<平台>-<架构>` 只有这几种：
+#         linux-x86_64 / linux-aarch64 / linux-armv7
+#         macos-x86_64 / macos-aarch64
+#         windows-x86_64 / windows-aarch64
+#       ⚠️★ 写的是**这几个短名字**，不是 `x86_64-unknown-linux-musl` 那种三元组 ——
+#       三元组只在 CI 内部给 cargo 用（矩阵里的 `target`），产物名用 `label`。
+#       认这个名字的地方：`Dockerfile` 的 `wget`（**连包内那个目录名**）、homebrew 那步、
+#       `docker.yml` 的预检。
+#     ‼️ **不再发 `.sha256`**（Jonny 2026-09-29：「不要 sha256」）。所以那三个 job 只
+#        `tar`/`zip` 一份产物，`upload-artifact` 的 path 里也不再带 `*.sha256`。
+#        ⚠️ homebrew 那个 job **不受影响** —— 它一直是自己 `gh release download` 下来现算
+#        sha256 的（formula/cask 里的 `sha256` 字段是**必填**，与「发不发校验文件」是两件事）。
+#   桌面端（**含服务端**，见 desktop job 的注释）：
+#     `clip9-desktop-v<版本>-<平台>-<架构>.<dmg|deb|AppImage|msi|exe>`
+#   `clip9:…`（容器镜像）                          由 Release 里那份二进制做的，**镜像里不编译**
 #   Formula/clip9.rb + Casks/clip9.rb            Homebrew tap（二进制与桌面端各一份）
-#   clip9-openwrt-<架构>-v<版本>.ipk              OpenWrt 服务端包，7 个架构
-#   clip9-openwrt-apk-<设备架构>-v<版本>.apk      8 个设备架构
-#   clip9-luci-openwrt-all-v<版本>.ipk / …-apk-noarch-v<版本>.apk  LuCI 界面包
-#   clip9-android-v<版本>.apk                    Android **合并包**（三个 ABI 都在）
-#   clip9-android-v<版本>-<abi>.apk              Android **单 ABI 包**，3 个：
-#                                                arm64-v8a / armeabi-v7a / x86_64
+#   OpenWrt 服务端包（7 个架构 / 8 个设备架构）：
+#     `clip9-openwrt-v<版本>-<架构>.ipk`
+#     `clip9-openwrt-apk-v<版本>-<设备架构>.apk`
+#   LuCI 界面包（与架构无关）：
+#     `clip9-luci-openwrt-v<版本>-all.ipk` / `clip9-luci-openwrt-apk-v<版本>-noarch.apk`
+#   Android：
+#     `clip9-android-v<版本>.apk`                 **合并包**（三个 ABI 都在）
+#     `clip9-android-v<版本>-<abi>.apk`           **单 ABI 包**，3 个：
+#                                                 arm64-v8a / armeabi-v7a / x86_64
 #   ⚠️★ OpenWrt 那一组里**只有 ipk 与 apk 是资产** —— 裸二进制
-#      （`clip9-server-<版本>-<架构>`）是**中间产物**，给 ipk/apk 两个 job 用。
+#      （`clip9-server-v<版本>-<架构>`，中间产物，给 ipk/apk 两个 job 用）**不是**。
 #      它**曾经真的被当资产传上去过**（v0.1.0-beta3 那次）：`publish` 的
 #      `download-artifact` 原来不带 `pattern`，会把整次运行里**所有** artifact 都拖下来，
 #      而 `openwrt.yml` 的 `binaries` job 正好在那一刻已经跑完了（时序问题）。
 #      现在那里写死成 `clip9-*`（cli / desktop 那两套），中间产物进不来。
+#   ⚠️ artifact 名（`upload-artifact` 的 `name:`）**不带版本号** —— 那是 CI 内部的通道，
+#      **不是**用户看到的资产。改它要连 `download-artifact` 那边一起改，没必要。
 #   ⚠️ 后面那几组由 `openwrt.yml` / `android.yml` 两个**可复用工作流**构建（它们也能单独
 #      手动跑，那样会自己覆盖上传）。见下面那两个 `uses:` 与 `publish-openwrt` /
 #      `publish-android`。
@@ -119,6 +132,9 @@ jobs:
   # ⚠️ armv7 曾担心的 `aws-lc-sys`（armv7 + musl 不在 AWS-LC 的平台表里）**实测是过的**
   # （2026-09-28，3m39s）—— 那张表是「跑没跑过他们的测试」，不是「编不编得过」。
   linux:
+    # ⚠️★ 产物名里要带版本号（Jonny 2026-09-29：「release 产物要么都带版本号要么都不」）
+    #    → 这一格需要 `info` 里的 tag。`info` 是秒级的（一次 `gh api`），不拖慢构建。
+    needs: info
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -172,7 +188,10 @@ jobs:
         working-directory: rust
         run: |
           set -euo pipefail
-          name="$PACKAGE-${{ matrix.label }}"
+          # ⚠️★ `v<版本>` **紧跟在 `clip9-<东西>` 之后** —— 全仓库一条规则（见文件头的
+          #    产物清单）。这个名字会落进两处：tar 包的**文件名**，以及包内那个顶层目录
+          #    —— `Dockerfile` 解包时认的就是后者，改这里要连它一起改。
+          name="$PACKAGE-${{ needs.info.outputs.tag }}-${{ matrix.label }}"
           mkdir -p "dist/$name"
           # ⚠️ 落进包里的文件就叫 $PACKAGE（`clip9-cli`）—— 命名表说的是**程序**的名字。
           #    `$BIN` 那个名字是给桌面端的 bundle 用的（见 desktop job）。
@@ -188,6 +207,8 @@ jobs:
           if-no-files-found: error
 
   macos:
+    # ⚠️ 同 `linux`：产物名里带版本号，所以要 tag。
+    needs: info
     runs-on: macos-latest
     strategy:
       fail-fast: false
@@ -216,7 +237,7 @@ jobs:
         working-directory: rust
         run: |
           set -euo pipefail
-          name="$PACKAGE-${{ matrix.label }}"
+          name="$PACKAGE-${{ needs.info.outputs.tag }}-${{ matrix.label }}"
           mkdir -p "dist/$name"
           cp "target/${{ matrix.target }}/release/$BIN" "dist/$name/$PACKAGE"
           cp ../LICENSE ../README.md "dist/$name/"
@@ -243,6 +264,8 @@ jobs:
   #    ⚠️ aarch64 用不到它：那边的 21 个汇编是 `.S`，由 cl.exe 汇编。
   #    ⚠️ 别的平台这个变量不起作用（只在 `target_os == windows && target_arch == x86_64` 读）。
   windows:
+    # ⚠️ 同 `linux`：产物名里带版本号，所以要 tag。
+    needs: info
     runs-on: windows-latest
     strategy:
       fail-fast: false
@@ -289,7 +312,8 @@ jobs:
         run: |
           $ErrorActionPreference = 'Stop'
           $pkg  = $env:PACKAGE
-          $name = "$pkg-${{ matrix.label }}"
+          # ⚠️★ 与 linux / macos 同一形态：`v<版本>` 紧跟 `clip9-cli` 之后。
+          $name = "$pkg-${{ needs.info.outputs.tag }}-${{ matrix.label }}"
           New-Item -ItemType Directory -Force -Path "dist/$name" | Out-Null
           Copy-Item "target/${{ matrix.target }}/release/$env:BIN.exe" "dist/$name/$pkg.exe"
           Copy-Item ../LICENSE, ../README.md "dist/$name/"
@@ -332,6 +356,8 @@ jobs:
   # ⚠️ 所以这里是**两步**：先把服务端编出来、拷到配置里写死的那个暂存路径
   # （`rust/crates/desktop/binaries/clip9-server[.exe]`，已 gitignore），再让 tauri 打包。
   desktop:
+    # ⚠️ 同 `linux`：产物名里带版本号，所以要 tag。
+    needs: info
     strategy:
       fail-fast: false
       matrix:
@@ -422,7 +448,8 @@ jobs:
           for f in "$base"/dmg/*.dmg "$base"/deb/*.deb "$base"/appimage/*.AppImage \
                    "$base"/msi/*.msi "$base"/nsis/*-setup.exe; do
             [ -e "$f" ] || continue
-            cp "$f" "$out/clip9-desktop-${{ matrix.label }}.${f##*.}"
+            # ⚠️★ `v<版本>` 紧跟 `clip9-desktop` 之后（与 cli / openwrt / android 同一条规则）。
+            cp "$f" "$out/clip9-desktop-${{ needs.info.outputs.tag }}-${{ matrix.label }}.${f##*.}"
           done
           ls -l "$out"
 
@@ -477,7 +504,11 @@ jobs:
   # ⚠️ 刻意**不写 `if:`**：手动跑一次、tag 留空的那次冒烟也要走到这里（它不上传，但名字照样
   # 能验）。⚠️ 也正因为不写 `if:`，它是唯一一个在两种触发下都跑的「产物」job。
   assets:
-    needs: [linux, macos, windows, desktop]
+    # ⚠️★ `info` 也在这里：下面那份「资产名对不对」的期望清单是拿 tag 拼出来的。
+    needs: [info, linux, macos, windows, desktop]
+    # ⚠️ 与 `publish` 同一个条件。手动跑且**没填 tag** 时产物名里没有版本号（tag 是空的），
+    #    而那时也没有资产要发布 → 这份清单无从校验，别让它报一堆假错。
+    if: github.event_name == 'release' || inputs.tag != ''
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -490,15 +521,18 @@ jobs:
       - name: 资产名对不对
         run: |
           set -euo pipefail
+          # ⚠️★ 产物名里带版本号（`v<版本>` 紧跟 `clip9-<东西>` 之后）→ 期望名拿 tag 拼。
+          #    别把 `v0.1.0` 写死在这儿：那正是这条判据要防的漂移。
+          tag="${{ needs.info.outputs.tag }}"
           # 每行是 `<产物名>|<谁在用它>` —— 报错时能直接指到该改哪个文件。
           expected=(
-            "clip9-cli-linux-x86_64.tar.gz|Dockerfile 的 amd64 与 homebrew formula 的 Linux/intel"
-            "clip9-cli-linux-aarch64.tar.gz|Dockerfile 的 arm64 与 homebrew formula 的 Linux/arm"
-            "clip9-cli-linux-armv7.tar.gz|Dockerfile 的 arm/v7"
-            "clip9-cli-macos-aarch64.tar.gz|homebrew formula 的 macOS/arm"
-            "clip9-cli-macos-x86_64.tar.gz|homebrew formula 的 macOS/intel"
-            "clip9-desktop-macos-aarch64.dmg|homebrew cask 的 macOS/arm"
-            "clip9-desktop-macos-x86_64.dmg|homebrew cask 的 macOS/intel"
+            "clip9-cli-${tag}-linux-x86_64.tar.gz|Dockerfile 的 amd64 与 homebrew formula 的 Linux/intel"
+            "clip9-cli-${tag}-linux-aarch64.tar.gz|Dockerfile 的 arm64 与 homebrew formula 的 Linux/arm"
+            "clip9-cli-${tag}-linux-armv7.tar.gz|Dockerfile 的 arm/v7"
+            "clip9-cli-${tag}-macos-aarch64.tar.gz|homebrew formula 的 macOS/arm"
+            "clip9-cli-${tag}-macos-x86_64.tar.gz|homebrew formula 的 macOS/intel"
+            "clip9-desktop-${tag}-macos-aarch64.dmg|homebrew cask 的 macOS/arm"
+            "clip9-desktop-${tag}-macos-x86_64.dmg|homebrew cask 的 macOS/intel"
           )
           ok=1
           # ⚠️★ 变量后面跟非 ASCII 字符时**必须写 `${}`**：`$who）` 里的全角括号会被 bash
@@ -534,12 +568,13 @@ jobs:
           fi
           echo "抽出来的映射："
           echo "$block"
+          tag="${{ needs.info.outputs.tag }}"
           for p in linux/amd64 linux/arm64 linux/arm/v7; do
             label=$(p="$p"; eval "$block"; printf '%s' "$label")
-            if [ -f "artifacts/clip9-cli-${label}.tar.gz" ]; then
-              echo "  ✅ ${p} → clip9-cli-${label}.tar.gz"
+            if [ -f "artifacts/clip9-cli-${tag}-${label}.tar.gz" ]; then
+              echo "  ✅ ${p} → clip9-cli-${tag}-${label}.tar.gz"
             else
-              echo "::error::docker.yml 把 ${p} 映射成 ${label}，但资产里没有 clip9-cli-${label}.tar.gz"
+              echo "::error::docker.yml 把 ${p} 映射成 ${label}，但资产里没有 clip9-cli-${tag}-${label}.tar.gz"
               exit 1
             fi
           done
@@ -592,6 +627,59 @@ jobs:
         run: |
           echo "::notice::这是预发布（prerelease）：容器镜像**只推 tag、不推 latest**。"
 
+  # ── Release 正文：从 `CHANGELOG.md` 抽这一版的段落贴上去 ──────────────────
+  #
+  # ⚠️★ 为什么要有这一步（Jonny 2026-09-29：「以后发版 release 会是中文介绍吗」）：
+  #    正文原先是「建 Release 时手贴」的纯人工动作，`v0.1.0` 那次就漏了。而**正文为空时
+  #    GitHub 会把 tag 指向那条提交的提交信息整段顶上去** —— 提交信息又是英文的
+  #    （`tools/check-commit-msg.mjs` 强制），于是页面上是一段英文的 commit message。
+  #    「发布前先写好这一版说明」本来就有硬约束（`CHANGELOG.md` 抬头那三条），
+  #    所以让正文从 CHANGELOG 抽 = 说明只维护一处，也少一个漏点。
+  #
+  # ⚠️★ 排在 `needs: publish` 的理由与 `docker` / `homebrew` 一样：**红在发布之后**。
+  #    已经传上去的资产不会因为这里红了而回滚，而整个 run 是红的 → 一眼看得见要补。
+  #    反过来（把它挪到 publish 之前当闸门）会让「文档没写完」把整次发布卡死，不划算。
+  #
+  # ⚠️ 它**不碰资产**：那三个 `action-gh-release` 只传 `tag_name` / `files` /
+  #    `overwrite_files`，从头到尾没有一处设过正文 —— 所以这里改正文不会与它们打架。
+  #
+  # ⚠️ 也**不会**回头再触发一次本工作流（那会死循环）：`on.release.types` 钉死了
+  #    `[published]`，而 `gh release edit` 发的是 `edited`；再叠上「用 `GITHUB_TOKEN`
+  #    做出来的事件不会触发新 run」那条保护，两道都挡住了。
+  #    ⚠️ 所以**别**把这里的 `GH_TOKEN` 换成 PAT —— 换掉就只剩 `types` 一道了。
+  #
+  # ⚠️ `ref:` 必须指到那个 tag：要读的是**那一版提交里**的 CHANGELOG（手动触发时
+  #    `github.sha` 是默认分支的头，不是 tag）。
+  release-notes:
+    needs: [info, publish]
+    if: github.event_name == 'release' || inputs.tag != ''
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.info.outputs.tag }}
+
+      - name: 从 CHANGELOG 抽出这一版
+        env:
+          TAG: ${{ needs.info.outputs.tag }}
+        run: |
+          set -euo pipefail
+          # ⚠️★ 抽不到、或者抽到的还是占位（「变动留空」/「待发布」那种）→ 这个脚本会
+          #    **报错退出**，一个字都不往 notes.md 写。宁可这里红，也不要让 Release
+          #    页面上挂着一句「（变动留空）」。
+          node tools/release-notes.mjs --tag "$TAG" > notes.md
+          echo "--- 正文预览（前 24 行）---"
+          head -24 notes.md
+
+      - name: 贴到那个 Release 上
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ needs.info.outputs.tag }}
+        run: |
+          set -euo pipefail
+          gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --notes-file notes.md
+          echo "::notice::Release 正文已从 CHANGELOG 同步（${TAG}）。"
+
   # ── OpenWrt 包：**排在 publish 之后**，覆盖上传 ──────────────────────────
   #
   # ⚠️★ 为什么不是并进 `publish`（它那边是 `files: artifacts/*` 一把传）：
@@ -636,9 +724,9 @@ jobs:
           #    ⚠️ 只数个数、不重列名字：重列一遍就是**又一处会漂的地方**。
           #    ⚠️ 前缀是 `clip9-openwrt-*`（2026-09-29 从 `clip9-server-openwrt-*` 改的）——
           #       与打包脚本里那两个 `*_NAME=` 必须一致。
-          n_ipk=$(find extra -maxdepth 1 -name 'clip9-openwrt-*.ipk' | wc -l)
-          n_apk=$(find extra -maxdepth 1 -name 'clip9-openwrt-apk-*.apk' | wc -l)
-          n_luci=$(find extra -maxdepth 1 \( -name 'clip9-luci-openwrt-*.ipk' -o -name 'clip9-luci-openwrt-*.apk' \) | wc -l)
+          n_ipk=$(find extra -maxdepth 1 -name 'clip9-openwrt-v*.ipk' | wc -l)
+          n_apk=$(find extra -maxdepth 1 -name 'clip9-openwrt-apk-v*.apk' | wc -l)
+          n_luci=$(find extra -maxdepth 1 \( -name 'clip9-luci-openwrt-v*.ipk' -o -name 'clip9-luci-openwrt-apk-v*.apk' \) | wc -l)
           n_all=$(find extra -type f | wc -l)
           echo "ipk=${n_ipk}（期望 7） apk=${n_apk}（期望 8） luci=${n_luci}（期望 2） 合计=${n_all}"
           bad=0
@@ -796,12 +884,14 @@ jobs:
           sums="$(cat dl/sums.txt)"
           sha() { echo "$sums" | awk -v f="$1" '$2 == f { print $1 }'; }
 
-          cli_arm=$(sha clip9-cli-macos-aarch64.tar.gz)
-          cli_intel=$(sha clip9-cli-macos-x86_64.tar.gz)
-          lx_arm=$(sha clip9-cli-linux-aarch64.tar.gz)
-          lx_intel=$(sha clip9-cli-linux-x86_64.tar.gz)
-          dmg_arm=$(sha clip9-desktop-macos-aarch64.dmg)
-          dmg_intel=$(sha clip9-desktop-macos-x86_64.dmg)
+          # ⚠️★ 产物名里带版本号 → 这里每一处都要拿 `${TAG}` 拼（`TAG` 形如 `v0.1.0`）。
+          #    漏一处不会报错，只会静默拿到一个空 sha → 下面那道 `[ -n "$v" ]` 才会拦下。
+          cli_arm=$(sha "clip9-cli-${TAG}-macos-aarch64.tar.gz")
+          cli_intel=$(sha "clip9-cli-${TAG}-macos-x86_64.tar.gz")
+          lx_arm=$(sha "clip9-cli-${TAG}-linux-aarch64.tar.gz")
+          lx_intel=$(sha "clip9-cli-${TAG}-linux-x86_64.tar.gz")
+          dmg_arm=$(sha "clip9-desktop-${TAG}-macos-aarch64.dmg")
+          dmg_intel=$(sha "clip9-desktop-${TAG}-macos-x86_64.dmg")
           for v in "$cli_arm" "$cli_intel" "$lx_arm" "$lx_intel" "$dmg_arm" "$dmg_intel"; do
             [ -n "$v" ] || { echo "::error::有产物没取到，上面 ls 里看看少了哪个"; exit 1; }
           done
@@ -817,22 +907,22 @@ jobs:
 
             on_macos do
               on_arm do
-                url "${base}/clip9-cli-macos-aarch64.tar.gz"
+                url "${base}/clip9-cli-${TAG}-macos-aarch64.tar.gz"
                 sha256 "${cli_arm}"
               end
               on_intel do
-                url "${base}/clip9-cli-macos-x86_64.tar.gz"
+                url "${base}/clip9-cli-${TAG}-macos-x86_64.tar.gz"
                 sha256 "${cli_intel}"
               end
             end
 
             on_linux do
               on_arm do
-                url "${base}/clip9-cli-linux-aarch64.tar.gz"
+                url "${base}/clip9-cli-${TAG}-linux-aarch64.tar.gz"
                 sha256 "${lx_arm}"
               end
               on_intel do
-                url "${base}/clip9-cli-linux-x86_64.tar.gz"
+                url "${base}/clip9-cli-${TAG}-linux-x86_64.tar.gz"
                 sha256 "${lx_intel}"
               end
             end
@@ -856,12 +946,12 @@ jobs:
 
             on_arm do
               sha256 "${dmg_arm}"
-              url "${base}/clip9-desktop-macos-aarch64.dmg"
+              url "${base}/clip9-desktop-${TAG}-macos-aarch64.dmg"
             end
 
             on_intel do
               sha256 "${dmg_intel}"
-              url "${base}/clip9-desktop-macos-x86_64.dmg"
+              url "${base}/clip9-desktop-${TAG}-macos-x86_64.dmg"
             end
 
             name "clip9"

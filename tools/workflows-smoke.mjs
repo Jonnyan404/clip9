@@ -30,7 +30,9 @@
 //   node tools/workflows-smoke.mjs
 //   node tools/workflows-smoke.mjs --root <别的仓库根>    # 变异验证用
 
-import { readFileSync, existsSync } from 'node:fs';
+import { readFileSync, existsSync, mkdirSync, writeFileSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
+import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -97,6 +99,12 @@ function jobNeeds(text, name) {
   if (blockForm) {
     return [...blockForm[1].matchAll(/- (\S+)/g)].map((m) => m[1]);
   }
+  // ⚠️★ **标量形式**（`needs: info`）也要认。仓库里 `openwrt` / `android` / 以及四个打包
+  //    job 都是这么写的，而这里以前只认数组 → 它们被读成「没有 needs」，
+  //    偏偏「没有 needs」是**合法**返回值（顶层 job 就是这样）—— 于是任何
+  //    `needs.includes('info')` 的判据都判不出「他忘了加」。
+  const scalar = /^ {4}needs: (\S+)\s*$/m.exec(body);
+  if (scalar) return [scalar[1]];
   return []; // 没有 needs 是合法的（顶层 job）
 }
 
@@ -391,6 +399,183 @@ const pkgApk = read('openwrt/scripts/package-openwrt-apk.sh');
     if (!problems.length) ok(`${label} —— ${seen.join(' · ')}`);
   }
   if (problems.length) fail(label, problems.join('\n    '));
+}
+
+// ── 判据 1d：产物名里的 `v<版本>`（Jonny 2026-09-29：「要么都带版本号要么都不」）──
+//
+// ⚠️★ 2026-09-29 加的。这是全仓库一条规矩：`v<版本>` **紧跟在 `clip9-<东西>` 之后**
+//    （细则写在 `release.yml` 的文件头）。cli / desktop 那四格原来**没有版本号** ——
+//    因为 `linux` / `macos` / `windows` / `desktop` 当时**都没有 `needs: info`**，
+//    手上根本没有 tag。（⚠️ 没有 needs 的 job 里写 `needs.info.outputs.tag` 不会报错，
+//    它**渲染成空串** —— 产物名会变成 `clip9-cli--linux-x86_64` 那种样子。）
+//    所以这里一次判两件事：① 四个 job 都 `needs: info`；② 它们确实拿它拼名字。
+//    ⚠️ 漏掉的症状**只在发布时**才出现：`assets` 那份期望清单（同源，也是拿 tag 拼的）
+//       会对不上，报的是「缺 clip9-cli-…」—— 而真正的错在另一个 job 里。
+{
+  const label = '四个打包 job 都拿 info 的 tag 拼产物名（少了 needs，tag 会渲染成空串）';
+  const problems = [];
+  if (release === null) {
+    problems.push('读不到 release.yml');
+  } else {
+    for (const job of ['linux', 'macos', 'windows', 'desktop']) {
+      const body = jobBlock(release, job);
+      if (body === null) {
+        problems.push(`读不到 ${job} job`);
+        continue;
+      }
+      const needs = jobNeeds(release, job);
+      if (!needs.includes('info')) {
+        problems.push(`${job} 的 needs 里没有 info（读到的是 ${JSON.stringify(needs)}）`);
+      }
+      if (!body.includes('needs.info.outputs.tag')) {
+        problems.push(`${job} 里没有拿 needs.info.outputs.tag 拼产物名`);
+      }
+    }
+    // ⚠️ `assets` 那份期望清单必须**同源**：它也按 `needs.info.outputs.tag` 拼。
+    //    两边各自写死一个版本号的话，只会在发布时对不上。
+    const assets = jobBlock(release, 'assets');
+    if (assets === null) {
+      problems.push('读不到 assets job');
+    } else {
+      if (!jobNeeds(release, 'assets').includes('info')) {
+        problems.push('assets 的 needs 里没有 info —— 它的期望清单是拿 tag 拼的，会渲染成空串');
+      }
+      if (!assets.includes('needs.info.outputs.tag')) {
+        problems.push('assets 的期望清单没有拿 needs.info.outputs.tag 拼（它必须与打包处同源）');
+      }
+    }
+  }
+  if (problems.length) fail(label, problems.join('\n    '));
+  else ok(`${label} —— linux/macos/windows/desktop + assets`);
+}
+
+// ── 判据 1e：Release 正文从 CHANGELOG 自动抽（`release-notes` job）────────────
+//
+// ⚠️★ 2026-09-29 加的（Jonny：「以后发版 release 会是中文介绍吗」）。判四件事：
+//    ① `release-notes` job 存在，且 `needs` 里**有 publish** —— 那是「排在发布之后」的
+//       **全部**依据（GitHub 里顺序就是 needs，没有第二个机制）；
+//    ② 它调的确实是 `tools/release-notes.mjs`；
+//    ③ 它**真把正文写上去**（`gh release edit … --notes-file`）；
+//    ④ 反向：`release.yml` 里**没有**任何 `body` / `body_path` —— 有的话就与③打架，
+//       而谁赢取决于 job 谁后跑（**没有症状的那类错**）。
+{
+  const label = 'release-notes：正文从 CHANGELOG 抽（needs 里有 publish，且没人另设 body）';
+  const problems = [];
+  if (release === null) {
+    problems.push('读不到 release.yml');
+  } else {
+    const body = jobBlock(release, 'release-notes');
+    if (body === null) {
+      problems.push('没有 release-notes job —— Release 正文会退回「建的时候手贴」');
+    } else {
+      const needs = jobNeeds(release, 'release-notes');
+      if (!needs.includes('publish')) {
+        problems.push(
+          `release-notes 的 needs 里没有 publish（读到的是 ${JSON.stringify(needs)}）—— ` +
+            '那它可能在资产传上去之前就跑',
+        );
+      }
+      if (!body.includes('tools/release-notes.mjs')) {
+        problems.push('release-notes 里没有调 tools/release-notes.mjs');
+      }
+      if (!/gh release edit[^\n]*--notes-file/.test(body)) {
+        problems.push('release-notes 里没有 `gh release edit … --notes-file`（那样正文写不上去）');
+      }
+    }
+    // ④ 反向。⚠️ 只认**键**（`body:` / `body_path:`），不认散文里出现「body」几个字母。
+    // ⚠️★ 这里**不能**写成 `^\s+body(_path)?:\s*$` —— 那样只认「空值的 body:」，
+    //    而真写正文时后面当然跟着内容（`body: 这次…` / `body: |`），于是**变异验证里
+    //    这条判据漏掉了**（第一次就是这么写的，N5 没打红才发现的）。
+    const bodyKey = /^ +body(_path)?:/m.exec(release);
+    if (bodyKey) {
+      problems.push(
+        `release.yml 里有 ${JSON.stringify(bodyKey[0].trim())} —— 它与 release-notes 都在写正文，` +
+          '谁赢取决于 job 谁后跑（没有症状）。要么删掉它，要么删掉 release-notes。',
+      );
+    }
+  }
+  if (problems.length) fail(label, problems.join('\n    '));
+  else ok(`${label} —— needs: [info, publish]`);
+}
+
+// ── 判据 1f：抽正文那个脚本自己的行为（夹具，四种情形）──────────────────────
+//
+// ⚠️★ 2026-09-29 加的。`tools/release-notes.mjs` 是**纯的**（读文件 → 打 stdout），
+//    所以这里能直接拿夹具喂它 —— 一条真跑得起来的判据，比「检查这个文件存在」强得多。
+//    ⚠️★ 夹具里预发布那一条**故意排在正式版上面**：那是「前缀陷阱」最容易露头的排法
+//    （`v0.1.0` 的正则要是少了尾巴那个否定断言，就会先命中 `## v0.1.0-beta1`，
+//    抽出来的是 beta 的说明 —— 而它在页面上看着**完全正常**）。
+//    ⚠️ 另外三种是**必须红**的：版本不存在、那一段是占位、那一段只有标题没有正文。
+//    只判「正常情形抽得对」的话，一个永远返回空的脚本也能过。
+{
+  const label = 'tools/release-notes.mjs：抽对那一段；缺席 / 占位 / 空正文都要报错';
+  const problems = [];
+  const script = join(ROOT, 'tools/release-notes.mjs');
+  if (!existsSync(script)) {
+    problems.push('没有 tools/release-notes.mjs');
+  } else {
+    // ⚠️ 夹具放临时目录，不进仓库（与其它判据的夹具同一个地方）。
+    const dir = join(tmpdir(), 'clip9-release-notes-fixture');
+    mkdirSync(dir, { recursive: true });
+
+    const write = (name, lines) => {
+      const path = join(dir, name);
+      writeFileSync(path, lines.join('\n'));
+      return path;
+    };
+    const run = (tag, file) =>
+      spawnSync(process.execPath, [script, '--tag', tag, '--changelog', file], {
+        encoding: 'utf8',
+      });
+
+    const main = write('CHANGELOG.md', [
+      '# 更新日志',
+      '',
+      '## v0.1.0-beta1 · 2026-09-28',
+      '',
+      '这条是 beta1 的正文，抽 v0.1.0 时**不该**拿到它。',
+      '',
+      '## v0.1.0 · 2026-09-29',
+      '',
+      '### 这一版有什么',
+      '',
+      '就是这一版要说的话。',
+      '',
+      '## v0.0.9 · 2026-09-27',
+      '',
+      '再往前那一版的正文。',
+      '',
+    ]);
+
+    const good = run('v0.1.0', main);
+    if (good.status !== 0) {
+      problems.push(`抽 v0.1.0 应当成功，却 exit=${good.status}：${good.stderr.trim()}`);
+    } else {
+      const out = good.stdout;
+      if (!out.includes('就是这一版要说的话')) problems.push('v0.1.0 那段正文没抽出来');
+      if (out.includes('beta1 的正文')) {
+        problems.push('把 `## v0.1.0-beta1` 那段当成 v0.1.0 抽出来了（标题正则少了尾巴的否定断言）');
+      }
+      if (out.includes('再往前那一版的正文')) problems.push('抽过头了：把下一条 `## ` 之后的正文也带上了');
+      if (/^##\s/m.test(out)) problems.push('输出里带上了 `## ` 标题行（应当去掉）');
+    }
+
+    // ⚠️ 配对的反面。⚠️ 同时判 stdout：失败时**一个字都不该**打出来 —— 否则
+    //    `> notes.md` 会把正文覆盖成那个空/残的东西。
+    const missing = run('v0.3.0', main);
+    if (missing.status === 0) problems.push('抽一个**不存在**的版本居然成功了（应当报错）');
+    if (missing.stdout.trim() !== '') problems.push('失败时往 stdout 写了东西');
+
+    const ph = write('PLACEHOLDER.md', ['## v0.4.0 · 2026-10-01', '', '（变动留空 —— 还没写。）', '']);
+    if (run('v0.4.0', ph).status === 0) problems.push('抽到**占位**（「变动留空」）居然成功了');
+
+    const empty = write('EMPTY.md', ['## v0.5.0 · 2026-10-02', '', '## v0.4.0 · 2026-10-01', '']);
+    if (run('v0.5.0', empty).status === 0) {
+      problems.push('抽到**只有标题、没有正文**的一条居然成功了');
+    }
+  }
+  if (problems.length) fail(label, problems.join('\n    '));
+  else ok(label);
 }
 
 // ── 判据 2：矩阵条目数 ↔ release.yml 里写死的期望个数 ──────────────────────

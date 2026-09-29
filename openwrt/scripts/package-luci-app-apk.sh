@@ -24,7 +24,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 BASE_DIR="$(dirname "$SCRIPT_DIR")"
 LUCI_DIR="$BASE_DIR/luci-app-clip9"
 PKG_DIR="$BASE_DIR/build/luci-app-apk"
-APK_NAME="clip9-luci-openwrt-apk-noarch-v${VERSION}.apk"
+APK_NAME="clip9-luci-openwrt-apk-v${VERSION}-noarch.apk"
 TEMP_DIR="$BASE_DIR/build/.tmp-luci-app-apk-$$"
 
 to_container_path() {
