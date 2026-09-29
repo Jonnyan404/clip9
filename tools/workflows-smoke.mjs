@@ -293,6 +293,106 @@ const pkgApk = read('openwrt/scripts/package-openwrt-apk.sh');
   else ok(label);
 }
 
+// ── 判据 1b：`publish` 取的范围**只有 cli / desktop**（中间产物不许混进去）────
+//
+// ⚠️★ 2026-09-29 加的。它判的是一件**真发生过**的事：v0.1.0-beta3 那个 Release 里躺着
+//    7 个 `clip9-server-<版本>-<架构>` —— 那是 OpenWrt 的**裸二进制**，只是给 ipk / apk
+//    两个 job 用的中间产物。原因：`publish` 的 `download-artifact` 原来**不带 `pattern`**，
+//    会把整次运行里**所有** artifact 都拖下来，而那一刻 openwrt 的 `binaries` job 恰好
+//    已经跑完了（**时序问题** —— 换个顺序可能就不出现，这正是它难查的地方）。
+//    ⚠️★ 它的症状是「**没有症状**」：多出来的资产要等有人去翻 Release 页面才看得到。
+//    ⚠️ 所以这里不只判「有没有 pattern」，还判那个 pattern **确实把中间产物排除在外**。
+{
+  const label = 'release.yml 的 publish 只取 cli / desktop（不带 pattern 会把中间产物一起传上去）';
+  const problems = [];
+  const pub = release === null ? null : jobBlock(release, 'publish');
+  const sel = downloadSelector(pub);
+  if (pub === null) {
+    problems.push('读不到 release.yml 的 publish job');
+  } else if (sel === null) {
+    problems.push('publish 里的 download-artifact 没解析出来（改名了？少了？）');
+  } else if (sel.kind !== 'pattern') {
+    problems.push(
+      `publish 的 download-artifact 是 ${JSON.stringify(sel)} —— 不带 pattern 会把整次运行的` +
+        '**所有** artifact 都拖下来（含 `openwrt-binaries` 那种中间产物）。应当写 `clip9-*`。',
+    );
+  } else {
+    // ⚠️ 前缀得是 `clip9-`：cli（`clip9-cli-*`）与 desktop（`clip9-desktop-*`）都在它下面，
+    //    而中间产物 `openwrt-binaries` / `openwrt-pkg-*` 与 `android-apk` 都不在。
+    for (const bad of ['openwrt', 'android']) {
+      if (sel.value.includes(bad)) {
+        problems.push(`publish 的 pattern ${JSON.stringify(sel.value)} 会连 ${bad} 的 artifact 一起取走`);
+      }
+    }
+    if (!sel.value.startsWith('clip9-')) {
+      problems.push(`publish 的 pattern 是 ${JSON.stringify(sel.value)}，应当以 \`clip9-\` 开头`);
+    }
+  }
+  if (problems.length) fail(label, problems.join('\n    '));
+  else ok(`${label} —— pattern ${sel.value}`);
+}
+
+// ── 判据 1c：OpenWrt 包名**前缀**三处一致 ──────────────────────────────────
+//
+// ⚠️★ 2026-09-29 加的（包名从 `clip9-server-openwrt-*` 改成 `clip9-openwrt-*` 的那一次）。
+//    同一个文件名在**三个文件**里各写了一份字面量：
+//      ① `openwrt/scripts/package-openwrt{,-apk}.sh` 的 `IPK_NAME=` / `APK_NAME=`
+//      ② `openwrt.yml` 里 upload 的 `path:`
+//      ③ `release.yml` 的 `publish-openwrt` 里那两句 `find … -name`
+//    ⚠️ 只改一处**不会静默**，但会**红在很晚的地方**：①② 不一致 → openwrt 那个 job 报
+//    `if-no-files-found: error`（还算早）；②③ 不一致 → 一路跑到 `publish-openwrt`，
+//    报的是「`ipk` 有 0 个」—— 而真正的错在另一个文件里。
+//    ⚠️ 判的是**前缀**（第一个 `$` 之前那截）：版本号 / 架构那一段由变量拼，不该比。
+{
+  const label = 'OpenWrt 包名前缀：打包脚本 ↔ openwrt.yml 的 path ↔ release.yml 的 find';
+  const problems = [];
+  /** 从 `IPK_NAME="…"` 取**字面前缀**（第一个 `$` 之前那截）。 */
+  const head = (text, re, what) => {
+    const m = re.exec(text ?? '');
+    if (!m) {
+      problems.push(`读不到 ${what}`);
+      return null;
+    }
+    const i = m[1].indexOf('$');
+    return i < 0 ? m[1] : m[1].slice(0, i);
+  };
+  const ipkPrefix = head(pkgIpk, /IPK_NAME="([^"]+)"/, 'package-openwrt.sh 的 IPK_NAME');
+  const apkPrefix = head(pkgApk, /APK_NAME="([^"]+)"/, 'package-openwrt-apk.sh 的 APK_NAME');
+  const owIpk = openwrt === null ? null : jobBlock(openwrt, 'ipk');
+  const owApk = openwrt === null ? null : jobBlock(openwrt, 'apk');
+  const pw = release === null ? null : jobBlock(release, 'publish-openwrt');
+  if (owIpk === null || owApk === null || pw === null) {
+    problems.push('读不到 openwrt.yml 的 ipk / apk job 或 release.yml 的 publish-openwrt');
+  } else {
+    // ⚠️ 只在**各自的 job 块**里找：luci 那个 job 也有一句 `openwrt/build/clip9-luci-…`。
+    const globIpk = /openwrt\/build\/([^*"]+)\*\.ipk/.exec(owIpk);
+    const globApk = /openwrt\/build\/([^*"]+)\*\.apk/.exec(owApk);
+    const findIpk = /-name '([^*']+)\*\.ipk'/.exec(pw);
+    const findApk = /-name '([^*']+)\*\.apk'/.exec(pw);
+    const pairs = [
+      ['ipk', ipkPrefix, globIpk && globIpk[1], findIpk && findIpk[1]],
+      ['apk', apkPrefix, globApk && globApk[1], findApk && findApk[1]],
+    ];
+    const seen = [];
+    for (const [what, a, b, c] of pairs) {
+      if (!a || !b || !c) {
+        problems.push(`${what}：三处里有读不到的（打包脚本 ${JSON.stringify(a)} / openwrt.yml ${JSON.stringify(b)} / release.yml ${JSON.stringify(c)}）`);
+        continue;
+      }
+      if (a !== b || a !== c) {
+        problems.push(
+          `${what} 的前缀三处不一致：打包脚本 ${JSON.stringify(a)}、openwrt.yml ${JSON.stringify(b)}、` +
+            `release.yml 的 find ${JSON.stringify(c)}`,
+        );
+      } else {
+        seen.push(`${what}=${a}`);
+      }
+    }
+    if (!problems.length) ok(`${label} —— ${seen.join(' · ')}`);
+  }
+  if (problems.length) fail(label, problems.join('\n    '));
+}
+
 // ── 判据 2：矩阵条目数 ↔ release.yml 里写死的期望个数 ──────────────────────
 //
 // ⚠️★ 这条判的是**两边一致**，判据里**不自己存一份数字**（存一份就是又一处会漂的地方）：
