@@ -32,8 +32,11 @@
 // 3. 反向（HTML 有、JS 没引用）**只提示**，而且分两种：
 //    · 「只被选择器用」（`#rooms-table { … }` 这类样式钩子）→ 正常，**不吵**；
 //    · 「既没被 JS 引用、也没有选择器用它」→ 才提一句（可能是死标记，与 §8.1 第 6 条那两段死 CSS 同类）。
-// 4. 每一个**能打字**的输入框（`type="text"` / 不带 `type` 的 `<input>` / `<textarea>`）
-//    必须带 `autocapitalize="off"` —— 不通过 = 退出码 1。理由见下。
+// 4. 每一个**能打字**的输入框（`type="text"` / `type="password"` / 不带 `type` 的
+//    `<input>` / `<textarea>`）必须带 `autocapitalize="off"` —— 不通过 = 退出码 1。理由见下。
+//    ⚠️★ `password` 也要：它掩着的时候无所谓，但那旁边有个「看一眼」的 👁
+//    （`cellSecret`）—— 按开之后它就是普通文本框，而凭据那一格**恰恰是**
+//    「一个字符都不能差」的地方。
 // 5. 新建房间的默认**不许打开上行**（`addRoomRow`）—— 不通过 = 退出码 1。理由见下。
 // 6. **提示不许自己拼房间名** —— 「一条提示归哪个房间」只有壳说了算
 //    （`store` 里每个房间各一格），界面只显示壳给的那一条。不通过 = 退出码 1。理由见下。
@@ -69,8 +72,10 @@
 // 表现是「明明填对了却连不上」—— 而**一个字母的大小写**是看不出来的，
 // 用户查了半天网络。⚠️ 它不会让任何东西报错，所以只有这里能拦。
 //
-// ⚠️★ 看**两个**入口：`index.html` 里写死的，与 `app.js` 现造的（`cellInput`）。
+// ⚠️★ 看**两个**入口：`index.html` 里写死的，与 `app.js` 现造的（`cellInput` / `cellSecret`）。
 // 只看一边的话，另一边新加的框会静默漏过去 —— 而漏过去**不报错**。
+// ⚠️ 两侧的「算不算要关自动大写」是**同一条规则**（`text` + `password`）：下面 HTML 那侧
+// 的 `typesText` 与 JS 那侧的正则字符类要一起改，漏一边就是那一半失效。
 // ⚠️ 扫描前要先**剥掉注释与 `<style>`**：CSS 注释里就写着 `<input>`（讲表格列宽那段），
 // 不剥的话会把它当成一个真的输入框来报。
 //
@@ -464,13 +469,23 @@ const autoCapMissing = [];
 for (const match of markup.matchAll(/<(input|textarea)\b[^>]*>/gi)) {
   const tag = match[0];
   // ⚠️ `<input>` **不带 `type` 就是 text**（HTML 的默认值）—— 别只看写了 type 的那些。
-  const typesText = !/\btype\s*=/i.test(tag) || /\btype\s*=\s*["']text["']/i.test(tag);
+  // ⚠️★ `type="password"` **也算**：它平时是掩着的，但凭据那一格旁边有一个「看一眼」
+  // （`cellSecret` 里的 👁）—— 按开之后它就是一个**普通文本框**，macOS 照样会
+  // 把首字母大写。2026-09-29 加那个 👁 时补的：只数 `text` 的话，这一格是这条自检
+  // **看不见**的一处，而它恰恰是「一个字符都不能差」的那一格。
+  const typesText = !/\btype\s*=/i.test(tag)
+    || /\btype\s*=\s*["']text["']/i.test(tag)
+    || /\btype\s*=\s*["']password["']/i.test(tag);
   if (typesText && !/autocapitalize\s*=\s*["']off["']/i.test(tag)) autoCapMissing.push(tag.trim());
 }
 
-// ⚠️ JS 那侧用**计数**：`cellInput` 这类工厂每造一个文本框就该关一次自动大写。
-// 不是逐个匹配（那是给文本做结构分析，假的精确），而是「造了几个、关了几个」对不上就说话。
-const jsTextFields = (js.match(/\.type\s*=\s*['"]text['"]/g) ?? []).length;
+// ⚠️ JS 那侧用**计数**：`cellInput` / `cellSecret` 这类工厂每造一个文本框就该关一次
+// 自动大写。不是逐个匹配（那是给文本做结构分析，假的精确），而是「造了几个、关了几个」
+// 对不上就说话。
+// ⚠️★ 字符类里那个 `(?:text|password)` 与上面 HTML 那侧的 `typesText` 是**同一条规则**：
+// 改了这里要一起改（漏一边 = 那一半静默失效）。收窄成只数 `text` 的话，`cellSecret`
+// 那一格就没人管了 —— 而它绿着，看起来一切正常。
+const jsTextFields = (js.match(/\.type\s*=\s*['"](?:text|password)['"]/g) ?? []).length;
 const jsNoAutoCap = (js.match(/\.setAttribute\(\s*['"]autocapitalize['"]\s*,\s*['"]off['"]\s*\)/g) ?? []).length;
 
 if (autoCapMissing.length || jsTextFields !== jsNoAutoCap) {
@@ -479,8 +494,8 @@ if (autoCapMissing.length || jsTextFields !== jsNoAutoCap) {
   for (const tag of autoCapMissing) console.error(`    index.html: ${tag}`);
   if (jsTextFields !== jsNoAutoCap) {
     console.error(
-      `    app.js: 造了 ${jsTextFields} 个文本输入框，只关了 ${jsNoAutoCap} 个的自动大写` +
-        '（找 `cellInput` 那一类工厂）。',
+      `    app.js: 造了 ${jsTextFields} 个文本输入框（含 password），只关了 ${jsNoAutoCap} 个的自动大写` +
+        '（找 `cellInput` / `cellSecret` 那一类工厂）。',
     );
   }
   console.error('  ⚠️ 加上 `autocapitalize="off"`；确实要自动大写的话，先想清楚那一格是不是「不许改字面」的。');
