@@ -1,9 +1,9 @@
 #!/usr/bin/env node
-// Android 那半边**两条跨文件契约**的静态门禁。
+// Android 那半边**跨文件 / 跨语言契约**的静态门禁。
 //
-// ⚠️ 为什么要有它：这两条契约都不在任何一个语言里 —— 它们散在 Cargo.toml / Kotlin /
-// Rust 符号名 / Gradle 配置 / proguard / jniLibs 目录 里，**没有任何编译器或测试看着它们**。
-// 对不上的症状全都不会指向出错的那一处：
+// ⚠️ 为什么要有它：这些契约都不在任何一个语言里 —— 它们散在 Cargo.toml / Kotlin /
+// Rust 符号名 / Gradle 配置 / proguard / jniLibs 目录 / config.rs / 两份 SPA 里，
+// **没有任何编译器或测试看着它们**。对不上的症状全都不会指向出错的那一处：
 //
 //   契约 A：ABI 清单（三处）
 //     ① tools/sync-android-jni-libs.mjs 的 TARGETS   —— abi → target，搬 `.so` 用
@@ -28,6 +28,11 @@
 //     · ①②③ 任一处改名 → `System.loadLibrary` 抛 `UnsatisfiedLinkError`
 //     · ④⑤ 对不上 → **能加载、能过编译，一调用就 `UnsatisfiedLinkError`**
 //     · release 下 R8 会改短类名与方法名，⑥ 少了哪条就悄悄失效（debug 不复现）
+//
+//   契约 C：配置页的「控件 ↔ JSON 字段名」表 ↔ `clip9-core` 的 `Config`
+//     见判据 13/14 抬头那段（**静默失败**，所以它比上面两条更需要门禁）。
+//   契约 D：资源引用是否存在（`R.id` / `R.string` / `R.color`）—— 编不过，只是提前问一句。
+//   契约 E：跨端桥名（`clip9Auth` / `roomAuth` / `__default__`）—— 对不上就「什么都没发生」。
 //
 // ⚠️★ 这几处都**没有测试运行器**（两个构建脚本、一个 Gradle 配置、一堆字符串），
 // 所以只能静态比对 —— 与 `tools/share-bridge-smoke.mjs` / `shell-smoke.mjs` 同一类。
@@ -604,6 +609,380 @@ function kotlinComments() {
     ok(`${label} —— ${res.count} 个文件`);
   } else {
     fail(label, res.problems.join('\n    '));
+  }
+}
+
+// ── 判据 13–16：配置页 ↔ Rust 配置模型 / 资源引用 / 跨端桥名 ─────────────────
+//
+// ⚠️★ 这一组存在的理由与上面两条一样：它们都**跨语言或跨文件**，没有任何编译器看着。
+//   配置页那四条尤其危险，因为它们的失败是**静默**的：
+//
+//   契约 C：配置页的「控件 ↔ JSON 字段名」表（`ConfigPage.kt`）
+//     · 字段名写错（`server.roomCleanup` 写成 `server.roomcleanup`）→ 那个框**永远读不到值**、
+//       保存时又**凭空多写一个键**进 `config.json`。Rust 那边把未知键忽略掉，
+//       于是症状是「改了、存了、重启了、没反应」。
+//     · 少写一项（`config.rs` 加了字段但表单没加）→ 「配不了」，而且没人会注意到。
+//   契约 D：资源引用（`R.id.*` / `R.string.*` / `R.color.*` / `@string/*`）
+//     ⚠️ 这一类的失败**不是静默的**（编不过），所以它更像「提前问一句」：
+//     本机跑不了 Gradle，而这几条是毫秒级的，能省掉一次 CI 往返。
+//     ⚠️ 但**反向**（定义了没人读）只记提示不失败 —— 那确实只是噪音，不是坏事。
+//   契约 E：跨端桥名（Android ↔ 两份 `web-vue3`）
+//     · `clip9Auth` / `roomAuth` / `__default__` 三处对不上 →
+//       「免打开界面认证」**什么都不发生**（不报错、不提示，只是又被问了一次密码）。
+
+/**
+ * 从 `config.rs` 里抽出「结构体名 → { JSON 键 → 字段类型 }」。
+ *
+ * ⚠️ JSON 键 = 有 `#[serde(rename = "…")]` 就用它，否则用字段名。
+ * ⚠️ 按**大括号配对**切每个结构体的正文，不用无界正则 —— 无界的 `[\s\S]*?\}` 会掉头
+ * 去吃别的结构体（这类自伤在本仓库发生过多次）。
+ * ⚠️ 元组结构体（`pub struct RoomAuthConfig(pub BTreeMap<…>)`）没有大括号，
+ * 这里天然扫不到 —— 它也不需要：`roomAuth` 那一块走的是动态行，不进字段表。
+ */
+function rustConfigKeys() {
+  const text = read('rust/crates/core/src/config.rs');
+  if (text === null) return null;
+  const out = new Map();
+  const header = /pub struct (\w+)\s*\{/g;
+  let m;
+  while ((m = header.exec(text)) !== null) {
+    const body = braceBody(text, header.lastIndex - 1);
+    if (body === null) return null;
+    const fields = new Map();
+    let pendingRename = null;
+    for (const rawLine of body.split('\n')) {
+      const line = rawLine.trim();
+      if (line.startsWith('//')) continue;
+      const rename = /^#\[serde\(rename = "([^"]+)"\)\]$/.exec(line);
+      if (rename) {
+        pendingRename = rename[1];
+        continue;
+      }
+      // ⚠️ 别的属性（`#[serde(default)]`、`#[derive(…)]`）**不重置** pendingRename：
+      //    rename 一定紧挨着它那一行字段，中间隔一个 derive 的情形不存在。
+      if (line.startsWith('#[')) continue;
+      const field = /^pub (\w+):\s*(.+?),?$/.exec(line);
+      if (field) {
+        fields.set(pendingRename ?? field[1], field[2].trim());
+        pendingRename = null;
+      }
+    }
+    out.set(m[1], fields);
+  }
+  return out.size ? out : null;
+}
+
+/** 取 `text[open]` 那个 `{` 配对到的那一个 `}` 之间的正文（不含两端）。 */
+function braceBody(text, open) {
+  if (text[open] !== '{') return null;
+  let depth = 0;
+  for (let i = open; i < text.length; i += 1) {
+    if (text[i] === '{') depth += 1;
+    else if (text[i] === '}') {
+      depth -= 1;
+      if (depth === 0) return text.slice(open + 1, i);
+    }
+  }
+  return null;
+}
+
+/**
+ * `ConfigPage.kt` 的字段表：`Field(R.id.控件, "块.字段", Kind.X)`。
+ *
+ * ⚠️ 这张表是**唯一**该出现字段名的地方（类文档里写着），所以扫它一个文件就够。
+ */
+function configPageFields() {
+  const text = read('android/app/src/main/java/com/clip9/app/ConfigPage.kt');
+  if (text === null) return null;
+  const rows = [
+    ...text.matchAll(/Field\(\s*R\.id\.(\w+)\s*,\s*"([^"]+)"\s*,\s*Kind\.(\w+)\s*\)/g),
+  ].map((m) => ({ id: m[1], path: m[2], kind: m[3] }));
+  return rows.length ? rows : null;
+}
+
+/** `ConfigPage.kt` 的开关表：`R.id.控件 to "块.字段"`。 */
+function configPageSwitches() {
+  const text = read('android/app/src/main/java/com/clip9/app/ConfigPage.kt');
+  if (text === null) return null;
+  // ⚠️ 框在 `switches` 那个 `listOf(` 里：`to` 这个写法在 Kotlin 里到处都是。
+  const block = /val switches: List<Pair<Int, String>> = listOf\(([\s\S]*?)\n    \)/.exec(text);
+  if (!block) return null;
+  const rows = [...block[1].matchAll(/R\.id\.(\w+)\s+to\s+"([^"]+)"/g)].map((m) => ({
+    id: m[1],
+    path: m[2],
+  }));
+  return rows.length ? rows : null;
+}
+
+/** 某个 `values/*.xml` 里定义的名字（`<string name="…">` / `<color name="…">`）。 */
+function definedNames(tag) {
+  const text = read('android/app/src/main/res/values/' + (tag === 'string' ? 'strings' : 'colors') + '.xml');
+  if (text === null) return null;
+  const rows = [...text.matchAll(new RegExp(`<${tag} name="([A-Za-z_]\\w*)"`, 'g'))].map((m) => m[1]);
+  return rows.length ? new Set(rows) : null;
+}
+
+/** 所有布局里 `@+id/…` 定义出来的 id。 */
+function layoutIds() {
+  const dir = join(ROOT, 'android/app/src/main/res/layout');
+  if (!existsSync(dir)) return null;
+  const files = readdirSync(dir).filter((f) => f.endsWith('.xml'));
+  if (!files.length) return null;
+  const defined = new Set();
+  const refs = [];
+  for (const name of files) {
+    const text = readFileSync(join(dir, name), 'utf8');
+    for (const m of text.matchAll(/@\+id\/([A-Za-z_]\w*)/g)) defined.add(m[1]);
+    for (const m of text.matchAll(/@id\/([A-Za-z_]\w*)/g)) refs.push({ name: m[1], where: name });
+    for (const m of text.matchAll(/@string\/([A-Za-z_]\w*)/g)) refs.push({ name: m[1], where: name, kind: 'string' });
+    for (const m of text.matchAll(/@color\/([A-Za-z_]\w*)/g)) refs.push({ name: m[1], where: name, kind: 'color' });
+  }
+  return { defined, refs };
+}
+
+/** 所有 `.kt` 里的 `R.id.*` / `R.string.*` / `R.color.*`。 */
+function kotlinResRefs() {
+  const dir = join(ROOT, 'android/app/src/main/java/com/clip9/app');
+  if (!existsSync(dir)) return null;
+  const files = readdirSync(dir).filter((f) => f.endsWith('.kt'));
+  if (!files.length) return null;
+  const ids = new Set();
+  const strings = new Set();
+  const colors = new Set();
+  // ⚠️★ 前面那个 `(?<![\w.])` 是必须的：`android.R.id.content` 里的 `R.id.content`
+  // 也匹配得上，而它是**框架的** id（不是我们的布局里的），于是判据会误报「没有 @+id」。
+  // 2026-09-29 真踩到：`findViewById<View>(android.R.id.content)`。
+  for (const name of files) {
+    const text = readFileSync(join(dir, name), 'utf8');
+    for (const m of text.matchAll(/(?<![\w.])R\.id\.([A-Za-z_]\w*)/g)) ids.add(m[1]);
+    for (const m of text.matchAll(/(?<![\w.])R\.string\.([A-Za-z_]\w*)/g)) strings.add(m[1]);
+    for (const m of text.matchAll(/(?<![\w.])R\.color\.([A-Za-z_]\w*)/g)) colors.add(m[1]);
+  }
+  return { ids, strings, colors, files: files.length };
+}
+
+/** 一份 SPA 的 `store/websocket.js` 里那三个跨端名字。 */
+function spaBridge(rel) {
+  const text = read(rel);
+  if (text === null) return null;
+  const bridge = /const NATIVE_AUTH_BRIDGE = '([^']+)'/.exec(text);
+  const roomKey = /const DEFAULT_ROOM_KEY = '([^']+)'/.exec(text);
+  // ⚠️ 判据用的是**它读的时候那一句**：`typeof bridge.roomAuth !== 'function'` 里那个方法名
+  //    才是页面真的会去调的。写成「读一个常量」的话，改常量不难，改调用处才容易漏。
+  const call = /typeof\s+bridge\.(\w+)\s*(?:!==|===)\s*'function'/.exec(text);
+  if (!bridge || !roomKey || !call) return null;
+  return { where: rel, bridge: bridge[1], roomKey: roomKey[1], method: call[1] };
+}
+
+/** `WebAppActivity.kt` 里那两处（对象名 + 方法名）。 */
+function kotlinBridgeNames() {
+  const text = read('android/app/src/main/java/com/clip9/app/WebAppActivity.kt');
+  if (text === null) return null;
+  const bridge = /const val AUTH_BRIDGE = "([^"]+)"/.exec(text);
+  const method = /fun (\w+)\(\): String\? = authCache/.exec(text);
+  const roomKey = /const val DEFAULT_ROOM_KEY = "([^"]+)"/.exec(text);
+  if (!bridge || !method || !roomKey) return null;
+  return { bridge: bridge[1], method: method[1], roomKey: roomKey[1] };
+}
+
+// ── 契约 C：配置页字段表 ↔ config.rs ───────────────────────────────────────
+
+const rustKeys = rustConfigKeys();
+const pageFields = configPageFields();
+const pageSwitches = configPageSwitches();
+
+{
+  const label = '契约 C：ConfigPage 的字段表 / 开关表都能在 config.rs 里对上 JSON 键';
+  const unreadC = [];
+  if (!rustKeys) unreadC.push('rust/crates/core/src/config.rs 的结构体字段');
+  if (!pageFields) unreadC.push('ConfigPage.kt 的 fields 表');
+  if (!pageSwitches) unreadC.push('ConfigPage.kt 的 switches 表');
+  if (unreadC.length) {
+    fail(label, `${unreadC.join('、')}：没解析出来（改了写法？）`);
+  } else {
+    const blocks = rustKeys.get('Config');
+    const problems = [];
+    const all = [...pageFields, ...pageSwitches];
+    for (const { id, path } of all) {
+      const parts = path.split('.');
+      if (parts.length !== 2) {
+        problems.push(`${id}：路径 "${path}" 应当是「块.字段」两段`);
+        continue;
+      }
+      const [block, key] = parts;
+      const struct = blocks ? blocks.get(block) : null;
+      if (!struct) {
+        problems.push(`${id}："${block}" 不是 Config 里的一个块（有：${blocks ? [...blocks.keys()].join(', ') : '?'}）`);
+        continue;
+      }
+      const fields = rustKeys.get(struct);
+      if (!fields || !fields.has(key)) {
+        problems.push(
+          `${id}：${struct} 里没有 JSON 键 "${key}"（有：${fields ? [...fields.keys()].sort().join(', ') : '?'}）`,
+        );
+      }
+    }
+    if (!problems.length) {
+      ok(`${label} —— ${all.length} 个路径`);
+    } else {
+      fail(
+        label,
+        problems.join('\n    ') +
+          '\n    ⚠️ 字段名对不上的症状是**静默**的：那个框读不到值，保存时又凭空多写一个键，\n' +
+          '       而 Rust 会把未知键忽略掉 —— 看起来就是「改了、存了、重启了、没反应」。',
+      );
+    }
+  }
+}
+
+{
+  // ⚠️★ 反向：`config.rs` 里**每一个**配置项都要能在表单上改到 —— 这正是
+  // 「加入服务端所有配置的可视化配置」这条需求的判据。
+  // ⚠️ `server.roomAuth` 是唯一的例外：它走的是**动态行**（`layout_room_row.xml`），
+  // 那一份的字段由 `ConfigPage.readRooms()` 拼，不在这两张表里。
+  const label = '契约 C（反向）：config.rs 里每一个配置项都有对应的控件';
+  if (!rustKeys) {
+    fail(label, '读不到 rust/crates/core/src/config.rs 的结构体字段');
+  } else {
+    const HANDLED_ELSEWHERE = new Set(['server.roomAuth']);
+    const blocks = rustKeys.get('Config');
+    const covered = new Set([...pageFields, ...pageSwitches].map((f) => f.path));
+    const missing = [];
+    if (!blocks) {
+      fail(label, '读不到 Config 的四个块');
+    } else {
+      for (const [block, struct] of blocks) {
+        const fields = rustKeys.get(struct);
+        if (!fields) {
+          missing.push(`${block} → ${struct}：读不到那个结构体的字段`);
+          continue;
+        }
+        for (const key of fields.keys()) {
+          const path = `${block}.${key}`;
+          if (HANDLED_ELSEWHERE.has(path) || covered.has(path)) continue;
+          missing.push(path);
+        }
+      }
+      if (!missing.length) {
+        ok(`${label} —— 覆盖 ${covered.size} 项 + roomAuth 的动态行`);
+      } else {
+        fail(
+          label,
+          `这些配置项在界面上没有控件（等于「配不了」）：\n    ${missing.join('\n    ')}\n` +
+            '    ⚠️ 要么加控件，要么把它加进 HANDLED_ELSEWHERE 并写清为什么。',
+        );
+      }
+    }
+  }
+}
+
+// ── 契约 D：资源引用都要存在 ───────────────────────────────────────────────
+
+{
+  const label = '契约 D：所有 R.id / @id / R.string / @string / R.color / @color 都有定义';
+  const layouts = layoutIds();
+  const kotlin = kotlinResRefs();
+  const strings = definedNames('string');
+  const colors = definedNames('color');
+  if (!layouts || !kotlin || !strings || !colors) {
+    fail(label, '读不到布局 / Kotlin / strings.xml / colors.xml 里的某一份');
+  } else {
+    const problems = [];
+    // 布局里引用别的布局定义的 id 也要在（同一份或跨文件都行）。
+    for (const ref of layouts.refs) {
+      if (ref.kind === 'string' && !strings.has(ref.name)) {
+        problems.push(`layout/${ref.where}: @string/${ref.name} 没有定义`);
+      } else if (ref.kind === 'color' && !colors.has(ref.name)) {
+        problems.push(`layout/${ref.where}: @color/${ref.name} 没有定义`);
+      } else if (!ref.kind && !layouts.defined.has(ref.name)) {
+        problems.push(`layout/${ref.where}: @id/${ref.name} 没有任何 @+id 定义它`);
+      }
+    }
+    for (const id of kotlin.ids) {
+      if (!layouts.defined.has(id)) problems.push(`Kotlin: R.id.${id} 在布局里没有 @+id`);
+    }
+    for (const name of kotlin.strings) {
+      if (!strings.has(name)) problems.push(`Kotlin: R.string.${name} 没有定义`);
+    }
+    for (const name of kotlin.colors) {
+      if (!colors.has(name)) problems.push(`Kotlin: R.color.${name} 没有定义`);
+    }
+    if (!problems.length) {
+      ok(`${label} —— ${kotlin.ids.size} 个 id · ${kotlin.strings.size} 条文案 · ${kotlin.colors.size} 个颜色`);
+    } else {
+      fail(
+        label,
+        problems.join('\n    ') +
+          '\n    ⚠️ 这一类的失败**编不过**，所以它更像「提前问一句」：本机跑不了 Gradle，\n' +
+          '       而这几条是毫秒级的。',
+      );
+    }
+
+    // ⚠️ 反向只记提示：定义了没人读确实只是噪音，不是坏事（`isShrinkResources` 会剥掉它们）。
+    //    但它值得说一声 —— 没人读的条目多了之后，这份表就没人敢动了。
+    const unusedStrings = [...strings].filter(
+      (n) => !kotlin.strings.has(n) && !layouts.refs.some((r) => r.kind === 'string' && r.name === n),
+    );
+    const unusedColors = [...colors].filter(
+      (n) => !kotlin.colors.has(n) && !layouts.refs.some((r) => r.kind === 'color' && r.name === n),
+    );
+    if (unusedStrings.length || unusedColors.length) {
+      notes.push(
+        `没人读的文案 ${unusedStrings.length} 条、颜色 ${unusedColors.length} 个（不失败）：` +
+          `${[...unusedStrings, ...unusedColors].join(', ') || '（无）'}`,
+      );
+    }
+  }
+}
+
+// ── 契约 E：跨端桥名（Android ↔ 两份 SPA）─────────────────────────────────
+
+{
+  const label = '契约 E：clip9Auth / roomAuth / __default__ 在 Android 与两份 SPA 里逐字一致';
+  const kotlin = kotlinBridgeNames();
+  // ⚠️★ `clip9` 是**独立仓库** —— 克隆它的人不会带上父仓库那份同源副本。
+  // 所以第二份**在则查、不在则只记一条提示**（让它失败的话，独立克隆的门禁会红）。
+  // ⚠️ 但也**不能**整条都靠「在不在」决定：本仓库这一份是硬的，永远要查到。
+  const COPIES = [
+    { rel: 'web-vue3/src/store/websocket.js', required: true },
+    { rel: '../web-vue3/src/store/websocket.js', required: false },
+  ];
+  if (kotlin === null) {
+    fail(label, '读不到 WebAppActivity.kt 里的 AUTH_BRIDGE / roomAuth / DEFAULT_ROOM_KEY');
+  } else {
+    const problems = [];
+    const seen = [];
+    for (const copy of COPIES) {
+      const parsed = spaBridge(copy.rel);
+      if (parsed === null) {
+        if (copy.required) problems.push(`读不到 ${copy.rel} 里的 NATIVE_AUTH_BRIDGE / roomAuth`);
+        else notes.push(`没查 ${copy.rel}（这份同源副本不在 —— 独立克隆 clip9 时是正常的）`);
+        continue;
+      }
+      seen.push(parsed);
+      if (parsed.bridge !== kotlin.bridge) {
+        problems.push(`${copy.rel}：对象名 "${parsed.bridge}" ≠ Android 的 "${kotlin.bridge}"`);
+      }
+      if (parsed.method !== kotlin.method) {
+        problems.push(`${copy.rel}：方法名 "${parsed.method}" ≠ Android 的 "${kotlin.method}"`);
+      }
+      if (parsed.roomKey !== kotlin.roomKey) {
+        problems.push(`${copy.rel}：默认房间键 "${parsed.roomKey}" ≠ Android 的 "${kotlin.roomKey}"`);
+      }
+    }
+    // ⚠️★ 两份 SPA 是**同源副本** —— 只改一份的话，Go 版那边就静默少了一半行为。
+    if (seen.length === 2 && (seen[0].bridge !== seen[1].bridge || seen[0].roomKey !== seen[1].roomKey)) {
+      problems.push('两份 web-vue3 的 store/websocket.js 不一致（它们必须同源）');
+    }
+    if (!problems.length) {
+      ok(`${label} —— ${kotlin.bridge}.${kotlin.method}() · ${kotlin.roomKey}（查了 ${seen.length} 份）`);
+    } else {
+      fail(
+        label,
+        problems.join('\n    ') +
+          '\n    ⚠️ 对不上的症状是**什么都没发生** —— 不报错、不提示，只是又被问了一次密码。',
+      );
+    }
   }
 }
 

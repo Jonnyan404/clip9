@@ -2,9 +2,11 @@
 
 这个目录**不是**一个完整的界面实现，它是「一个原生管理页 + 一个 WebView」的壳：
 
-- `MainActivity` —— **原生**管理页。启停本机服务端、显示局域网地址与二维码、切换「本机 / 远端」、
+- `MainActivity` —— **原生**管理页（**方案 B**：顶部状态条 + 「连接 / 配置 / 其它」三页）。
+  起停服务端、显示局域网地址与二维码、把 `config.json` 画成表单、管理可保存多台的远端服务器、
   电池优化白名单、WebView 版本提示。
 - `WebAppActivity` —— **一个全屏 WebView**，加载服务端下发的界面（看板 / 分享页）。
+  打开清单里某一台之前，它会**先用保存的密码换一张会话令牌**（「免打开界面认证」，见 §一之四）。
 - `ServerService` —— 前台服务。它让服务端在 App 退到后台之后继续活着，并且**是唯一起停服务端的地方**。
 
 ⚠️★ 看板**不**是原生写的：`web-vue3` 那一份产物由服务端下发，Android 只是把它显示出来。
@@ -29,11 +31,28 @@
   编得过、装得上、一调就炸）。用 `tools/sync-android-jni-libs.mjs` 搬，`--check` 能提前问一句。
 - `app/proguard-rules.pro` 里的 `-keep`：release 开了 R8，**类名一改短第 1 条就废了**。
 
-⚠️ 上面这五处现在**逐条有判据**：`node tools/android-contract-smoke.mjs`（12 条，已接进 CI 的
-frontend job）。它管两组 —— 「ABI 名单在三处是否一致」与「库名 / JNI 符号名在六处是否一致」，
-外加「`jniLibs/<abi>/` 真的有占位」「构建产物路径（`app/build`、`build`、`.gradle`、`.kotlin`、
-`local.properties`）**逐条**真的被 `android/.gitignore` 忽略了」「`.kt` 的块注释闭不闭合」。
-⚠️ 变异验证 24 组（详见脚本抬头）。
+⚠️ 上面这五处现在**逐条有判据**：`node tools/android-contract-smoke.mjs`（15 条，已接进 CI 的
+frontend job）。它管四组：
+
+- 「ABI 名单在三处是否一致」+「库名 / JNI 符号名在六处是否一致」；
+- 「`jniLibs/<abi>/` 真的有占位」「构建产物路径（`app/build`、`build`、`.gradle`、`.kotlin`、
+  `local.properties`）**逐条**真的被 `android/.gitignore` 忽略了」「`.kt` 的块注释闭不闭合」；
+- **契约 C**：`ConfigPage.kt` 那张「控件 ↔ JSON 字段名」表 ↔ `clip9-core` 的 `Config`
+  （**双向**：写错的路径要红，`config.rs` 里新加的字段没人管也要红）；
+- **契约 D / E**：资源引用是否存在（`R.id` / `R.string` / `R.color` / `@string` / `@color`）
+  与跨端桥名（§一之四）。
+
+⚠️ 变异验证分三份台本（都在 `/tmp`，仓库文件一行不碰；夹具是那边一个真的 git 仓库）：
+
+| 台本 | 组数 | 它改坏什么 |
+|---|---|---|
+| `clip9-android-smoke-mutate.cjs` | 5 | 契约 C 的路径写错 / `config.rs` 加字段 / 文案改名 / 桥名改名 + 一组对照 |
+| `clip9-cfg-mutate.cjs` | 6 | `validate_for_save` 的三道闸 + `config_file` 的读写 + 一组对照 |
+| `kt-mutate.mjs` | 5 | 块注释的三种坏法 + 两组反向（字符串 / 行注释里出现结束符**不该**红） |
+
+⚠️ 前两份都断言「**红的集合正好等于预期集合**」，不是「至少包含」——
+多红一条说明这一处改动破坏的不止一条判据，那本身就是一条要看的信号。
+⚠️ 本脚本还支持 `--root <别的仓库根>` —— 那是给变异验证用的。
 
 ⚠️ 它**抓不到**下面那段说的那件事（`JObject` vs `JClass`）—— 两种在 ABI 上都是指针、
 都不会崩，静态也看不出「该用哪个」。那条**仍然只能靠注释**。
@@ -63,6 +82,72 @@ frontend job）。它管两组 —— 「ABI 名单在三处是否一致」与�
 （页面拿不到路径），候选与取舍在 `docs/specs/android-client.md` §4.3。
 ⚠️ 投递是「等 `isReady()` 为真 → 把 payload 交给 `sendText` → 轮询取回 `{ok, reason}`」，
 **两条路都有超时**（各 20 秒），超时**会说出来**而不是静默吞掉。
+
+---
+
+## 一之三、第三份契约：配置页 ↔ `config.rs`
+
+「把 `config.json` 画成表单」跨了一条**没有编译器**的边界：Kotlin 那一侧是字符串，
+Rust 那一侧是 `serde` 的字段名。字段名写错的症状是**静默**的 ——
+那个框永远读不到值，保存时又凭空多写一个键，而 Rust 把未知键忽略掉：
+
+> 改了 → 存了 → 重启了 → **没反应**。
+
+所以字段名**只在一处**出现：`ConfigPage.kt` 的 `fields` / `switches` 两张表
+（`Field(R.id.configHost, "server.host", Kind.HOST)` 这种）。别在别的文件里再抄一遍。
+判据是 `android-contract-smoke.mjs` 的契约 C（**双向**）：
+
+- 表里每个路径都要能在 `config.rs` 里对上 JSON 键（`#[serde(rename = "…")]` 也算）；
+- `config.rs` 里**每一个**配置项都要有控件 —— 这正是「服务端所有配置可视化」这条需求的判据。
+  唯一的例外是 `server.roomAuth`：它走**动态行**（`layout_room_row.xml`），
+  字段由 `ConfigPage.readRooms()` 拼，所以不在那两张表里、而是列进 `HANDLED_ELSEWHERE`。
+
+⚠️★ **界面不校验配置语义**。三条闸全在写的那一侧（`Config::validate_for_save` 与反序列化），
+界面做的是「把它的**原话**原样显示出来」。界面自己只判两件**只有表单才看得见**的事：
+
+| 谁判 | 判什么 | 为什么只有它判得了 |
+|---|---|---|
+| 界面 | 配置**读不出来**（`Loaded.Broken`）→ 不许保存 | 那是「盘上这份坏了」，Rust 那边只回一句 `error` |
+| 界面 | 某个数字框里填的**不是整数** → 不许保存 | 到 Rust 那边它已经是 `0` 了，分不出笔误与真值 |
+| Rust | 端口 `0` / 正文上限超了 / 证书只给一个 / JSON 拼错 | 这些是**配置语义**，各端必须同一个答案 |
+
+⚠️★ `roomAuth` 那一项有**三态**，少一个就会错：画出来的键（`drawn`）、
+没画出来的（形态不合法 → **原样保留**）、画了但删了（→ 真删）。
+只有「删/不删」两种的话，要么房间删不掉，要么把读不懂的部分静默抹掉。
+
+⚠️★ **没动过的字段原样放回**（记着它的「原文」）：`server.auth` 可以是
+`false` / `"pw"` / `123`，`roomAuth` 一项可以是 `"pw"` / `123` / `{…}` ——
+统一成一种形态的话，用户什么都没改也会在配置文件里产生一大片 diff。
+
+---
+
+## 一之四、第四份契约：跨端桥名（`clip9Auth`）
+
+「免打开界面认证」分两步，跨着外壳与页面：
+
+1. **外壳**：打开清单里某一台之前，先用保存的密码换一张会话令牌（`AuthClient.requestToken`），
+   **换到了才 `loadUrl`**；
+2. **页面**：`web-vue3/src/store/websocket.js` 在读凭据时问一句
+   `window.clip9Auth.roomAuth()`，拿到就并进 `roomAuthCache`。
+
+| 什么 | 在哪 | 对不上的症状 |
+|---|---|---|
+| 对象名 `clip9Auth` | `WebAppActivity.AUTH_BRIDGE` ↔ `websocket.js` 的 `NATIVE_AUTH_BRIDGE` | **什么都没发生**（不报错、不提示，只是又被问了一次密码） |
+| 方法名 `roomAuth` | `WebAppActivity.AuthBridge.roomAuth()` ↔ `websocket.js` 里那句 `typeof bridge.roomAuth` | 同上 |
+| 默认房间键 `__default__` | `WebAppActivity.DEFAULT_ROOM_KEY` ↔ `websocket.js` 的 `getRoomStorageKey` | 令牌落在一个**谁都不会去读的键**上，界面照常问密码 |
+
+判据是契约 E（`android-contract-smoke.mjs`），对着**两份** `web-vue3` 一起比：
+`clip9` 是独立仓库，父仓库那份同源副本不在时**只记一条提示**（不失败），
+但在的时候要逐字相同。
+
+⚠️★ **顺序不能反**：SPA 在 pinia store 初始化时**只读一次**凭据。
+页面开始加载之后再去准备令牌，时序是不保证的 —— 「时好时坏」的那种坏。
+
+⚠️★ **换不到不拦着打开**：照常进网页界面、在里面手输密码（那正是这次改动之前的行为），
+只把原因说一句。为了一个「自动」那一步失败，就把整个界面挡在外面，是不划算的。
+
+⚠️★ **密码不进 Intent**：`dumpsys activity` 里 extras 是明文可读的，
+所以只传 `EXTRA_SERVER_ID`，密码由 `WebAppActivity` 自己从清单里取。
 
 ---
 
@@ -279,9 +364,18 @@ wrapper 的发行版已经缓存在 `~/.gradle/wrapper/dists/gradle-8.13-bin`。
 - ⚠️ **没有在真机或模拟器上跑过**。所以「明文 HTTP 能不能连、自签 HTTPS 那个确认框长什么样、
   前台服务会不会被 ROM 杀掉、锁屏之后还活着吗」这些都**只是照着设计稿写的**。
 - ✅ **Rust 侧那半边验过**：`crates/android` 在主机上 `clippy --all-targets -D warnings` 干净、
-  5 条测试全绿（含两条四态状态机的决策表）；`aarch64-linux-android` 也真的编得出来。
+  **6 条**测试全绿（含两条四态状态机的决策表，以及 `config_round_trips_through_the_bridge_and_bad_values_are_refused`
+  —— 配置经过 JNI 桥走一圈回来逐字段相同、坏值被拒）；`aarch64-linux-android` 也真的编得出来。
+- ✅ **配置文件的读写那半边验过**：`crates/server/src/config_file.rs` 有 3 条测试
+  （存进去再读回来逐字段相同 / 首次保存会建文件且能覆盖 / 坏文件是致命错误而保存仍能修好它），
+  `Config::validate_for_save` 的三道闸各有一条正反断言。⚠️ 但**界面把表单拼成 JSON 那一段**
+  仍然没验过（那要真跑一次 App）。
 - ✅ **分享桥的 SPA 那半边验过**：`npm run build` 过，且 `node tools/share-bridge-smoke.mjs`
   的 7 条判据全绿、8 组变异全部按预期变红（见设计稿 §0.4）。
+- ✅ **「免打开界面认证」的 SPA 那半边验过**：`websocket.js` 里问桥、把外壳给的那份并到
+  `roomAuthCache` 上面这十几行，由 `node tools/android-contract-smoke.mjs` 的契约 E 逐字对
+  （桥名 / 方法名 / 默认房间键三处）；⚠️ 但**外壳那一半**（`AuthClient.requestToken` 真发出去、
+  `addJavascriptInterface` 真的在 `loadUrl` 之前装上）仍然没验过 —— 同样要真跑一次。
 
 ---
 
@@ -308,22 +402,44 @@ wrapper 的发行版已经缓存在 `~/.gradle/wrapper/dists/gradle-8.13-bin`。
 
 ```
 android/
-├── app/build.gradle.kts          namespace/applicationId/minSdk/abiFilters（⚠️ 契约见 §一）
+├── app/build.gradle.kts          namespace/applicationId/minSdk/splits.abi（⚠️ 契约见 §一）
 ├── app/proguard-rules.pro        ⚠️ R8 会改短类名 → JNI 符号名失效，见 §一
 └── app/src/main/
     ├── AndroidManifest.xml       权限、两个 Activity、那个前台服务、分享过滤器（只 text/plain）
     ├── java/com/clip9/app/
-    │   ├── MainActivity.kt       原生管理页（每 700ms 轮询 ServerBridge.status）+ 分享进来的落点
-    │   ├── WebAppActivity.kt     全屏 WebView + 分享投递（明文 HTTP / 自签证书 / 返回键 / 外链也在这）
+    │   ├── MainActivity.kt       原生管理页（方案 B：状态条 + 连接/配置/其它三页）+ 分享进来的落点
+    │   ├── ConfigPage.kt         把 config.json 画成表单（⚠️ 字段名那张表是跨语言契约，见 §一之三）
+    │   ├── RemoteServerList.kt   连接页里的服务器清单（可存多台，每台带自己的房间与密码）
+    │   ├── WebAppActivity.kt     全屏 WebView + 分享投递 + 打开前的自动认证
     │   ├── ServerService.kt      前台服务：唯一起停服务端的地方
     │   ├── ServerBridge.kt       ⚠️ JNI 契约，见 §一
+    │   ├── ServerConfigStore.kt  服务端配置（config.json）的读写 —— 只搬运，不解释字段含义
+    │   ├── RemoteServers.kt      服务器清单的存取（整份 JSON 落一个偏好键）
+    │   ├── SecretBox.kt          清单里的密码怎么加密（Android Keystore，AES/GCM）
+    │   ├── AuthClient.kt         用密码换会话令牌（`POST /auth/token`）+ 测试连接
     │   ├── SharePayload.kt       分享的解析 + 排队（⚠️ 契约见 §一之二）
-    │   ├── AppPrefs.kt           端口 / 远端地址（⚠️ 这是**应用偏好**，不是服务端配置）
-    │   └── ServerAddress.kt      回环地址 与 局域网地址（⚠️ 两者不是一回事）
-    ├── res/layout/               activity_main.xml（管理页）/ activity_webapp.xml（WebView）
+    │   ├── AppPrefs.kt           ⚠️ 只剩两个**老版本的键**（port / remoteUrl），只给迁移读
+    │   ├── ServerAddress.kt      回环地址 与 局域网地址（⚠️ 两者不是一回事）
+    ├── res/layout/               activity_main.xml（管理页，四块拼起来）/ activity_webapp.xml
+    │                             + layout_room_row.xml（房间行）/ layout_remote_row.xml（服务器行）
+    │                             + dialog_remote_server.xml（编辑一台）
     ├── res/values*/              strings / colors / themes（+ 暗色）
     └── res/xml/network_security_config.xml   明文 HTTP 策略（见下面那条）
 ```
+
+⚠️★ **动态行的 id 一律用 `row.findViewById`**：`layout_room_row.xml` / `layout_remote_row.xml`
+会被 inflate **多次**（有几个房间/几台服务器就有几份），Activity 级的 `findViewById`
+**只会拿到第一份** —— 症状是「界面上改了第三行，存下去的是第一行」。
+
+⚠️★ **两份布局里的 id 不许与 `activity_main.xml` 重名**：重了之后 `row.findViewById(R.id.x)`
+仍然是对的，但任何一处写漏 `row.` 就会**静默**绑到 Activity 那一份上。
+
+⚠️★ **配置页不校验配置语义**（端口范围、正文上限、证书配一半…）：那些只在
+`clip9-core` 的 `Config::validate_for_save` 里实现一次，界面把它的**原话**显示出来。
+界面自己只判两件**只有表单才看得见**的事：① 配置读不出来（不许保存）；
+② 某个数字框里填的**不是整数**（Rust 收到的是已经变成 `0` 的数，它分不出那是笔误还是真值）。
+理由：抄一遍必然漂，而漂了的两种结果都很难看 ——「界面放行、服务端拒绝」，
+或者更坏的「界面拒绝、其实能配」。
 
 ⚠️ `res/xml/network_security_config.xml` 选的是「**全局放行明文**」：
 Android 9 起 `usesCleartextTraffic` 默认为 false，而**服务端默认就是 http**，
