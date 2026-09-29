@@ -1,24 +1,24 @@
 # clip9 前端产物的同步清单 —— 由 tools/sync-web-assets.mjs 生成，别手改。
-source 9d5deec53d584946a0a1e32db1f67214e7fdea38d94deebb3041b38f2814896a
+source d4340df464c0e840094e43c67b9ff3b95823c6cf61f7ab36889eb5942716832f
 apple-touch-icon.png
+assets/ShareView-B-vLfRrZ.js
+assets/ShareView-B-vLfRrZ.js.br
+assets/ShareView-B-vLfRrZ.js.gz
 assets/ShareView-DjLm0d4-.css
 assets/ShareView-DjLm0d4-.css.br
 assets/ShareView-DjLm0d4-.css.gz
-assets/ShareView-yenrNHbA.js
-assets/ShareView-yenrNHbA.js.br
-assets/ShareView-yenrNHbA.js.gz
 assets/highlight-langs-Dt8YXhtn.js
 assets/highlight-langs-Dt8YXhtn.js.br
 assets/highlight-langs-Dt8YXhtn.js.gz
 assets/i18n-B2E8evwD.js
 assets/i18n-B2E8evwD.js.br
 assets/i18n-B2E8evwD.js.gz
-assets/index-C-w8Oxdp.js
-assets/index-C-w8Oxdp.js.br
-assets/index-C-w8Oxdp.js.gz
 assets/index-CVV4eSNY.css
 assets/index-CVV4eSNY.css.br
 assets/index-CVV4eSNY.css.gz
+assets/index-ymABmBZl.js
+assets/index-ymABmBZl.js.br
+assets/index-ymABmBZl.js.gz
 assets/materialdesignicons-webfont-B7mPwVP_.ttf
 assets/materialdesignicons-webfont-CSr8KVlo.eot
 assets/materialdesignicons-webfont-Dp5v-WZN.woff2
