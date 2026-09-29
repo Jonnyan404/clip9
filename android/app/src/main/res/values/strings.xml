@@ -28,10 +28,33 @@
     <string name="section_local">本机地址</string>
     <string name="copy_address">复制地址</string>
     <string name="address_copied">地址已复制</string>
-    <string name="show_qr">显示二维码</string>
     <string name="hide_qr">收起二维码</string>
-    <string name="open_local_ui">打开本机界面</string>
     <string name="no_address_yet">（先启动服务端，这里才会出现地址）</string>
+
+    <!--
+      ══ 连接页那张控制台面板（方案 B，见 docs/design/android-ui/b-console.html）══
+
+      ⚠️ 面板上的三态文案**成对**出现：核心上一个大词（启动 / 停止 / 起不来）
+      与它下面一行小字（未运行 / 按下即停 / 组件缺失）。分两条而不是一条拼接 ——
+      拼接出来的那一句在别的语言里多半要拆开重写。
+      ⚠️ 复用现有的 `action_start` / `action_stop`（它们本来就写着「启动」「停止」），
+      不另起一份 —— 同一个动作在两处（迷你条那个按钮与圆环核心）文字不一样会让人以为
+      它们做的事不一样。
+    -->
+    <string name="console_panel_label">CLIP9 · 本机服务端</string>
+    <string name="console_say_idle">启动后，同一个 Wi-Fi 下的设备就能连进来。</string>
+    <string name="console_say_live">运行中 · 别的设备现在可以连到这台手机</string>
+    <string name="console_say_bad">本地组件没加载成功，服务端起不来 —— 这个包的架构和手机对不上。</string>
+    <string name="console_core_idle_sub">未运行</string>
+    <string name="console_core_live_sub">按下即停</string>
+    <string name="console_core_bad">起不来</string>
+    <string name="console_core_bad_sub">组件缺失</string>
+    <string name="console_metric_port">端口</string>
+    <string name="console_metric_address">局域网地址</string>
+    <string name="console_metric_none">—</string>
+    <string name="console_quick_open">打开界面</string>
+    <string name="console_quick_qr">二维码</string>
+    <string name="console_qr_note">手机连同一个 Wi-Fi 就能打开</string>
     <!-- ⚠️ 它和上面那句是**两种不同的事实**：上面是「还没起」，这一句是「起了，
          但这台设备没有局域网地址」（连的是蜂窝、或者没接网）。合成一句的话，
          第二种情况下用户会一直去点启动 —— 而它已经在跑了。 -->

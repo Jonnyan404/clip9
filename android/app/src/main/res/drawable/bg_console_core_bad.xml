@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 圆环中心那个圆 —— **起不来**（设计稿 `.ringwrap.bad .core`）：暗红底 + 红边。
+     ⚠️ 这一态下它**不可点** —— 点下去也起不来（本地组件没加载成功）。 -->
+<shape xmlns:android="http://schemas.android.com/apk/res/android"
+    android:shape="oval">
+    <gradient
+        android:angle="270"
+        android:endColor="@color/console_bad_bottom"
+        android:startColor="@color/console_bad_top"
+        android:type="linear" />
+    <stroke
+        android:width="1dp"
+        android:color="@color/console_err_edge" />
+</shape>

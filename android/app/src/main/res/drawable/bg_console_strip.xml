@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  迷你状态条（设计稿 `.strip`）：配置页与「其它」页用它 —— 状态不消失，但不占地方。
+
+  ⚠️★ 它是**连接页那张大面板的收起形态**（同一个 `ServerBridge.status()`，
+  只是换了画法）。两处的状态词、led 颜色必须由**同一段代码**算出来，
+  否则会出现「面板写着运行中、翻到配置页的迷你条写着未启动」这种自相矛盾。
+  见 `MainActivity.refresh()`。
+-->
+<shape xmlns:android="http://schemas.android.com/apk/res/android"
+    android:shape="rectangle">
+    <corners android:radius="16dp" />
+    <gradient
+        android:angle="270"
+        android:endColor="@color/console_surface"
+        android:startColor="@color/console_strip_top"
+        android:type="linear" />
+    <stroke
+        android:width="1dp"
+        android:color="@color/console_edge" />
+</shape>

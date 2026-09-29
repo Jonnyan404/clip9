@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 三个页签按钮的**文字色**：选中的亮，未选中的暗（设计稿 `.seg button`）。 -->
+<selector xmlns:android="http://schemas.android.com/apk/res/android">
+    <item
+        android:color="@color/console_text"
+        android:state_checked="true" />
+    <item android:color="@color/console_text_dim" />
+</selector>

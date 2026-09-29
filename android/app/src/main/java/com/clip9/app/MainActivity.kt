@@ -6,6 +6,7 @@ import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.content.res.ColorStateList
 import android.graphics.Bitmap
 import android.graphics.Color
 import android.net.Uri
@@ -80,6 +81,42 @@ class MainActivity : AppCompatActivity() {
     private val handler = Handler(Looper.getMainLooper())
 
     private lateinit var versionText: TextView
+
+    /**
+     * 顶部的两种形态。
+     *
+     * ⚠️★ 连接页用 [connectTop]（那张大面板 + 快捷三格），其余两页用 [miniStrip]
+     * （迷你状态条）—— 由 [showPage] 按当前页切换。这正是设计稿里
+     * 「面板收成迷你状态条」那句话，也是「状态不消失」的实现方式：
+     * 两处显示的状态词与 led 颜色都由 [refresh] 里**同一段**算出来。
+     */
+    private lateinit var connectTop: View
+    private lateinit var miniStrip: View
+
+    /** 连接页大面板那一套（见 [updateConsole]）。 */
+    private lateinit var ringView: RingView
+    private lateinit var ringCore: View
+    private lateinit var ringIcon: ImageView
+    private lateinit var ringAction: TextView
+    private lateinit var ringSub: TextView
+    private lateinit var consoleSay: TextView
+    private lateinit var metricPort: TextView
+    private lateinit var metricAddress: TextView
+
+    /** 快捷三格：复制地址 / 打开界面 / 二维码。 */
+    private lateinit var quickCopy: View
+    private lateinit var quickOpen: View
+    private lateinit var quickQr: View
+    private lateinit var quickQrLabel: TextView
+
+    /** 出错横幅（本地组件没加载 / 上次启动失败）。 */
+    private lateinit var connectBanner: View
+
+    /** 二维码卡片。⚠️ [qrCard] 由「有没有地址」决定，[qrImage] 由 [qrExpanded] 决定。 */
+    private lateinit var qrCard: View
+    private lateinit var qrAddress: TextView
+    private lateinit var qrImage: ImageView
+
     private lateinit var stripLed: TextView
     private lateinit var stripState: TextView
     private lateinit var stripAddress: TextView
@@ -87,10 +124,6 @@ class MainActivity : AppCompatActivity() {
     private lateinit var errorText: TextView
     private lateinit var libMissingText: TextView
     private lateinit var tabGroup: MaterialButtonToggleGroup
-    private lateinit var addressText: TextView
-    private lateinit var addressActions: View
-    private lateinit var qrImage: ImageView
-    private lateinit var qrButton: Button
     private lateinit var dirtyBar: View
     private lateinit var dirtySave: Button
     private lateinit var dirtyText: TextView
@@ -116,6 +149,16 @@ class MainActivity : AppCompatActivity() {
 
     /** 上一次真的画过的地址 —— 免得每 700ms 重算一次二维码。 */
     private var renderedAddress: String? = null
+
+    /**
+     * 二维码卡片里的**图**现在是展开的吗。
+     *
+     * ⚠️★ 为什么要单独记一个标志：卡片的可见性是「有没有地址」决定的
+     * （每 700ms 重算一次），而「展开 / 收起」是用户按出来的。两者合用一个
+     * `visibility` 的话，用户刚把二维码收起来，下一轮刷新就会把它又摊开 ——
+     * 看起来像按钮坏了。
+     */
+    private var qrExpanded = true
 
     /**
      * 「手上这次分享还没送进 WebView」。
@@ -177,20 +220,27 @@ class MainActivity : AppCompatActivity() {
         refreshRemoteList()
         refreshDirty()
 
+        // ⚠️★ 两处「启停」的落点：迷你条上那个按钮（配置 / 其它页）与面板中心那个圆
+        // （连接页）。它们走**同一个** [toggle] —— 两处各写一份的话，
+        // 「点了停止却没反应」将来只会出现在其中一处，而且很难想到是这边漏了。
         powerButton.setOnClickListener { toggle() }
-        findViewById<Button>(R.id.copyAddressButton).setOnClickListener { copyAddress() }
-        findViewById<Button>(R.id.openLocalButton).setOnClickListener { openLocal() }
-        qrButton.setOnClickListener { toggleQr() }
+        ringCore.setOnClickListener { toggle() }
+        quickCopy.setOnClickListener { copyAddress() }
+        quickOpen.setOnClickListener { openLocal() }
+        quickQr.setOnClickListener { toggleQr() }
         findViewById<Button>(R.id.dirtyDiscard).setOnClickListener { discardChanges() }
         findViewById<Button>(R.id.dirtySave).setOnClickListener { saveAndRestart() }
         findViewById<Button>(R.id.batteryButton).setOnClickListener { requestBatteryWhitelist() }
         findViewById<Button>(R.id.webViewCheckButton).setOnClickListener { checkWebView() }
+        // ⚠️ 初始态是「展开」，而布局里那一格写的是「二维码」—— 不在这里对一次，
+        // 首屏就会「图已经摊开、文字却说点它能看」。
+        applyQrExpanded()
 
         tabGroup.addOnButtonCheckedListener { _, checkedId, isChecked ->
             if (!isChecked) return@addOnButtonCheckedListener
+            // ⚠️ 切页这一刻重算那条横栏：它**只属于配置页**（见 [showPage]），
+            // 切走要收起来、切回要重新算，统一走 showPage 一条路。
             showPage(checkedId)
-            // ⚠️ 切过来时重算一次那条横栏：改动了多少处是**切页这一刻**才需要知道的事。
-            if (checkedId == R.id.tabConfig) refreshDirty()
         }
         // ⚠️ 用 `check()` 而不是在 XML 里写 `app:checkedButton`：走同一条代码路径，
         // 就少了「初始状态与切页逻辑不一致」这种只在某一次改动后才冒出来的问题。
@@ -252,6 +302,26 @@ class MainActivity : AppCompatActivity() {
 
     private fun bindViews() {
         versionText = findViewById(R.id.versionText)
+
+        connectTop = findViewById(R.id.connectTop)
+        miniStrip = findViewById(R.id.miniStrip)
+        ringView = findViewById(R.id.ringView)
+        ringCore = findViewById(R.id.ringCore)
+        ringIcon = findViewById(R.id.ringIcon)
+        ringAction = findViewById(R.id.ringAction)
+        ringSub = findViewById(R.id.ringSub)
+        consoleSay = findViewById(R.id.consoleSay)
+        metricPort = findViewById(R.id.metricPort)
+        metricAddress = findViewById(R.id.metricAddress)
+        quickCopy = findViewById(R.id.quickCopy)
+        quickOpen = findViewById(R.id.quickOpen)
+        quickQr = findViewById(R.id.quickQr)
+        quickQrLabel = findViewById(R.id.quickQrLabel)
+        connectBanner = findViewById(R.id.connectBanner)
+        qrCard = findViewById(R.id.qrCard)
+        qrAddress = findViewById(R.id.qrAddress)
+        qrImage = findViewById(R.id.qrImage)
+
         stripLed = findViewById(R.id.stripLed)
         stripState = findViewById(R.id.stripState)
         stripAddress = findViewById(R.id.stripAddress)
@@ -259,10 +329,6 @@ class MainActivity : AppCompatActivity() {
         errorText = findViewById(R.id.errorText)
         libMissingText = findViewById(R.id.libMissingText)
         tabGroup = findViewById(R.id.tabGroup)
-        addressText = findViewById(R.id.addressText)
-        addressActions = findViewById(R.id.addressActions)
-        qrImage = findViewById(R.id.qrImage)
-        qrButton = findViewById(R.id.qrButton)
         dirtyBar = findViewById(R.id.dirtyBar)
         dirtySave = findViewById(R.id.dirtySave)
         dirtyText = findViewById(R.id.dirtyText)
@@ -283,24 +349,120 @@ class MainActivity : AppCompatActivity() {
         for ((tab, page) in TABS) {
             findViewById<View>(page).visibility = if (tab == checkedId) View.VISIBLE else View.GONE
         }
+        // ⚠️★ 顶部跟着当前页换形态：连接页是那张大面板（外加三格快捷动作），
+        // 配置 / 其它页收成迷你状态条（设计稿 ⑥⑦⑧⑨ 顶部那条）。
+        // ⚠️ 两处显示的**是同一份状态**（都由 [refresh] 算），所以这里只切可见性 ——
+        // 千万别在这里顺手也设一遍状态词：那就会出现「面板说运行中、迷你条说未启动」
+        // 这种只在切页之后才看得出来的自相矛盾。
+        val onConnect = checkedId == R.id.tabConnect
+        connectTop.visibility = if (onConnect) View.VISIBLE else View.GONE
+        miniStrip.visibility = if (onConnect) View.GONE else View.VISIBLE
+        // ⚠️ 那条「未生效的更改」横栏**只属于配置页**（设计稿 b-console.html 的
+        // 六七两 张配置图里只有带改动的那张画了它）：切到连接页还挂着一条
+        // 「保存并重启」，用户会以为那边也有要保存的东西 —— 而且连接页根本没有
+        // 「保存」这个动作。切页时重新算一次（横栏自己在 refreshDirty 里看当前页）。
+        refreshDirty()
     }
 
     // ── 状态刷新 ───────────────────────────────────────────────────────
 
     private fun refresh() {
         val loadFailure = ServerBridge.loadFailure()
-        libMissingText.visibility = if (loadFailure != null) View.VISIBLE else View.GONE
-        if (loadFailure != null) libMissingText.text = getString(R.string.lib_missing, loadFailure)
-
         val status = ServerBridge.status()
         val running = status == ServerBridge.STATUS_RUNNING
+        val address = displayAddress(status)
 
-        // ── 顶部状态条 ──
+        // ── 两处状态显示（连接页那张大面板 / 其余两页的迷你条）都由这一段驱动 ──
         // ⚠️ 圆点的颜色只有两种：**真的在跑**是绿的，其余（没起 / 正在起 / 正在停）都是灰的。
         // 过渡态刻意不给自己一个颜色：它会在一秒内变成一个确定的状态，
         // 为它单独调一种颜色只会让「绿 = 现在能连」这条规则变模糊。
-        stripLed.setTextColor(getColor(if (running) R.color.led_running else R.color.led_idle))
+        stripLed.setTextColor(getColor(if (running) R.color.console_ok else R.color.console_led_off))
         stripState.text = getString(ServerBridge.statusLabelRes(status))
+        updatePowerButton(status, loadFailure)
+        updateConsole(status, loadFailure, running)
+
+        // ── 地址：面板的两个指标格 / 迷你条 / 二维码卡片 ──
+        stripAddress.text = address ?: noAddressText(status)
+        metricPort.text = port.toString()
+        metricAddress.text = address ?: getString(R.string.console_metric_none)
+
+        // ── 快捷三格：没有地址时**一起**禁用（设计稿 ① 里三格都是暗的）──
+        // ⚠️★ 三格一起：没有地址时「复制地址」复制不出东西、「打开界面」打开的是一个
+        // 还没人监听的端口、「二维码」扫出来也连不上 —— 让它们看起来能点才是问题。
+        // ⚠️ `alpha` 必须一起降：只设 `isEnabled=false` 的话按下去的反馈没了，
+        // 但图标与文字还是亮的，看起来仍然「可以点」。
+        val usable = address != null
+        for (cell in listOf(quickCopy, quickOpen, quickQr)) {
+            cell.isEnabled = usable
+            cell.alpha = if (usable) 1f else 0.4f
+        }
+
+        // ── 二维码卡片 ──
+        // ⚠️★ 两个可见性是**两件事**：卡片的看「有没有地址」（下面这段算），
+        // 图本身的看 `qrExpanded`（用户按出来的，见 [applyQrExpanded]）。
+        // 合成一个的话，用户刚把二维码收起来，下一轮刷新就会把它又摊开。
+        if (address == null) {
+            qrCard.visibility = View.GONE
+            renderedAddress = null
+            qrImage.setImageDrawable(null)
+        } else {
+            qrAddress.text = address
+            qrCard.visibility = View.VISIBLE
+            if (renderedAddress != address) {
+                // ⚠️ 只在地址**变了**的时候重画二维码 —— 这段循环每 700ms 跑一次，
+                // 每次重画会白白造一张 480×480 的 Bitmap（那是能看出来的卡顿）。
+                renderedAddress = address
+                renderQr(address)
+            }
+        }
+
+        // ── 出错横幅 ──
+        libMissingText.visibility = if (loadFailure != null) View.VISIBLE else View.GONE
+        if (loadFailure != null) libMissingText.text = getString(R.string.lib_missing, loadFailure)
+
+        val error = ServerBridge.lastError()
+        if (status == ServerBridge.STATUS_IDLE && !error.isNullOrBlank()) {
+            errorText.visibility = View.VISIBLE
+            errorText.text = error
+        } else {
+            errorText.visibility = View.GONE
+        }
+        // ⚠️★ 横幅整体跟着里面那两条走 —— 两条都藏着的时候它必须自己也消失，
+        // 否则屏幕上会留一个空的红色方块（里面什么都没有），看起来像界面坏了。
+        connectBanner.visibility =
+            if (libMissingText.visibility == View.VISIBLE || errorText.visibility == View.VISIBLE) {
+                View.VISIBLE
+            } else {
+                View.GONE
+            }
+
+        // ── 「保存并重启」的后半步 ──
+        // ⚠️★ 只有**真的回到「未启动」**了才起。在 `Stopping` 里起会撞上 Rust 的拒绝。
+        if (restartAfterStop && status == ServerBridge.STATUS_IDLE) {
+            restartAfterStop = false
+            // ⚠️ 现在换端口是安全的：服务端已经停了，而且地址条此刻也不显示地址。
+            port = ServerConfigStore.port(this)
+            sendAction(ServerService.ACTION_START)
+        }
+
+        // ⚠️★ 手上还压着一次分享（冷启动那一下刚把服务端起起来）→ 现在才开 WebView。
+        // 早一步开的话页面会先显示「连不上」再自己恢复，而投递那边还得多等一轮。
+        // ⚠️ `waitingToDeliver` 在这里归零 = 只开一次 —— 不然每 700ms 叠一个 Activity。
+        if (waitingToDeliver && running) {
+            waitingToDeliver = false
+            openLocal()
+        }
+    }
+
+    /**
+     * 迷你状态条上那个按钮（设计稿 `.strip .go`）。
+     *
+     * ⚠️ 它的底色是**两态**的：运行中是「停止」（暗红底 + 浅红字，稿子里的 `.go.stop`），
+     * 其余是「启动 / 请稍候」（灰蓝底 + 浅字）。这不是装饰 —— 停止是个会断开
+     * 所有连着的设备的动作，它长得和「启动」一样的话，误按的代价不对称。
+     */
+    private fun updatePowerButton(status: Int, loadFailure: String?) {
+        val stopping = status == ServerBridge.STATUS_RUNNING
         when (status) {
             ServerBridge.STATUS_RUNNING -> {
                 // ⚠️ 用短文案：状态条那一格要留给地址。
@@ -320,53 +482,67 @@ class MainActivity : AppCompatActivity() {
                 powerButton.isEnabled = false
             }
         }
+        powerButton.backgroundTintList = ColorStateList.valueOf(
+            getColor(if (stopping) R.color.console_go_stop else R.color.console_edge),
+        )
+        powerButton.setTextColor(
+            getColor(if (stopping) R.color.console_err_text else R.color.console_text_mid),
+        )
+    }
 
-        val address = displayAddress(status)
-        stripAddress.text = address ?: noAddressText(status)
+    /**
+     * 连接页那张大面板（设计稿 `.panel` + `.ringwrap`）。
+     *
+     * ⚠️★ 三种形态一一对应稿子里的 ①②③：
+     * - **未运行**：灰弧 + 中心「启动 / 未运行」，下面那句是「启动后…就能连进来」；
+     * - **运行中**：绿弧 + 中心「停止 / 按下即停」；
+     * - **起不来**（本地组件没加载成功）：红弧 + 中心「起不来 / 组件缺失」，且**不可点** ——
+     *   点下去也起不来（`.so` 根本没加载进进程），让它可以点只是把人骗一次。
+     *
+     * ⚠️ 过渡态（正在起 / 正在停）沿用灰弧、中心写「请稍候…」并**禁用** ——
+     * 它跟 [updatePowerButton] 是同一条规则：这段时间里点下去只会撞上 Rust 那边的拒绝。
+     * ⚠️ 中心那个圆只有 [toggle] 一条出口，这里管的是「这一态该不该让它点」。
+     */
+    private fun updateConsole(status: Int, loadFailure: String?, running: Boolean) {
+        val broken = loadFailure != null
+        val busy = !broken && !running && status != ServerBridge.STATUS_IDLE
 
-        val error = ServerBridge.lastError()
-        if (status == ServerBridge.STATUS_IDLE && !error.isNullOrBlank()) {
-            errorText.visibility = View.VISIBLE
-            errorText.text = error
-        } else {
-            errorText.visibility = View.GONE
-        }
-
-        // ── 连接页上那个大号的地址 + 二维码 ──
-        if (address == null) {
-            addressText.text = noAddressText(status)
-            addressActions.visibility = View.GONE
-            qrImage.visibility = View.GONE
-            qrButton.visibility = View.GONE
-            renderedAddress = null
-            qrImage.setImageDrawable(null)
-        } else {
-            addressText.text = address
-            addressActions.visibility = View.VISIBLE
-            qrButton.visibility = View.VISIBLE
-            if (renderedAddress != address) {
-                // ⚠️ 只在地址**变了**的时候重画二维码 —— 这段循环每 700ms 跑一次，
-                // 每次重画会白白造一张 480×480 的 Bitmap（那是能看出来的卡顿）。
-                renderedAddress = address
-                renderQr(address)
+        when {
+            broken -> {
+                ringView.setRing(RingView.ARC_BAD, getColor(R.color.console_err))
+                ringCore.setBackgroundResource(R.drawable.bg_console_core_bad)
+                ringIcon.setImageResource(R.drawable.ic_console_alert)
+                ringIcon.imageTintList = ColorStateList.valueOf(getColor(R.color.console_bad_ic))
+                ringAction.text = getString(R.string.console_core_bad)
+                ringSub.text = getString(R.string.console_core_bad_sub)
+                consoleSay.text = getString(R.string.console_say_bad)
+                ringCore.isEnabled = false
             }
-        }
-
-        // ── 「保存并重启」的后半步 ──
-        // ⚠️★ 只有**真的回到「未启动」**了才起。在 `Stopping` 里起会撞上 Rust 的拒绝。
-        if (restartAfterStop && status == ServerBridge.STATUS_IDLE) {
-            restartAfterStop = false
-            // ⚠️ 现在换端口是安全的：服务端已经停了，而且地址条此刻也不显示地址。
-            port = ServerConfigStore.port(this)
-            sendAction(ServerService.ACTION_START)
-        }
-
-        // ⚠️★ 手上还压着一次分享（冷启动那一下刚把服务端起起来）→ 现在才开 WebView。
-        // 早一步开的话页面会先显示「连不上」再自己恢复，而投递那边还得多等一轮。
-        // ⚠️ `waitingToDeliver` 在这里归零 = 只开一次 —— 不然每 700ms 叠一个 Activity。
-        if (waitingToDeliver && running) {
-            waitingToDeliver = false
-            openLocal()
+            running -> {
+                ringView.setRing(RingView.ARC_LIVE, getColor(R.color.console_ok))
+                ringCore.setBackgroundResource(R.drawable.bg_console_core_live)
+                ringIcon.setImageResource(R.drawable.ic_console_power)
+                ringIcon.imageTintList = ColorStateList.valueOf(getColor(R.color.console_ok))
+                ringAction.text = getString(R.string.action_stop)
+                ringSub.text = getString(R.string.console_core_live_sub)
+                consoleSay.text = getString(R.string.console_say_live)
+                ringCore.isEnabled = true
+            }
+            else -> {
+                ringView.setRing(RingView.ARC_IDLE, getColor(R.color.console_arc_idle))
+                ringCore.setBackgroundResource(R.drawable.bg_console_core)
+                ringIcon.setImageResource(R.drawable.ic_console_power)
+                ringIcon.imageTintList = ColorStateList.valueOf(getColor(R.color.console_core_ic))
+                if (busy) {
+                    ringAction.text = getString(R.string.action_busy)
+                    ringSub.text = getString(ServerBridge.statusLabelRes(status))
+                } else {
+                    ringAction.text = getString(R.string.action_start)
+                    ringSub.text = getString(R.string.console_core_idle_sub)
+                }
+                consoleSay.text = getString(R.string.console_say_idle)
+                ringCore.isEnabled = !busy
+            }
         }
     }
 
@@ -398,6 +574,10 @@ class MainActivity : AppCompatActivity() {
     /**
      * 重算底部那条横栏。
      *
+     * ⚠️★ 它是**配置页**的东西（设计稿里它只出现在配置页那几张图里），所以只有
+     * 配置页可见时才允许它出现：切走就收起来、切回来再算。之前它挂在整个界面底部
+     * （布局上在三个页面之外），配置页有改动时切到连接页也能看见 —— 2026-09-29 改掉。
+     *
      * ⚠️★ 它由**整份比对**驱动（`ConfigPage.changed()`），不是二十来个控件各挂一个监听：
      * 漏挂一个的症状是「改了它、底部却不提示」，而用户会以为已经存过了。
      *
@@ -410,7 +590,9 @@ class MainActivity : AppCompatActivity() {
     private fun refreshDirty() {
         val reason = configPage.blockReason()
         val changed = reason == null && configPage.changed()
-        dirtyBar.visibility = if (reason != null || changed) View.VISIBLE else View.GONE
+        val onConfigPage = findViewById<View>(R.id.pageConfig).visibility == View.VISIBLE
+        dirtyBar.visibility =
+            if (onConfigPage && (reason != null || changed)) View.VISIBLE else View.GONE
         dirtySave.isEnabled = reason == null
         dirtyText.text = when {
             reason != null -> reason
@@ -592,14 +774,27 @@ class MainActivity : AppCompatActivity() {
         startActivity(intent)
     }
 
+    /**
+     * 快捷第三格：展开 / 收起二维码。
+     *
+     * ⚠️★ 它只翻 [qrExpanded] 这个标志，画面由 [applyQrExpanded] 统一对 ——
+     * 直接在这里判 `qrImage.visibility` 的话，卡片「因为地址没了而消失」
+     * （那是 [refresh] 管的）会被误当成「用户收起来了」，文字就跟着乱了。
+     */
     private fun toggleQr() {
-        if (qrImage.visibility == View.VISIBLE) {
-            qrImage.visibility = View.GONE
-            qrButton.text = getString(R.string.show_qr)
-        } else {
-            qrImage.visibility = View.VISIBLE
-            qrButton.text = getString(R.string.hide_qr)
-        }
+        qrExpanded = !qrExpanded
+        applyQrExpanded()
+    }
+
+    /**
+     * 把 [qrExpanded] 画到界面上：二维码图的可见性 + 那一格的文字。
+     *
+     * ⚠️★ 两件事必须一起做：只切图不切文字的话，「收起二维码」会一直挂在格子上，
+     * 而图早就没了 —— 用户会以为点坏了，然后再点一次（于是图又出来、文字又对不上）。
+     */
+    private fun applyQrExpanded() {
+        qrImage.visibility = if (qrExpanded) View.VISIBLE else View.GONE
+        quickQrLabel.setText(if (qrExpanded) R.string.hide_qr else R.string.console_quick_qr)
     }
 
     private fun renderQr(content: String) {
