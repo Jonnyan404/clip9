@@ -1,0 +1,178 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  一个房间的编辑块（配置页里 `roomAuth` 的一项）。
+
+  ⚠️★ 它是**被代码 inflate 多次**的（房间有几个就几份），所以：
+  - 这里面的 id 会在每一份里重复出现 —— 这没问题，因为绑定用的是
+    `row.findViewById(...)`（在那**一份**视图树里找），不是 Activity 级的 `findViewById`。
+  - 千万不要在 Activity 里直接 `findViewById(R.id.roomName)`：那只会拿到第一份。
+  - 所以这个布局里**不许**出现与 `activity_main.xml` 重名的 id，也不要在这里用 `@+id`
+    去引用 Activity 里的东西。
+
+  ⚠️ 顶行是「房间名 + 标签 + 展开」（收起来的时候一屏能看下好几个房间），
+  展开之后才是四个字段 —— 房间多的时候全展开会让人找不到北。
+-->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:layout_marginTop="8dp"
+    android:background="?attr/colorSurfaceVariant"
+    android:orientation="vertical"
+    android:padding="12dp">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:gravity="center_vertical"
+        android:orientation="horizontal">
+
+        <TextView
+            android:id="@+id/roomHeadName"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:textAppearance="?attr/textAppearanceTitleSmall" />
+
+        <TextView
+            android:id="@+id/roomHeadFlag"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginEnd="8dp"
+            android:textAppearance="?attr/textAppearanceBodySmall" />
+
+        <Button
+            android:id="@+id/roomExpand"
+            style="?attr/materialButtonOutlinedStyle"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:minWidth="0dp"
+            android:minHeight="36dp"
+            android:text="@string/config_room_expand" />
+    </LinearLayout>
+
+    <LinearLayout
+        android:id="@+id/roomBody"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:visibility="gone">
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:text="@string/config_room_name_label"
+            android:textAppearance="?attr/textAppearanceTitleSmall" />
+
+        <EditText
+            android:id="@+id/roomName"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:autofillHints=""
+            android:hint="@string/config_room_name_hint"
+            android:imeOptions="actionDone"
+            android:inputType="text" />
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:text="@string/config_room_password_label"
+            android:textAppearance="?attr/textAppearanceTitleSmall" />
+
+        <EditText
+            android:id="@+id/roomPassword"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:autofillHints=""
+            android:hint="@string/config_room_password_label"
+            android:imeOptions="actionDone"
+            android:inputType="textVisiblePassword" />
+
+        <Switch
+            android:id="@+id/roomOpen"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:text="@string/config_room_open_label" />
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="@string/config_room_open_hint"
+            android:textAppearance="?attr/textAppearanceBodySmall" />
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:text="@string/config_room_expire_label"
+            android:textAppearance="?attr/textAppearanceTitleSmall" />
+
+        <EditText
+            android:id="@+id/roomExpire"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:autofillHints=""
+            android:hint="@string/config_room_expire_label"
+            android:imeOptions="actionDone"
+            android:inputType="numberSigned" />
+
+        <TextView
+            android:id="@+id/roomExpireHint"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:textAppearance="?attr/textAppearanceBodySmall" />
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:text="@string/config_room_automation_label"
+            android:textAppearance="?attr/textAppearanceTitleSmall" />
+
+        <RadioGroup
+            android:id="@+id/roomAutomation"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal">
+
+            <RadioButton
+                android:id="@+id/roomAutoFollow"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="@string/automation_follow" />
+
+            <RadioButton
+                android:id="@+id/roomAutoNone"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="@string/automation_none" />
+
+            <RadioButton
+                android:id="@+id/roomAutoSingle"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="@string/automation_single" />
+
+            <RadioButton
+                android:id="@+id/roomAutoRoom"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="@string/automation_room" />
+        </RadioGroup>
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="@string/automation_hint"
+            android:textAppearance="?attr/textAppearanceBodySmall" />
+
+        <Button
+            android:id="@+id/roomRemove"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:text="@string/config_room_remove" />
+    </LinearLayout>
+</LinearLayout>

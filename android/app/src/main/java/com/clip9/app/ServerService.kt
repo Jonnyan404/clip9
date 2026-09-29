@@ -31,10 +31,6 @@ class ServerService : Service() {
     companion object {
         const val ACTION_START = "com.clip9.app.action.START"
         const val ACTION_STOP = "com.clip9.app.action.STOP"
-        const val EXTRA_PORT = "port"
-
-        /** ⚠️ 服务端监听 `0.0.0.0` = 局域网里别的设备也能连（这是本 App 的主要用途）。 */
-        private const val HOST = "0.0.0.0"
 
         private const val CHANNEL_ID = "clip9-server"
         private const val NOTIFICATION_ID = 1
@@ -64,12 +60,13 @@ class ServerService : Service() {
 
         // ⚠️★ 系统重启服务时 `intent` 是 null（START_STICKY 的正常行为）—— 那也要把服务端起起来，
         // 否则会停在「前台服务活着、服务端没了」这个最难查的状态上。
-        // ⚠️ 端口从偏好里读，而不是从 intent（重启时没有 intent）。端口是**应用偏好**，
-        // 不是服务端配置 —— 它必须在服务端起来之前就知道，见 [AppPrefs]。
-        val port = intent?.getIntExtra(EXTRA_PORT, AppPrefs.port(this)) ?: AppPrefs.port(this)
-
+        //
+        // ⚠️★ 监听地址与端口**只从配置文件来**（2026-09-29 改）：这里既没有
+        // `EXTRA_PORT` 也不再有 `HOST` 常量 —— 见 `ServerBridge.start` 的注释。
+        // 这么改之后，「界面上填的端口」与「真的监听的端口」**不可能**不一致，
+        // 因为只有一个地方存着它（`config.json` 的 `server.port`）。
         onBackground {
-            val error = ServerBridge.start(configPath(), filesDir.absolutePath, HOST, port)
+            val error = ServerBridge.start(configPath(), filesDir.absolutePath)
             main.post {
                 if (error != null) {
                     // ⚠️★ 起失败就**别留着**「正在启动」那条常驻通知 —— 那也是谎话。
@@ -78,6 +75,7 @@ class ServerService : Service() {
                     stopSelf()
                 } else {
                     // 通知文案要说清「为什么要有这条通知」（ARCHITECTURE §4.1 第 2 条）。
+                    val port = ServerConfigStore.port(this)
                     val url = ServerAddress.lanUrl(port) ?: ServerAddress.loopbackUrl(port)
                     updateNotification(getString(R.string.notification_running, url))
                 }
@@ -85,6 +83,18 @@ class ServerService : Service() {
         }
         return START_STICKY
     }
+
+    /**
+     * 配置文件的位置。
+     *
+     * ⚠️★ 与 [ServerConfigStore.path] 是**同一行代码**（两处都写着
+     * `File(filesDir, "config.json")`）—— 「App 私有目录」只有 `Context` 知道，
+     * 没有一个常量能表达它。改这里要一起改那边，不一致的症状是
+     * **「配置页改的东西服务端不认」**。
+     * ⚠️ 另外它与传给 [ServerBridge.start] 的 `dataDir` 必须是**同一个目录** ——
+     * 路径解析（`dbPath` / `storageDir` 那些相对路径）都以它为基准。
+     */
+    private fun configPath(): String = File(filesDir, "config.json").absolutePath
 
     override fun onDestroy() {
         // ⚠️★ 兜底：服务被系统杀掉时也要把服务端停掉。不停的话 tokio/axum 的线程还挂在这个
@@ -94,9 +104,6 @@ class ServerService : Service() {
         onBackground { ServerBridge.stop() }
         super.onDestroy()
     }
-
-    /** 配置文件的位置。⚠️ 必须与传给 [ServerBridge.start] 的 `dataDir` 对得上（同一个目录）。 */
-    private fun configPath(): String = File(filesDir, "config.json").absolutePath
 
     private fun onBackground(block: () -> Unit) {
         Thread(block, "clip9-service").start()
