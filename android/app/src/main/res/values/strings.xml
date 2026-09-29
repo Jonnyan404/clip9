@@ -17,11 +17,11 @@
     <string name="status_running">运行中</string>
     <string name="status_stopping">正在停止…</string>
     <string name="status_starting">正在启动…</string>
-    <string name="status_label">服务端：%1$s</string>
 
-    <!-- 启停 -->
-    <string name="action_start">启动服务端</string>
-    <string name="action_stop">停止服务端</string>
+    <!-- 启停。⚠️ 这两个是**顶部状态条**上那一格按钮的文案，所以刻意短：
+         那一行还要放下「● 运行中」和地址。服务端是什么，由旁边的状态词说清了。 -->
+    <string name="action_start">启动</string>
+    <string name="action_stop">停止</string>
     <string name="action_busy">请稍候…</string>
 
     <!-- 本机地址 -->
@@ -32,18 +32,13 @@
     <string name="hide_qr">收起二维码</string>
     <string name="open_local_ui">打开本机界面</string>
     <string name="no_address_yet">（先启动服务端，这里才会出现地址）</string>
+    <!-- ⚠️ 它和上面那句是**两种不同的事实**：上面是「还没起」，这一句是「起了，
+         但这台设备没有局域网地址」（连的是蜂窝、或者没接网）。合成一句的话，
+         第二种情况下用户会一直去点启动 —— 而它已经在跑了。 -->
+    <string name="strip_no_lan">（运行中，但这台设备没有局域网地址）</string>
 
-    <!-- 端口 -->
-    <string name="port_label">端口</string>
-    <string name="port_invalid">端口要在 1 到 65535 之间</string>
-    <string name="port_saved">端口已保存</string>
-    <string name="save">保存</string>
-    <string name="port_note">端口被占用时服务端会直接报错，不会自己换一个 —— 静默换端口会让别的设备上填的地址永远连不上。</string>
-
-    <!-- 远端 -->
-    <string name="section_remote">远端服务端</string>
-    <string name="remote_hint">http://192.168.1.10:9501/</string>
-    <string name="open_remote_ui">打开远端界面</string>
+    <!-- ⚠️ 它现在只有一处读者：[WebAppActivity] 在**没拿到地址**的时候显示它。
+         远端地址本身由连接页的服务器清单管（可以存多台）。 -->
     <string name="remote_empty">先填一个远端地址</string>
 
     <!-- 其它 -->
@@ -56,7 +51,6 @@
     <string name="webview_version">WebView UA：%1$s</string>
     <string name="webview_old">这台设备的 WebView 偏旧（Chrome %1$d），界面可能显示不全或一片白。不是这个 App 的问题，是系统组件没更新。</string>
     <string name="data_dir">数据目录：%1$s</string>
-    <string name="data_dir_note">（应用私有目录，卸载即清空。配置文件 config.json 也在里面。）</string>
     <string name="notification_denied">没给通知权限：服务端照常运行，但通知栏里看不到它。</string>
     <string name="version_format">v%1$s · 本地组件 %2$s</string>
 
@@ -98,4 +92,162 @@
     <string name="ssl_message">这个地址用了自签证书（或者证书链有问题）。\n\n%1$s\n\n指纹（SHA-256）：\n%2$s\n\n只在你确定那台服务端是自己的时候继续 —— 继续就等于放弃这次校验。</string>
     <string name="ssl_continue">仍然继续</string>
     <string name="ssl_cancel">取消</string>
+
+    <!-- ═══ 管理页（方案 B：顶部状态条 + 连接 / 配置 / 其它三页）═══════════════
+         ⚠️★ 这里的每一句都是**给用户看的**，所以只写「结果 + 下一步」，
+         不写「实现」。解释性的长句子宁可放在 `docs/` 里 —— 手机上没人读第三行。 -->
+
+    <!-- 顶部状态条（不随页面切换滚走） -->
+    <string name="tab_connect">连接</string>
+    <string name="tab_config">配置</string>
+    <string name="tab_other">其它</string>
+    <!-- ⚠️ 状态条左边那个「●」。用一个字符而不是一张 drawable：省一个资源文件，
+         而且它天然跟着字号走（字体放大时圆点一起放大）。颜色由代码按状态设
+         （`R.color.led_running` / `R.color.led_idle`）。 -->
+    <string name="strip_led">●</string>
+
+    <!-- 房间行的展开 / 收起 -->
+    <string name="config_room_expand">展开</string>
+    <string name="config_room_collapse">收起</string>
+    <string name="automation_follow">跟随</string>
+    <string name="automation_none">关闭</string>
+    <string name="automation_single">仅本人</string>
+    <string name="automation_room">全房间</string>
+    <string name="automation_hint">「跟随」= 看这个房间的鉴权档位（公开房间默认是关闭）。</string>
+
+    <!-- ── 配置页 · 访问与安全 ─────────────────────────────────────────────── -->
+    <string name="config_section_access">访问与安全</string>
+    <string name="config_global_password">全局密码</string>
+    <string name="config_global_password_hint">留空 = 任何知道地址的设备都能连进来。数字也会被当成密码，但只能填纯数字。</string>
+    <string name="config_flag_password_set">需要密码</string>
+    <string name="config_flag_open">不需要密码</string>
+    <string name="config_rooms">房间</string>
+    <string name="config_rooms_count">%1$d 个房间</string>
+    <string name="config_rooms_none">还没单独配过房间。没配过的房间只用上面的全局密码。</string>
+    <string name="config_room_add">＋ 添加房间</string>
+    <string name="config_room_locked">要密码</string>
+    <string name="config_room_opened">开放</string>
+    <string name="config_room_name_label">房间名</string>
+    <string name="config_room_name_hint">留空 = 默认房间</string>
+    <string name="config_room_password_label">这个房间的密码</string>
+    <string name="config_room_open_label">开放房间</string>
+    <string name="config_room_open_hint">打开后不要密码，即使全局密码设了也一样。「开放」是显式开关，不是「密码留空」—— 密码留空的意思是「只接受全局密码」。</string>
+    <string name="config_room_expire_label">文件过期覆盖（秒）</string>
+    <string name="config_room_expire_hint">留空 = 跟随全局的 %1$d 秒。填 0 = 这个房间的文件永不过期。</string>
+    <string name="config_room_automation_label">定时任务</string>
+    <string name="config_room_remove">删掉这个房间</string>
+    <string name="config_room_remove_confirm">删掉房间「%1$s」？保存之后它在服务端上就没有单独的密码与档位了。</string>
+    <string name="config_room_list">开放房间列表</string>
+    <string name="config_room_list_hint">打开 /rooms 接口，别的客户端能列出房间。下面那条只在这个开着的时候才会跑。</string>
+    <string name="config_room_cleanup">清理间隔（秒）</string>
+    <string name="config_room_cleanup_hint">多久清一次空房间（没连接、没消息、空闲超过这个秒数）。填 0 或负数 = 不清理。</string>
+
+    <!-- ── 配置页 · 内容限制 ──────────────────────────────────────────────── -->
+    <string name="config_section_content">内容限制</string>
+    <string name="config_history">历史条数</string>
+    <string name="config_history_hint">进房间先看到几条历史。握手、翻页缺省、上限三处共用这一根旋钮。</string>
+    <string name="config_text_limit">单条正文上限（字节）</string>
+    <string name="config_text_limit_hint">判的是字节不是字符 —— 4096 字节约 1365 个汉字。填 0 表示不限。</string>
+    <string name="config_file_limit">单文件上限（字节）</string>
+    <string name="config_file_limit_hint">一次上传最多多大。⚠️ 上传是分片的，单次请求另有 16 MiB 的硬上限。</string>
+    <string name="config_file_chunk">分片大小（字节）</string>
+    <string name="config_file_chunk_hint">上传时一片多大。越大越省请求，断点重传的粒度越粗。</string>
+    <string name="config_file_expire">文件过期（秒）</string>
+    <string name="config_file_expire_hint">上传的文件多久后失效。每个房间可以单独覆盖这一条。</string>
+    <string name="config_automation">定时自动化</string>
+    <string name="config_automation_enabled">总开关</string>
+    <string name="config_automation_enabled_hint">关掉之后 /tasks 整个不可用。能不能给某个房间装任务，仍由那个房间的档位决定。</string>
+    <string name="config_tick_seconds">轮询间隔（秒）</string>
+    <string name="config_tick_seconds_hint">多久醒过来检查一次到点的任务。</string>
+    <string name="config_grace_seconds">宽限期（秒）</string>
+    <string name="config_grace_seconds_hint">错过触发时间多久之内还算数（比如服务端那时候正睡着）。</string>
+    <string name="config_default_tz">默认时区</string>
+    <string name="config_default_tz_hint">cron 表达式按这个时区解释。房间可以有自己的时区。</string>
+
+    <!-- ── 配置页 · 网络与存储（危险区）───────────────────────────────────── -->
+    <string name="config_section_network">网络与存储</string>
+    <string name="config_section_network_note">下面这几项改错会找不到旧数据，或者让别人连不上。</string>
+    <string name="config_host">监听地址</string>
+    <string name="config_host_hint">0.0.0.0 = 局域网里谁都能访问；只想在本机用可以改成 127.0.0.1（那样别的设备就连不上了）。</string>
+    <string name="config_port">端口</string>
+    <string name="config_port_hint">被占用时服务端会直接报错，不会自己换一个 —— 静默换端口会让别的设备上填的地址永远连不上。</string>
+    <string name="config_prefix">子路径前缀</string>
+    <string name="config_prefix_hint">部署在反向代理的子目录时才用（比如 /clip9/）。留空 = 根路径。</string>
+    <string name="config_cert">证书文件路径</string>
+    <string name="config_key">私钥文件路径</string>
+    <string name="config_tls_hint">两个要一起填才走 HTTPS。都不填就是明文 HTTP —— 同一个 Wi-Fi 下的人理论上能看到内容。</string>
+    <string name="config_db_path">数据库文件</string>
+    <string name="config_db_path_hint">相对路径按数据目录解析；写成绝对路径就不跟数据目录走了。</string>
+    <string name="config_storage_dir">上传目录</string>
+    <string name="config_storage_dir_hint">解析规则与数据库文件同一套 —— 两处不一致会出现「库在 A、上传在 B」。</string>
+    <string name="config_data_dir_note">应用私有目录，卸载即清空。这一项不可改。</string>
+
+    <!-- ── 配置页 · 保存 ──────────────────────────────────────────────────── -->
+    <string name="dirty_title">%1$d 处更改未生效</string>
+    <string name="dirty_note">服务端只在启动时读一次配置，保存之后要重启才生效。</string>
+    <string name="dirty_discard">放弃</string>
+    <string name="dirty_discard_confirm">放弃这次改的那些？表单会回到上一次保存的样子。</string>
+    <string name="dirty_save">保存并重启</string>
+    <string name="config_saved">配置已保存</string>
+    <string name="config_saved_restarting">配置已保存，正在重启服务端…</string>
+    <string name="config_discarded">已放弃改动</string>
+    <string name="config_unreadable">配置读不出来（本地组件没有响应）</string>
+    <string name="config_broken">配置文件现在读不出来，所以只能先修好它：\n%1$s</string>
+    <string name="config_broken_note">修好之前不让你从界面上保存 —— 否则会把原来的内容整份盖掉。</string>
+    <string name="config_not_created">配置文件还不存在，现在显示的是一份默认值。改完按「保存并重启」就会写出来。</string>
+    <!-- ⚠️ 这两句说的是**表单自己**才看得见的东西：「这个框里根本不是个数」。
+         真读成一个数之后它是不是合理（端口 0、正文上限超了…）由服务端那道闸判 ——
+         判完给的是**另一句**原话（见 `Config::validate_for_save`）。 -->
+    <string name="config_invalid_number">「%1$s」要填一个整数</string>
+    <string name="config_number_missing">有个数字框还空着，填一个整数（0 也算）</string>
+
+    <!-- ── 远端服务器（可保存多台，各自带密码）────────────────────────────── -->
+    <string name="remote_section">远端服务器</string>
+    <string name="remote_section_note">可以保存多台。打开哪一台就进哪一台的界面 —— 别人起好的 clip9 也能加进来。</string>
+    <string name="remote_none">还没添加过。点下面的「添加」把一台加进来，就不用自己在本机起服务端了。</string>
+    <string name="remote_add">＋ 添加服务器</string>
+    <string name="remote_default_name">远端</string>
+    <string name="remote_edit">编辑</string>
+    <!-- ⚠️ 行上的状态词只有「已经存了密码 / 没存密码」两种，而且它是**本地推断**：
+         真要知道那台服务端要不要密码，得去问它（`AuthClient.test` 里那条路）。
+         为一个颜色去连一次是不值的，所以文案写成「可能」。 -->
+    <string name="remote_status_logged_in">已登录</string>
+    <string name="remote_status_needs_password">要密码</string>
+    <string name="remote_selected">当前用这一台</string>
+
+    <string name="remote_editor_new">添加服务器</string>
+    <string name="remote_editor_edit">编辑服务器</string>
+    <string name="remote_name">名称</string>
+    <string name="remote_name_hint">随便起一个（「家里」「公司」）—— 清单里靠它认。</string>
+    <string name="remote_url">地址</string>
+    <string name="remote_url_hint">192.168.1.10:9501</string>
+    <string name="remote_url_note">没写 http:// 的话会补上。反代到子目录时要写全（https://host/clip9）。</string>
+    <string name="remote_room">房间</string>
+    <string name="remote_room_hint">留空 = 默认房间</string>
+    <string name="remote_room_note">打开界面时落在哪个房间。留空不是「任意房间」，是那个默认房间。</string>
+    <string name="remote_password">密码</string>
+    <string name="remote_password_hint">服务端的全局密码、或这个房间的密码都行</string>
+    <string name="remote_password_note">两种都行 —— 是哪种由服务端自己判（它和网页里那个登录框走的是同一个接口）。</string>
+    <string name="remote_remember">记住密码</string>
+    <string name="remote_remember_note">加密后存在本机：不落明文，也不跟着备份走。换手机 / 清了应用数据之后要重填。</string>
+    <string name="remote_auto_auth">打开前自动认证</string>
+    <string name="remote_auto_auth_note">先用密码换一张 1 小时的会话令牌再进界面 —— 网页里就不会再问你一次。</string>
+    <string name="remote_test">测试连接</string>
+    <string name="remote_testing">正在测试…</string>
+    <string name="remote_test_ok">通了 · 密码对 · 已换到会话令牌（%1$s 过期）。打开界面时直接进。</string>
+    <string name="remote_test_notoken">地址通了，但没填密码 —— 打开界面时会问你要一次。</string>
+    <string name="remote_test_open">地址通了，这台服务端不需要密码 —— 打开界面直接进。</string>
+    <string name="remote_test_failed">没通：%1$s</string>
+    <string name="remote_save">保存</string>
+    <string name="remote_cancel">取消</string>
+    <string name="remote_delete">删除这一台</string>
+    <string name="remote_delete_confirm">删掉「%1$s」？连同存在本机的那个密码一起。</string>
+    <string name="remote_name_required">给它起个名字吧 —— 清单里靠它认</string>
+    <string name="remote_url_required">地址不能为空</string>
+    <string name="remote_saved">已保存</string>
+    <string name="remote_removed">已删除</string>
+    <string name="auto_auth_failed">自动认证没成，进去之后可能要你输一次密码：\n%1$s</string>
+
+    <!-- ── 其它页 ─────────────────────────────────────────────────────────── -->
+    <string name="other_server_note">本机服务端的数据都在下面这个目录里，卸载 App 就全没了 —— 重要的东西顺手在别的设备上留一份。</string>
 </resources>

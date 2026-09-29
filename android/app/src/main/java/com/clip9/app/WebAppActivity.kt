@@ -10,6 +10,7 @@ import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.view.View
+import android.webkit.JavascriptInterface
 import android.webkit.SslErrorHandler
 import android.webkit.WebResourceError
 import android.webkit.WebResourceRequest
@@ -38,12 +39,50 @@ import java.security.MessageDigest
  * 从「收到 Intent」（[MainActivity]）到「SPA 能收」之间隔着起服务端 + 加载页面 + 连上 WS，
  * 所以 payload 先落在 [PendingShare] 里，这里等 `isReady()` 再递。
  * ⚠️ 页面是谁的（本机 / 远端）不影响这件事：投递永远打到**当前正在看的那个**服务端上。
+ *
+ * ⚠️★ **免打开界面认证**（2026-09-29 加）分两步，第一步在这里：
+ * 如果打开的是清单里某一台、而且它开着「打开前自动认证」并有保存的密码，
+ * 那就**先用密码换一张会话令牌，换到了再 `loadUrl`**；页面来问的时候
+ * （[AuthBridge.roomAuth]，SPA 在 `store/websocket.js` 里读凭据时调）立刻给它。
+ * 第二步（读桥）在 SPA 那一侧 —— 两边的方法名与键名**逐字对应**，
+ * 由 `tools/android-contract-smoke.mjs` 的一条判据盯着。
+ *
+ * ⚠️★ 为什么不走「改写服务端下发的 HTML」那条路（用 `shouldInterceptRequest` 自己拿主文档、
+ * 往 `<head>` 里塞一段写 `sessionStorage` 的脚本）：那要**自己重放**一次 HTTP
+ * （状态码、重定向、gzip、编码、以及**自签证书的确认**全都得自己处理一遍），
+ * 而任何一处没重放对，症状都是「界面白了」或者「证书对话框不出现了」。
+ * 让 SPA 主动问一句要小得多、也可靠得多。
  */
 class WebAppActivity : AppCompatActivity() {
 
     companion object {
         const val EXTRA_URL = "url"
         const val EXTRA_TITLE = "title"
+
+        /**
+         * 打开的是清单里的哪一台（可空）。
+         *
+         * ⚠️ 有它才能「打开前自动认证」，也能让「已登录 / 要密码」那个状态
+         * 跟着**这一台**走，而不是全局一个布尔。
+         */
+        const val EXTRA_SERVER_ID = "serverId"
+
+        /**
+         * 交给页面的那个对象名。
+         *
+         * ⚠️★ 必须与 SPA 那边读的名字**逐字一致**（`web-vue3/src/store/websocket.js`）。
+         * 对不上的症状是**什么都没发生** —— 不报错、不提示，只是又被问了一次密码。
+         */
+        private const val AUTH_BRIDGE = "clip9Auth"
+
+        /**
+         * 默认房间在凭据缓存里的键。
+         *
+         * ⚠️★ 与 SPA 的 `getRoomStorageKey` 逐字对应：默认房间是 `__default__`，
+         * **不是**空串、也不是 `default`（那边 `normalizeRoomName` 先把 `default` 变成空串）。
+         * 对不上 = 令牌在缓存里躺着一个谁都不会去读的键。
+         */
+        private const val DEFAULT_ROOM_KEY = "__default__"
 
         /**
          * 等 SPA 就绪的上界。
@@ -99,6 +138,15 @@ class WebAppActivity : AppCompatActivity() {
     /** 只允许在这一台主机内导航；别的都交给系统（见 [shouldStayInside]）。 */
     private var baseHost: String? = null
 
+    /**
+     * 已经换好的凭据，形如 `{"<房间键>":{"token":"…","expiresAt":…}}`；没换到就是 null。
+     *
+     * ⚠️ `@Volatile`：写它的是主线程（网络回来之后），读它的是
+     * WebView 那个 JS 线程（[AuthBridge.roomAuth] 被页面调用时）。
+     */
+    @Volatile
+    private var authCache: String? = null
+
     /** 等就绪已经等了多久（毫秒）。⚠️ 每次开始投递归零。 */
     private var waitedMs = 0L
 
@@ -111,6 +159,7 @@ class WebAppActivity : AppCompatActivity() {
         setContentView(R.layout.activity_webapp)
 
         val url = intent.getStringExtra(EXTRA_URL).orEmpty()
+        val serverId = intent.getStringExtra(EXTRA_SERVER_ID).orEmpty()
         title = intent.getStringExtra(EXTRA_TITLE) ?: getString(R.string.app_name)
 
         webView = findViewById(R.id.webView)
@@ -175,9 +224,27 @@ class WebAppActivity : AppCompatActivity() {
             }
         }
 
-        // ⚠️ 每次重建都重新加载：让 WebView 自己扛恢复状态比在这里猜它恢复得对不对更省事，
-        // 而 SPA 的状态本来就在 URL / localStorage 里。
-        webView.loadUrl(url)
+        // ⚠️★ 桥必须在 `loadUrl` **之前**装上：装晚了页面已经跑过一轮，
+        // 而它对凭据**只问一次**（SPA 的 pinia store 第一次实例化时）。
+        // ⚠️ 它是**只读**的一个方法，见 [AuthBridge] 的注释。
+        webView.addJavascriptInterface(AuthBridge(), AUTH_BRIDGE)
+
+        // ⚠️★ 先换令牌、换到了再加载 —— 见类文档那一段。
+        // 没配（或者这台没保存密码 / 关掉了自动认证）就直接加载：
+        // 那就是这次改动**之前**的行为，用户在网页里自己输密码。
+        //
+        // ⚠️ 这里只传 `serverId` 进来、密码**不进 Intent**：Intent 的 extras
+        // 在 `dumpsys activity` 里是明文可读的，而密码不该出现在那儿。
+        val server = serverId.takeIf { it.isNotEmpty() }?.let { id ->
+            RemoteServers.load(this).servers.firstOrNull { it.id == id }
+        }
+        if (server != null && server.autoAuth && server.password.isNotEmpty()) {
+            preAuthThenLoad(server, url)
+        } else {
+            // ⚠️ 每次重建都重新加载：让 WebView 自己扛恢复状态比在这里猜它恢复得对不对更省事，
+            // 而 SPA 的状态本来就在 URL / localStorage 里。
+            webView.loadUrl(url)
+        }
 
         onBackPressedDispatcher.addCallback(
             this,
@@ -202,6 +269,85 @@ class WebAppActivity : AppCompatActivity() {
         main.removeCallbacks(resultPoll)
         delivering = false
         super.onDestroy()
+    }
+
+    // ── 免打开界面认证（第一步：先在原生侧换好令牌）─────────────────────
+
+    /**
+     * 先用保存的密码换一张会话令牌，**换到了再加载页面**。
+     *
+     * ⚠️★ 顺序不能反。SPA 在启动时就会读一次凭据（`store/websocket.js` 的
+     * `loadRoomAuthCache`，它进 pinia store 的初始 state）—— 而**页面开始加载之后**
+     * 再去准备那份凭据，时序是不保证的：早一点、晚一点都有可能，
+     * 晚一点的表现就是「还是被问了一次密码」，而且**时好时坏**。
+     * 先把令牌攥在手里，等页面来问时立刻给（[AuthBridge.roomAuth]），这个竞态就不存在了。
+     *
+     * ⚠️★ 换不到**不拦着打开**：照常进网页界面、在里面手输密码 ——
+     * 那正是这次改动之前的行为，不能因为「自动」那一步失败就让整个界面进不去。
+     * 只是把原因说一句，不然用户不明白为什么又被问了密码。
+     *
+     * ⚠️ 网络请求不能在主线程（超时上界 8 秒，冻在那儿用户会以为死了）。
+     */
+    private fun preAuthThenLoad(server: RemoteServer, url: String) {
+        Thread(
+            {
+                val result = AuthClient.requestToken(server.url, server.room, server.password)
+                main.post {
+                    // ⚠️ 回来时页面可能已经被关掉了（用户按了返回）。
+                    if (isFinishing || isDestroyed) return@post
+                    when (result) {
+                        is AuthClient.Result.Ok -> authCache = cacheOf(server.room, result)
+                        is AuthClient.Result.Failed ->
+                            toast(getString(R.string.auto_auth_failed, result.message))
+                    }
+                    webView.loadUrl(url)
+                }
+            },
+            "clip9-auth",
+        ).start()
+    }
+
+    /**
+     * 拼成 SPA 认的那一份凭据缓存。
+     *
+     * ⚠️★ 房间名要先归一化，而且规则必须与 SPA 的 `normalizeRoomName` **完全一致**：
+     * 那边把 `default` 变成空串，再由 `getRoomStorageKey` 变成 `__default__`。
+     * 这里少一步的后果是令牌落在一个**谁都不会去读的键**上 ——
+     * 界面照常打开、照常问密码，而没有任何地方能看出「其实换到了」。
+     */
+    private fun cacheOf(room: String, ok: AuthClient.Result.Ok): String {
+        val trimmed = room.trim()
+        val key = if (trimmed.isEmpty() || trimmed == "default") DEFAULT_ROOM_KEY else trimmed
+        return JSONObject()
+            .put(
+                key,
+                JSONObject()
+                    .put("token", ok.token)
+                    .put("expiresAt", ok.expiresAt),
+            )
+            .toString()
+    }
+
+    /**
+     * 交给页面的那个对象：**只有一个只读方法**。
+     *
+     * ⚠️★ 每多一个方法就是多开一个「网页能指挥外壳做什么」的口子 ——
+     * 而这个 WebView 加载的是**别人的**服务端下发的页面（清单里那一台可能是远端）。
+     * 所以这里只有「把已经换好的令牌读出去」这一件事，没有写、没有发请求、没有读文件。
+     *
+     * ⚠️ 它能被**任何**加载进来的页面调到（同主机的页面都在返回键与导航的白名单里）。
+     * 这是可以接受的：那些页面本来就读得到自己的 `sessionStorage`。
+     * 真正的边界是 [shouldStayInside]（外站点一律轰到系统浏览器），不是这个桥。
+     *
+     * ⚠️ `@JavascriptInterface` **不是可选的**：API 17 起，没有这个注解的方法
+     * 不会被暴露给页面 —— 少了它的症状还是「什么都没发生」。
+     *
+     * ⚠️ 返回**字符串**（不是对象）：`addJavascriptInterface` 的返回值只能是
+     * 基本类型与 String，复杂类型要自己序列化（页面那一侧再 `JSON.parse`）。
+     */
+    private inner class AuthBridge {
+        @JavascriptInterface
+        fun roomAuth(): String? = authCache
     }
 
     // ── 分享投递（外壳 → SPA）────────────────────────────────────────────
