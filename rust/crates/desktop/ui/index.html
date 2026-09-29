@@ -263,11 +263,38 @@
 
 
     /* ── 输入区 ─────────────────────────────────────────────── */
-    .composer { flex: none; border-top: 1px solid var(--border); padding: 9px 12px 11px; }
+    /* ⚠️★ 输入区的高度可拖（2026-09-29，Jonny：「允许自由调整桌面端发送窗口的高度」）。
+       高度读 `--composer-h`：**没有它的时候是 `height: auto`** —— 也就是原来那个
+       「一行输入 + 下面一排按钮」的自然高度，一点没变。
+       ⚠️ 写这个变量的**只有两处**：`boot.js`（第一次绘制之前贴存储里的值，与主题/侧栏
+       同一个理由）与 `app.js` 的 `applyComposerHeight`（拖动 / 键盘 / 窗口变化）。
+       ⚠️ 变量挂在 `<html>` 上（`:root`），不是挂在这个元素上 —— 拖动那一侧只碰
+       `documentElement`，与 `data-theme` / `data-sidebar` 同一套做法。 */
+    .composer {
+        position: relative; flex: none; height: var(--composer-h, auto);
+        border-top: 1px solid var(--border); padding: 9px 12px 11px;
+    }
+
+    /* 拖拽带：压在上边缘那条 1px 边框上（`top: -3px`，6px 高 = 两边各 3px 好抓）。
+       ⚠️ 它只占这 6px，不挡下面真正的输入框。 */
+    .composer .rs {
+        position: absolute; top: -3px; left: 0; right: 0; height: 6px;
+        cursor: ns-resize;
+        /* ⚠️ 触屏上不加这一条，竖着拖会被当成滚动手势 → 浏览器直接 `pointercancel`
+           （表现是「拖不动」）。桌面端没有触屏也留着：Windows / Linux 那两台上可能有。 */
+        touch-action: none;
+    }
+
+    /* ⚠️ 悬停 / 键盘聚焦才显一下 —— 平时它必须**看不见**：那是一条视觉上不存在的边。
+       颜色用 `--accent`（两套主题里都是那个蓝），`--border` 太淡，看不出「抓到了没有」。 */
+    .composer .rs:hover, .composer .rs:focus-visible { background: var(--accent); }
 
     .composer .box {
         border: 1px solid var(--border); border-radius: 9px; background: var(--bg);
         padding: 8px 10px;
+        /* ⚠️ 竖着一列：输入框吃掉多出来的高度，下面那排按钮留在底部。
+           没有这两行的话，把输入区拖高只会**多出一块空白**（输入框还是一条）。 */
+        display: flex; flex-direction: column; height: 100%;
     }
 
     .composer .ph { color: var(--text-2); font-size: 12.5px; }
@@ -693,11 +720,14 @@ table.ra td input[type='checkbox'] { margin: 0; }
    而不是在这里再覆盖一遍 —— 「留一条没人用的规则」就是留一份会漂的第二定义。
    原来这里还有 `button.sync` / `.sync.wait` 三条（app 专属态），一起删了。 */
 
-/* 输入区：稿 1 画的是 <div class="ph">占位文本</div>，app 要的是真 <textarea>。 */
+/* 输入区：稿 1 画的是 <div class="ph">占位文本</div>，app 要的是真 <textarea>。
+   ⚠️ `flex: 1`：输入区被拖高之后，多出来的高度**给输入框**（不是留一块空白）。
+   ⚠️ 原来还有一条 `max-height: 120px` —— 删了：它会把输入框**钉死在 120px**，
+   拖到 400 高的时候下面就是一整块空白（那正是这个功能要修的东西）。 */
 .composer .box textarea {
     display: block; width: 100%; border: 0; outline: none; padding: 0;
     background: transparent; color: var(--text); font: inherit; font-size: 12.5px;
-    resize: none; min-height: 18px; max-height: 120px; overflow-y: auto;
+    resize: none; min-height: 18px; flex: 1; overflow-y: auto;
 }
 /* ⚠️★ 侧栏底部那两个按钮（「＋ 添加房间」「⚙ 全局设置」）加**虚线框**，
    让它们一眼看着就是「动作」而不是房间行（房间行是实心/无框的）。
@@ -941,7 +971,14 @@ table.ra td input[type='checkbox'] { margin: 0; }
                  读出来的（`spa_url` 命令），写死一个端口迟早会指错。 -->
             <iframe class="spa" id="spa" title="SPA" hidden></iframe>
 
-            <div class="composer">
+            <div class="composer" id="composer">
+                <!-- 拖这条边改输入区高度（2026-09-29）。⚠️ 它是**独立的 6px 细带**，
+                     不是给 textarea 加 `resize: vertical` —— 后者只改 textarea，
+                     改完 `.box` 和下面那排按钮的间距不跟着走，看着像「框破了」。
+                     ⚠️ `tabindex="0"` 是为了**键盘也能调**（↑/↓ 各 16px，见 `app.js`）：
+                     只能用鼠标拖的话，它就是一个只能用鼠标的功能。 -->
+                <div class="rs" id="composer-resize" role="separator" aria-orientation="horizontal"
+                     tabindex="0" data-i18n-title="拖动调整输入区高度"></div>
                 <div class="box">
                     <!-- ⚠️★ `autocapitalize="off"`：macOS 会在这个框里把每句首字母**自动大写**，
                          而用户发的常常是命令、路径、代码片段 —— 一个大写字母就让它变成另一回事。

@@ -71,6 +71,17 @@
   const LOCALE_KEY = 'locale';
   // ⚠️ 桌面端输入框藏不藏（2026-09-29）：`app.js` 里有一份同名常量，判据 10 对着。
   const COMPOSER_KEY = 'composer';
+  // ⚠️★ 输入区**拖出来的高度**（2026-09-29，Jonny：「允许自由调整桌面端发送窗口的高度」）。
+  // `app.js` 里有同名常量，判据 10 对着。
+  //
+  // ⚠️★ 它贴的**不是** `data-` 属性，而是一个自定义属性 `--composer-h`：CSS 里没有
+  // 「属性等于某个 px 值」这种选择器（`attr()` 拿不到长度），所以只能走变量。
+  // 这与文件头上说的「只往 `<html>` 上写属性」不冲突 —— `style` 也是 `<html>` 上的一个属性，
+  // 而且**只**有 `index.html` 里 `.composer` 的 `height` 读它（一处写、一处读）。
+  //
+  // ⚠️ 为什么非要在**这里**贴：晚一步就是「先画出矮的输入区、再跳高」——
+  // 与主题闪白屏、侧栏先宽后窄是同一个病（而且拖动过的高度通常差得更多）。
+  const COMPOSER_H_KEY = 'composerHeight';
   const root = document.documentElement;
   try {
     const theme = localStorage.getItem(THEME_KEY);
@@ -83,6 +94,16 @@
     // ⚠️ 输入框同款：只认 `'hidden'`。晚一步贴的代价是「先画一条输入区再跳没」——
     // 与侧栏那条同一个病，所以归进这个文件。
     if (localStorage.getItem(COMPOSER_KEY) === 'hidden') root.dataset.composer = 'hidden';
+
+    // ⚠️★ 输入区高度：这里**只判「是不是一个正数」**，上下界交给 `app.js`
+    //（上界跟着窗口大小走，只有它知道；在这里再写一份边界就是第二份定义）。
+    // ⚠️ 脏值（没存过 / 手改成非数字 / 负数）**一律不贴**：贴一个 `NaNpx` 进去会让
+    // 整条 `height: var(--composer-h)` 失效 —— 表现是「拖过的高度重启就没了」，
+    // 而且**不报错**（与主题那条「只认 dark/light」同一个理由）。
+    const composerHeight = Number(localStorage.getItem(COMPOSER_H_KEY));
+    if (Number.isFinite(composerHeight) && composerHeight > 0) {
+      root.style.setProperty('--composer-h', `${Math.round(composerHeight)}px`);
+    }
 
     // ⚠️★ 语种：这里只认 `'en'`（源语言 `'zh'` 不贴，其余一律当源语言）。
     // 判据 14 会把这个字面量拿去 `i18n.js` 的 `LOCALES` 里找，并且要求它**不是**源语言。
