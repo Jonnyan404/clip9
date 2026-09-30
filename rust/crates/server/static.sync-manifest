@@ -1,21 +1,21 @@
 # clip9 前端产物的同步清单 —— 由 tools/sync-web-assets.mjs 生成，别手改。
-source db228b80a232cc653672c2a84224590667c9c2c48dfa85ac26f11ea72aa0a2ee
+source 9b7fd3031c3b18d4b10fd100c887e71066d8963305f2012e0b0416fd9551ac41
 apple-touch-icon.png
+assets/ShareView-CIcPycAw.js
+assets/ShareView-CIcPycAw.js.br
+assets/ShareView-CIcPycAw.js.gz
 assets/ShareView-DjLm0d4-.css
 assets/ShareView-DjLm0d4-.css.br
 assets/ShareView-DjLm0d4-.css.gz
-assets/ShareView-DuLYRytJ.js
-assets/ShareView-DuLYRytJ.js.br
-assets/ShareView-DuLYRytJ.js.gz
 assets/highlight-langs-Dt8YXhtn.js
 assets/highlight-langs-Dt8YXhtn.js.br
 assets/highlight-langs-Dt8YXhtn.js.gz
 assets/i18n-B2E8evwD.js
 assets/i18n-B2E8evwD.js.br
 assets/i18n-B2E8evwD.js.gz
-assets/index-D-WF5Wqw.js
-assets/index-D-WF5Wqw.js.br
-assets/index-D-WF5Wqw.js.gz
+assets/index-DpKyaNxO.js
+assets/index-DpKyaNxO.js.br
+assets/index-DpKyaNxO.js.gz
 assets/index-ifumBe6s.css
 assets/index-ifumBe6s.css.br
 assets/index-ifumBe6s.css.gz

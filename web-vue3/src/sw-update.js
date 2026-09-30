@@ -55,6 +55,36 @@ export function setupServiceWorkerUpdate() {
         return;
     }
 
+    // ⚠️★ 宿主内嵌（`?embed=1`，桌面端把网页版塞进 iframe）时**不装 SW**，
+    // 顺手把**已经装过的注销掉**。
+    //
+    // 为什么内嵌态的收益是零而风险是「界面永远旧」：
+    //   · 收益：SW 在这里唯一的作用是**离线**，而这份页面是从**本机 HTTP** 取的
+    //     （服务端就是这个 app 自己起的），离线压根没有意义；
+    //   · 风险：precache 把 **index.html** 也缓存了，导航由
+    //     `NavigationRoute → createHandlerBoundToURL('index.html')` 应答 ⇒
+    //     **只要 SW 没换新，界面就永远是装 SW 那天的**。而宿主的 WebKit / WebView
+    //     profile 是**持久的**（存在 app 自己的数据目录里），跟着宿主一起升级 ——
+    //     宿主换了、里面那份前端不换。用户看到的是「这个功能怎么没了」。
+    //
+    // ⚠️ 2026-09-30 那次「功能没了」的**真主因不是这条**（是桌面端复用了一个旧的孤儿
+    // 服务端，见 LESSONS §8.7）—— 但**这条机制本身是真的**：SW 的更新检查一旦不成功
+    // （`sw.js` 被缓存住、或那次检查没发生），宿主里就会一直显示上一版。
+    // 内嵌态不要这个机制，就不会有这个失败模式。
+    //
+    // ⚠️ 只注销、**不删 `caches`**：`caches` 只有 SW 在用，注销之后就没人碰它了
+    // （残留占几 MB，随 origin 的站点数据一起清）。而从页面里删正在运行的旧 SW 的
+    // precache，等于在它脚下抽梯子 —— 没有收益，只有一个新的失败模式。
+    if (useAppStore().embedded) {
+        navigator.serviceWorker
+            .getRegistrations()
+            .then((list) => list.forEach((registration) => registration.unregister()))
+            .catch((error) => {
+                console.error('Unregistering the service worker failed:', error);
+            });
+        return;
+    }
+
     // 只有「本来就被某个 SW 控制着」才说明这是版本更替，不是首次安装
     const isVersionChange = Boolean(navigator.serviceWorker.controller);
     // 新版本已经接管，只是在等一个不会丢数据的时机
