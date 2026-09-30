@@ -446,6 +446,14 @@ jobs:
       # ⚠️ `bundle.macOS.bundleVersion` 要**一起**给：它是 Info.plist 里的 `CFBundleVersion`，
       #    不给就取 `version` 那份，而预发布的 `0.1.1-beta1` **不是** Apple 认的点分数字形状。
       #    `version_code`（`MAJOR*100000+MINOR*1000+PATCH`）正好是个整数。
+      # ⚠️★ `bundle.windows.wix.version` **同样必须**给 —— `v0.1.1-beta2`（2026-09-30）就是
+      #    栽在这一条上：WiX（MSI）的 ProductVersion **只认数字**，注入真实 tag 之后版本
+      #    第一次带上字母，Windows 那条打包在**最后一步**报
+      #    `optional pre-release identifier in app version must be numeric-only
+      #     and cannot be greater than 65535 for msi target`（另外三个平台全绿）。
+      #    ⚠️ 只有 msi 需要它：NSIS 原生支持完整 semver（上游 tauri#5286 里说的）。
+      #    ⚠️ 值取 `wix_version`（形状 `major.minor.patch.build`），**在脚本里算**、
+      #    这里不许自己拼 —— 与 `version_code` 同一条理由：换算只许有一个定义处。
       - name: 把 tag 的版本号注进构建
         shell: bash
         run: |
@@ -453,12 +461,13 @@ jobs:
           out="$(node tools/release-version.mjs --tag "${{ needs.info.outputs.tag }}")"
           version="$(printf '%s\n' "$out" | sed -n 's/^version=//p')"
           code="$(printf '%s\n' "$out" | sed -n 's/^version_code=//p')"
-          if [ -z "$version" ] || [ -z "$code" ]; then
+          wix="$(printf '%s\n' "$out" | sed -n 's/^wix_version=//p')"
+          if [ -z "$version" ] || [ -z "$code" ] || [ -z "$wix" ]; then
             echo "::error::取不到版本号 —— tools/release-version.mjs 的输出是：$out"
             exit 1
           fi
-          printf '{"version":"%s","bundle":{"macOS":{"bundleVersion":"%s"}}}\n' \
-            "$version" "$code" > "$RUNNER_TEMP/tauri-version.json"
+          printf '{"version":"%s","bundle":{"macOS":{"bundleVersion":"%s"},"windows":{"wix":{"version":"%s"}}}}\n' \
+            "$version" "$code" "$wix" > "$RUNNER_TEMP/tauri-version.json"
           cat "$RUNNER_TEMP/tauri-version.json"
 
       # ② 桌面端打包。⚠️ 不传任何 release 参数：发 Release 归下面那个唯一的 publish job。
@@ -468,8 +477,9 @@ jobs:
         with:
           projectPath: rust/crates/desktop
           # ⚠️ 末尾那份 `--config` 就是上面那一步写的文件（与 `tauri.windows.conf.json`
-          #    是同一套 JSON Merge Patch 机制：只盖 `version` 与 macOS 的 `bundleVersion`，
-          #    其余整份配置照旧）。⚠️ 路径里**不能有空格** —— tauri-action 会按空格拆参数。
+          #    是同一套 JSON Merge Patch 机制：只盖 `version`、macOS 的 `bundleVersion`
+          #    与 Windows 的 `wix.version`，其余整份配置照旧）。
+          #    ⚠️ 路径里**不能有空格** —— tauri-action 会按空格拆参数。
           args: >-
             --target ${{ matrix.target }} --bundles ${{ matrix.bundles }}
             --config ${{ runner.temp }}/tauri-version.json
