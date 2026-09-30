@@ -1010,15 +1010,38 @@ pub async fn open_project_page() -> Result<(), Msg> {
 /// 那个不变量：这个字符串最后交给 `open`（macOS）/ `start`（Windows），
 /// 而它们会把它当 URL 解释 —— `file://` / `javascript:` 进来就是另一类事了。
 /// 一行校验，比一条「记得只拼 http」的口头约定靠得住。
+/// ⚠️★ 现在它**也**给用户手填的那一格当闸（[`site_root`]），所以它比上面那段描述更严了：
+/// 那一路进来的东西是自由文本，不是我们自己拼的。
 fn openable_url(url: &str) -> Result<String, Msg> {
-    let trimmed = url.trim();
+    // ⚠️ 先去掉尾斜杠**再**判 scheme：反过来的话 `"http://"` 会被削成 `"http:"` 并通过
+    //    那句 `starts_with("http://")`（削之前成立的判据，削之后就不成立了）。
+    let trimmed = url.trim().trim_end_matches('/');
     if trimmed.is_empty() {
         return Err(Msg::key("serverUrlEmpty"));
     }
-    if !(trimmed.starts_with("http://") || trimmed.starts_with("https://")) {
+    // ⚠️★ scheme **不区分大小写**（RFC 3986 §3.1）。这里原来写的是
+    //    `trimmed.starts_with("https://")` —— 对「我们自己拼出来的地址」够用
+    //    （`local_server_url` 恒是小写），对**用户手填的那一格**就不够了。
+    //    2026-09-30 现场踩到：Jonny 的房间里写的是 `Https://ccg.ubuy.fun`，而那台
+    //    **连得上、也带网页版** —— 只有这一句把它判成了「不是 http(s)」，
+    //    界面于是说「这个房间的服务端地址不是 http(s)」。
+    //    ⚠️★ 之所以能瞒这么久：**别处全都容忍**。reqwest 走的 `url` crate 会把 scheme
+    //    归一成小写，所以那个房间的列表 / 收发 / 房间名**一直是正常的** ——
+    //    「房间能用」与「地址合法」在这里是两个判据，而用户只看到后者的报错。
+    let lower = trimmed.to_ascii_lowercase();
+    if !(lower.starts_with("http://") || lower.starts_with("https://")) {
         return Err(Msg::key("serverUrlNotHttp").param("url", trimmed));
     }
-    Ok(trimmed.trim_end_matches('/').to_owned())
+    // ⚠️ 返回**归一化过的**那一份，但**只动 scheme 那一段**：主机名与路径的大小写是有意义的
+    //    （`/A` 与 `/a` 是两个地址）。归一化的理由有两条：这个串会被塞进 `iframe.src`、
+    //    也会交给系统 opener（两个都按 RFC 解析，小写更稳），而 `syncSpa` 那边还拿它当
+    //    「还是不是同一台」的比较键 —— 同一台有两个写法的话，切一次房间就会重载一次。
+    let scheme_end = trimmed.find("://").map_or(trimmed.len(), |at| at + 3);
+    Ok(format!(
+        "{}{}",
+        trimmed[..scheme_end].to_ascii_lowercase(),
+        &trimmed[scheme_end..]
+    ))
 }
 
 /// 交给系统自带的 opener。
@@ -1088,12 +1111,30 @@ mod tests {
             openable_url("  https://host/clip/  ").unwrap(),
             "https://host/clip"
         );
+        // ⚠️★ scheme 大小写不敏感（RFC 3986），而且返回的是**归一化过的**那一份。
+        //    2026-09-30 现场踩到：用户房间里写的是 `Https://ccg.ubuy.fun` ——
+        //    那台**连得上、也带网页版**，却因为一句大小写敏感的 `starts_with` 被判成
+        //    「不是 http(s)」，界面于是说「这个房间的服务端地址不是 http(s)，没法嵌网页」。
+        assert_eq!(
+            openable_url("Https://ccg.ubuy.fun").unwrap(),
+            "https://ccg.ubuy.fun"
+        );
+        assert_eq!(openable_url("HTTP://host").unwrap(), "http://host");
+        // ⚠️ 只动 scheme 那一段：**主机名与路径的大小写是有意义的**（`/A` 与 `/a` 两个地址）
+        assert_eq!(
+            openable_url("HTTPS://Host.Example/Clip9").unwrap(),
+            "https://Host.Example/Clip9"
+        );
         for bad in [
             "",
             "   ",
             "file:///etc/passwd",
             "javascript:alert(1)",
             "127.0.0.1:9502",
+            // ⚠️ 光有 scheme、没有主机名还不算地址。⚠️ 这两条是**顺序**的回归钉子：
+            //    「先削尾斜杠、再判 scheme」的话 `http://` 会变成 `http:` 而被放行。
+            "http://",
+            "https:///",
         ] {
             assert!(openable_url(bad).is_err(), "{bad:?} 不该被放行");
         }
@@ -1149,6 +1190,12 @@ mod tests {
         assert_eq!(
             site_root("https://host/clip9/").unwrap(),
             "https://host/clip9/"
+        );
+        // ⚠️★ 用户手填那一格的**真实形状**（大小写随手打的）。这条是 2026-09-30 那个 bug 的
+        //    回归钉子：「房间连得上」与「地址合法」是两个判据，而这里只该管后者。
+        assert_eq!(
+            site_root("Https://ccg.ubuy.fun").unwrap(),
+            "https://ccg.ubuy.fun/"
         );
         for bad in [
             "",

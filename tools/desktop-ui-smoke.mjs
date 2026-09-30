@@ -1584,15 +1584,18 @@ if (entryViewFiles.length !== 1) {
     const bareMain = stripComments(mainSource);
     const syncSpaBody = bareJs.match(/function syncSpa\(state\)\s*\{[\s\S]*?\n\}/);
     const probeSiteBody = bareJs.match(/async function probeSite\(base\)\s*\{[\s\S]*?\n\}/);
+    const renderBlockedBody = bareJs.match(/function renderBlocked\(\)\s*\{[\s\S]*?\n\}/);
 
-    if (!syncSpaBody || !probeSiteBody) {
+    if (!syncSpaBody || !probeSiteBody || !renderBlockedBody) {
       failed = true;
       console.error('✗ 判据 21 找不到要比对的东西 —— 这条自检要跟着代码改：');
       if (!syncSpaBody) console.error('    · `app.js` 里找不到 `function syncSpa(state)`');
       if (!probeSiteBody) console.error('    · `app.js` 里找不到 `async function probeSite(base)`');
+      if (!renderBlockedBody) console.error('    · `app.js` 里找不到 `function renderBlocked()`');
     } else {
       const sync = syncSpaBody[0];
       const probe = probeSiteBody[0];
+      const blocked = renderBlockedBody[0];
       const problems = [];
 
       if (!sync.includes('siteBaseOf(')) {
@@ -1633,14 +1636,26 @@ if (entryViewFiles.length !== 1) {
             '    那一格会永远停在「正在检查这个站点…」，没有超时也没有失败提示。',
         );
       }
+      // ⚠️★ 这条钉的是「别给人**错建议**」：`renderBlocked` 必须按原因决定要不要摆那句
+      //    「把它更新到 clip9」和那颗「去 clip9 项目」的按钮。
+      //    2026-09-30 的实际代价：地址写成 `Https://…`（大小写而已），界面却把人指去
+      //    「查你的部署为什么没有网页版」—— 他真去查了，还来问了。
+      if (!/\u0000?spaProbeNotClip9/.test(blocked)) {
+        problems.push(
+          '`renderBlocked` 不再按原因区分文案 —— 「把它更新到 clip9」与「去 clip9 项目」\n' +
+            '    会对**所有**原因显示。地址打错 / 连不上时，那句话改变不了任何事，\n' +
+            '    只会把用户指向一个没问题的部署。',
+        );
+      }
 
       if (problems.length) {
         failed = true;
         console.error(`✗ 判据 21：「网页视图跟着房间走、先探测再嵌」这条链上少了 ${problems.length} 个零件：`);
         for (const one of problems) console.error(`    · ${one}`);
-        console.error('  ⚠️ 症状全都**不报错**：网页显示的是**另一个站点**的内容，或者永远停在检查中。');
+        console.error('  ⚠️ 症状全都**不报错**：网页显示的是**另一个站点**的内容，永远停在检查中，');
+        console.error('    或者给出了一个改变不了现状的建议。');
       } else {
-        console.log('· 判据 21：网页视图按当前房间的站点走，且先探测再嵌（6 个零件都在）。');
+        console.log('· 判据 21：网页视图按当前房间的站点走，先探测再嵌，且按原因给对的话（7 个零件都在）。');
       }
     }
   }

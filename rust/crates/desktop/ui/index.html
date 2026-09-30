@@ -198,7 +198,7 @@
        iframe 是一片空白，深色主题下那块白会很扎眼。 */
     .spa { flex: 1; border: 0; width: 100%; background: var(--bg); }
 
-    /* 「这个站点没有可嵌入的网页版」（2026-09-30）。
+    /* 「这一格现在没法嵌网页」那块（2026-09-30）。
        ⚠️★ 与 `.spa` **互斥显示**（都在同一个 flex 容器里，各占一份 `flex: 1`）：探测没通过时
        露出来的是它，iframe 那颗 DOM 一直留着（只是不设 `src`），探测一通过立刻能换回去。
        ⚠️ `display: flex` 与 `hidden` 的冲突由样式表里那条 `[hidden] { display: none !important }`
@@ -1063,11 +1063,21 @@ table.ra td input[type='checkbox'] { margin: 0; }
                  那个陌生页面。 -->
             <div class="spa-blocked" id="spa-blocked" hidden>
                 <div class="box">
-                    <div class="t" data-i18n="这个站点没有可嵌入的网页版">这个站点没有可嵌入的网页版</div>
-                    <p class="d" id="spa-blocked-why"></p>
-                    <p class="d" data-i18n="把它更新到 clip9 的新版本之后，这里就能直接看网页版。">把它更新到 clip9 的新版本之后，这里就能直接看网页版。</p>
+                    <!-- ⚠️★ 标题**不写死**（2026-09-30 改）。原来这里是固定的一句
+                         「这个站点没有可嵌入的网页版」，而那句话只对**三种原因里的第一种**成立
+                         （那台答了、答的不是我们的网页版）—— 地址写错、连不上也照样显示它。
+                         用户看到的恰恰是那一句，于是去查「我的部署为什么没有网页版」，
+                         而真实原因在下面那行（更坏的是那行还会让他去看一眼配置里的地址）。
+                         ⚠️ 现在标题就是**壳给的那句原因**（`I18N.say(spaReason)`）；
+                         下面写着的这句是 `checking` 那一态的初值（也是首帧没跑 JS 时的那句）。 -->
+                    <div class="t" id="spa-blocked-why" data-i18n="正在检查这个站点…">正在检查这个站点…</div>
                     <p class="d addr" id="spa-blocked-addr"></p>
-                    <button class="btn" id="spa-blocked-project" data-i18n="去 clip9 项目">去 clip9 项目</button>
+                    <!-- ⚠️★ 下面这两样**只在「那台不是 clip9 的网页版」时才露**（`renderBlocked`）：
+                         对「地址不是 http(s)」与「连不上」，「把它更新到 clip9」是**错建议**
+                         （更新服务器改变不了打错的地址），而一颗「去 clip9 项目」的按钮
+                         更是在说「问题在那边」—— 两句都在把人往错方向指。 -->
+                    <p class="d" id="spa-blocked-update" hidden data-i18n="把它更新到 clip9 的新版本之后，这里就能直接看网页版。">把它更新到 clip9 的新版本之后，这里就能直接看网页版。</p>
+                    <button class="btn" id="spa-blocked-project" hidden data-i18n="去 clip9 项目">去 clip9 项目</button>
                 </div>
             </div>
 
