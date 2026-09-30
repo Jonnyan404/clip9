@@ -29,10 +29,18 @@
         <activity
             android:name=".MainActivity"
             android:exported="true"
-            android:launchMode="singleTop"
+            android:launchMode="singleTask"
             android:theme="@style/Theme.Clip9.Console">
-            <!-- ⚠️ singleTop：常驻通知点回来时不该再叠一个管理页；
-                 ⚠️★ 分享进来时也靠它 —— 走的是 `onNewIntent`（见 MainActivity）。 -->
+            <!-- ⚠️★ singleTask 而不是 singleTop：两个入口都靠 onNewIntent，而
+                 singleTop 只在「我就在栈顶」时才复用 —— WebView（WebAppActivity）
+                 开着的时候它压在下面，分享 Intent 会被系统投给**栈顶那个**
+                 （WebAppActivity 不认 SEND，直接吞掉，连 onNewIntent 都轮不到
+                 MainActivity）。2026-09-30 真机抓到：WebView 开着时分享，
+                 handleShareIntent 一次都没被调。singleTask 的语义是「Intent 路由
+                 给任务里那个既有实例」，不管它上面压着谁 —— 通知点回来同样
+                 不会再叠管理页（原来 singleTop 承担的那个职责）。
+                 ⚠️ 代价：投递会再开一个 WebAppActivity 叠在旧的上面，
+                 返回时要按两下才回到最初的页面 —— 比静默丢分享好。 -->
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
