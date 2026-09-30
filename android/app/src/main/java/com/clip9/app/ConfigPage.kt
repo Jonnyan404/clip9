@@ -133,14 +133,19 @@ class ConfigPage(
     private val roomsEmpty: TextView = root.findViewById(R.id.configRoomsEmpty)
     private val roomsTitle: TextView = root.findViewById(R.id.configRoomsTitle)
     private val authFlag: TextView = root.findViewById(R.id.configAuthFlag)
+    private val automationFlag: TextView = root.findViewById(R.id.configAutomationFlag)
     private val notice: TextView = root.findViewById(R.id.configNotice)
     private val notCreated: TextView = root.findViewById(R.id.configNotCreated)
 
     init {
         // 每个开关动一下就刷新一遍底部那条「未生效」—— 开关没有文本框那种「原文」问题，
         // 所以不需要在取样时做等价判断。
+        // ⚠️ 自动化总开关还多一件事：卡头那枚「已开启 / 未开启」徽章跟着它走。
         for ((id, _) in switches) {
-            root.findViewById<Switch>(id).setOnCheckedChangeListener { _, _ -> onChange?.invoke() }
+            root.findViewById<Switch>(id).setOnCheckedChangeListener { _, _ ->
+                if (id == R.id.configAutomationEnabled) refreshAutomationFlag()
+                onChange?.invoke()
+            }
         }
         for (field in fields) {
             root.findViewById<EditText>(field.id).doAfterTextChanged { onChange?.invoke() }
@@ -209,6 +214,7 @@ class ConfigPage(
         }
         refreshRoomsHeader()
         refreshAuthFlag()
+        refreshAutomationFlag()
     }
 
     // ── 取样 ──────────────────────────────────────────────────────────
@@ -500,9 +506,31 @@ class ConfigPage(
 
     private fun refreshAuthFlag() {
         val empty = root.findViewById<EditText>(R.id.configGlobalPassword).text.toString().trim().isEmpty()
-        authFlag.text = activity.getString(
-            if (empty) R.string.config_flag_open else R.string.config_flag_password_set,
+        // ⚠️ 徽章的两副脸色（稿子 `.cfg-h .flag`）：没密码 = 「不需要密码」是**好事**（绿），
+        // 有密码 = 「需要密码」是**提醒**（橙）。只换文字不换色的话，绿底橙字 / 橙底绿字
+        // 总有一副是看不清的 —— 底色与文字色必须一起换。
+        setFlag(
+            authFlag,
+            activity.getString(if (empty) R.string.config_flag_open else R.string.config_flag_password_set),
+            ok = empty,
         )
+    }
+
+    /** 自动化总开关的卡头徽章（稿子 ⑦ 里那枚「已开启」）：开着绿、关着橙。 */
+    private fun refreshAutomationFlag() {
+        val on = root.findViewById<Switch>(R.id.configAutomationEnabled).isChecked
+        setFlag(
+            automationFlag,
+            activity.getString(if (on) R.string.config_flag_automation_on else R.string.config_flag_automation_off),
+            ok = on,
+        )
+    }
+
+    /** 把一枚卡头徽章换成指定的文字与脸色（`ok` = 绿那副，否则橙）。 */
+    private fun setFlag(flag: TextView, text: String, ok: Boolean) {
+        flag.text = text
+        flag.setBackgroundResource(if (ok) R.drawable.bg_console_flag_ok else R.drawable.bg_console_flag)
+        flag.setTextColor(activity.getColor(if (ok) R.color.console_flag_ok_text else R.color.console_flag_text))
     }
 
     // ── JSON 小工具 ────────────────────────────────────────────────────

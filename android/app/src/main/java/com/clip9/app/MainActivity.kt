@@ -20,10 +20,12 @@ import android.view.View
 import android.webkit.WebSettings
 import android.widget.Button
 import android.widget.ImageView
+import android.widget.Switch
 import android.widget.TextView
 import android.widget.Toast
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
+import androidx.core.app.NotificationManagerCompat
 import androidx.core.content.ContextCompat
 import com.google.android.material.button.MaterialButtonToggleGroup
 import com.google.zxing.BarcodeFormat
@@ -127,8 +129,29 @@ class MainActivity : AppCompatActivity() {
     private lateinit var dirtyBar: View
     private lateinit var dirtySave: Button
     private lateinit var dirtyText: TextView
+    // ── 其它页（稿子 ⑨：「手机本身的事」四行 + 一条警示 + 页脚）──────────
+
+    /** 第一行右侧那格：`已加入` / `未加入`（颜色也跟着换，见 [refreshOther]）。 */
+    private lateinit var batteryState: TextView
+
+    /** 第二行右侧的 WebView 大版本（`Chrome 118`）。 */
     private lateinit var webViewVersionText: TextView
+
+    /**
+     * 第三行右侧的开关。
+     * ⚠️★ 它是**指示灯**不是控件（布局里 `clickable=false`）：勾选状态由系统授予结果决定，
+     * 点它只能把用户丢进系统设置再让他自己回来 —— 那不如不做。
+     */
+    private lateinit var notificationSwitch: Switch
+
+    /** 第四行右侧的路径（mono，从中间截断）。 */
     private lateinit var dataDirText: TextView
+
+    /** 电池没加白时才出现的那条警示（稿子 `.banner.err`）。 */
+    private lateinit var otherBatteryBanner: View
+
+    /** 页脚那行版本 —— 与连接页的 [versionText] 读同一份数据。 */
+    private lateinit var otherVersionText: TextView
 
     /** 配置页（把 `config.json` 画成一张表单）。 */
     private lateinit var configPage: ConfigPage
@@ -194,8 +217,10 @@ class MainActivity : AppCompatActivity() {
         bindViews()
         // ⚠️ 这里顺手把本地组件也读一次版本 —— 它同时是「.so 加载成功了吗」的第一次探针：
         // 失败的话下面 `refresh()` 会把原因显示在界面上，而不是等到用户点启动才炸。
+        // ⚠️ 版本号两处显示（连接页底部那份 `.foot` 与其它页的 `.foot`）—— 同一个来源，
+        // 分开写是为了将来「只改一处」时**不会静默漏掉另一处**（两行并排，一眼看得见）。
         versionText.text = getString(R.string.version_format, appVersion(), ServerBridge.version())
-        dataDirText.text = getString(R.string.data_dir, filesDir.absolutePath)
+        otherVersionText.text = getString(R.string.version_format, appVersion(), ServerBridge.version())
 
         // ⚠️★ 这一步要在**配置页装载之前**做：`ensureCreated` 会把老版本存在偏好里的端口
         // 搬进 `server.port` 并顺手把文件建出来，搬完再画表单 —— 用户看到的才是那个端口。
@@ -230,8 +255,11 @@ class MainActivity : AppCompatActivity() {
         quickQr.setOnClickListener { toggleQr() }
         findViewById<Button>(R.id.dirtyDiscard).setOnClickListener { discardChanges() }
         findViewById<Button>(R.id.dirtySave).setOnClickListener { saveAndRestart() }
-        findViewById<Button>(R.id.batteryButton).setOnClickListener { requestBatteryWhitelist() }
-        findViewById<Button>(R.id.webViewCheckButton).setOnClickListener { checkWebView() }
+        // ⚠️ 其它页（稿子 ⑨）四行里只有 ①②④ 可点：③ 通知权限那行的开关是**指示灯**
+        // （勾选状态由系统授予结果决定），点了也不知道该发生什么，所以整行都不接点击。
+        findViewById<View>(R.id.batteryRow).setOnClickListener { requestBatteryWhitelist() }
+        findViewById<View>(R.id.webViewRow).setOnClickListener { checkWebView() }
+        findViewById<View>(R.id.dataDirRow).setOnClickListener { copyDataDir() }
         // ⚠️ 初始态是「展开」，而布局里那一格写的是「二维码」—— 不在这里对一次，
         // 首屏就会「图已经摊开、文字却说点它能看」。
         applyQrExpanded()
@@ -288,6 +316,9 @@ class MainActivity : AppCompatActivity() {
             port = ServerConfigStore.port(this)
         }
         refresh()
+        // ⚠️ 从系统设置回来时（去加电池白名单、去开通知权限）正是这条最需要重算的时刻 ——
+        // 用户刚做完动作，回来看到的必须是**新值**。
+        refreshOther()
         handler.post(poll)
     }
 
@@ -344,8 +375,12 @@ class MainActivity : AppCompatActivity() {
         dirtyBar = findViewById(R.id.dirtyBar)
         dirtySave = findViewById(R.id.dirtySave)
         dirtyText = findViewById(R.id.dirtyText)
+        batteryState = findViewById(R.id.batteryState)
         webViewVersionText = findViewById(R.id.webViewVersionText)
+        notificationSwitch = findViewById(R.id.notificationSwitch)
         dataDirText = findViewById(R.id.dataDirText)
+        otherBatteryBanner = findViewById(R.id.otherBatteryBanner)
+        otherVersionText = findViewById(R.id.otherVersionText)
     }
 
     // ── 分段切页 ───────────────────────────────────────────────────────
@@ -374,6 +409,10 @@ class MainActivity : AppCompatActivity() {
         // 「保存并重启」，用户会以为那边也有要保存的东西 —— 而且连接页根本没有
         // 「保存」这个动作。切页时重新算一次（横栏自己在 refreshDirty 里看当前页）。
         refreshDirty()
+        // ⚠️★ 其它页那四项读的都是**系统状态**（电池白名单 / WebView 版本 / 通知权限 / 路径），
+        // 而系统状态在我们看不见的时候会变 —— 用户去设置里把 App 加进白名单、系统更新了 WebView。
+        // 切过去就重算一次：停在旧值上比不显示更糟，它看起来像「已经检查过了」。
+        if (checkedId == R.id.tabOther) refreshOther()
     }
 
     // ── 状态刷新 ───────────────────────────────────────────────────────
@@ -867,21 +906,95 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    /** 读系统 WebView 的版本，太旧就直说（设计稿 §3.6）。 */
-    private fun checkWebView() {
-        val userAgent = try {
-            WebSettings.getDefaultUserAgent(this)
-        } catch (t: Throwable) {
-            android.util.Log.w("clip9", "取不到 WebView UA", t)
-            ""
-        }
-        webViewVersionText.visibility = View.VISIBLE
-        val major = Regex("Chrome/(\\d+)").find(userAgent)?.groupValues?.get(1)?.toIntOrNull()
-        webViewVersionText.text = if (major != null && major < MIN_WEBVIEW_CHROME) {
-            getString(R.string.webview_version, userAgent) + "\n" + getString(R.string.webview_old, major)
+    /**
+     * 重算其它页那四行 + 那条电池警示（稿子 ⑨）。
+     *
+     * ⚠️★ 四项读的都是**系统状态**而不是我们自己的数据 —— 用户可能刚在设置里把 App
+     * 加进白名单、刚更新了系统 WebView。所以 [showPage] 切过来时与 [onResume] 各算一次；
+     * 停在旧值上比不显示更糟，它看起来像「已经检查过了」。
+     */
+    private fun refreshOther() {
+        // ① 电池优化白名单：那格的文字 / 颜色，以及下面那条警示的显隐，全由这一个布尔决定。
+        // ⚠️ 三处同源是**故意**的 —— 「未加入」与「还没加白」说的是同一件事，
+        // 拆成两个判断早晚会出现「上面说未加入、下面没警示」这种自相矛盾的屏。
+        val power = getSystemService(PowerManager::class.java)
+        val whitelisted = power?.isIgnoringBatteryOptimizations(packageName) == true
+        batteryState.text = getString(
+            if (whitelisted) R.string.battery_state_yes else R.string.battery_state_no,
+        )
+        batteryState.setTextColor(
+            getColor(if (whitelisted) R.color.console_ok else R.color.console_warn),
+        )
+        otherBatteryBanner.visibility = if (whitelisted) View.GONE else View.VISIBLE
+
+        // ② WebView 版本：值平时就填在行右侧（不必等用户点那一下），太旧连值一起标成橙色。
+        val userAgent = readWebViewUserAgent()
+        val major = webViewMajor(userAgent)
+        webViewVersionText.text = if (major != null) {
+            getString(R.string.webview_value, major)
         } else {
-            getString(R.string.webview_version, userAgent)
+            getString(R.string.webview_unknown)
         }
+        webViewVersionText.setTextColor(
+            getColor(
+                if (major != null && major < MIN_WEBVIEW_CHROME) R.color.console_warn
+                else R.color.console_text_dim,
+            ),
+        )
+
+        // ③ 通知权限：只当指示灯。
+        // ⚠️★ 用 `areNotificationsEnabled()` 而不是查 `POST_NOTIFICATIONS` 权限：
+        // 那个权限 Android 13 才存在，而「通知到底弹不弹得出来」在**所有**版本上
+        // 都是这一个答案（用户在系统设置里也能单独把这个 App 的通知关掉，
+        // 那种情况查权限是查不出来的 —— 查出来还是「已授予」）。
+        notificationSwitch.isChecked = NotificationManagerCompat.from(this).areNotificationsEnabled()
+
+        // ④ 数据目录：只显示路径。
+        // ⚠️ 从**中间**截断（布局里 `ellipsize="middle"`）：`filesDir` 的两头
+        // （`/data/user/0/` 与 `/files`）都是有用信息，从尾巴截会先丢掉区分度最高的包名段。
+        dataDirText.text = filesDir.absolutePath
+    }
+
+    /** 点第四行：把数据目录复制到剪贴板。 */
+    private fun copyDataDir() {
+        val clipboard = getSystemService(ClipboardManager::class.java) ?: return
+        clipboard.setPrimaryClip(
+            ClipData.newPlainText(getString(R.string.data_dir_title), filesDir.absolutePath),
+        )
+        toast(getString(R.string.data_dir_copied))
+    }
+
+    /** 读系统 WebView 的 UA（拿不到就返回空串）。 */
+    private fun readWebViewUserAgent(): String = try {
+        WebSettings.getDefaultUserAgent(this)
+    } catch (t: Throwable) {
+        android.util.Log.w("clip9", "取不到 WebView UA", t)
+        ""
+    }
+
+    /** 从 UA 里抠出 Chrome 大版本。 */
+    private fun webViewMajor(userAgent: String): Int? =
+        Regex("Chrome/(\\d+)").find(userAgent)?.groupValues?.get(1)?.toIntOrNull()
+
+    /**
+     * 点第二行：重读一次 WebView 版本，用 toast 说结论（设计稿 §3.6）。
+     *
+     * ⚠️ 值已经在行右侧了（[refreshOther] 填的），所以 toast 只负责说「旧了会怎样」。
+     * 旧的时候把 UA 一起报出来 —— 用户要拿这句话去搜 / 去反馈时，「偏旧」三个字没有用。
+     */
+    private fun checkWebView() {
+        refreshOther()
+        val userAgent = readWebViewUserAgent()
+        val major = webViewMajor(userAgent)
+        toast(
+            when {
+                major == null -> getString(R.string.webview_unknown)
+                major < MIN_WEBVIEW_CHROME ->
+                    getString(R.string.webview_version, userAgent) + "\n" +
+                        getString(R.string.webview_old, major)
+                else -> getString(R.string.webview_fine, major)
+            },
+        )
     }
 
     private fun askNotificationPermission() {

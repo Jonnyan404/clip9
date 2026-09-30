@@ -64,17 +64,48 @@
          远端地址本身由连接页的服务器清单管（可以存多台）。 -->
     <string name="remote_empty">先填一个远端地址</string>
 
-    <!-- 其它 -->
-    <string name="section_other">其它</string>
-    <string name="battery_whitelist">加入电池优化白名单</string>
+    <!-- 其它（稿子 ⑨）：四行「手机本身的事」+ 一条电池白名单警示 + 页脚。
+         ⚠️★ 每条拆成 title / note 两段，是因为稿子把 `.row-t` 拆成了
+         `<b>`（14.5px 粗）+ `<span>`（11.5px 灰）—— 合成一句就没法两段不同色。
+
+         ⚠️ 2026-09-30 这一批换了形态：原来是「一个按钮 + 一段说明」，现在是
+         **一行一件事**（值 / 开关在右侧）。所以 `webview_check` 与 `data_dir`
+         （旧写法是「数据目录：%s」）都被拆掉重写了 —— 见 layout 里 pageOther 的注释。 -->
+    <!-- section_other 已删（2026-09-30）：稿子 ⑥⑦⑧⑨ 四张图都是「页签直接接内容」，
+         「其它」两个字由上面的 `.seg` 说了 —— 页里再加一行标题就是同一句话说两遍。 -->
+
+    <!-- ① 电池优化白名单 -->
+    <string name="battery_whitelist">电池优化白名单</string>
+    <string name="battery_note">不做这步，锁屏一段时间后会莫名断连 —— 日志里什么都不会留下。</string>
+    <string name="battery_state_yes">已加入</string>
+    <string name="battery_state_no">未加入</string>
     <string name="battery_already">已经在白名单里了</string>
     <string name="battery_unavailable">这台设备打不开电池优化设置</string>
-    <string name="battery_note">不做这一步，服务端会在锁屏一段时间后被系统杀掉，而日志里什么都不会留下（看起来像「莫名其妙断连」）。</string>
-    <string name="webview_check">检查 WebView 版本</string>
+    <string name="battery_banner_title">电池优化还没加白</string>
+    <string name="battery_banner_body">这台设备在白名单外。加入后锁屏时服务端才不会被系统杀掉。</string>
+
+    <!-- ② WebView 版本 -->
+    <string name="webview_title">WebView 版本</string>
+    <string name="webview_note">界面是网页画的，太旧会显示不全或一片白 —— 不是这个 App 的问题。</string>
+    <!-- 右侧那一小格的值（稿子 `.row-v` 的「Chrome 118」）。 -->
+    <string name="webview_value">Chrome %1$d</string>
+    <!-- 连 UA 都拿不到（系统 WebView 被禁用 / 正在更新）。 -->
+    <string name="webview_unknown">读不到</string>
     <string name="webview_version">WebView UA：%1$s</string>
     <string name="webview_old">这台设备的 WebView 偏旧（Chrome %1$d），界面可能显示不全或一片白。不是这个 App 的问题，是系统组件没更新。</string>
-    <string name="data_dir">数据目录：%1$s</string>
+    <string name="webview_fine">WebView 版本没问题（Chrome %1$d）</string>
+
+    <!-- ③ 通知权限 -->
+    <string name="notification_title">通知权限</string>
+    <string name="notification_note">没给也能跑，只是通知栏里看不到它。</string>
     <string name="notification_denied">没给通知权限：服务端照常运行，但通知栏里看不到它。</string>
+
+    <!-- ④ 数据目录 -->
+    <string name="data_dir_title">数据目录</string>
+    <string name="data_dir_note">卸载即清空 · 配置与历史都在这。</string>
+    <string name="data_dir_copied">路径已复制</string>
+
+    <string name="other_foot_note">服务端配置在「配置」页；这里只放手机本身的事。</string>
     <string name="version_format">v%1$s · 本地组件 %2$s</string>
 
     <!-- 常驻通知 -->
@@ -141,9 +172,16 @@
     <!-- ── 配置页 · 访问与安全 ─────────────────────────────────────────────── -->
     <string name="config_section_access">访问与安全</string>
     <string name="config_global_password">全局密码</string>
-    <string name="config_global_password_hint">留空 = 任何知道地址的设备都能连进来。数字也会被当成密码，但只能填纯数字。</string>
+    <string name="config_global_password_hint">留空 = 任何知道地址的设备都能连进来。字母、数字、符号随意组合都可以，按输入的原样保存。</string>
     <string name="config_flag_password_set">需要密码</string>
     <string name="config_flag_open">不需要密码</string>
+    <!-- ⚠️ 稿子里「总开关」那枚徽章也是两副脸色：开着（绿）/ 关着（橙）。 -->
+    <string name="config_flag_automation_on">已开启</string>
+    <string name="config_flag_automation_off">未开启</string>
+    <!-- 危险区卡头的徽章（稿子 ⑧ 存储那组的 flag）。 -->
+    <string name="config_flag_danger">改错会找不到旧数据</string>
+    <!-- 「房间」那一张卡下面还有一组（稿子 ⑥ 里独立的一张）：开放列表 + 清理间隔。 -->
+    <string name="config_section_rooms">房间列表与清理</string>
     <string name="config_rooms">房间</string>
     <string name="config_rooms_count">%1$d 个房间</string>
     <string name="config_rooms_none">还没单独配过房间。没配过的房间只用上面的全局密码。</string>
@@ -189,13 +227,17 @@
 
     <!-- ── 配置页 · 网络与存储（危险区）───────────────────────────────────── -->
     <string name="config_section_network">网络与存储</string>
-    <string name="config_section_network_note">下面这几项改错会找不到旧数据，或者让别人连不上。</string>
+    <!-- ⚠️ 原来还有一条 config_section_network_note（「下面这几项改错会找不到旧数据…」）：
+         2026-09-30 照稿子 ⑧ 重排后，这层意思收进了卡头的橙色徽章 config_flag_danger，
+         长说明没有落点，删了。 -->
     <string name="config_host">监听地址</string>
     <string name="config_host_hint">0.0.0.0 = 局域网里谁都能访问；只想在本机用可以改成 127.0.0.1（那样别的设备就连不上了）。</string>
     <string name="config_port">端口</string>
     <string name="config_port_hint">被占用时服务端会直接报错，不会自己换一个 —— 静默换端口会让别的设备上填的地址永远连不上。</string>
     <string name="config_prefix">子路径前缀</string>
     <string name="config_prefix_hint">部署在反向代理的子目录时才用（比如 /clip9/）。留空 = 根路径。</string>
+    <!-- 证书与私钥合成一行（稿子 ⑧ 的 tlsrow），两个输入框各自的提示沿用下面两条。 -->
+    <string name="config_tls_title">证书与私钥</string>
     <string name="config_cert">证书文件路径</string>
     <string name="config_key">私钥文件路径</string>
     <string name="config_tls_hint">两个要一起填才走 HTTPS。都不填就是明文 HTTP —— 同一个 Wi-Fi 下的人理论上能看到内容。</string>
@@ -203,6 +245,11 @@
     <string name="config_db_path_hint">相对路径按数据目录解析；写成绝对路径就不跟数据目录走了。</string>
     <string name="config_storage_dir">上传目录</string>
     <string name="config_storage_dir_hint">解析规则与数据库文件同一套 —— 两处不一致会出现「库在 A、上传在 B」。</string>
+    <string name="config_data_dir">数据目录</string>
+    <!-- ⚠️ 这一条读它的是配置页里那行**只读**的值（`ConfigPage.kt` 的 `configDataDir`），
+         不是其它页 —— 其它页那行只放裸路径（`data_dir_title` / `data_dir_note`）。
+         名字里的 `data_dir` 是历史叫法，改它要连着 Kotlin 一起动。 -->
+    <string name="data_dir">数据目录：%1$s</string>
     <string name="config_data_dir_note">应用私有目录，卸载即清空。这一项不可改。</string>
 
     <!-- ── 配置页 · 保存 ──────────────────────────────────────────────────── -->
@@ -276,5 +323,6 @@
     <string name="auto_auth_failed">自动认证没成，进去之后可能要你输一次密码：\n%1$s</string>
 
     <!-- ── 其它页 ─────────────────────────────────────────────────────────── -->
-    <string name="other_server_note">本机服务端的数据都在下面这个目录里，卸载 App 就全没了 —— 重要的东西顺手在别的设备上留一份。</string>
+    <!-- other_server_note 已删（2026-09-30）：其它页改成稿子 ⑨ 的「一行一件事」之后，
+         这段解释被并进了 data_dir_note（行内）与 other_foot_note（页脚），原来那条没人读了。 -->
 </resources>
