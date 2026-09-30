@@ -1021,6 +1021,83 @@ const pkgApk = read('openwrt/scripts/package-openwrt-apk.sh');
   if (problems.length) fail(label, problems.join('\n    '));
 }
 
+// ── 判据 11：桌面端的版本号只认 tag（注入链完整）─────────────────────────────
+//
+// ⚠️★ 为什么要有这一条：这条链**断了不会报错** —— 构建照样成功、包照样发出去，
+// 只有用户看到的那个版本号变成仓库里那份兜底值（2026-09-30 之前是 `0.1.0`，
+// 而同一时刻的 tag 已经是 `v0.1.1-beta1`）。这是一类**无症状失败**，
+// 除了这条判据没有别的地方能拦它。
+//
+// ⚠️ 它**不钉**文件名与写法（改名不该让它红），钉的是约定本身：
+//   ① 仓库里不许再有第二份版本真值（`tauri.conf.json` 不许有 `version`）；
+//   ② 换算只在 `tools/release-version.mjs` 那一处；
+//   ③ `tauri build` 真的吃到了那份由它生成的覆盖配置（`--config` + `runner.temp`）；
+//   ④ 两处指的是**同一个文件**，且生成排在打包之前。
+{
+  const label = '桌面端：版本号的注入链完整（只认 tag，不认仓库里写死的那份）';
+  const problems = [];
+
+  const confRaw = read('rust/crates/desktop/tauri.conf.json');
+  if (confRaw === null) {
+    problems.push('读不到 `rust/crates/desktop/tauri.conf.json`');
+  } else {
+    let conf = null;
+    try {
+      conf = JSON.parse(confRaw);
+    } catch (error) {
+      problems.push(`\`tauri.conf.json\` 解析不了：${error.message}`);
+    }
+    if (conf && 'version' in conf) {
+      problems.push(
+        '`tauri.conf.json` 里又有 `version` 了 —— 那是**第二份**版本真值，而两份一定会漂\n' +
+          '    （2026-09-30 之前它和 `rust/Cargo.toml` 都停在 `0.1.0`，而 tag 已到 `v0.1.1-beta1`）。\n' +
+          '    本地兜底请用 `rust/Cargo.toml` 那份（Tauri 官方行为：配置里没有就取它）。',
+      );
+    }
+  }
+
+  const body = jobBlock(release, 'desktop');
+  if (body === null) {
+    problems.push('读不到 `release.yml` 的 `desktop` job');
+  } else {
+    const injectAt = body.indexOf('tools/release-version.mjs');
+    const buildAt = body.indexOf('tauri-apps/tauri-action@');
+    if (injectAt < 0) {
+      problems.push(
+        '`desktop` job 里没有调 `tools/release-version.mjs` —— 版本号与 versionCode 的换算\n' +
+          '    只许在这一处（那个脚本自己的注释就是「只在这里定义一次」）。',
+      );
+    }
+    if (buildAt < 0) {
+      problems.push('`desktop` job 里找不到 `tauri-apps/tauri-action` 那一步');
+    }
+    if (injectAt >= 0 && buildAt >= 0 && injectAt > buildAt) {
+      problems.push('版本注入那一步排在打包**之后**—— 那样算出来的值赶不上这次构建');
+    }
+
+    const argRef = /--config\s+\$\{\{\s*runner\.temp\s*\}\}\/([^\s{}]+)/.exec(body);
+    if (!argRef) {
+      problems.push(
+        '`tauri-action` 的 `args` 里没有 `--config ${{ runner.temp }}/…` —— 少了它，\n' +
+          '    发出去的桌面端会自称仓库里那份兜底版本，而**构建不会报错**。\n' +
+          '    ⚠️ 这里只认 `runner.temp`：写死成仓库里的路径等于「发布要改仓库文件」。',
+      );
+    }
+    const written = /"\$RUNNER_TEMP\/([^"]+)"/.exec(body);
+    if (!written) {
+      problems.push('看不出那一步把覆盖配置写到哪儿了（期望形如 `> "$RUNNER_TEMP/<名字>.json"`）');
+    }
+    if (argRef && written && argRef[1] !== written[1]) {
+      problems.push(
+        `打包引用的文件名（${argRef[1]}）与生成时写的那个（${written[1]}）不一致 —— 注入会落空`,
+      );
+    }
+  }
+
+  if (!problems.length) ok(label);
+  if (problems.length) fail(label, problems.join('\n    '));
+}
+
 // ── 输出 ────────────────────────────────────────────────────────────────────
 
 if (failures.length) {

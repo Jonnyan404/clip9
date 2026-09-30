@@ -1836,6 +1836,11 @@ async function openSettings() {
     el('sc-hotkey-key').textContent = view.hotkeyToggleWindow;
     // ⚠️ 顺序要紧：它读的是**上面那句刚画上去的**勾（`sqGet('sc-hotkey')`）。
     await refreshHotkeyState();
+    // ⚠️★ 客户端壳自己的版本 —— **只从壳拿**（`view.clientVersion`），页面里不许写死：
+    // 发布时那份真值来自 tag（CI 用 `tauri build --config …` 注进构建），
+    // 页面再抄一份就会与用户装的包各说各话。
+    // ⚠️ 前缀 `v` 是照 Release 上的写法（`v0.1.1-beta1`）—— 用户报版本时念的就是那个。
+    el('dg-client-version').textContent = 'v' + view.clientVersion;
     el('dg-data').textContent = view.dataDir;
     el('dg-config').textContent = view.configPath;
   } catch (error) {

@@ -1,7 +1,6 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "clip9",
-  "version": "0.1.0",
   "identifier": "com.clip9.desktop",
   "build": {
     "frontendDist": "ui"
