@@ -3,6 +3,27 @@ main = "src/index.js"
 compatibility_date = "2025-08-01"
 compatibility_flags = ["nodejs_compat"]
 
+# ── *.workers.dev 那个域名要不要开（以及 Preview URLs）────────────────────────
+#
+# ⚠️★ **这个开关的主人是操作者**：CF 控制台 → Workers & Pages → 选中这个 Worker →
+# Settings → Domains & Routes 里那颗 Disable / Enable。用自定义域的人通常在**那里**关掉它。
+#
+# ⚠️★ 但 wrangler **没有**「别管这个键」这一说：**配置里不写 = 用默认值**，而默认是 `true`
+#（官方文档：`workers_dev` … *Defaults to `true`*），并且**每次部署都会照配置重设一遍** ——
+# 于是「在控制台关掉」会被下一次部署**原样打开**。2026-09-30 报上来的就是这一条。
+#
+# → 所以要表达「**别表态**」，只能部署前先读一眼现在是什么、再照原样写回来。
+#   `cloudflare/sync-workers-dev.mjs` 做这件事，两条部署路径都会在 `wrangler deploy`
+#   之前调它（CI 的工作流、以及本地 `deploy.sh`，后者只在有 API token 时才调）：
+#     · Worker 已经存在 → 写它现在那个值  ⇒ 部署**不再对这个键表态**；
+#     · 首次部署（还查不到这个脚本）→ 写 `true`，于是新部署者拿到一个能访问的地址。
+#
+# ⚠️ 下面这两行不是「默认值」，是**兜底**：读不到状态时用的那一份（脚本会拒绝在那种情况下
+# 继续，见它文件头的取舍）；本地手敲 `wrangler deploy` 时也只认这里。
+# 想让本地部署也别打开 workers.dev，把上面那行改成 false（那台就得靠自定义域访问）。
+workers_dev = true
+preview_urls = true
+
 # 托管 Vue3 前端静态资源（web-vue3/dist 的拷贝）
 #
 # 规则只有一条：命中静态资源就直接免费发出去，没命中就整包交给 Worker。

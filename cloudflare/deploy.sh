@@ -187,7 +187,20 @@ deploy_worker() {
     # 安装依赖
     info "安装 Worker 依赖..."
     npm install
-    
+
+    # ⚠️★ 部署前把这个 Worker 现在开没开 *.workers.dev **照原样写回配置**。
+    # 不写回的话，`wrangler deploy` 会把它设回默认的 true —— 也就是把操作者
+    # 在控制台关掉的域名重新打开（2026-09-30 报上来的那条，见 sync-workers-dev.mjs 文件头）。
+    # ⚠️ 它要 API token，而本地这条路径是 `wrangler login`（OAuth）—— 没有 token 时
+    # **跳过并说清楚**（跳过 = 用模板里那一行的值，模板里已经写着这件事）。
+    if [[ -n "${CLOUDFLARE_API_TOKEN:-${CF_API_TOKEN:-}}" ]]; then
+        node ../sync-workers-dev.mjs wrangler.toml
+    else
+        warn "没有 CLOUDFLARE_API_TOKEN / CF_API_TOKEN —— 跳过 workers.dev 状态的写回"
+        warn "本次会用模板里 workers_dev = … 那一行的值；不想让部署动这个开关的话，"
+        warn "要么给一个 token，要么直接在模板里把它写死成你要的值。"
+    fi
+
     # 部署 Worker
     info "部署 Worker..."
     DEPLOY_OUTPUT=$(wrangler deploy --env="" 2>&1)
