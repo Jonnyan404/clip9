@@ -165,6 +165,39 @@ function ogField(html, prop) {
   check('落地页：标题取首行', ogField(landing.html, 'og:title'), '招行 APP 登录密码');
   // 第二行（账号）刻意不进预览：摘要只取首行，别把整段正文搬进第三方缓存
   check('落地页：第二行不进预览', landing.html.includes('6225'), false);
+
+  // ⚠️★ 纯 ASCII 的首行 / 首尾是 ASCII 的首行（2026-10-01，Jonny 报「发短文本比如 123，
+  //    它就只显示有人分享了一段内容」）。
+  //
+  //    根因：`firstSummaryLine` 那个字符类当时写成 `[#>*-·|\s]`，而里面那条 `-` 夹在
+  //    `*`(U+002A) 与 `·`(U+00B7) 之间 → 被 JS 解析成**范围 U+002A–U+00B7**，
+  //    而 **ASCII 的数字与大小写字母全都在这个区间里**。于是「削掉行首行尾的装饰符」
+  //    实际变成了「吃掉行首行尾的所有字母数字」：`123` 整行被吃光 → 摘要为空 →
+  //    落地页退回「有人分享了一段文本」，而分享记录里那条的**名字也是空的**。
+  //
+  //    ⚠️★ 上面那条 `招行 APP 登录密码` **挡不住它** —— 汉字（U+4E00+）不在那个范围里，
+  //    削到第一个汉字就停了。夹具的首尾又恰好都是中文，所以这个 bug 一直没被发现。
+  //    ⇒ 下面这三条是**唯一**能挡住它的断言，别删（第三条是对照组：装饰符仍然要削，
+  //       否则「把整个 replace 删掉」也能让前两条变绿）。
+  const insertExtra = db.prepare(
+    `INSERT INTO messages (id, type, content, name, size, room, timestamp, senderIP, uuid, expireTime)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+  );
+  insertExtra.run(9, 'text', '123', null, null, 'default', now, '127.0.0.1', null, null);
+  insertExtra.run(10, 'text', 'hello 世界 123', null, null, 'default', now, '127.0.0.1', null, null);
+  insertExtra.run(11, 'text', '# 标题', null, null, 'default', now, '127.0.0.1', null, null);
+
+  const landingOf = async (id) =>
+    getLanding(env, (await postShare(env, { type: 'content', id, ttl: 600 })).json.token);
+
+  const asciiLanding = await landingOf('9');
+  check('落地页：纯 ASCII 的首行进摘要（不是兜底卡片）', ogField(asciiLanding.html, 'og:title'), '123');
+
+  const mixedLanding = await landingOf('10');
+  check('落地页：首尾的 ASCII 不被吃掉', ogField(mixedLanding.html, 'og:title'), 'hello 世界 123');
+
+  const decoratedLanding = await landingOf('11');
+  check('落地页：Markdown 装饰符仍然被削（对照组）', ogField(decoratedLanding.html, 'og:title'), '标题');
   check('落地页：og:url 是落地页自己', ogField(landing.html, 'og:url'), `http://worker.local/s/${encodeURIComponent(share.json.token)}`);
   check('落地页：带 noindex', landing.headers.get('X-Robots-Tag').includes('noindex'), true);
   check('落地页：带 no-referrer（地址里有 token，别流到第三方）', landing.headers.get('Referrer-Policy'), 'no-referrer');
