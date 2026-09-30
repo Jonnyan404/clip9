@@ -677,6 +677,50 @@ jobs:
         run: |
           echo "::notice::这是预发布（prerelease）：容器镜像**只推 tag、不推 latest**。"
 
+  # ── 这一版的说明写了吗：只提示、不拦发布（秒级）────────────────────────────
+  #
+  # ⚠️★ 2026-09-30 加的（`v0.1.1-beta2` 那次：说明压根没写 → 构建、上传、镜像、tap 全
+  #    跑完，13 分钟后才在 release-notes 那里红）。同一件事**开头就能看出来**：这里提前
+  #    跑一遍同一个抽取，忘了写的话几秒内出一条 `::warning::`，而构建还在跑 —— 立刻把
+  #    那一段补进默认分支，下面 release-notes 的兜底就能抽到，整次发布一次绿。
+  #
+  # ⚠️★ 它**不当闸门**（`publish` 的 `needs` 里没有它）：把「文档没写完」变成发布的门，
+  #    等于让一个文档问题拖住资产 —— 那是下面 release-notes 抬头里拒绝过的做法。
+  #    这里只负责**早说**；红不红由 release-notes 说了算。
+  # ⚠️ 所以这个 job 里**任何一步都不许把它弄红**：可能失败的地方（取默认分支那份文件）
+  #    自己兜住，失败也只当「这里不判了」。
+  notes-precheck:
+    needs: [info]
+    if: github.event_name == 'release' || inputs.tag != ''
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.info.outputs.tag }}
+
+      - name: 这一版的说明在 tag 的提交里吗
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ needs.info.outputs.tag }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        run: |
+          set -euo pipefail
+          if node tools/release-notes.mjs --tag "$TAG" > /dev/null; then
+            echo "tag 的提交里能找到这一版，正文就从它抽。"
+            exit 0
+          fi
+          # 没有时再看一眼默认分支：那儿有的话正文抽得出来（只是 tag 自身缺这一条），
+          # 说成 warning 就太吓人了；两边都没有才是「现在就得补」。
+          if ! gh api "repos/${GITHUB_REPOSITORY}/contents/CHANGELOG.md?ref=${DEFAULT_BRANCH}" -H "Accept: application/vnd.github.raw" > /tmp/changelog-branch.md; then
+            echo "::notice::tag 的提交里没有这一版，而 ${DEFAULT_BRANCH} 那份没取到（网络？）—— 这里不判了，看 release-notes。"
+            exit 0
+          fi
+          if node tools/release-notes.mjs --tag "$TAG" --changelog /tmp/changelog-branch.md > /dev/null; then
+            echo "::notice::tag 的提交里没有这一版，但 ${DEFAULT_BRANCH} 上有 —— 正文会从那里抽。下次记得先提交、再打 tag（见 .github/RELEASE_TEMPLATE.md 第 3 步）。"
+          else
+            echo "::warning::CHANGELOG 里没有这一版（tag 与 ${DEFAULT_BRANCH} 上都没有）—— 现在补进 CHANGELOG.md 还来得及：构建还在跑，正文会从 ${DEFAULT_BRANCH} 上抽。按规矩它本该在打 tag 之前就写好。"
+          fi
+
   # ── Release 正文：从 `CHANGELOG.md` 抽这一版的段落贴上去 ──────────────────
   #
   # ⚠️★ 为什么要有这一步（Jonny 2026-09-29：「以后发版 release 会是中文介绍吗」）：
@@ -689,6 +733,12 @@ jobs:
   # ⚠️★ 排在 `needs: publish` 的理由与 `docker` / `homebrew` 一样：**红在发布之后**。
   #    已经传上去的资产不会因为这里红了而回滚，而整个 run 是红的 → 一眼看得见要补。
   #    反过来（把它挪到 publish 之前当闸门）会让「文档没写完」把整次发布卡死，不划算。
+  #
+  #    ⚠️★ 2026-09-30 补（`v0.1.1-beta2` 实测）：这条设计里原本**没有「事后补」的路** ——
+  #    说明漏写时，tag 的提交永远缺那一条，重跑这个 job 也抽不到，正文就一直空着
+  #    （而 `RELEASE_TEMPLATE.md` 写着「单独重跑那个 job 就行」）。现在补上两处：
+  #    开头几秒 `notes-precheck` 先提示一次（不拦发布），这里则**退回默认分支**再抽
+  #    （把那一段补进 main 就补得上）。「不当闸门」那条判断不变。
   #
   # ⚠️ 它**不碰资产**：那三个 `action-gh-release` 只传 `tag_name` / `files` /
   #    `overwrite_files`，从头到尾没有一处设过正文 —— 所以这里改正文不会与它们打架。
@@ -711,13 +761,36 @@ jobs:
 
       - name: 从 CHANGELOG 抽出这一版
         env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAG: ${{ needs.info.outputs.tag }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
         run: |
           set -euo pipefail
           # ⚠️★ 抽不到、或者抽到的还是占位（「变动留空」/「待发布」那种）→ 这个脚本会
           #    **报错退出**，一个字都不往 notes.md 写。宁可这里红，也不要让 Release
           #    页面上挂着一句「（变动留空）」。
-          node tools/release-notes.mjs --tag "$TAG" > notes.md
+          #
+          # ⚠️★ 兜底（2026-09-30 加，`v0.1.1-beta2` 那次的教训）：按规矩「先提交、再打
+          #    tag」，这一段本该在 tag 指向的提交里 —— 而那条规矩**只在打 tag 之前**来
+          #    得及遵守。已经指出去的 tag 是别人下载、镜像、tap 认着的东西，不该为了一段
+          #    说明去挪它；于是 tag 里找不到时**退回默认分支**再抽一次：把那一段补进 main
+          #    之后，重跑这个 job 就能把正文补齐（`RELEASE_TEMPLATE.md` 里「单独重跑那个
+          #    job 就行」那句话，靠的就是这里）。
+          #    ⚠️ 它是**有症状**的：走这条路会打一条 `::warning::`，不静默；两边都找不到
+          #    才红，并且给出「怎么补」。
+          if node tools/release-notes.mjs --tag "$TAG" > notes.md; then
+            echo "tag 的提交里抽到了这一版。"
+          else
+            echo "::warning::tag 的提交里没有这一版 —— 按规矩应当先提交、再打 tag；这次退回 ${DEFAULT_BRANCH} 上抽（正文仍然会有，只是 tag 自身缺这一条）。"
+            if ! gh api "repos/${GITHUB_REPOSITORY}/contents/CHANGELOG.md?ref=${DEFAULT_BRANCH}" -H "Accept: application/vnd.github.raw" > /tmp/changelog-branch.md; then
+              echo "::error::${DEFAULT_BRANCH} 那份 CHANGELOG 也没取到（网络？）—— 重跑这个 job 即可。"
+              exit 1
+            fi
+            if ! node tools/release-notes.mjs --tag "$TAG" --changelog /tmp/changelog-branch.md > notes.md; then
+              echo "::error::${DEFAULT_BRANCH} 上也没有这一版 —— 把说明补进 CHANGELOG.md（照旧写在最上面），然后重跑本 job。按规矩它本该在打 tag 之前就写好。"
+              exit 1
+            fi
+          fi
           echo "--- 正文预览（前 24 行）---"
           head -24 notes.md
 
