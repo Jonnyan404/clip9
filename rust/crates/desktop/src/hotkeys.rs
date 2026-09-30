@@ -207,7 +207,9 @@ pub fn on_event(app: &AppHandle<Wry>, state: ShortcutState) {
 /// 「哪个 label、要不要 unminimize」迟早会漂，而漂的表现是「点了没反应」。
 fn toggle_main_window(app: &AppHandle<Wry>) {
     let Some(window) = app.get_webview_window("main") else {
-        eprintln!("找不到主窗口（label=main），快捷键这次什么也没做");
+        // ⚠️★ 2026-09-30：与托盘那两处共用**同一句**（日志 + 提示区一条）——
+        // 三处各写一份的话，「哪一句、要不要出声」迟早会漂，而漂的表现正是「点了没反应」。
+        crate::tray::warn_no_main_window(app);
         return;
     };
     // ⚠️ 两个 `unwrap_or(false)`：拿不到状态时按「没显示」算 —— 也就是**叫出来**。

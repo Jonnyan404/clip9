@@ -77,6 +77,13 @@ pub struct ServerProcess {
     /// 服务端二进制自己的版本（`-v`）。⚠️ **懒探一次并缓存** ——
     /// `server_status` 每次打开设置都会问，为一行版本号反复起进程不划算。
     version: Mutex<Option<String>>,
+    /// **最近一次 `start` 为什么没成**（成功 / 主动停掉之后清空）。
+    ///
+    /// ⚠️★ 2026-09-30 加：在那之前，启动那一拍的失败**只有日志一条路**
+    ///（`main.rs` 里那句 `eprintln!`），而界面读的是 `server_status` —— 端口被别人占着时
+    /// 它照样说「运行中」（那条缺口记在 `main.rs` 与规格的待办里）。现在这份记录跟着
+    /// 句柄留到下一次尝试，设置页那张卡读得到 —— 「起不来」于是有了常驻的去处。
+    last_error: Mutex<Option<Msg>>,
     binary: PathBuf,
     data_dir: PathBuf,
     /// 配置里读不到端口时用的兜底值（正常路径上就是 [`DEFAULT_PORT`]）。
@@ -90,6 +97,7 @@ impl ServerProcess {
             child: Mutex::new(None),
             started_at: Mutex::new(None),
             version: Mutex::new(None),
+            last_error: Mutex::new(None),
             binary,
             data_dir,
             fallback_port,
@@ -138,6 +146,18 @@ impl ServerProcess {
     #[must_use]
     pub fn is_running(&self) -> bool {
         probe(self.port())
+    }
+
+    /// **最近一次 [`ServerProcess::start`] 为什么没成**（成功 / 真的停掉之后清空）。
+    ///
+    /// ⚠️★ 界面上唯一的去处是设置页那张「本机服务端」卡（`server_status` 的 `startError`）——
+    /// 「启动那一拍」失败时没有「用户点了什么」，那句话只进日志就等于没人看得见。
+    #[must_use]
+    pub fn last_start_error(&self) -> Option<Msg> {
+        self.last_error
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone()
     }
 
     /// **服务端会在哪个端口上** —— 从**它自己的配置**里读，读不到才用兜底那个。
@@ -209,7 +229,21 @@ impl ServerProcess {
     ///
     /// ⚠️ 问 `try_wait()`（真的问内核）而**不是**记一个「我起过」的布尔：
     /// 服务端被系统杀掉之后，那个布尔会一直说「起过」，而这一路上「记的」正是错的那一侧。
+    ///
+    /// 起自带的服务端（幂等：自己起的那个还活着就只等它答话）。
+    ///
+    /// ⚠️★ 不管成没成，结果都**记一分**（[`ServerProcess::last_start_error`]）——
+    /// 「启动那一拍」没有任何界面在看着（没有「用户点了什么」这个上下文），
+    /// 失败只进日志就等于没人看得见。
     pub fn start(&self) -> Result<(), Msg> {
+        let outcome = self.start_inner();
+        *self.last_error.lock().unwrap_or_else(|e| e.into_inner()) =
+            outcome.as_ref().err().cloned();
+        outcome
+    }
+
+    /// [`ServerProcess::start`] 的本体 —— 拆开只为在那一次结果上盖一个记录。
+    fn start_inner(&self) -> Result<(), Msg> {
         // ⚠️★ 端口**每次现读配置**：用户在「服务端配置」里改完、点「保存并重启」，
         // 那一下必须真的换到新端口上（原来写死常量 → 改哪个都白改）。
         let port = self.port();
@@ -293,7 +327,10 @@ impl ServerProcess {
     /// ⚠️★ 只有这一句能回答「端口上那个是不是我的」：
     /// `try_wait()` 给 `Ok(None)` = 子进程还在跑；`Ok(Some(_))` = 它已经退出了
     ///（那时端口上那个**一定**是别人）。
-    fn owns_live_child(&self) -> bool {
+    ///
+    /// ⚠️★ 2026-09-30 起是 `pub`：`server_status` 要用它回答「端口上那个到底是不是
+    /// 这个客户端起的」——在那之前只有内部控制流在问它。
+    pub fn owns_live_child(&self) -> bool {
         let mut guard = self.child.lock().unwrap_or_else(|e| e.into_inner());
         match guard.as_mut() {
             Some(child) => matches!(child.try_wait(), Ok(None)),
@@ -325,6 +362,8 @@ impl ServerProcess {
             .map_err(|reason| Msg::key("serverStopFailed").param("reason", reason))?;
         // ⚠️ 收尸：不 `wait` 的话会留下僵尸进程（在 Linux 上看得见）。
         let _ = child.wait();
+        // ⚠️ 失败记录也一起清：真的把服务端停下来了，那「上次为什么没起来」就已经翻篇了。
+        *self.last_error.lock().unwrap_or_else(|e| e.into_inner()) = None;
         Ok(())
     }
 }
@@ -1009,5 +1048,56 @@ mod tests {
         assert!(a.is_running(), "A 必须还活着");
 
         a.stop().expect("A 自己停");
+    }
+
+    /// ⚠️★ **起不来的时候要把原因留下来**（2026-09-30 加）。
+    ///
+    /// 「启动那一拍」（随客户端启动 / 开机自启）没有任何界面在看着 —— 失败只进日志
+    /// 就等于没人看得见。这条记录是设置页那张卡的唯一来源
+    ///（`last_start_error` → `ServerStatusView::start_error`）。
+    #[test]
+    fn a_failed_start_remembers_why() {
+        let dir = tempfile::tempdir().expect("建临时目录");
+        let process = ServerProcess::new(
+            PathBuf::from("/definitely/not/a/clip9-server"),
+            dir.path().to_path_buf(),
+            free_port(),
+        );
+        let reason = process.start().expect_err("这个二进制不存在，起不来");
+        // ⚠️ 只钉**键**（与别处同一条规矩）：句子住在 `ui/i18n.js` 里。
+        assert_eq!(
+            reason.key, "serverSpawnFailed",
+            "起不来要说得出是哪一类：{reason:?}"
+        );
+        let recorded = process
+            .last_start_error()
+            .expect("起不来却什么都没记 —— 设置页那张卡就没得说了");
+        assert_eq!(recorded.key, reason.key, "记下来的该是同一个原因");
+    }
+
+    /// 同一条记录的另一半：**成功之后要清掉**。
+    ///
+    /// ⚠️ 直接往字段里种一条（测试就在同一个模块，字段是私有的）—— 这条要钉的是
+    /// 「`start` 成功之后它变回 `None`」，而不是「怎么失败」（上一条已经钉了）。
+    /// 不清的症状：卡上一直挂着一条早就过去的失败，而灯已经是「运行中」。
+    #[test]
+    fn a_good_start_clears_the_remembered_reason() {
+        let binary = test_binary();
+        if !binary.is_file() {
+            eprintln!("跳过：{} 不在", binary.display());
+            return;
+        }
+        let dir = tempfile::tempdir().expect("建临时目录");
+        let process = ServerProcess::new(binary, dir.path().join("data"), free_port());
+        *process.last_error.lock().unwrap_or_else(|e| e.into_inner()) =
+            Some(Msg::key("serverPortTaken"));
+
+        process.start().expect("起自带的服务端");
+        assert!(
+            process.last_start_error().is_none(),
+            "起来了就该把上一次的失败清掉 —— 否则卡上会挂着一条早就过去的错误"
+        );
+        process.stop().expect("停掉它");
+        assert!(process.last_start_error().is_none(), "停掉之后更不该留着它");
     }
 }

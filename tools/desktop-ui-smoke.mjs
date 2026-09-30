@@ -1679,6 +1679,173 @@ if (entryViewFiles.length !== 1) {
   }
 }
 
+// ── 判据 22：提示的等级三处逐字一致；且 `#notice` 只有一个所有者（理由见下）──────
+//
+// ⚠️★ 2026-09-30 加（「把提示收成一套」那一步）。它钉的是两件**拆掉就静默变坏**的事：
+//
+//   ① **等级这条接缝**：`NoticeLevel`（壳）→ `state.notice.level`（IPC）→ `#notice` 的
+//      CSS 类名（页面）。三处**各写一份**，谁改了另一处都不会报错 —— 症状只是那条提示
+//      掉回默认样式（分不清「做成了 / 被跳过 / 失败了」），而那正是当初留一个分类字段
+//      要解决的事。做法同判据 18（两份渲染器读同一份夹具）：比的是**集合逐字一致**。
+//   ② **所有者**：`#notice` 只许 `showNotice` 碰；「一条提示什么时候结束」只有两个事件
+//      —— 计时器到点，或者新的一条顶上。⚠️ 别再从「快照里还有没有 notice」去收：
+//      那一拍是 `clear_notice` 之后的下一拍，照着 `null` 抹就把刚显示的那条**一闪抹掉**
+//      —— 上一版正是为它留了 `noticeVisible` 那个补丁（用户报过的「提示只闪一下」）。
+//      补丁再出现的那天，那个 bug 就回来了，所以这里连那个名字一起钉。
+{
+  const storePath = join(dirname(rustPath), 'store.rs');
+  let storeSource = null;
+  let storeError = null;
+  try {
+    storeSource = readFileSync(storePath, 'utf8');
+  } catch (error) {
+    storeError = error;
+  }
+
+  if (storeSource === null) {
+    failed = true;
+    console.error(`✗ 判据 22 跑不了：读不出 ${storePath}（${storeError.message}）`);
+    console.error('  ⚠️ 读不到就看不出等级这条接缝 —— 而它断了**不报错**，只是提示掉回默认样式。');
+  } else {
+    const problems = [];
+    const bareStore = stripComments(storeSource);
+    const bareJs = stripComments(js);
+
+    // ① 壳那一侧：枚举体 + serde 的改名规则（改名规则不对 → 序列化出来的是 `Ok` 那样的大写）。
+    const enumAt = bareStore.indexOf('enum NoticeLevel');
+    const enumBody =
+      enumAt < 0 ? null : /enum\s+NoticeLevel\s*\{([\s\S]*?)\n\}/.exec(bareStore.slice(enumAt));
+    if (!enumBody) {
+      problems.push('`store.rs` 里找不到 `enum NoticeLevel` —— 判据要跟着代码改（或者那个枚举被删了）');
+    } else if (!/rename_all\s*=\s*"lowercase"/.test(bareStore.slice(Math.max(0, enumAt - 300), enumAt))) {
+      problems.push(
+        '`NoticeLevel` 上面没有 `#[serde(rename_all = "lowercase")]` —— 序列化出来会是 `Ok/Warn/Error`，' +
+          '而 CSS 那几档是小写：接缝从这里断，页面上只是掉回默认样式',
+      );
+    }
+    const variants = enumBody ? [...enumBody[1].matchAll(/^\s*([A-Z][A-Za-z0-9]*)\s*,/gm)].map((m) => m[1]) : [];
+    if (enumBody && variants.length < 3) {
+      problems.push(
+        `只认出 ${variants.length} 个枚举变体（${variants.join('、') || '一个都没有'}）—— 读不懂就当红，别当绿`,
+      );
+    }
+    const fromRust = new Set(variants.map((one) => one.toLowerCase()));
+
+    // ② 样式表那一侧：`.notice.<名字>` 的类名。
+    const fromCss = new Set([...html.matchAll(/\.notice\.([a-z0-9-]+)\s*\{/g)].map((m) => m[1]));
+    if (!fromCss.size) problems.push('`index.html` 里一条 `.notice.<名字>` 规则都没有 —— 提示会没有颜色');
+
+    // ③ 页面那一侧：`showNotice('…')` 传的那些字面量（传变量/字段的地方不在此列）。
+    // ⚠️★ 哨兵 `\u0000` **必需**（不是可选）：非字面量的实参（`showNotice(state.notice.level…)`
+    // 与函数定义里的形参那一行）也长得像 `showNotice(` 后面跟个名字 —— 可选哨兵会把它们
+    // 当成等级报出来（2026-09-30 第一版就这么假红了两条）。
+    const fromJs = new Set([...bareJs.matchAll(/showNotice\(\s*\u0000([a-z0-9-]+)\u0000/g)].map((m) => m[1]));
+
+    // 三处逐字一致。⚠️ 只报**差集**，别只说一句「不一致」—— 差集才指得出该改哪一处。
+    for (const one of fromRust) {
+      if (!fromCss.has(one)) {
+        problems.push(`壳会发出等级 \`${one}\`，而样式表里没有 \`.notice.${one}\`（那条提示掉回默认样式）`);
+      }
+    }
+    for (const one of fromCss) {
+      if (!fromRust.has(one)) {
+        problems.push(`样式表有 \`.notice.${one}\`，而 \`NoticeLevel\` 发不出这个值（一条死样式，或者枚举改了名）`);
+      }
+    }
+    for (const one of fromJs) {
+      if (!fromRust.has(one)) {
+        problems.push(
+          `页面在 \`showNotice('${one}')\` 里用了这个等级，而壳/样式表里没有它（少一个字母就是这个症状，不报错）`,
+        );
+      }
+    }
+
+    // ④ 所有者：`#notice` 只被 `showNotice` 碰。
+    const showNoticeBody = /function showNotice\(level, text\)\s*\{[\s\S]*?\n\}/.exec(bareJs);
+    if (!showNoticeBody) {
+      problems.push('`app.js` 里找不到 `function showNotice(level, text)` —— 判据要跟着代码改');
+    } else {
+      const touches = [...bareJs.matchAll(/el\(\s*\u0000?notice\u0000?\s*\)/g)].length;
+      if (touches !== 1) {
+        problems.push(
+          `\`el('notice')\` 在 app.js 里出现了 ${touches} 次 —— 只能有 1 次（在 showNotice 里）；` +
+            '别处再碰它，就等于又冒出第二个所有者',
+        );
+      }
+      const assignments = [...bareJs.matchAll(/notice\.hidden\s*=/g)].length;
+      if (assignments !== 2) {
+        problems.push(
+          `\`notice.hidden =\` 出现了 ${assignments} 次 —— 只能有 2 次（showNotice 里显示、计时器里收）；` +
+            '多在那一处就是从别的地方收（照着快照的 `null` 收会把提示闪掉）',
+        );
+      }
+      if (/\bnoticeVisible\b/.test(bareJs)) {
+        problems.push('`noticeVisible` 又出现了 —— 那个补丁是「照快照收提示」留下的，它回来 = 提示又会一闪而过');
+      }
+    }
+
+    // ③ 「只有日志」的失败必须**表态**（2026-09-30 加）。壳里每个 `eprintln!` 要么
+    //    紧挨着一次 `notice*`（日志 + 提示两条路都给），要么带一行 `// log-only-ok: 理由`。
+    //    ⚠️★ 症状：一句失败只进日志、界面上一个字都没有 —— 就是「点了没反应」那一类；
+    //    2026-09-30 之前 `desktop/src` 有十几处是这样，而没有任何东西看着它们。
+    //    ⚠️ 带标记的**每次都会印出来**（不失败，但一直看得见）—— 静默的例外清单是会长大的
+    //    （与判据 16 的 `i18n-ok` 同一条道理）。
+    //    ⚠️ 边界：只扫 `#[cfg(test)]` **之前**那半（测试里打印「跳过」是正常的），
+    //    窗口取 ±3 行 —— 这个仓库的写法就是「日志那行、提示下一行」。
+    {
+      const files = rustSources(join(root, 'rust/crates/desktop/src'));
+      if (!files.length) {
+        problems.push('`rust/crates/desktop/src` 里一个 .rs 都没扫到 —— 这条判据要跟着仓库结构改');
+      } else {
+        const offenders = [];
+        const marked = [];
+        for (const path of files) {
+          const rel = path.slice(root.length + 1);
+          const raw = readFileSync(path, 'utf8');
+          // ⚠️★ 在**骨架**上找 `eprintln!`：注释里到处在提它（说明「以前只进日志」），
+          // 直接在原文里找会假红 —— 2026-09-30 的第一版就这么报了两条（`server_process.rs`）。
+          // ⚠️ 而**标记**是注释，只在原文里有 → 窗口取原文那几行。
+          // ⚠️ 测试段跳过（`rustTestRanges`，与判据 16/17 同一套）：那里打印「跳过：… 不在」是正常的。
+          const { blanked } = scanRust(raw);
+          const tests = rustTestRanges(blanked);
+          const rawLines = raw.split('\n');
+          const codeLines = blanked.split('\n');
+          let lineStart = 0;
+          for (let i = 0; i < codeLines.length; i += 1) {
+            const at = lineStart;
+            lineStart += codeLines[i].length + 1; // +1 = 那个 `\n`
+            if (!codeLines[i].includes('eprintln!')) continue;
+            if (tests.some(([from, to]) => at >= from && at < to)) continue;
+            const window = rawLines.slice(Math.max(0, i - 3), i + 4).join('\n');
+            if (window.includes('log-only-ok')) marked.push(`${rel}:${i + 1}`);
+            else if (!/\.notice(_in)?\(/.test(window)) offenders.push(`${rel}:${i + 1}`);
+          }
+        }
+        for (const one of offenders) {
+          problems.push(
+            `\`${one}\` 的 \`eprintln!\` 既没紧挨着一次提示、也没有 \`// log-only-ok:\` 标记 —— 那句失败用户在界面上看不到`,
+          );
+        }
+        if (marked.length) {
+          console.log(`· 判据 22 · 只进日志的例外（${marked.length} 处，不算失败，但每次印出来）：`);
+          for (const one of marked) console.log(`    ${one}`);
+        }
+      }
+    }
+
+    if (problems.length) {
+      failed = true;
+      console.error(`✗ 判据 22：提示的等级 / 所有者这条链断了（${problems.length} 处）：`);
+      for (const one of problems) console.error(`    · ${one}`);
+      console.error('  ⚠️ 症状：提示掉回默认样式（分不出成功 / 失败 / 被跳过），或者只闪一下就没了。');
+    } else {
+      console.log(
+        `· 判据 22：等级三处一致（壳 ${[...fromRust].join(' / ')}），且 \`#notice\` 只有一个所有者。`,
+      );
+    }
+  }
+}
+
 if (cssOnly.length) {
   console.log(`· ${cssOnly.length} 个 id 只被选择器用（形如 #id { … }），正常：${cssOnly.join('、')}`);
 }

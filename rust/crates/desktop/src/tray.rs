@@ -46,7 +46,7 @@ use clip9_client::Msg;
 use crate::runtime::Runtime;
 use crate::server_process::ServerProcess;
 use crate::shell_text::ShellText;
-use crate::store::Store;
+use crate::store::{NoticeLevel, Store};
 
 /// 托盘的 id。⚠️ 建菜单与 [`retranslate`] **必须同一个** —— 所以这里只写一份。
 const TRAY_ID: &str = "main";
@@ -168,6 +168,7 @@ pub fn retranslate(app: &AppHandle<Wry>, shell: &Arc<ShellText>) {
     };
     let Some(tray) = app.tray_by_id(TRAY_ID) else {
         eprintln!("托盘：找不到托盘图标（id={TRAY_ID}），换语言之后菜单还是旧的那份");
+        store.notice(NoticeLevel::Error, Msg::key("trayMenuStale"));
         return;
     };
     match build_menu(app, &store, shell) {
@@ -176,9 +177,13 @@ pub fn retranslate(app: &AppHandle<Wry>, shell: &Arc<ShellText>) {
             // 而点它时的句柄由 `install` 的那个闭包持着（菜单重建不影响事件回调）。
             if let Err(err) = tray.set_menu(Some(menu)) {
                 eprintln!("托盘：换语言时挂回菜单失败：{err}");
+                store.notice(NoticeLevel::Error, Msg::key("trayMenuStale"));
             }
         }
-        Err(err) => eprintln!("托盘：换语言时重建菜单失败：{err}"),
+        Err(err) => {
+            eprintln!("托盘：换语言时重建菜单失败：{err}");
+            store.notice(NoticeLevel::Error, Msg::key("trayMenuStale"));
+        }
     }
 }
 
@@ -217,7 +222,10 @@ pub fn install(
         .on_menu_event(move |app, event| {
             let Some(action) = action_for(event.id().as_ref()) else {
                 // ⚠️ 认不出来**什么也不做**，但要留下痕迹 —— 静默吞掉是这类问题的温床。
+                // ⚠️★ 2026-09-30：除了日志还推一条提示 —— 症状是「点了没反应」，
+                // 而界面上一个字都没有，那正是这个项目最忌讳的一类。
                 eprintln!("托盘：认不出的菜单项 id={}", event.id().as_ref());
+                store_for_menu.notice(NoticeLevel::Error, Msg::key("trayUnknownItem"));
                 return;
             };
             match action {
@@ -230,6 +238,9 @@ pub fn install(
                     if let Err(reason) = store_for_menu.select(index) {
                         // ⚠️ `{reason:?}`：那是一条 `Msg`，它故意没有 `Display`（句子该由页面渲染）。
                         eprintln!("托盘：切房间失败：{reason:?}");
+                        // ⚠️★ 2026-09-30：**同一句话**也推给提示区 —— 否则用户点了托盘，
+                        // 窗口没被叫出来、也没有任何解释（那正是「点了没反应」）。
+                        store_for_menu.notice(NoticeLevel::Error, reason);
                         return;
                     }
                     runtime_for_menu.refresh_history();
@@ -274,7 +285,21 @@ fn stop_bundled_server(app: &AppHandle<Wry>) {
     if let Err(reason) = server.stop() {
         // ⚠️ 失败要**出声**：留下的会是一个占着端口的孤儿，而用户只会在
         // 下次「起不来」时才发现 —— 那时已经离这里很远了。
+        // log-only-ok: 这条路在**退出**那一拍，进程随即就没了 —— 提示窗口里没人看得到；
+        //   后果由下次启动那张卡说清（`owned` / `start_error`，2026-09-30）
         eprintln!("托盘：退出时停本地服务端失败：{reason:?}");
+    }
+}
+
+/// 「主窗口找不到了」—— 托盘 / 快捷键 / 单实例**三处共用**这一句。
+///
+/// ⚠️★ 2026-09-30 加：这三处的症状都是「点了没反应」（窗口都不在了，用户只看到
+/// 按键 / 点击没动静），而原来它们只打日志 —— 界面上一个字都没有。现在除了日志，
+/// 还往提示区推一条（`Store` 从 `AppHandle` 拿；状态还没注册时只剩日志）。
+pub(crate) fn warn_no_main_window(app: &AppHandle<Wry>) {
+    eprintln!("找不到主窗口（label=main）");
+    if let Some(store) = app.try_state::<Arc<Store>>() {
+        store.notice(NoticeLevel::Error, Msg::key("noMainWindow"));
     }
 }
 
@@ -289,7 +314,7 @@ fn stop_bundled_server(app: &AppHandle<Wry>) {
 /// 漏掉 `unminimize` 的表现就是「窗口最小化时点了图标仍然什么都没发生」。
 pub(crate) fn show_main_window(app: &AppHandle<Wry>) {
     let Some(window) = app.get_webview_window("main") else {
-        eprintln!("找不到主窗口（label=main）");
+        warn_no_main_window(app);
         return;
     };
     let _ = window.show();

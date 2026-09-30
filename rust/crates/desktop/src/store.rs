@@ -175,9 +175,27 @@ impl Default for ConnectionView {
     }
 }
 
+/// 一条提示的**等级** —— 决定界面上的颜色（`ui/index.html` 的 `.notice.<值>`）。
+///
+/// ⚠️★ 用枚举而不是 `&'static str`（2026-09-30 改）：这个值要一路走到页面的 **CSS 类名**
+/// 上，而字符串拼错了**不会让任何东西报错** —— 症状是那条提示掉回默认样式
+///（分不出「做成了 / 被跳过 / 失败了」），而那正是当初留一个分类字段要解决的事。
+/// 序列化出来的三个字面量与样式表那三档**逐字**对应；`tools/desktop-ui-smoke.mjs`
+/// 判据 22 把这条接缝钉住（两边各写一份的地方就该有一条判据）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum NoticeLevel {
+    /// 做成了（上传送达之类）。
+    Ok,
+    /// 没做成，但它不是错误 —— 被开关 / 规则跳过了。
+    Warn,
+    /// 失败了。
+    Error,
+}
+
 /// 界面上「刚刚发生的一件事」（上传结果之类）。
 ///
-/// ⚠️ 用 `kind` 而不是只给一句话：页面要能**分清**「成功 / 失败 / 只是被跳过」，
+/// ⚠️ 带一个 [`NoticeLevel`] 而不是只给一句话：页面要能**分清**「成功 / 失败 / 只是被跳过」，
 /// 三者的颜色不一样。只给一句话的结果就是界面只能全画成一种颜色。
 ///
 /// ⚠️★ 它**不带房间名**（2026-09-27 改）。原来带过一版：一条全局提示加一句
@@ -190,7 +208,7 @@ impl Default for ConnectionView {
 #[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Notice {
-    pub kind: &'static str,
+    pub level: NoticeLevel,
     pub text: Msg,
 }
 
@@ -556,9 +574,11 @@ impl Store {
     /// ⚠️ `text` 收 [`Msg`]（键 + 参数），**不是成文的中文**（2026-09-28 改）。
     /// ⚠️★ 签名就是 `Msg`（不是 `impl Into<Msg>`）—— 于是调用点必须明确写出
     /// `Msg::key("…")`，键**看得见、也抠得出来**（`tools/desktop-ui-smoke.mjs` 判据 17）。
-    pub fn notice(&self, kind: &'static str, text: Msg) {
+    /// ⚠️ `level` 是 [`NoticeLevel`]（2026-09-30 改，原先是 `&'static str`）——
+    /// 「上行的结果 → 界面的等级」那一步翻译在 `runtime` 的 `Outcome::level` 里，**只此一处**。
+    pub fn notice(&self, level: NoticeLevel, text: Msg) {
         let mut inner = self.lock();
-        let next = Notice { kind, text };
+        let next = Notice { level, text };
         if inner.app_notice.as_ref() != Some(&next) {
             inner.app_notice = Some(next);
             inner.touch();
@@ -577,11 +597,11 @@ impl Store {
     ///
     /// ⚠️★ 那个「带上房间标识」是**嵌一句话**（[`Msg::param_msg`]），不是字符串拼接 ——
     /// 见 [`clip9_client::ParamValue::Msg`]。
-    pub fn notice_in(&self, server: &str, room: &str, kind: &'static str, text: Msg) {
+    pub fn notice_in(&self, server: &str, room: &str, level: NoticeLevel, text: Msg) {
         let mut inner = self.lock();
         let Some(index) = inner.room_index(server, room) else {
             let next = Notice {
-                kind,
+                level,
                 text: Msg::key("noticeForMissingRoom")
                     .param("room", room)
                     .param_msg("text", text),
@@ -594,7 +614,7 @@ impl Store {
         };
         // ⚠️ 值一样就不动：`render` 里那一串上传结果提示可能重复出现
         //（「已上传」连点两次），而重画一次是白花的。
-        let next = Notice { kind, text };
+        let next = Notice { level, text };
         if inner.rooms[index].notice.as_ref() != Some(&next) {
             inner.rooms[index].notice = Some(next);
             inner.touch();
@@ -1875,7 +1895,7 @@ mod tests {
         store.notice_in(
             "https://cf.example",
             "default",
-            "err",
+            NoticeLevel::Error,
             Msg::key("historyFailed").param("reason", "401"),
         );
 
@@ -1888,7 +1908,7 @@ mod tests {
         // ② 切到远端那个房间 → 它在这儿等着。
         store.select(2).unwrap();
         let notice = store.snapshot().notice.expect("它自己的房间该看得到");
-        assert_eq!(notice.kind, "err");
+        assert_eq!(notice.level, NoticeLevel::Error);
         assert_eq!(notice.text.key, "historyFailed");
         assert_eq!(
             notice
@@ -1913,7 +1933,7 @@ mod tests {
         assert!(store.snapshot().notice.is_some(), "还没显示过就被吃掉了");
 
         // ⑤ **两条同时待着时房间那条优先**：界面那一格就长在那个房间标题下面。
-        store.notice("err", Msg::key("configSaveFailed"));
+        store.notice(NoticeLevel::Error, Msg::key("configSaveFailed"));
         assert_eq!(
             store.snapshot().notice.expect("提示该在").text.key,
             "historyFailed",
@@ -1952,7 +1972,7 @@ mod tests {
         store.notice_in(
             "https://谁也不是",
             "room-x",
-            "err",
+            NoticeLevel::Error,
             Msg::key("historyFailed").param("reason", "x"),
         );
 
@@ -1989,7 +2009,12 @@ mod tests {
     #[test]
     fn a_room_notice_follows_the_room_across_a_room_list_edit() {
         let (_dir, store) = temp_store();
-        store.notice_in(FIXTURE_SERVER, "work", "err", Msg::key("historyFailed"));
+        store.notice_in(
+            FIXTURE_SERVER,
+            "work",
+            NoticeLevel::Error,
+            Msg::key("historyFailed"),
+        );
         store.select(1).unwrap();
         assert!(store.snapshot().notice.is_some(), "先确认它挂上去了");
 
@@ -2573,13 +2598,13 @@ mod tests {
             "notice",
             |_| {},
             |store| {
-                store.notice("err", Msg::key("uploadFailed"));
+                store.notice(NoticeLevel::Error, Msg::key("uploadFailed"));
             },
         );
         assert_quiet(
             "notice（同一条再来一次）",
-            |store| store.notice("err", Msg::key("uploadFailed")),
-            |store| store.notice("err", Msg::key("uploadFailed")),
+            |store| store.notice(NoticeLevel::Error, Msg::key("uploadFailed")),
+            |store| store.notice(NoticeLevel::Error, Msg::key("uploadFailed")),
         );
     }
 
@@ -2587,7 +2612,7 @@ mod tests {
     fn clearing_a_notice_bumps_the_version() {
         assert_bumps(
             "clear_notice",
-            |store| store.notice("err", Msg::key("x")),
+            |store| store.notice(NoticeLevel::Error, Msg::key("x")),
             |store| store.clear_notice(),
         );
         assert_quiet(

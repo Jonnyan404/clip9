@@ -33,6 +33,8 @@ pub fn apply(app: &AppHandle<tauri::Wry>, wanted: bool) {
         manager.disable()
     };
     if let Err(err) = result {
+        // log-only-ok: 设置页那行「系统里的真相」（`autostart::is_enabled`）会暴露不一致，
+        //   用户在那儿看得见；这里只是日志
         eprintln!("设置开机自启失败（想要 {wanted}）：{err}");
     }
 }

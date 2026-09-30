@@ -203,6 +203,9 @@
       'trayAutostart': '开机自动启动',
       'trayRooms': '切换房间',
       'trayQuit': '退出',
+      'trayUnknownItem': '托盘里有一项这个版本认不出来（点它没有反应）',
+      'trayMenuStale': '托盘菜单没能跟着语言更新（可能还停在旧语言）',
+      'noMainWindow': '主窗口找不到了 —— 这次操作没有生效，重启一下客户端',
       'notifyUploadFailed': '本机剪贴板没发出去',
       'notifyWroteToClipboard': '房间的内容写进本机剪贴板了',
       'notifyEmptyText': '（空文本）',
@@ -560,6 +563,11 @@
       '没有自带服务端（找不到 clip9-server）': 'No bundled server (clip9-server not found)',
       '本地服务端运行中': 'The local server is running',
       '本地服务端没在跑': 'The local server is not running',
+      '端口上是别的服务端（不是这个客户端起的）':
+        'Something else is serving on that port (this client did not start it)',
+      '本地服务端：端口上那个不是这个客户端起的':
+        'Local server: the one on the port was not started by this client',
+      '不是本客户端起的': 'not started by this client',
       '本地服务端：这个客户端没有自带（找不到 clip9-server）':
         'Local server: this client has no bundled one (clip9-server not found)',
       '本地服务端：运行中': 'Local server: running',
@@ -701,6 +709,9 @@
       'trayAutostart': 'Start at login',
       'trayRooms': 'Switch rooms',
       'trayQuit': 'Quit',
+      'trayUnknownItem': 'The tray has an item this version does not recognise (clicking it does nothing)',
+      'trayMenuStale': 'The tray menu could not follow the language change (it may still be in the old one)',
+      'noMainWindow': 'The main window is gone -- that action did nothing; restart the client',
       'notifyUploadFailed': 'This machine\'s clipboard could not be sent',
       'notifyWroteToClipboard': 'The room\'s content was written to this machine',
       'notifyEmptyText': '(empty text)',

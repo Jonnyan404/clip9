@@ -51,7 +51,7 @@ use std::time::Instant;
 // 排在最后一行，很容易被当成「方法名写错了」。
 use tauri::Manager;
 
-use store::{CONFIG_FILE, Store, default_data_dir, load_config};
+use store::{CONFIG_FILE, NoticeLevel, Store, default_data_dir, load_config};
 
 /// 起动参数（**手写解析**，与 `clip9-server` 同一套规矩：`-port` / `--port` 都收）。
 ///
@@ -171,6 +171,7 @@ fn restore_window_size(app: &tauri::AppHandle, path: &Path) {
         f64::from(wanted.width),
         f64::from(wanted.height),
     )) {
+        // log-only-ok: 窗口尺寸记不住只影响「下次开在哪」，用户处理不了，也**不影响使用**
         eprintln!("贴窗口大小失败（用默认尺寸继续）：{reason}");
     }
 }
@@ -196,6 +197,7 @@ fn main() {
         // （有终端时看得到；没有时 macOS 会把 stdout 丢进日志。）
         Ok(None) => return,
         Err(reason) => {
+            // log-only-ok: 命令行（终端）上的报错，紧接着就 exit(2) —— 窗口里没有它的位置
             eprintln!("启动参数有问题：{reason}");
             std::process::exit(2);
         }
@@ -203,6 +205,7 @@ fn main() {
 
     // ⚠️ 顺序要紧：**先建目录再读配置** —— `load_config` 第一次运行就要往那里写。
     if let Err(reason) = std::fs::create_dir_all(&args.data_dir) {
+        // log-only-ok: 同上，终端上直接看得到（随后 exit(1)）
         eprintln!("建数据目录失败（{}）：{reason}", args.data_dir.display());
         std::process::exit(1);
     }
@@ -218,6 +221,7 @@ fn main() {
             // ⚠️ `{reason:?}` 而不是 `{reason}`：那是一条 `Msg`（键 + 参数），
             // 它**故意没有 `Display`**（见 `clip9_client::Msg` 的模块文档第 3 条）——
             // 终端里看到键与参数就够定位了，而句子该由页面渲染。
+            // log-only-ok: 配置坏了就**不启动**（明知取舍，2026-09-30 拍板留在范围外）；终端上看得到
             eprintln!("{reason:?}");
             std::process::exit(1);
         }
@@ -256,6 +260,7 @@ fn main() {
         match runtime::Runtime::with_notifier(Arc::clone(&store), tokio_handle, notifier.clone()) {
             Ok(runtime) => runtime,
             Err(reason) => {
+                // log-only-ok: 同上，进程随后 exit(1)
                 eprintln!("起不来：{reason:?}");
                 std::process::exit(1);
             }
@@ -280,22 +285,19 @@ fn main() {
             if local_server && let Err(reason) = process.start() {
                 // ⚠️★ 这一拍**只进日志**（`{reason:?}` —— `Msg` 没有 `Display`）。
                 //
-                // ⚠️ 原来这里写着「用户在界面上看到的是『起不来』那条命令错误，与这里是
-                // 同一句话的两个听众」——**那是错的**（2026-09-30 查清）：启动这一拍没有
-                // 「用户点了什么」，而界面上服务端那一页读的是 `server_status`，
-                // 它探的是**端口答不答话**（`probe`）—— 端口被别人占着时它照样说「运行中」。
-                // 所以这句话用户**看不到**；他能看到它的时机是点「启动 / 重启 / 切换运行方式」
-                // 那三处（同一条 `Msg` 从命令那条路回去）。
-                //
-                // ⚠️ 这是**已知缺口**（2026-09-30 记）：`server_status` 该把「端口上那个不是
-                // 本客户端起的」一并报出来，好让启动这一拍就有去处。没在本轮做，因为它要动
-                // `ServerStatusView` + `ui/app.js` + 字典三处（见 `dev-docs/specs/desktop-client.md`
-                // 的待办那一节）。
+                // ⚠️★ 这一拍**没有「用户点了什么」**：界面上服务端那一页读的是 `server_status`，
+                // 而启动失败在这条路上只有一个出口 —— **记在句柄里**，由那张卡显示
+                //（`ServerProcess::last_start_error` → `ServerStatusView::start_error`）。
+                // ⚠️ 2026-09-30 之前这里是**已知缺口**：只进日志，而 `server_status` 探的是
+                // 「端口答不答话」—— 端口被别人占着时它照样说「运行中」。现在它多报两个事实
+                //（`owned` / `start_error`），那两件事在卡上都说得出来（见规格的变更记录）。
+                // log-only-ok: 这条日志的听众是终端与日志文件；**用户看的那一份在设置页那张卡上**
                 eprintln!("{reason:?}");
             }
             Some(process)
         }
         Err(reason) => {
+            // log-only-ok: 设置页那张卡会说「这个客户端没有自带服务端」（`bundled: false`）
             eprintln!("找不到本地服务端：{reason:?}");
             None
         }
@@ -449,7 +451,7 @@ fn main() {
                 // 启动这一刻主窗口就在眼前，这条提示看得到（见 `hotkeys` 的模块文档）。
                 if let Err(problem) = hotkeys::apply(app.handle(), store.config().enable_hotkey) {
                     eprintln!("{problem:?}");
-                    store.notice("err", problem);
+                    store.notice(NoticeLevel::Error, problem);
                 }
                 Ok(())
             }
@@ -502,6 +504,7 @@ fn main() {
                 if gate.should_write(started.elapsed().as_millis() as u64, size)
                     && let Err(reason) = window_state::save(&window_size_path, size)
                 {
+                    // log-only-ok: 只在退出/节流那一拍失败，用户处理不了（不影响使用）
                     eprintln!("记窗口大小失败（不影响使用）：{reason}");
                 }
             }
@@ -521,6 +524,7 @@ fn main() {
                 if let Some(size) = latest
                     && let Err(reason) = window_state::save(&window_size_path, size)
                 {
+                    // log-only-ok: 只在退出/节流那一拍失败，用户处理不了（不影响使用）
                     eprintln!("记窗口大小失败（不影响使用）：{reason}");
                 }
             }
