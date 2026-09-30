@@ -347,7 +347,11 @@ async function hitForm(port, path, filename, content) {
 /** 把指定字段抹成 `<masked>`。
  *
  * ⚠️ 只用于**本来就不可比**的值（分享令牌里的随机 `jti` → 整个 token 串），
- * 别的字段一律不抹 —— 抹多了就变成「什么都能过」。 */
+ * 别的字段一律不抹 —— 抹多了就变成「什么都能过」。
+ *
+ * ⚠️★ 它**忽略不了「存在」**：一边有这个 key、另一边没有时，抹完仍是一个
+ * `'<masked>'`、一个 `undefined`，`canonical` 依旧不等 —— **看上去抹了，其实没生效**。
+ * 那种「刻意只有一边有」的字段走 [`applyDrop`]。 */
 function applyMask(value, mask) {
   if (mask.length === 0) return value;
   if (Array.isArray(value)) return value.map((v) => applyMask(v, mask));
@@ -355,6 +359,28 @@ function applyMask(value, mask) {
     const out = {};
     for (const [k, v] of Object.entries(value)) {
       out[k] = mask.includes(k) ? '<masked>' : applyMask(v, mask);
+    }
+    return out;
+  }
+  return value;
+}
+
+/** 把指定字段**整条删掉** —— 用于**刻意只有一边有**的字段（见 [`expectSideOnly`]）。
+ *
+ * ⚠️★ 与 [`applyMask`] 的分工：那个「抹值」（保留「两边都有这个字段吗」的检查），
+ * 这个「连存在一起忽略」（因为**本来就只有一边有**）。
+ *
+ * ⚠️★ 代价是**连存在性也不查了**，所以**只给「刻意一边有」的字段用**，而且必须配一条
+ * [`expectSideOnly`] 把「哪边该有」钉住 —— 光删不钉，哪天该有的那边也没了、或者
+ * 另一边也长出来了，判据一样全绿，**没人会知道**。 */
+function applyDrop(value, drop) {
+  if (drop.length === 0) return value;
+  if (Array.isArray(value)) return value.map((v) => applyDrop(v, drop));
+  if (value && typeof value === 'object') {
+    const out = {};
+    for (const [k, v] of Object.entries(value)) {
+      if (drop.includes(k)) continue; // ← 整个 key 拿掉
+      out[k] = applyDrop(v, drop);
     }
     return out;
   }
@@ -400,13 +426,13 @@ function formatDiff(paths, limit = 8) {
   return shown;
 }
 
-/** 比对两个已经取回来的响应。`mask` 见 [`applyMask`]。 */
-function judge(label, g, r, mask = []) {
+/** 比对两个已经取回来的响应。`mask` 见 [`applyMask`]，`drop` 见 [`applyDrop`]。 */
+function judge(label, g, r, mask = [], drop = []) {
   const problems = [];
   if (g.status !== r.status) problems.push(`状态码 Go=${g.status} Rust=${r.status}`);
   if (g.parsed !== undefined || r.parsed !== undefined) {
-    const gn = applyMask(normalize(g.parsed, GO_PORT), mask);
-    const rn = applyMask(normalize(r.parsed, RS_PORT), mask);
+    const gn = applyDrop(applyMask(normalize(g.parsed, GO_PORT), mask), drop);
+    const rn = applyDrop(applyMask(normalize(r.parsed, RS_PORT), mask), drop);
     if (canonical(gn) !== canonical(rn)) {
       // ⚠️ 打**差异字段**，不打整坨 JSON —— `/tasks` 的响应里带着 34 个动作声明，
       // 整坨打出来是一屏红字，真正不同的那一两个字段反而找不到。
@@ -429,18 +455,48 @@ function judge(label, g, r, mask = []) {
   }
 }
 
-async function compare(label, method, path, opts = {}, mask = []) {
+async function compare(label, method, path, opts = {}, mask = [], drop = []) {
   const [g, r] = await Promise.all([
     hit(GO_PORT, method, path, opts),
     hit(RS_PORT, method, path, opts),
   ]);
-  judge(label, g, r, mask);
+  judge(label, g, r, mask, drop);
 }
 
 /** 两边的请求**构造方式不同**时用它（比如各自先换一张令牌，再拿它去续期）。 */
 async function compareVia(label, fn, mask = []) {
   const [g, r] = await Promise.all([fn(GO_PORT), fn(RS_PORT)]);
   judge(label, g, r, mask);
+}
+
+/** ⚠️★ 「一边有、一边没有」的**刻意差异**用它：遮掉那个字段**并且**断言它现在确实只长在一边。
+ *
+ * 为什么不能只遮：遮罩是把差异**当相同**，于是这个字段从此**永远**不参与判据 ——
+ * 哪天两边都有了（它变成了跨端契约），或者该有的那边也没了（它被删/改名了），
+ * 结果一样全绿，而这两个变化**都该有人知道**。所以「遮什么」必须配「它现在长什么样」。
+ *
+ * `side` 是「**该有**它的那一边」（目前只有 `'rust'`），另一边**必须没有**。 */
+async function expectSideOnly(label, path, field, side) {
+  const [g, r] = await Promise.all([hit(GO_PORT, 'GET', path), hit(RS_PORT, 'GET', path)]);
+  const has = (x) => x.parsed != null && Object.hasOwn(x.parsed, field);
+  const mine = has(side === 'rust' ? r : g);
+  const theirs = has(side === 'rust' ? g : r);
+  const who = side === 'rust' ? 'Rust' : 'Go';
+  const other = side === 'rust' ? 'Go' : 'Rust';
+  if (mine && !theirs) {
+    pass++;
+    console.log(`  ok   ${label}（刻意差异：只有 ${who} 侧报 ${field}）`);
+    return;
+  }
+  fail++;
+  const why = mine
+    ? `${other} 侧**也**开始报 ${field} 了`
+    : `${who} 侧**也不再**报 ${field} 了（删了？改名了？）`;
+  const advice = mine
+    ? '它变成跨端契约了 —— 把上面那条遮罩删掉，让它回到正常比对里'
+    : '上面那条遮罩（连同这条断言）该一起删掉';
+  failures.push(`- ${label} 的「一边有」前提不成立：${why}\n  ${advice}`);
+  console.log(`  FAIL ${label} —— ${why}`);
 }
 
 await waitReady(GO_PORT, goChild);
@@ -580,8 +636,23 @@ await compare('POST /revoke/2 真的删', 'POST', '/revoke/2');
 await compare('GET /content/2 删完再看', 'GET', '/content/2?format=json');
 
 console.log('\n=== /server ===');
-await compare('GET /server', 'GET', '/server');
-await compare('GET /server?room=work', 'GET', '/server?room=work');
+// ⚠️★ `staticBuild` 是**刻意差异**（只遮这一个字段，其余照比）：
+// 它回答「**端口上那个服务端在发哪一版前端**」（外壳里的 `data-build-id`），
+// 消费者只有**桌面端宿主** —— 起服务端失败时把这一版报进错误里
+//（`clip9-desktop` 的 `server_process::static_build_of`）。
+//
+// ⚠️ 为什么 Go 侧不会有：**父仓库没有 `desktop/`** —— 没有宿主要问它。
+// ⚠️ 为什么它**不算契约**：前端一个字段都不读它。
+// ⚠️ 它自己的正确性由 Rust 的测试钉着：`crates/server/tests/static_files.rs`
+//（断言它与**内嵌外壳里那个** `data-build-id` 逐字相同）。
+//
+// ⚠️ 别把它当版本号：`-v` 报的那个版本号在**同一个 tag 里区分不出两个二进制**
+//（09-28 与 09-30 那两个都答 `0.1.0`），而 09-30 那次「换了个二进制、里面那份前端
+// 却还是旧的」**只有内容指纹判得出来**。两者互补，不重复。
+const HOST_ONLY = ['staticBuild'];
+await compare('GET /server', 'GET', '/server', {}, [], HOST_ONLY);
+await compare('GET /server?room=work', 'GET', '/server?room=work', {}, [], HOST_ONLY);
+await expectSideOnly('GET /server 的 staticBuild', '/server', 'staticBuild', 'rust');
 
 // ⚠️ `/myip` 那一节已删（2026-09-26）：端点本身删了（它唯一的消费者是聊天模式，已退役），
 // 所以「三个来源的优先级」那几条断言也一起没了。
