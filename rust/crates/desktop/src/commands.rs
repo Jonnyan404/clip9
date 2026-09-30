@@ -1013,35 +1013,21 @@ pub async fn open_project_page() -> Result<(), Msg> {
 /// ⚠️★ 现在它**也**给用户手填的那一格当闸（[`site_root`]），所以它比上面那段描述更严了：
 /// 那一路进来的东西是自由文本，不是我们自己拼的。
 fn openable_url(url: &str) -> Result<String, Msg> {
-    // ⚠️ 先去掉尾斜杠**再**判 scheme：反过来的话 `"http://"` 会被削成 `"http:"` 并通过
-    //    那句 `starts_with("http://")`（削之前成立的判据，削之后就不成立了）。
-    let trimmed = url.trim().trim_end_matches('/');
-    if trimmed.is_empty() {
+    // ⚠️★ 归一化走 `clip9_client::normalize_server`（**唯一**一份：去首尾空白、去尾部 `/`、
+    //    scheme 折小写），这里**不再自己判大小写**。
+    //    2026-09-30 现场踩到：这里原来写的是 `trimmed.starts_with("https://")` ——
+    //    大小写敏感，于是用户配的 `Https://example.com`（那台**连得上也带网页版**）
+    //    被判成「不是 http(s)」。而连接那边一直好着，因为 `reqwest` 走的 `url` crate
+    //    会把 scheme 归一成小写 —— 同一个地址，两处两个判据，用户看到的是后者的报错。
+    let normalized = clip9_client::normalize_server(url);
+    if normalized.is_empty() {
         return Err(Msg::key("serverUrlEmpty"));
     }
-    // ⚠️★ scheme **不区分大小写**（RFC 3986 §3.1）。这里原来写的是
-    //    `trimmed.starts_with("https://")` —— 对「我们自己拼出来的地址」够用
-    //    （`local_server_url` 恒是小写），对**用户手填的那一格**就不够了。
-    //    2026-09-30 现场踩到：Jonny 的房间里写的是 `Https://example.com`，而那台
-    //    **连得上、也带网页版** —— 只有这一句把它判成了「不是 http(s)」，
-    //    界面于是说「这个房间的服务端地址不是 http(s)」。
-    //    ⚠️★ 之所以能瞒这么久：**别处全都容忍**。reqwest 走的 `url` crate 会把 scheme
-    //    归一成小写，所以那个房间的列表 / 收发 / 房间名**一直是正常的** ——
-    //    「房间能用」与「地址合法」在这里是两个判据，而用户只看到后者的报错。
-    let lower = trimmed.to_ascii_lowercase();
-    if !(lower.starts_with("http://") || lower.starts_with("https://")) {
-        return Err(Msg::key("serverUrlNotHttp").param("url", trimmed));
+    // ⚠️ 归一化之后 scheme 一定是小写，所以这里直接比就够 —— 别再写第二份大小写判断。
+    if !(normalized.starts_with("http://") || normalized.starts_with("https://")) {
+        return Err(Msg::key("serverUrlNotHttp").param("url", url.trim()));
     }
-    // ⚠️ 返回**归一化过的**那一份，但**只动 scheme 那一段**：主机名与路径的大小写是有意义的
-    //    （`/A` 与 `/a` 是两个地址）。归一化的理由有两条：这个串会被塞进 `iframe.src`、
-    //    也会交给系统 opener（两个都按 RFC 解析，小写更稳），而 `syncSpa` 那边还拿它当
-    //    「还是不是同一台」的比较键 —— 同一台有两个写法的话，切一次房间就会重载一次。
-    let scheme_end = trimmed.find("://").map_or(trimmed.len(), |at| at + 3);
-    Ok(format!(
-        "{}{}",
-        trimmed[..scheme_end].to_ascii_lowercase(),
-        &trimmed[scheme_end..]
-    ))
+    Ok(normalized)
 }
 
 /// 交给系统自带的 opener。

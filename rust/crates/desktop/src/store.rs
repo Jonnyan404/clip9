@@ -45,12 +45,24 @@ pub struct SyncScopePatch {
 /// ⚠️ 用「服务端 + 房间」而不是显示名：显示名是给用户改的，
 /// **改个名字就把历史清空**是说不通的。也**不含凭据** —— 改密码同样不该清历史。
 ///
-/// ⚠️★ 服务端要**归一化**（去首尾空白、去尾部 `/`）：`http://h:9502` 与
-/// `http://h:9502/` 明明是同一条地址，写法差一个斜杠就认不出是同一个房间。
+/// ⚠️★ 服务端那一半要**归一化**（`clip9_client::normalize_server`：去首尾空白、
+/// 去尾部 `/`、scheme 折小写）：`http://h:9502` 与 `http://h:9502/` 是同一条地址，
+/// 写法差一个斜杠就认不出是同一个房间。
+/// ⚠️★ 2026-09-30 补上 scheme 那一半：`Https://example.com` 与 `https://example.com`
+/// 在配置里是**两条记录**（用户可以既见过一个又改了另一个），而它们指的是同一台 ——
+/// 不折的话会各建一条连接、各存一份历史，而侧栏画着两个房间、看起来只是「重复了」。
+///
 /// ⚠️★ 而**这里是唯一的归一化点** —— [`Inner::room_index`] 也调这个函数。
 /// 两处各归一化一遍一定会漂，而漂了**不报错**，只是「这个房间怎么不刷新了」。
+///
+/// ⚠️★ 归一化用的是**表示**归一（[`clip9_client::normalize_server`]），不是
+/// [`clip9_client::same_endpoint`] 的**语义**等价：换成后者的话，`http://localhost:9502`
+/// 那个房间与 `http://127.0.0.1:9502` 那个房间会并成同一个身份（侧栏画着两个、状态共用一份）。
+/// 那是另一个问题 —— 后者留给 `channels_pointing_at`（「哪些房间指向本机那个服务端」）。
+/// ⚠️ 拼法（含分隔符）只有一份：[`clip9_client::room_identity`] ——
+/// `ClientConfig::problems` 也用同一份来点名「两个房间指向了同一个地方」。
 fn channel_key(server: &str, room: &str) -> String {
-    format!("{}|{}", server.trim().trim_end_matches('/'), room)
+    clip9_client::room_identity(server, room)
 }
 
 /// 一个房间的稳定标识（从 `Channel` 上取）。
@@ -1807,6 +1819,36 @@ mod tests {
             "远端房间的历史串进了本地那个同名房间"
         );
         assert_eq!(store.snapshot().rooms[2].count, 1, "它该落在远端那个房间上");
+    }
+
+    /// ⚠️★ **同一台服务端的两种写法是同一个房间**（2026-09-30 补的）。
+    ///
+    /// 这条是用户配置里那个 `Https://example.com`（首字母大写）引出来的：身份不归一的话，
+    /// `Https://h` 与 `https://h` 在 store 里是**两个房间** —— 各建一条连接、各存一份历史，
+    /// 而侧栏画着两个房间，看起来只是「重复了」。
+    #[test]
+    fn the_room_identity_ignores_how_the_address_is_written() {
+        assert_eq!(
+            channel_key("Https://example.com", "default"),
+            channel_key("https://example.com/", "default"),
+            "同一个地址的大小写 / 尾斜杠写法没被归一"
+        );
+        assert_eq!(
+            channel_key("  http://h:9502  ", "default"),
+            channel_key("http://h:9502", "default"),
+            "首尾空白没被归一"
+        );
+        // ⚠️ 房间名那一半**不归一**：它是用户自由文本，`Default` 与 `default` 是两个房间。
+        assert_ne!(
+            channel_key("https://h", "Default"),
+            channel_key("https://h", "default")
+        );
+        // ⚠️★ **语义**等价（`localhost` vs `127.0.0.1`）**不并** —— 那是 `same_endpoint`
+        //    回答的问题（「哪些房间指向本机那个服务端」），拿来当身份会把两个房间合成一个。
+        assert_ne!(
+            channel_key("http://localhost:9502", "default"),
+            channel_key("http://127.0.0.1:9502", "default")
+        );
     }
 
     /// ⚠️★★ **房间的提示归每个房间**（2026-09-27 用户报的「提示串房间了」）。

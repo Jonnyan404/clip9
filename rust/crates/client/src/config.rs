@@ -108,6 +108,50 @@ fn path_key(url: &Url) -> &str {
     path.strip_suffix('/').unwrap_or(path)
 }
 
+/// 服务端地址的**表示归一**：去首尾空白、去尾部 `/`、scheme 折成小写。
+///
+/// ⚠️★ 只动**写法**，不动**语义**。三件事都是「同一个地址的另一种写法」：
+///   · 手填的那一格常带首尾空白；
+///   · `http://h:9502` 与 `http://h:9502/` 是同一条地址（尾巴那个斜杠不描述任何东西）；
+///   · scheme **不区分大小写**（RFC 3986 §3.1）—— `Https://h` 就是 `https://h`，
+///     而别的解析器（`reqwest` 走的 `url` crate）本来就会把它归一成小写。
+///     ⚠️★ 2026-09-30 现场踩到：桌面端有一处 `starts_with("https://")` 没归一，
+///     于是「那个房间能用」（连接那边容忍大小写）与「地址合法」（那一处不容忍）
+///     成了两个判据，用户看到的是后者的报错，跑去查自己的部署。
+///
+/// ⚠️★ 主机名与路径的**大小写不动**：`/A` 与 `/a` 是两个地址。
+///
+/// ⚠️★ 它**不**回答「这两个地址是不是同一台服务端」—— 别名（`localhost` / `127.0.0.1`）、
+/// 默认端口、路径前缀那些**语义**等价归 [`same_endpoint`]。两者是**两个问题**：
+/// 这里是「同一个东西被写成了两种样子」，那里是「两个入口是不是同一台」。
+/// ⚠️ 别把它换成 `same_endpoint` 用在**房间身份**（`store::channel_key`）上：
+/// 那会让「`127.0.0.1` 那个房间」与「`localhost` 那个房间」并成一个 ——
+/// 侧栏还画着两个房间，状态却共用一份，比两个连接更难解释。
+#[must_use]
+pub fn normalize_server(raw: &str) -> String {
+    let trimmed = raw.trim().trim_end_matches('/');
+    // ⚠️ 没有 `://` 就**原样返回**（没有 scheme 可折，也不许顺手把路径折小写）。
+    //    这种串本来就不是地址，交给调用方那道 `http(s)` 校验去拒。
+    match trimmed.find("://") {
+        Some(at) => format!("{}{}", trimmed[..at].to_ascii_lowercase(), &trimmed[at..]),
+        None => trimmed.to_owned(),
+    }
+}
+
+/// 一个房间的**身份**：`(服务端, 房间)`，服务端那一半走 [`normalize_server`]。
+///
+/// ⚠️★ 两处必须用**同一份定义**：桌面端 `store` 拿它当「这是同一个房间吗」的键
+///（`store::channel_key`），而 [`ClientConfig::problems`] 拿它点名「两个房间指向了同一个地方」。
+/// 一份松一份紧的话，界面会报一个「重复」而 store 那边其实没并起来（或者反过来：
+/// 静默并了而没人说）。
+///
+/// ⚠️ 分隔符用 `\0` 而不是 `|`：房间名是用户自由文本，可能含 `|` ——
+/// 用可打印字符拼键的话 `("a|b", "c")` 与 `("a", "b|c")` 会撞成同一个键。
+#[must_use]
+pub fn room_identity(server: &str, room: &str) -> String {
+    format!("{}\u{0}{}", normalize_server(server), room)
+}
+
 /// 一个「通道」= **一台服务端上的一个房间**，带自己的凭据与两个方向的开关。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Channel {
@@ -593,6 +637,19 @@ impl ClientConfig {
             out.push(Msg::key("configNoRooms"));
         }
 
+        // ⚠️★ 两个房间指向**同一台服务端的同一个房间** → 它们的**身份**是同一个
+        //（[`room_identity`]，`store::channel_key` 用的就是它）。后果**不是**「重复一条记录」：
+        // 连接状态是按身份回填的，两条记录都指向第一条，于是**第二条那份状态永远不更新** ——
+        // 侧栏画着两个房间，其中一个看起来永远连不上。这件事必须点出来，不能让它静默地坏着。
+        // ⚠️ 判据用 `room_identity` 而**不是** [`same_endpoint`]：后者会把 `127.0.0.1` 与
+        // `localhost` 也算重，而那是「两个入口指的是同一台」—— 与「身份是同一个」是两件事。
+        let mut seen = std::collections::HashSet::new();
+        for channel in &self.channels {
+            if !seen.insert(room_identity(&channel.server, &channel.room)) {
+                out.push(Msg::key("configRoomDuplicate").param("room", &channel.name));
+            }
+        }
+
         out
     }
 
@@ -761,6 +818,58 @@ mod tests {
             .map(|m| m.params.get("room").and_then(ParamValue::as_str))
             .collect();
         assert_eq!(rooms, vec![Some("缺地址"), Some("协议错"), Some("乱填")]);
+    }
+
+    /// ⚠️★ 两个房间指向**同一台服务端的同一个房间**要点名 —— 而「同一个」按
+    /// [`room_identity`] 算（与 `store::channel_key` **同一份定义**），
+    /// 所以大小写 / 尾斜杠的差别都算同一条。
+    ///
+    /// ⚠️ 为什么非报不可：身份一旦相同，**第二条那份连接状态永远不会更新**
+    ///（回填按身份找下标，两条都指向第一条）—— 侧栏画着两个房间、其中一个看着永远连不上。
+    #[test]
+    fn two_rooms_pointing_at_the_same_place_are_named() {
+        // 同一个地方，**写法不同**（首字母大写 + 尾斜杠）—— 身份仍是同一个。
+        let dup = ClientConfig {
+            channels: vec![
+                Channel {
+                    server: "https://h:9502".to_owned(),
+                    ..ch("甲", false)
+                },
+                Channel {
+                    name: "乙".to_owned(),
+                    server: "Https://h:9502/".to_owned(),
+                    ..ch("乙", false)
+                },
+            ],
+            ..ClientConfig::default()
+        };
+        let problems = dup.problems();
+        assert!(
+            problems.iter().any(|m| m.key == "configRoomDuplicate"),
+            "同一台服务端的同一个房间配了两次，没报出来：{problems:?}"
+        );
+
+        // ⚠️ 同一台服务端上的**不同房间**是正常配置，不许报。
+        let ok = ClientConfig {
+            channels: vec![
+                Channel {
+                    server: "https://h:9502".to_owned(),
+                    ..ch("甲", false)
+                },
+                Channel {
+                    name: "乙".to_owned(),
+                    room: "test".to_owned(),
+                    server: "https://h:9502".to_owned(),
+                    ..ch("乙", false)
+                },
+            ],
+            ..ClientConfig::default()
+        };
+        assert!(
+            !ok.problems().iter().any(|m| m.key == "configRoomDuplicate"),
+            "不同房间被误报成重复：{:?}",
+            ok.problems()
+        );
     }
 
     /// ⚠️★ **一个房间都没开 ↑ = 上行是空的**，而且**下行不受影响**。
@@ -1082,6 +1191,35 @@ mod tests {
         // ⚠️★ 解析不了的一律**不相等** —— 宁可漏报，也不误报。
         assert!(!same_endpoint("", "http://127.0.0.1:9502"));
         assert!(!same_endpoint("不是地址", "不是地址"));
+    }
+
+    /// ⚠️★ 归一化的边界：**只动写法，不动语义**。
+    ///
+    /// 2026-09-30 那个 bug 就是「有一处忘了归一」：桌面端一句 `starts_with("https://")`
+    /// 把 `Https://example.com` 判成了「不是 http(s)」，而连接那边（`url` crate）一直正常。
+    #[test]
+    fn normalizing_a_server_only_touches_the_writing() {
+        // 三件事：首尾空白、尾部斜杠、scheme 大小写。
+        assert_eq!(normalize_server("  https://h/clip  "), "https://h/clip");
+        assert_eq!(normalize_server("https://h/clip/"), "https://h/clip");
+        assert_eq!(
+            normalize_server("Https://example.com"),
+            "https://example.com"
+        );
+        assert_eq!(normalize_server("HTTP://h"), "http://h");
+        // ⚠️ 主机名与路径的大小写**不动** —— `/A` 与 `/a` 是两个地址。
+        assert_eq!(
+            normalize_server("HTTPS://Host.Example/Clip9"),
+            "https://Host.Example/Clip9"
+        );
+        // 没有 `://` 的串**原样**返回：没有 scheme 可折，也不许顺手把路径折小写。
+        assert_eq!(normalize_server("Host/Clip9"), "Host/Clip9");
+        assert_eq!(normalize_server("   "), "");
+        // ⚠️ 它**不**做等价判断 —— 那件事归 `same_endpoint`（两个问题，两份定义）。
+        assert_ne!(
+            normalize_server("http://localhost:9502"),
+            normalize_server("http://127.0.0.1:9502")
+        );
     }
 
     /// 桌面端要的那一问：**哪些已配的房间指向本机那个服务端**。
