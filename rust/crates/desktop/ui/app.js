@@ -103,8 +103,20 @@ pushShellMessages();
  * ⚠️ 用**轮询**而不是事件推送：一份快照就是界面的全部真相，轮询天然不会出现
  * 「丢了一条更新」或「两条更新乱序到达」。700ms 对一个托盘级客户端绰绰有余。
  * ⚠️ 串行取（取完再排下一次），否则服务端卡住时会有几十个请求堆在上面。
+ * ⚠️★ 2026-09-30 补：**这个数只管「后台安静地盯着」的节奏**，不是
+ * 「点一下之后界面多久才有反应」—— 后者由 `refreshNow()` 单独负责（动作之后立刻取一次）。
  */
 const POLL_MS = 700;
+
+/** 「正在等一个**已知会来**的东西」时的节奏。
+ *
+ * ⚠️★ 它只为一个场景存在：切房间之后那一段 —— `select` 在壳里顺带就发了取历史的请求，
+ * 内容**正在路上**，而用户正盯着那块空白等。那段窗口很短（一次 HTTP 往返），
+ * 用 700ms 的话内容到了还要再等半拍才画出来。
+ * ⚠️ 判据是「当前房间的历史还没到」（`historyLoaded` 为假），一旦到了就回到 `POLL_MS` ——
+ * 所以它**不是**「把轮询调快了」，只是「在等东西的那一小段里问得勤一点」。
+ */
+const POLL_FAST_MS = 150;
 
 /** 上一份快照的**版本号** —— 只用来判断「要不要重画」。
  *
@@ -217,6 +229,22 @@ let spaSrc = null;
 /** iframe 里那份 SPA 回过一声没有 —— 回过了才敢用 postMessage 驱动它（见 `sayHello`）。 */
 let spaReady = false;
 
+/** 「那个站点是不是 clip9 的网页版」的探测结论缓存：`站点基址` → `{view, at}`。
+ *
+ * ⚠️★ 为什么要有它：在**网页**那一版里来回切房间时，只要跨了站点就要重新探一遍
+ *（`probe_site` 是一次 IPC + 一次 HTTP 往返，还可能 3 秒超时），而它**串在
+ * iframe 加载之前** —— 用户看到的是「切过去先愣一下，然后才开始加载」。
+ * 实测（2026-09-30）：A→B→C→A→B→C 这么来回六下，探测被调了 **9** 次；
+ * 而里面只有**两台**站点。
+ *
+ * ⚠️ 失败也缓存，但**短**得多：站点可能刚被更新（装上带标记的新版本），
+ * 让用户为此等满 5 分钟是说不通的；而「连不上」更不该每次都等满超时 ——
+ * 那正是最该少问的那种情况。
+ */
+const PROBE_TTL_MS = 5 * 60 * 1000;
+const PROBE_TTL_BAD_MS = 20 * 1000;
+const probeCache = new Map();
+
 /** 那个房间该嵌哪个站点。
  *
  * ⚠️ 只做最轻的规范化（去尾斜杠）—— **scheme 的校验不在这里**：真正拦住 `iframe.src` 的
@@ -253,14 +281,23 @@ function syncSpa(state) {
     // 而在此之前**什么都不嵌** —— 探测没回来之前不许把 `src` 设出去，否则用户会先看到
     // 那个陌生页面的首页（那正是要修的那个毛病）。
     spaBase = base;
-    spaSite = 'checking';
-    spaReason = null;
     spaReady = false;
     spaSrc = null;
     closeHello();
-    paintSpa(mainView === 'spa');
-    renderBlocked();
-    probeSite(base);
+    // ⚠️★ 先看缓存（见 `probeCache`）：命中就不摆「正在检查」、也不问壳 ——
+    //    那样会先闪一下「检查中」再跳成结论，而答案我们早就有了。
+    const hit = probeCache.get(base);
+    const fresh =
+      hit && Date.now() - hit.at < (hit.view?.supported ? PROBE_TTL_MS : PROBE_TTL_BAD_MS);
+    if (fresh) {
+      applyProbe(base, hit.view);
+    } else {
+      spaSite = 'checking';
+      spaReason = null;
+      paintSpa(mainView === 'spa');
+      renderBlocked();
+      probeSite(base);
+    }
     return;
   }
 
@@ -292,7 +329,7 @@ function setSpaSrc(roomName) {
   el('spa').src = url;
 }
 
-/** 问壳「那台站点有没有可嵌的网页版」。 */
+/** 问壳「那台站点有没有可嵌的网页版」，并把结论记进缓存。 */
 async function probeSite(base) {
   let view = null;
   try {
@@ -300,7 +337,19 @@ async function probeSite(base) {
   } catch (error) {
     view = null;
   }
-  // ⚠️★ 探测回来时用户可能已经切到别的房间了 —— 那这次结果**作废**
+  // ⚠️ 连「没答上来」也记进去（`view = null`）：不然每次切到这个站点都要再等一遍
+  //    3 秒超时 —— 而「连不上」正是最该少问的那一种。
+  probeCache.set(base, { view: view ?? null, at: Date.now() });
+  applyProbe(base, view);
+}
+
+/** 探测有结论了（刚问回来的，或缓存命中的）：把它落到界面上。
+ *
+ * ⚠️★ `spaSite` / `spaReason` 只在这里改（外加 `syncSpa` 里那条「正在检查」）——
+ * 两处都写就会漂，而漂起来的表现是「覆盖层和 iframe 叠在一起」或者「一片空白」，都不报错。
+ */
+function applyProbe(base, view) {
+  // ⚠️★ 结果回来时用户可能已经切到别的房间了 —— 那这次结果**作废**
   //（拿它去画覆盖层或设 `src`，就是「网速慢一点就按上一个站点画」）。
   if (base !== spaBase) return;
   if (view && view.supported) {
@@ -1132,7 +1181,51 @@ function render(state) {
   }
 }
 
+/** 下一拍的那个 timer。
+ *
+ * ⚠️★ 必须留住它：`refreshNow()` 要能**取消**已排的那一拍 ——
+ * 不取消的话那条 `setTimeout` 链还在，同一时刻就变成两条轮询
+ *（频率翻倍，而用户每点一下就再多一条）。
+ */
+let tickTimer = null;
+/** 正在取快照吗。⚠️ `tick` 是 async，用户连点几下就会并发进来两条。 */
+let ticking = false;
+/** 取这一拍的时候又来了请求 —— 跑完**立刻再跑一次**（不丢，也不并发）。 */
+let tickAgain = false;
+
+/** 排下一拍（永远只有一条链）。 */
+function scheduleTick(delay) {
+  clearTimeout(tickTimer);
+  tickTimer = setTimeout(tick, delay);
+}
+
+/** 立刻取一次快照，**不等**那一拍。
+ *
+ * ⚠️★ 为什么需要它：界面是**轮询**驱动的（`POLL_MS`），于是每个用户动作
+ *（切房间、开 ↑/↓）都要等下一次轮询才看得见 —— 实测「点一下到界面有反应」
+ * 就是 282–700ms，而那段时间里什么都没发生（数据早就在壳里了）。
+ * 动作之后自己叫一次，这段死等就没了。
+ *
+ * ⚠️ 只用于**用户动作之后**，别拿它去替换轮询：轮询是「后台盯着」，
+ * 而这里是「刚发生了我知道的事，立刻看一眼」。
+ */
+function refreshNow() {
+  if (ticking) {
+    tickAgain = true;
+    return;
+  }
+  clearTimeout(tickTimer);
+  tick();
+}
+
+/** 下一拍等多久。⚠️ 正在等那个房间的历史时问得勤一点（见 `POLL_FAST_MS`）。 */
+function nextDelay() {
+  const room = lastState?.rooms?.[lastState.selected];
+  return room && !room.historyLoaded ? POLL_FAST_MS : POLL_MS;
+}
+
 async function tick() {
+  ticking = true;
   try {
     const state = await invoke('snapshot');
     // ⚠️★ 留下来是给**换语种**用的（见 `lastState` 的注释）：换语种不动版本号，
@@ -1153,8 +1246,16 @@ async function tick() {
     // 主界面上没有地方放它（侧栏那块调试信息已删），所以进一次性提示。
     showNotice('err', t('取不到状态：{error}', { error: errorText(error) }));
   } finally {
-    setTimeout(tick, POLL_MS);
+    ticking = false;
   }
+  // ⚠️★ 取这一拍期间来的请求（用户连点几下）**不丢**：立刻再跑一次。
+  //    并发跑两条的话，`lastState` / `lastVersion` 会被乱序写。
+  if (tickAgain) {
+    tickAgain = false;
+    tick();
+    return;
+  }
+  scheduleTick(nextDelay());
 }
 
 function sendCurrentInput() {
@@ -1257,7 +1358,9 @@ function ensureHistory(state) {
   const last = historyAsked.get(key) ?? 0;
   if (Date.now() - last < HISTORY_RETRY_MS) return;
   historyAsked.set(key, Date.now());
-  invoke('refresh').catch(() => {});
+  invoke('refresh')
+    .finally(refreshNow)
+    .catch(() => {});
 }
 
 // ⚠️ 这里原来绑的是 `#conn`（那个同步胶囊的点击 → `set_monitoring`）。
@@ -1269,12 +1372,18 @@ el('rooms').addEventListener('click', (event) => {
   if (Number.isNaN(index)) return;
   const room = currentRoom(index);
   if (target.dataset.action === 'upload') {
-    invoke('set_upload', { index, on: !room.upload });
+    // ⚠️★ 下面三条都跟着 `.finally(refreshNow)`：界面是**轮询**驱动的
+    //（`POLL_MS`），不叫这一下，用户点完要等最多 700ms 才看见那颗开关变色 ——
+    // 而那 700ms 里什么都没发生（壳那边早就改完了）。见 `refreshNow` 的注释。
+    invoke('set_upload', { index, on: !room.upload }).finally(refreshNow);
   } else if (target.dataset.action === 'download') {
     // ⚠️ 下载是**单选**：点已选中的那个 = 关掉它（而不是「点了没反应」）。
-    invoke('set_download', { index: room.download ? null : index });
+    invoke('set_download', { index: room.download ? null : index }).finally(refreshNow);
   } else {
-    invoke('select', { index });
+    // ⚠️★ `select` 在壳里**顺带就发了取历史那条请求**（`commands::select` → `refresh_history`），
+    // 所以这一下之后立刻取一份快照，就能看见选中态（以及可能已经到的内容）——
+    // 不用等那一拍。剩下的「等内容」那半由 `POLL_FAST_MS` 接管。
+    invoke('select', { index }).finally(refreshNow);
   }
 });
 

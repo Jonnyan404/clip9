@@ -1584,17 +1584,20 @@ if (entryViewFiles.length !== 1) {
     const bareMain = stripComments(mainSource);
     const syncSpaBody = bareJs.match(/function syncSpa\(state\)\s*\{[\s\S]*?\n\}/);
     const probeSiteBody = bareJs.match(/async function probeSite\(base\)\s*\{[\s\S]*?\n\}/);
+    const applyProbeBody = bareJs.match(/function applyProbe\(base, view\)\s*\{[\s\S]*?\n\}/);
     const renderBlockedBody = bareJs.match(/function renderBlocked\(\)\s*\{[\s\S]*?\n\}/);
 
-    if (!syncSpaBody || !probeSiteBody || !renderBlockedBody) {
+    if (!syncSpaBody || !probeSiteBody || !applyProbeBody || !renderBlockedBody) {
       failed = true;
       console.error('✗ 判据 21 找不到要比对的东西 —— 这条自检要跟着代码改：');
       if (!syncSpaBody) console.error('    · `app.js` 里找不到 `function syncSpa(state)`');
       if (!probeSiteBody) console.error('    · `app.js` 里找不到 `async function probeSite(base)`');
+      if (!applyProbeBody) console.error('    · `app.js` 里找不到 `function applyProbe(base, view)`');
       if (!renderBlockedBody) console.error('    · `app.js` 里找不到 `function renderBlocked()`');
     } else {
       const sync = syncSpaBody[0];
       const probe = probeSiteBody[0];
+      const applied = applyProbeBody[0];
       const blocked = renderBlockedBody[0];
       const problems = [];
 
@@ -1618,10 +1621,25 @@ if (entryViewFiles.length !== 1) {
             '    后果是**先嵌上去再问**，用户会先看到那个陌生页面的首页。',
         );
       }
-      if (!probe.includes('!== spaBase')) {
+      if (!applied.includes('!== spaBase')) {
+        // ⚠️★ 2026-09-30：这条判断原来在 `probeSite` 里，加探测缓存时挪进了 `applyProbe`
+        //（缓存命中也走它）—— 于是判据当场红了。**它红得对**：那段保护换了个函数住，
+        // 这里就得跟着换，否则下一次「顺手删掉一行」就真的没人看着了。
         problems.push(
-          '`probeSite` 少了「回来时用户已经切走 → 这次结果作废」（`!== spaBase`）——\n' +
+          '`applyProbe` 少了「回来时用户已经切走 → 这次结果作废」（`!== spaBase`）——\n' +
             '    后果是网速慢一点就按**上一个**站点画那一格。',
+        );
+      }
+      if (!probe.includes('probeCache.set(')) {
+        problems.push(
+          '`probeSite` 不再把结论写进 `probeCache` —— 缓存永远是空的，\n' +
+            '    于是每次切房间都要重新探一遍（跨站点的那一趟串在 iframe 加载之前）。',
+        );
+      }
+      if (!sync.includes('probeCache.get(')) {
+        problems.push(
+          '`syncSpa` 不再查 `probeCache` —— 探测那一趟白缓存了，\n' +
+            '    「网页那一版里来回切房间」每次都还是要等一次 HTTP 往返。',
         );
       }
       if (/invoke\(\s*\u0000?spa_url/.test(bareJs)) {
@@ -1655,7 +1673,7 @@ if (entryViewFiles.length !== 1) {
         console.error('  ⚠️ 症状全都**不报错**：网页显示的是**另一个站点**的内容，永远停在检查中，');
         console.error('    或者给出了一个改变不了现状的建议。');
       } else {
-        console.log('· 判据 21：网页视图按当前房间的站点走，先探测再嵌，且按原因给对的话（7 个零件都在）。');
+        console.log('· 判据 21：网页视图按当前房间的站点走，先探测再嵌（带缓存），且按原因给对的话（9 个零件都在）。');
       }
     }
   }
