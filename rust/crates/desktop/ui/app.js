@@ -673,6 +673,16 @@ el('btn-lang').addEventListener('click', () => {
  */
 let noticeTimer = null;
 
+/** 这一条提示是在**哪个房间**下标下显示的（`null` = 现在没有提示）。
+ *
+ * ⚠️★ 2026-09-30 加（Jonny：「切到 B 房间，还挂着 A 房间那条提示」）：提示归房间
+ *（壳里每个房间一格，`Room::notice`），而这一格长在**房间标题下面** ——
+ * A 的「发出去了」挂在 B 的标题下，读起来就是 B 发的事。
+ * 所以「换了房间」也是那条提示的**结束事件之一**（另两个：3 秒到点、新的一条顶掉），
+ * 见 `render` 里那一句 `hideNotice()`。
+ */
+let noticeRoom = null;
+
 const NOTICE_MS = 3000;
 
 /** 显示一条提示。
@@ -692,10 +702,25 @@ function showNotice(level, text) {
   notice.hidden = false;
   notice.className = `notice ${level}`;
   notice.textContent = text;
+  noticeRoom = lastState ? lastState.selected : null;
   clearTimeout(noticeTimer);
   noticeTimer = setTimeout(() => {
     notice.hidden = true;
+    noticeTimer = null;
   }, NOTICE_MS);
+}
+
+/** 收起那条提示（换房间那一拍用，见 `noticeRoom`）。
+ *
+ * ⚠️★ 它和 `showNotice` 是**仅有的两个**碰 `#notice` 的函数（判据 22 钉着）——
+ * 「谁显示谁计时」这条规矩在换房间这个场景下也要成立：上一条属于**上一个**房间。
+ */
+function hideNotice() {
+  clearTimeout(noticeTimer);
+  noticeTimer = null;
+  const notice = el('notice');
+  notice.hidden = true;
+  noticeRoom = null;
 }
 
 /** 这一份快照要不要重画 —— **只看版本号**。
@@ -1001,9 +1026,14 @@ function renderTimeline(state) {
     // 两种都画成空列表的话，用户会以为功能坏了。
     // ⚠️ 「还没加载」那句**不能**再说「点右上角刷新」：那个按钮按界面稿删掉了
     //（历史是自动取的，见 `ensureHistory`），留着就是指向一个不存在的东西。
-    host.append(h('div', 'empty', room.historyLoaded
-      ? t('这个房间还没有内容。')
-      : t('正在取这个房间的历史…（取不到会每 5 秒重试一次）')));
+    // ⚠️★ 三态（2026-09-30）：取失败过要说「取不到」并告诉用户**怎么再试**
+    //（点一下这个房间 = 壳里那条 `ByUser`）—— 否则它会永远写着「正在取…」，
+    // 而那是假话（自动重试已经停了，见 `ensureHistory`）。
+    host.append(h('div', 'empty', room.historyFailed
+      ? t('这个房间的历史取不到（多半是连不上服务端）—— 点一下这个房间再试一次。')
+      : room.historyLoaded
+        ? t('这个房间还没有内容。')
+        : t('正在取这个房间的历史…')));
     return;
   }
   state.entries.forEach((entry) => host.append(renderEntry(entry)));
@@ -1152,6 +1182,11 @@ function render(state) {
   // ⚠️ 只写那一格 `span`，不写 `problems` 本身 —— 它里面还有一个收起来时才画的 `⚠`。
   el('problems-text').textContent = problemText;
 
+  // ⚠️★ 换了房间 → 上一条提示**立刻收掉**（2026-09-30，Jonny 报的「切到 B 还挂着 A 的」）：
+  // 提示归房间，而这一格长在房间标题下面 —— 挂着上一条读起来就是**这个**房间的事。
+  // 之后这一拍照常显示**新房间**自己那条（`if (state.notice)` 那半，如果它有）。
+  if (state.selected !== noticeRoom) hideNotice();
+
   // ⚠️★ 壳里那条提示**走同一条显示路径**（`showNotice`）—— 见它的注释：
   // 原来这里直接写进 DOM，而 `clear_notice` 会让**下一拍**的重绘把它抹掉，
   // 于是「已发送 3 个文件」只闪一下（2026-09-27 修的）。
@@ -1206,10 +1241,14 @@ function refreshNow() {
   tick();
 }
 
-/** 下一拍等多久。⚠️ 正在等那个房间的历史时问得勤一点（见 `POLL_FAST_MS`）。 */
+/** 下一拍等多久。⚠️ 正在等那个房间的历史时问得勤一点（见 `POLL_FAST_MS`）。
+ *
+ * ⚠️★ 取失败过（`historyFailed`）就**不再快轮询**：自动重试已经停了，还按 150ms 问
+ * 只是空转（2026-09-30）。
+ */
 function nextDelay() {
   const room = lastState?.rooms?.[lastState.selected];
-  return room && !room.historyLoaded ? POLL_FAST_MS : POLL_MS;
+  return room && !room.historyLoaded && !room.historyFailed ? POLL_FAST_MS : POLL_MS;
 }
 
 async function tick() {
@@ -1342,6 +1381,9 @@ const HISTORY_RETRY_MS = 5000;
 function ensureHistory(state) {
   const room = state.rooms[state.selected];
   if (!room || room.historyLoaded) return;
+  // ⚠️★ 上一次就取失败过 → **停**（2026-09-30，Jonny：「连不上还每 5 秒取一次、
+  // 每 5 秒弹一次」）。手动重试不在这里：点一下那个房间就走 `select`（壳里记 `ByUser`）。
+  if (room.historyFailed) return;
   const key = `${room.server}\u0000${room.room}`;
   const last = historyAsked.get(key) ?? 0;
   if (Date.now() - last < HISTORY_RETRY_MS) return;

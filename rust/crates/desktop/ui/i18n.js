@@ -534,8 +534,9 @@
       '{name} · {count} 条 · 延迟 {latency}': '{name} · {count} entries · latency {latency}',
       '没有房间。': 'No rooms.',
       '这个房间还没有内容。': 'This room has nothing in it yet.',
-      '正在取这个房间的历史…（取不到会每 5 秒重试一次）':
-        "Loading this room's history… (it retries every 5 s if that fails)",
+      '正在取这个房间的历史…': "Loading this room's history…",
+      '这个房间的历史取不到（多半是连不上服务端）—— 点一下这个房间再试一次。':
+        "Could not load this room's history (the server is probably unreachable) -- click the room again to retry.",
       '{bytes} / 不限': '{bytes} / unlimited',
       '上限还不知道（还没连上）': 'limit unknown yet (not connected)',
       '还没连上': 'not connected yet',
