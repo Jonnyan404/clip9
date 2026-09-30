@@ -49,9 +49,9 @@
     <string name="console_core_live_sub">按下即停</string>
     <string name="console_core_bad">起不来</string>
     <string name="console_core_bad_sub">组件缺失</string>
-    <string name="console_metric_port">端口</string>
-    <string name="console_metric_address">局域网地址</string>
-    <string name="console_metric_none">—</string>
+    <!-- console_metric_port / console_metric_address / console_metric_none 已删（2026-09-30）：
+         面板上那两格与迷你条、二维码卡片、快速复制三处同源，删掉了 —— 见 activity_main.xml
+         里那段注释。⚠️ 删这三条之前确认过 `console_metric_none` 只有 metricAddress 读。 -->
     <string name="console_quick_open">打开界面</string>
     <string name="console_quick_qr">二维码</string>
     <string name="console_qr_note">手机连同一个 Wi-Fi 就能打开</string>
