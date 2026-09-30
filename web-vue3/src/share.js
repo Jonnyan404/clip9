@@ -14,6 +14,7 @@
 import { postText } from '@/send.js';
 import { errorMessage } from '@/util.js';
 import { useWebSocketStore } from '@/store/websocket';
+import router from '@/router';
 
 /**
  * 失败原因的**稳定键**（机器读的，不是给人看的句子）。
@@ -57,11 +58,16 @@ export function installShareBridge() {
          * ⚠️★ `onPageFinished` **不代表**这个为真：Vue 挂载、WS 连上都在它之后。
          * 外壳必须**轮询到这里为真**再投递，否则分享过来那一瞬间内容就丢了。
          *
-         * 判据与输入框的 `sendDisabled` 用**同一个**（`ws.websocket` 存在 = 连上了）——
-         * 别另外发明一个「应该算连上了」的条件。
+         * ⚠️★ **只看 WS 在不在** —— `ws.room` 是**空串**的时候表示「公共房间」（default），
+         * 那是**合法状态**，不能当「没选房间」。原来的
+         * `Boolean(ws.websocket && ws.room)` 在公共房间里**永远是 false**，
+         * 于是冷启动分享的 20 秒就绪探测必超时、分享必丢
+         * （2026-09-30 真机验收抓到，§7-6）。判据改成与「输入框可不可用」同源：
+         * WS 连着 = 房间有效 —— 分享页不建 WS（`main.js` 对 sharePage 不 connect），
+         * 所以「WS 在」就蕴含「在正主页面的某个房间里」。
          */
         isReady() {
-            return Boolean(ws.websocket && ws.room);
+            return Boolean(ws.websocket);
         },
 
         /**
@@ -77,7 +83,10 @@ export function installShareBridge() {
             if (!body) {
                 return { ok: false, reason: SHARE_REASONS.EMPTY };
             }
-            if (!ws.room) {
+            // ⚠️★ 「没选房间」的判据是**分享页**，不是「room 为空」——
+            //    空串 = 公共房间（上面的 isReady 注释）。分享页不建 WS，
+            //    本来也发不出去，这里先给它一个说得清的理由。
+            if (router.currentRoute.value.meta?.sharePage) {
                 return { ok: false, reason: SHARE_REASONS.NO_ROOM };
             }
             if (!ws.websocket) {
@@ -87,6 +96,10 @@ export function installShareBridge() {
                 // ⚠️ 这里**不**自己判 `app.config.text.limit`：那条上限由服务端裁决，
                 // 超了会回一句明确的错，`message` 直接带给用户。再抄一份等于把
                 // 「上限是多少」变成两处定义（项目里已有过三次「配了不生效」）。
+                // ⚠️ `room: ws.room` 在公共房间里是**空串**——与三个 composer
+                // （UnifiedComposer / StickyComposer / BenchWall）传的**同一个值**，
+                // 服务端把空 room 归一成 default。别在这里补 `|| 'default'`：
+                // 那会变成第二处定义「空串是什么意思」。
                 await postText({ room: ws.room, text: body });
                 return { ok: true };
             } catch (error) {
