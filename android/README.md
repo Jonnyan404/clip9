@@ -363,7 +363,7 @@ wrapper 的发行版已经缓存在 `~/.gradle/wrapper/dists/gradle-8.13-bin`。
   ⚠️ 真机验收的第 6 条（设计稿 §7）就是它。
 - ⚠️★ **CI 那条路一次都没跑过**（2026-09-28 写下这份文档时）。本机也验不了 —— 它要
   runner、Android SDK / NDK、四个 `SIGNING_*` secret。能提前问的只有
-  `node tools/workflows-smoke.mjs`（7 条跨文件判据，已接进 CI 的 frontend job，19 组变异验过）：
+  `node tools/workflows-smoke.mjs`（一组跨文件判据，已接进 CI 的 frontend job；它自己会报条数）：
   它管的是「artifact 名字 / 前缀 / 矩阵条目数 / ABI ↔ target / `--require-all` 还在不在」这些
   字符串约定，**管不了「编不编得出来」**。
   ⚠️ 所以第一次 CI 红了**先看 `.github/workflows/android.yml` 里「看清楚 Android SDK / NDK 在哪」
