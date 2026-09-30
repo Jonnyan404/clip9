@@ -1092,6 +1092,59 @@ const pkgApk = read('openwrt/scripts/package-openwrt-apk.sh');
         `打包引用的文件名（${argRef[1]}）与生成时写的那个（${written[1]}）不一致 —— 注入会落空`,
       );
     }
+
+    // ⚠️★ MSI 那一份必须是**纯数字**（WiX 的 ProductVersion 只认数字）——
+    //    `v0.1.1-beta2`（2026-09-30）就栽在这里：注入真实 tag 之后版本第一次带上字母，
+    //    Windows 那条打包在**最后一步**报
+    //    `optional pre-release identifier in app version must be numeric-only`，
+    //    而另外三个平台全绿 —— 只有专门盯这条链的判据拦得住。
+    //    ⚠️ 只有 msi 需要它（NSIS 原生支持完整 semver），而 Windows 那格是 `msi,nsis`。
+    // ⚠️★ 先**剥掉注释**再找 `wix_version=` —— 不然抬头那段「用法示例」里的
+    //    `wix_version=0.1.0.1` 就足以让这条判据永远变绿（把真正的 `console.log` 删掉
+    //    它照样绿）。「判据不能靠一个全局搜索」这条坑，`desktop-ui-smoke.mjs` 的判据 8
+    //    也踩过一次（那边是补了 `stripComments` 才关上的）。
+    const versionScript = read('tools/release-version.mjs');
+    const versionCodeOnly =
+      versionScript === null
+        ? ''
+        : versionScript
+            .split('\n')
+            .filter((line) => !/^\s*(\/\/|\*|\/\*)/.test(line))
+            .join('\n');
+    if (versionScript === null || !/wix_version=/.test(versionCodeOnly)) {
+      problems.push(
+        '`tools/release-version.mjs` 不再输出 `wix_version` —— 桌面端注入的\n' +
+          '    `bundle.windows.wix.version` 就取自它（换算只许有一个定义处）。',
+      );
+    }
+    if (!body.includes('wix_version')) {
+      problems.push(
+        '版本注入那一步没有取 `wix_version` —— 缺了它，MSI 会退回用带预发布后缀的\n' +
+          '    `version` 打包，而 WiX 只认数字：`v0.1.1-beta2` 就是这么挂的。',
+      );
+    }
+
+    // ⚠️★ 把那份覆盖配置的**模板**也解析一遍。2026-09-30 我在那一行上多写了一个 `}`，
+    //    生成出来的 JSON 是坏的 —— 而**上面所有检查一条都没红**（文件名对得上、
+    //    `--config` 在、顺序对）。这类「模板自己写错」只有真解析一次才看得出来。
+    const tpl = /printf\s+'(\{[^']*)'/.exec(body);
+    if (!tpl) {
+      problems.push('看不出注入的覆盖配置长什么样（期望 `printf \'{"version":…}\' …`）');
+    } else {
+      if (!/"windows"\s*:\s*\{\s*"wix"/.test(tpl[1])) {
+        problems.push(
+          '注入的覆盖配置里没有 `bundle.windows.wix.version` —— MSI 会退回用带字母的 version',
+        );
+      }
+      try {
+        JSON.parse(tpl[1].replace(/\\n/g, '').replace(/%s/g, '0'));
+      } catch (error) {
+        problems.push(
+          `注入的覆盖配置模板不是合法 JSON：${error.message}\n` +
+            '    （`%s` 会被换成版本号、`\\n` 是 printf 的换行 —— 两者都不该影响结构）',
+        );
+      }
+    }
   }
 
   if (!problems.length) ok(label);
