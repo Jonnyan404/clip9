@@ -24,11 +24,22 @@
   管理页跑在 `Theme.Clip9.Console`（固定深色）下，不用 `?attr/...` 那套主题语义色。
   （契约 D 现在是**剥掉注释**之后才扫引用与定义的，所以注释里可以正常写资源名。）
 -->
-<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+<!--
+  ⚠️★ 根是 FrameLayout 而不是 LinearLayout（2026-09-30）：远端服务器改成了
+  稿子 ④⑤ 的「子页」两层结构 —— 列表子页与编辑子页是**盖在主体之上**的两层
+  全屏覆盖层（后面两个 child），不是三页签里的第四、第五页：
+  它们有各自的返回路径（子页返回键 = 回到主体，不是退出 App），
+  用覆盖层就不用给它们单独的 Activity / Fragment 生命周期问题。
+-->
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:app="http://schemas.android.com/apk/res-auto"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:background="@color/console_bg"
+    android:background="@color/console_bg">
+
+<LinearLayout
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
     android:orientation="vertical">
 
     <!-- ══════════════════ ① 连接页的顶部：大面板 + 快捷三格 ══════════════════
@@ -588,84 +599,68 @@
                         android:scaleType="fitCenter" />
                 </LinearLayout>
 
-                <!-- ── 远端服务器清单 ────────────────────────────────────────
-                     ⚠️★ 这一块**与稿子不一样**，是有意留的：稿子 ④⑤ 把它做成了
-                     「连接页里点一行 → 进子页」的两层结构（列表页 + 编辑页），
-                     而现在它还是内嵌的一张卡（列表 + 每行「编辑」+ 底部「添加」）。
-                     功能是齐的（增删改都能做），只是形态还没换 —— 换子页要新做两个界面，
-                     是下一件事，别在这里半途改成「一行但点不进去」。 -->
+                <!-- ── 远端服务器 · 一行入口（稿子 ① 里 list 的第一行）────────
+                     ⚠️★ 2026-09-30 从「内嵌卡（清单 + 每行编辑 + 添加）」换成了
+                     「一行 → 进列表子页」：稿子 ④⑤ 把多台管理做成了子页，
+                     内嵌卡是过渡形态。入口行只显示**当前选中那台**的一句话摘要；
+                     完整清单、增删改、测试连接都在列表子页（remoteListPage）里。
+                     ⚠️ 这一行的可见内容由 RemoteServerList.refreshEntry() 刷 ——
+                     它与子页清单是同一份数据（RemoteServers.load）的两个看法。 -->
                 <LinearLayout
+                    android:id="@+id/remoteEntry"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:layout_marginTop="14dp"
                     android:background="@drawable/bg_console_card"
-                    android:orientation="vertical"
-                    android:paddingTop="13dp"
-                    android:paddingBottom="8dp">
+                    android:clickable="true"
+                    android:focusable="true"
+                    android:foreground="?attr/selectableItemBackground"
+                    android:gravity="center_vertical"
+                    android:minHeight="64dp"
+                    android:orientation="horizontal"
+                    android:paddingStart="15dp"
+                    android:paddingTop="12dp"
+                    android:paddingEnd="12dp"
+                    android:paddingBottom="12dp">
+
+                    <ImageView
+                        android:layout_width="19dp"
+                        android:layout_height="19dp"
+                        android:contentDescription="@null"
+                        android:src="@drawable/ic_console_server"
+                        app:tint="@color/console_text_faint" />
 
                     <LinearLayout
-                        android:layout_width="match_parent"
+                        android:layout_width="0dp"
                         android:layout_height="wrap_content"
-                        android:gravity="center_vertical"
-                        android:orientation="horizontal"
-                        android:paddingStart="15dp"
-                        android:paddingEnd="15dp">
-
-                        <ImageView
-                            android:layout_width="17dp"
-                            android:layout_height="17dp"
-                            android:contentDescription="@null"
-                            android:src="@drawable/ic_console_link"
-                            app:tint="@color/console_icon" />
+                        android:layout_marginStart="12dp"
+                        android:layout_weight="1"
+                        android:orientation="vertical">
 
                         <TextView
-                            android:layout_width="wrap_content"
+                            android:layout_width="match_parent"
                             android:layout_height="wrap_content"
-                            android:layout_marginStart="9dp"
-                            android:letterSpacing="0.14"
                             android:text="@string/remote_section"
-                            android:textColor="@color/console_say"
-                            android:textSize="12sp"
-                            android:textStyle="bold" />
+                            style="@style/Text.Clip9.CfgTitle" />
+
+                        <TextView
+                            android:id="@+id/remoteEntryCurrent"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:layout_marginTop="2dp"
+                            android:ellipsize="middle"
+                            android:fontFamily="monospace"
+                            android:maxLines="1"
+                            android:textColor="@color/console_text_body"
+                            android:textSize="11.5sp" />
                     </LinearLayout>
 
-                    <TextView
-                        android:layout_width="match_parent"
-                        android:layout_height="wrap_content"
-                        android:layout_marginTop="4dp"
-                        android:paddingStart="15dp"
-                        android:paddingEnd="15dp"
-                        android:text="@string/remote_section_note"
-                        android:textColor="@color/console_text_body"
-                        android:textSize="11.5sp" />
-
-                    <!-- ⚠️ 里面的行是**代码生成**的（数量不定）—— 见 MainActivity.renderRemoteServers -->
-                    <LinearLayout
-                        android:id="@+id/remoteList"
-                        android:layout_width="match_parent"
-                        android:layout_height="wrap_content"
-                        android:layout_marginTop="8dp"
-                        android:orientation="vertical" />
-
-                    <TextView
-                        android:id="@+id/remoteEmpty"
-                        android:layout_width="match_parent"
-                        android:layout_height="wrap_content"
-                        android:layout_marginTop="8dp"
-                        android:paddingStart="15dp"
-                        android:paddingEnd="15dp"
-                        android:text="@string/remote_none"
-                        android:textColor="@color/console_text_body"
-                        android:textSize="11.5sp" />
-
-                    <com.google.android.material.button.MaterialButton
-                        android:id="@+id/remoteAddButton"
-                        style="@style/Widget.Clip9.ConsoleButton"
-                        android:layout_width="match_parent"
-                        android:layout_height="wrap_content"
-                        android:text="@string/remote_add"
-                        android:textColor="@color/console_icon"
-                        app:backgroundTint="@android:color/transparent" />
+                    <ImageView
+                        android:layout_width="16dp"
+                        android:layout_height="16dp"
+                        android:contentDescription="@null"
+                        android:src="@drawable/ic_console_chev"
+                        app:tint="@color/console_text_faint" />
                 </LinearLayout>
 
                 <!-- ── 版本 / 本地组件（稿子底部那行 `.foot`）────────────────── -->
@@ -1306,4 +1301,440 @@
             android:textSize="12.5sp"
             app:backgroundTint="@color/console_accent" />
     </LinearLayout>
-</LinearLayout>
+
+    <!-- ══════════════ ⑥ 远端服务器 · 列表子页（稿子 ④）══════════════
+         ⚠️ 它是盖在主体上的**全屏覆盖层**（见文件抬头的注释），不是三页签里的第四页。
+         显隐由 RemoteServerList 的 show / hide 管；返回键也归它（MainActivity 里拦）。 -->
+    <LinearLayout
+        android:id="@+id/remoteListPage"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:background="@color/console_bg"
+        android:orientation="vertical"
+        android:visibility="gone">
+
+        <!-- ── 子页头（稿子 `.subh`）：返回 + 标题 + 添加 ── -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:gravity="center_vertical"
+            android:orientation="horizontal"
+            android:paddingStart="8dp"
+            android:paddingTop="12dp"
+            android:paddingEnd="12dp"
+            android:paddingBottom="10dp">
+
+            <ImageView
+                android:id="@+id/remoteBack"
+                android:layout_width="42dp"
+                android:layout_height="42dp"
+                android:contentDescription="@string/remote_cancel"
+                android:padding="9dp"
+                android:src="@drawable/ic_console_back"
+                app:tint="@color/console_text_mid" />
+
+            <TextView
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="6dp"
+                android:layout_weight="1"
+                android:text="@string/remote_section"
+                android:textColor="@color/console_text"
+                android:textSize="16.5sp"
+                android:textStyle="bold" />
+
+            <ImageView
+                android:id="@+id/remoteAddButton"
+                android:layout_width="42dp"
+                android:layout_height="42dp"
+                android:contentDescription="@string/remote_add"
+                android:padding="9dp"
+                android:src="@drawable/ic_console_plus"
+                app:tint="@color/console_icon" />
+        </LinearLayout>
+
+        <ScrollView
+            android:layout_width="match_parent"
+            android:layout_height="0dp"
+            android:layout_weight="1"
+            android:fillViewport="true">
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:paddingStart="16dp"
+                android:paddingTop="6dp"
+                android:paddingEnd="16dp"
+                android:paddingBottom="24dp">
+
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="4dp"
+                    android:text="@string/remote_subpage_note"
+                    style="@style/Text.Clip9.CfgHint" />
+
+                <!-- ⚠️ 行是代码生成的（台数不定）—— 见 RemoteServerList.render -->
+                <LinearLayout
+                    android:id="@+id/remotePageList"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="14dp"
+                    android:background="@drawable/bg_console_card"
+                    android:divider="@drawable/bg_console_row_edge"
+                    android:orientation="vertical"
+                    android:showDividers="middle" />
+
+                <TextView
+                    android:id="@+id/remotePageEmpty"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="14dp"
+                    android:background="@drawable/bg_console_card"
+                    android:padding="15dp"
+                    android:text="@string/remote_none"
+                    style="@style/Text.Clip9.CfgHint" />
+
+                <!-- ── 打开当前选中的那台（稿子 `.openbtn`）── -->
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/remoteOpenButton"
+                    style="@style/Widget.Clip9.ConsoleButton"
+                    android:layout_width="match_parent"
+                    android:layout_height="44dp"
+                    android:layout_marginTop="14dp"
+                    android:insetTop="0dp"
+                    android:insetBottom="0dp"
+                    android:textSize="13.5sp"
+                    android:textColor="@color/console_text"
+                    app:backgroundTint="@color/console_edge" />
+
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="14dp"
+                    android:text="@string/remote_credential_note"
+                    style="@style/Text.Clip9.CfgHint"
+                    android:textColor="@color/console_foot" />
+            </LinearLayout>
+        </ScrollView>
+    </LinearLayout>
+
+    <!-- ══════════════ ⑦ 远端服务器 · 编辑子页（稿子 ⑤）══════════════
+         ⚠️ 它取代了原来的 dialog_remote_server 弹窗：字段、开关、测试连接
+         全都在，只是从「对话框」换成了「与列表子页同一套返回路径的子页」。
+         字段的 id（editorName / editorUrl / editorRoom / editorPassword /
+         editorRemember / editorAutoAuth / editorTest / editorTestResult）
+         与弹窗时代一致 —— 那一层逻辑没换，换的只是皮。 -->
+    <LinearLayout
+        android:id="@+id/remoteEditPage"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:background="@color/console_bg"
+        android:orientation="vertical"
+        android:visibility="gone">
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:gravity="center_vertical"
+            android:orientation="horizontal"
+            android:paddingStart="8dp"
+            android:paddingTop="12dp"
+            android:paddingEnd="12dp"
+            android:paddingBottom="10dp">
+
+            <ImageView
+                android:id="@+id/remoteEditBack"
+                android:layout_width="42dp"
+                android:layout_height="42dp"
+                android:contentDescription="@string/remote_cancel"
+                android:padding="9dp"
+                android:src="@drawable/ic_console_back"
+                app:tint="@color/console_text_mid" />
+
+            <TextView
+                android:id="@+id/remoteEditTitle"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="6dp"
+                android:layout_weight="1"
+                android:ellipsize="end"
+                android:maxLines="1"
+                android:textColor="@color/console_text"
+                android:textSize="16.5sp"
+                android:textStyle="bold" />
+
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/remoteSaveButton"
+                style="@style/Widget.Clip9.ConsoleButton"
+                android:layout_width="wrap_content"
+                android:layout_height="36dp"
+                android:insetTop="0dp"
+                android:insetBottom="0dp"
+                android:text="@string/remote_save"
+                android:textColor="@android:color/white"
+                app:backgroundTint="@color/console_accent" />
+        </LinearLayout>
+
+        <ScrollView
+            android:layout_width="match_parent"
+            android:layout_height="0dp"
+            android:layout_weight="1"
+            android:fillViewport="true">
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:paddingStart="16dp"
+                android:paddingTop="6dp"
+                android:paddingEnd="16dp"
+                android:paddingBottom="24dp">
+
+                <!-- ── 四个字段（稿子 `.redit.card`）──
+                     ⚠️ 名称是唯一必填的两项之一（另一个是地址）；
+                     「保存」按钮的校验在 Kotlin 里（不过就不关子页）。 -->
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:background="@drawable/bg_console_card"
+                    android:orientation="vertical"
+                    android:padding="15dp">
+
+                    <TextView
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:text="@string/remote_name"
+                        style="@style/Text.Clip9.CfgTitle" />
+
+                    <EditText
+                        android:id="@+id/editorName"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="6dp"
+                        android:autofillHints=""
+                        android:hint="@string/remote_name_hint"
+                        android:inputType="text"
+                        android:maxLines="1"
+                        style="@style/Widget.Clip9.CfgInput" />
+
+                    <TextView
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="12dp"
+                        android:text="@string/remote_url"
+                        style="@style/Text.Clip9.CfgTitle" />
+
+                    <EditText
+                        android:id="@+id/editorUrl"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="6dp"
+                        android:autofillHints=""
+                        android:hint="@string/remote_url_hint"
+                        android:inputType="textUri"
+                        android:maxLines="1"
+                        style="@style/Widget.Clip9.CfgInput" />
+
+                    <TextView
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="4dp"
+                        android:text="@string/remote_url_note"
+                        style="@style/Text.Clip9.CfgHint" />
+
+                    <TextView
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="12dp"
+                        android:text="@string/remote_room"
+                        style="@style/Text.Clip9.CfgTitle" />
+
+                    <EditText
+                        android:id="@+id/editorRoom"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="6dp"
+                        android:autofillHints=""
+                        android:hint="@string/remote_room_hint"
+                        android:inputType="text"
+                        android:maxLines="1"
+                        style="@style/Widget.Clip9.CfgInput" />
+
+                    <TextView
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="4dp"
+                        android:text="@string/remote_room_note"
+                        style="@style/Text.Clip9.CfgHint" />
+
+                    <TextView
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="12dp"
+                        android:text="@string/remote_password"
+                        style="@style/Text.Clip9.CfgTitle" />
+
+                    <EditText
+                        android:id="@+id/editorPassword"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="6dp"
+                        android:autofillHints=""
+                        android:hint="@string/remote_password_hint"
+                        android:inputType="textVisiblePassword"
+                        android:maxLines="1"
+                        style="@style/Widget.Clip9.CfgInput" />
+
+                    <TextView
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="4dp"
+                        android:text="@string/remote_password_note"
+                        style="@style/Text.Clip9.CfgHint" />
+                </LinearLayout>
+
+                <!-- ── 两个开关（稿子 ⑤ 的 `.cfg` 两行）── -->
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="12dp"
+                    android:background="@drawable/bg_console_card"
+                    android:divider="@drawable/bg_console_row_edge"
+                    android:orientation="vertical"
+                    android:showDividers="middle">
+
+                    <LinearLayout
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:gravity="center_vertical"
+                        android:minHeight="56dp"
+                        android:orientation="horizontal"
+                        android:paddingStart="15dp"
+                        android:paddingTop="10dp"
+                        android:paddingEnd="15dp"
+                        android:paddingBottom="10dp">
+
+                        <ImageView
+                            android:layout_width="19dp"
+                            android:layout_height="19dp"
+                            android:contentDescription="@null"
+                            android:src="@drawable/ic_console_lock"
+                            app:tint="@color/console_text_faint" />
+
+                        <LinearLayout
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_marginStart="12dp"
+                            android:layout_weight="1"
+                            android:orientation="vertical">
+
+                            <TextView
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:text="@string/remote_remember"
+                                style="@style/Text.Clip9.CfgTitle" />
+
+                            <TextView
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:layout_marginTop="2dp"
+                                android:text="@string/remote_remember_note"
+                                style="@style/Text.Clip9.CfgHint" />
+                        </LinearLayout>
+
+                        <Switch
+                            android:id="@+id/editorRemember"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:layout_marginStart="12dp" />
+                    </LinearLayout>
+
+                    <LinearLayout
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:gravity="center_vertical"
+                        android:minHeight="56dp"
+                        android:orientation="horizontal"
+                        android:paddingStart="15dp"
+                        android:paddingTop="10dp"
+                        android:paddingEnd="15dp"
+                        android:paddingBottom="10dp">
+
+                        <ImageView
+                            android:layout_width="19dp"
+                            android:layout_height="19dp"
+                            android:contentDescription="@null"
+                            android:src="@drawable/ic_console_shield"
+                            app:tint="@color/console_text_faint" />
+
+                        <LinearLayout
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_marginStart="12dp"
+                            android:layout_weight="1"
+                            android:orientation="vertical">
+
+                            <TextView
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:text="@string/remote_auto_auth"
+                                style="@style/Text.Clip9.CfgTitle" />
+
+                            <TextView
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:layout_marginTop="2dp"
+                                android:text="@string/remote_auto_auth_note"
+                                style="@style/Text.Clip9.CfgHint" />
+                        </LinearLayout>
+
+                        <Switch
+                            android:id="@+id/editorAutoAuth"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:layout_marginStart="12dp" />
+                    </LinearLayout>
+                </LinearLayout>
+
+                <!-- ── 测试连接（稿子 `.openbtn` 暗色变体 + `.okline`）── -->
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/editorTest"
+                    style="@style/Widget.Clip9.ConsoleButton"
+                    android:layout_width="match_parent"
+                    android:layout_height="44dp"
+                    android:layout_marginTop="12dp"
+                    android:insetTop="0dp"
+                    android:insetBottom="0dp"
+                    android:text="@string/remote_test"
+                    android:textSize="13.5sp"
+                    android:textColor="@color/console_text_mid"
+                    app:backgroundTint="@color/console_edge" />
+
+                <TextView
+                    android:id="@+id/editorTestResult"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="10dp"
+                    style="@style/Text.Clip9.CfgHint"
+                    android:visibility="gone" />
+
+                <!-- ── 删除（稿子里没画 —— 危险动作退到这里，红色文字的纯文字行）── -->
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/editorDelete"
+                    style="@style/Widget.Clip9.ConsoleButton"
+                    android:layout_width="match_parent"
+                    android:layout_height="44dp"
+                    android:layout_marginTop="16dp"
+                    android:insetTop="0dp"
+                    android:insetBottom="0dp"
+                    android:text="@string/remote_delete"
+                    android:textSize="13.5sp"
+                    android:textColor="@color/console_err_text"
+                    app:backgroundTint="@color/console_go_stop" />
+            </LinearLayout>
+        </ScrollView>
+    </LinearLayout>
+    </LinearLayout>
+</FrameLayout>

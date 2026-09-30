@@ -246,6 +246,18 @@ class MainActivity : AppCompatActivity() {
         // 就少了「初始状态与切页逻辑不一致」这种只在某一次改动后才冒出来的问题。
         tabGroup.check(R.id.tabConnect)
 
+        // ⚠️★ 返回键先给远端子页（稿子 ④⑤ 的两层覆盖层）：
+        // 编辑子页开着 → 关它；列表子页开着 → 关它；都没开 → 才真的退出。
+        // 不拦的话「在子页里按返回 = 退出 App」，用户填了一半的表单直接没了。
+        onBackPressedDispatcher.addCallback(
+            this,
+            object : androidx.activity.OnBackPressedCallback(true) {
+                override fun handleOnBackPressed() {
+                    if (!remoteList.onBack()) finish()
+                }
+            },
+        )
+
         askNotificationPermission()
 
         // ⚠️ 最后做：它可能只是 toast 一句（分享文件那条还没做），也可能去起服务端。
