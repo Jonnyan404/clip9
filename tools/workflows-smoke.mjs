@@ -459,7 +459,8 @@ const pkgApk = read('openwrt/scripts/package-openwrt-apk.sh');
 //    ④ 反向：`release.yml` 里**没有**任何 `body` / `body_path` —— 有的话就与③打架，
 //       而谁赢取决于 job 谁后跑（**没有症状的那类错**）。
 {
-  const label = 'release-notes：正文从 CHANGELOG 抽（needs 里有 publish，且没人另设 body）';
+  const label =
+    'release-notes：正文从 CHANGELOG 抽（needs 里有 publish、没人另设 body、tag 里找不到能退回默认分支）';
   const problems = [];
   if (release === null) {
     problems.push('读不到 release.yml');
@@ -480,6 +481,26 @@ const pkgApk = read('openwrt/scripts/package-openwrt-apk.sh');
       }
       if (!/gh release edit[^\n]*--notes-file/.test(body)) {
         problems.push('release-notes 里没有 `gh release edit … --notes-file`（那样正文写不上去）');
+      }
+      // ⑤ 兜底（2026-09-30 加，`v0.1.1-beta2` 那次的教训）：tag 的提交里找不到时，要能
+      //    **退回默认分支**再抽一次 —— 忘了「先提交、再打 tag」的那一版，正文靠它才
+      //    补得上（tag 已经指出去，不该为一段说明去挪）。删掉它 = 回到「正文一直空着」。
+      if (!body.includes('--changelog')) {
+        problems.push(
+          'release-notes 没有退回默认分支的兜底（`--changelog`）—— 忘了先写说明的那一版，正文就再也补不上了',
+        );
+      }
+      // ⑥ 开头那个早提示（`notes-precheck`）：**只提示**。它不许进 `publish` 的 needs
+      //    （那是「文档没写完就不发资产」，这里拒过），也不许被悄悄删掉。
+      const pubNeeds = jobNeeds(release, 'publish') ?? [];
+      if (pubNeeds.includes('notes-precheck')) {
+        problems.push('notes-precheck 挂进了 publish 的 needs —— 它只能提示，不能挡住资产发布');
+      }
+      const pre = jobBlock(release, 'notes-precheck');
+      if (pre === null) {
+        problems.push('没有 notes-precheck job —— 说明漏写时，要等十几分钟后才看得出来');
+      } else if (!pre.includes('::warning::')) {
+        problems.push('notes-precheck 里没有 `::warning::` —— 那它就不会出声了');
       }
     }
     // ④ 反向。⚠️ 只认**键**（`body:` / `body_path:`），不认散文里出现「body」几个字母。
