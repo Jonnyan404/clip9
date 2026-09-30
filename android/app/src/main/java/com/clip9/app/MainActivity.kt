@@ -102,8 +102,6 @@ class MainActivity : AppCompatActivity() {
     private lateinit var ringAction: TextView
     private lateinit var ringSub: TextView
     private lateinit var consoleSay: TextView
-    private lateinit var metricPort: TextView
-    private lateinit var metricAddress: TextView
 
     /** 快捷三格：复制地址 / 打开界面 / 二维码。 */
     private lateinit var quickCopy: View
@@ -354,8 +352,6 @@ class MainActivity : AppCompatActivity() {
         ringAction = findViewById(R.id.ringAction)
         ringSub = findViewById(R.id.ringSub)
         consoleSay = findViewById(R.id.consoleSay)
-        metricPort = findViewById(R.id.metricPort)
-        metricAddress = findViewById(R.id.metricAddress)
         quickCopy = findViewById(R.id.quickCopy)
         quickOpen = findViewById(R.id.quickOpen)
         quickQr = findViewById(R.id.quickQr)
@@ -432,10 +428,10 @@ class MainActivity : AppCompatActivity() {
         updatePowerButton(status, loadFailure)
         updateConsole(status, loadFailure, running)
 
-        // ── 地址：面板的两个指标格 / 迷你条 / 二维码卡片 ──
+        // ── 地址：迷你条 / 二维码卡片 ──
+        // ⚠️ 面板上原来还有「端口 / 局域网地址」两格，2026-09-30 删掉：值与迷你条、
+        //    二维码卡片、快速复制三处完全同源，而且只有跑起来之后才有内容。
         stripAddress.text = address ?: noAddressText(status)
-        metricPort.text = port.toString()
-        metricAddress.text = address ?: getString(R.string.console_metric_none)
 
         // ── 快捷三格：没有地址时**一起**禁用（设计稿 ① 里三格都是暗的）──
         // ⚠️★ 三格一起：没有地址时「复制地址」复制不出东西、「打开界面」打开的是一个

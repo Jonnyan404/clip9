@@ -1,7 +1,0 @@
-<?xml version="1.0" encoding="utf-8"?>
-<!-- 「端口 / 局域网地址」那两格的**外壳**（设计稿 `.metrics`）：格子之间露出的那条 1dp 线就是它。 -->
-<shape xmlns:android="http://schemas.android.com/apk/res/android"
-    android:shape="rectangle">
-    <corners android:radius="14dp" />
-    <solid android:color="@color/console_edge" />
-</shape>

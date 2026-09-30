@@ -1,9 +1,0 @@
-<?xml version="1.0" encoding="utf-8"?>
-<!-- 指标格（右）：只有右上、右下两个角是圆的。 -->
-<shape xmlns:android="http://schemas.android.com/apk/res/android"
-    android:shape="rectangle">
-    <corners
-        android:bottomRightRadius="14dp"
-        android:topRightRadius="14dp" />
-    <solid android:color="@color/console_surface" />
-</shape>
