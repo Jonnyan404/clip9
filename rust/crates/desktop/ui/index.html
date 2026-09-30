@@ -688,41 +688,77 @@ body {
 /* 表格里的窄列（↑ / ↓ / 删除） */
 table.ra td.tiny, table.ra th.tiny { width: 30px; text-align: center; }
 
-/* ⚠️★ 列宽**必须**自己定，而且必须用 `table-layout: fixed`。
-   稿 2 画的是**另一张表**（房间凭据那张，列是 房间/密码/文件过期/定时任务/开放/删），
-   所以这两张表的列宽在稿子里都没有可抄的。
-   不定的话（auto 布局）：单元格里的 <input> 有自己的固有宽度，表格会被撑得比容器宽 →
-   最右边那列（删除按钮）被切掉。这正是第一次巡检抓到的那 42 处溢出。
-   `fixed` 之后列宽**完全**由这里决定，`width:100%` 的输入框也就跟着列走了。 */
-/* ⚠️★ 加了「图标」那一列（2026-09-28，Jonny：「添加房间允许用户自定义 emoji」）之后
-   这七个数**必须重新配平**：`table-layout: fixed` 是**完全**按这里的百分比切的，
-   加起来不是 100% 的话，最右边那一列（删除按钮）会被切掉 —— 而它不会报错。
-   原来的配比是 14/30/13/19/7/7/10；现在多了一列 7%，从名字与服务端各让一点出来。
-   ⚠️ 这一列是**偏离稿 2** 的（稿子里那张表没有图标）—— 偏离都写在这里，不混进照稿抄的那几段。 */
-#rooms-table { table-layout: fixed; }
-#rooms-table th:nth-child(1) { width: 7%; }   /* 图标 */
-#rooms-table th:nth-child(2) { width: 13%; }  /* 名字 */
-#rooms-table th:nth-child(3) { width: 26%; }  /* 服务端（装 URL，最宽） */
-#rooms-table th:nth-child(4) { width: 12%; }  /* 房间 */
-#rooms-table th:nth-child(5) { width: 18%; }  /* 凭据 */
-#rooms-table th:nth-child(6),
-#rooms-table th:nth-child(7) { width: 7%; }   /* ↑ / ↓ */
-#rooms-table th:nth-child(8) { width: 10%; }  /* 删除 */
-/* ⚠️ 窄列（图标 / ↑ / ↓ / 删除）的内边距从 6px 收到 3px：那一列一共才 7% 宽
-   （660px 的窗口上约 46px），原来那 12px 的横向内边距去掉之后，
-   图标那个框里只剩十几像素放一个 emoji + 光标。
-   ⚠️ 只改**表格里**那一条（`table.ra td` 那条公共规则还要给名字/地址那些格子用）。 */
-#rooms-body td.tiny { padding-left: 3px; padding-right: 3px; }
-/* 图标那一格现在是**点选**（`<select>`，见 `cellEmoji`）——
-   原来这条是给那个文本框的（`td.tiny input`）。⚠️ 不改成 `select` 的话它就是一条
-   死规则：`input` 已经不在那个格子里了，而「留一条没人用的规则」就是留一份会漂的第二定义。
+/* ⚠️★ 原来这里还有一整段 `#rooms-table`（`table-layout: fixed` + 八条 `nth-child` 列宽，
+   7/13/26/12/18/7/7/10）。2026-09-30 房间清单**改成卡片**之后整段删掉了 ——
+   ⚠️ 删的理由不是「没用了」，而是它**正好是那条需求本身**：列宽按百分比硬切，
+   660px 的窗口里「服务端」只有 26%（约 170px），`https://…` 只能看见开头。
+   卡片版式在下面（`.rlist` / `.rcard`），列宽交给 flex，窗口多宽就多宽。
+   ⚠️ 别再顺手把这八条搬回来 —— 它们只对**表格**有效，而卡片那个容器上一条都不匹配
+   （留着的表现是「改了没反应」，不报错）。 */
+
+/* ── 房间清单：每行一张卡片（2026-09-30）───────────────────────────────
+   ⚠️★ 两层结构：上层 = 图标 + 名字 + 房间 + ↑/↓ + 删（都是短内容）；
+   下层 = 服务端 + 凭据（各占半宽，这是唯一会填长文本的两个格子）。
+   宽度一律用 flex（`flex: 1` + `min-width: 0`）—— 不写任何像素：
+   `min-width: 0` 不能少，flex 子项默认 `min-width: auto`，而 `<input>` 有固有宽度，
+   少了它长输入框会把卡片撑出容器（和旧表格那 42 处溢出同一个病）。 */
+.rlist { display: flex; flex-direction: column; gap: 8px; }
+
+.rcard {
+    display: flex; flex-direction: column; gap: 6px;
+    padding: 7px 8px; border: 1px solid var(--border); border-radius: 9px;
+    background: var(--bg);
+}
+
+.rc-top { display: flex; align-items: center; gap: 6px; }
+
+/* 图标那一格是**点选**（`<select>`，见 `emojiPicker`）—— 定宽，别被 flex 压扁。
    ⚠️ 用原生外观（**不写 `appearance: none`**）：那条下拉箭头是「这一格能点」的唯一提示，
    去掉它就得自己再画一个。 */
-#rooms-body td.tiny select.ico {
-    width: 100%; border: 1px solid var(--border); border-radius: 7px;
+.rc-top select.ico {
+    flex: none; width: 46px;
+    border: 1px solid var(--border); border-radius: 7px;
     background: var(--bg); color: var(--text); font: inherit; font-size: 11.5px;
     padding: 3px 0 3px 2px; text-align: center;
 }
+
+/* 卡片里可编辑的文本框：名字 / 房间 / 服务端 / 凭据**共用这一条**。
+   ⚠️★ `password` 一起列进来不能漏（2026-09-29）：凭据那一格是 `type="password"`，
+   只写 `text` 的话它会**掉出这条规则** —— 宽度回落到 `<input>` 的固有宽度、
+   边框和内边距全没，表现出来是「那一格看着像坏了」，而它不报错。 */
+.rcard input[type='text'], .rcard input[type='password'] {
+    flex: 1; min-width: 0;
+    border: 1px solid var(--border); border-radius: 7px;
+    background: var(--bg); padding: 3px 6px; font: inherit; font-size: 11.5px; color: var(--text);
+}
+
+/* ↑ / ↓ 那一组：`flex: none`（它们不该跟着输入框一起伸缩）。 */
+.rc-dirs { flex: none; display: flex; gap: 3px; }
+
+.rc-del { flex: none; padding: 2px 7px; }
+
+/* ⚠️★ 下层**会自动换行** —— 这一条是量出来的，不是猜的：
+   设置窗口是**固定 640px**（`.overlay .win.settings`），左边导航吃掉 158px，
+   扣掉两层内边距之后卡片里只剩约 430px。两个字段并排 → 每个约 215px
+   （再减去标签与间距，输入框只剩 ~173px），而一个 `https://clip9.example.com/clip9`
+   是 31 个字符 ≈ 190px —— **仍然看不全**，那正是这条需求要修的东西。
+   `flex: 1 1 280px`：每个字段的基准宽是 280px（一个 URL 类输入框的下限），
+   装得下就并排、装不下就各占一行。⚠️ 别再改回 `flex: 1`（那会永远并排）。 */
+.rc-bot { display: flex; flex-wrap: wrap; gap: 6px; }
+
+/* 下层的一格：小标签 + 控件，控件吃掉剩下的宽度。 */
+.rc-f { flex: 1 1 280px; min-width: 0; display: flex; align-items: center; gap: 6px; }
+
+/* ⚠️ 标签用 `min-width` 而**不是** `width`：中文的「服务端」(3 字) 与「凭据」(2 字) 差
+   一个字宽，不设下限的话两行的输入框左边缘对不齐（实测差约 15px）；
+   但设成**固定**宽又会切掉别的语种 —— 英文是 `Server`(6) / `Credential`(10)，
+   10 个字母放不进 3.2em。`min-width` 两头都占：中文那两行对齐，长译文自己会长。 */
+.rc-l { flex: none; min-width: 3.2em; font-size: 11px; color: var(--text-2); }
+
+/* 凭据那一格是 `.secret`（输入框 + 👁）—— 它自己就是个 flex 容器，
+   这里要的是「占满这一格的剩余宽度」。
+   ⚠️ `.rc-f .secret` 里的 `min-width: 0` 与上面输入框那条是同一个理由。 */
+.rc-f .secret { flex: 1; min-width: 0; }
 #roomauth-table { table-layout: fixed; }
 #roomauth-table th:nth-child(1) { width: 18%; } /* 房间 */
 #roomauth-table th:nth-child(2) { width: 24%; } /* 密码 */
@@ -1093,14 +1129,14 @@ table.ra td input[type='checkbox'] { margin: 0; }
             <div class="pane" id="pane-rooms">
                 <h3 data-i18n="服务端与房间">服务端与房间</h3>
                 <p class="sub"><span data-i18n="↑ 把本机剪贴板发到这个房间，↓ 把这个房间的内容收进本机剪贴板（">↑ 把本机剪贴板发到这个房间，↓ 把这个房间的内容收进本机剪贴板（</span><b data-i18n="全局只能一个）。">全局只能一个）。</b></p>
-                <table class="ra" id="rooms-table">
-                    <thead><tr>
-                        <th class="tiny" data-i18n-title="留空 = 自动挑一个不重样的" data-i18n="图标">图标</th>
-                        <th class="c-name" data-i18n="名字">名字</th><th class="c-server" data-i18n="服务端">服务端</th><th class="c-room" data-i18n="房间">房间</th>
-                        <th class="c-token" data-i18n="凭据">凭据</th><th class="tiny">↑</th><th class="tiny">↓</th><th class="tiny"></th>
-                    </tr></thead>
-                    <tbody id="rooms-body"></tbody>
-                </table>
+                <!-- ⚠️★ 这里原来是一张 8 列的 `<table class="ra">`（图标/名字/服务端/房间/凭据/↑/↓/删）。
+                     2026-09-30 改成卡片（Jonny：「目前的列表编辑框都太窄了，展示不全，
+                     编辑的时候也不看见自己写了啥」）：那张表是 `table-layout: fixed`，
+                     列宽按百分比**硬切**，660px 的窗口里「服务端」只分到 26%（约 170px），
+                     一个 `https://…` 的地址只能看见开头。卡片横向分两层，两个长字段各占半宽。
+                     ⚠️ 容器 id 仍是 `rooms-body`（`app.js` 的 `renderRoomRows` 往里填卡片）；
+                     行与列全在 CSS 里定（`.rlist` / `.rcard`），这里不留任何像素。 -->
+                <div class="rlist" id="rooms-body"></div>
                 <button class="btn" id="room-add" style="margin-top:9px" data-i18n="＋ 添加房间">＋ 添加房间</button>
             </div>
 

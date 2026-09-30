@@ -1721,23 +1721,33 @@ let roomDraft = [];
  */
 let emojiPool = [];
 
-/** 一个单元格里的文本框。⚠️ 用 `input` 事件更新草稿，不重渲染 ——
+/** 一个「填字」输入框（**不带 `<td>`**）。⚠️ 用 `input` 事件更新草稿，不重渲染 ——
  *  每次重渲染都把 `value` 重设会把用户正在输入的光标顶掉。
  *
  *  ⚠️★ `autocapitalize="off"`：macOS 会在这个框里把首字母**自动大写**，
  *  而这一格填的是**地址**（用户实测把 `https://…` 打成了 `Https://…`，
  *  然后怎么都连不上）。见 `tools/desktop-ui-smoke.mjs` 里那条静态自检 ——
  *  这一侧没有测试运行器，「新加的输入框忘了关」只能靠它拦。
+ *
+ *  ⚠️★ 2026-09-30 拆成两层：**这里只管造那个 `<input>`**，包不包 `<td>` 是调用方的事。
+ *  房间清单从 8 列表格改成了卡片（见 `renderRoomRows`），同一个输入框现在要放进
+ *  两种容器里；而「这一格是地址、必须关自动大写」这件事**只许有一份定义**
+ *  —— `roomauth-table` 那张表还在用 `<td>`（走 `cellInput`），房间卡片直接用它。
  */
-function cellInput(value, onChange, placeholder) {
-  const td = h('td');
+function inputEl(value, onChange, placeholder) {
   const input = document.createElement('input');
   input.type = 'text';
   input.setAttribute('autocapitalize', 'off');
   input.value = value ?? '';
   if (placeholder) input.placeholder = placeholder;
   input.addEventListener('input', () => onChange(input.value));
-  td.append(input);
+  return input;
+}
+
+/** 表格里的一个文本框单元格（`roomauth-table` 用；房间卡片改用 `inputEl`）。 */
+function cellInput(value, onChange, placeholder) {
+  const td = h('td');
+  td.append(inputEl(value, onChange, placeholder));
   return td;
 }
 
@@ -1753,9 +1763,11 @@ function cellInput(value, onChange, placeholder) {
  * macOS 照样会把首字母大写 —— 而这一格同样是「不许改字面」的。
  * ⚠️ 判据 4 因此要把 `type='password'` 一起数进去（见 `tools/desktop-ui-smoke.mjs`）：
  * 只数 `text` 的话，这一格就是那条自检**看不见**的一处。
+ *
+ * ⚠️★ 与 `inputEl` 同一条：这里只造「输入框 + 👁」那一组（`.secret` 包着），
+ * `cellSecret` 才是把它塞进 `<td>` 的那一层。
  */
-function cellSecret(value, onChange, placeholder) {
-  const td = h('td');
+function secretEl(value, onChange, placeholder) {
   const wrap = h('span', 'secret');
   const input = document.createElement('input');
   input.type = 'password';
@@ -1787,7 +1799,13 @@ function cellSecret(value, onChange, placeholder) {
   });
 
   wrap.append(input, peek);
-  td.append(wrap);
+  return wrap;
+}
+
+/** 表格里的凭据单元格（`roomauth-table` 用）。 */
+function cellSecret(value, onChange, placeholder) {
+  const td = h('td');
+  td.append(secretEl(value, onChange, placeholder));
   return td;
 }
 
@@ -1801,14 +1819,16 @@ function cellSecret(value, onChange, placeholder) {
  */
 const uploadOn = (room) => room.enable_upload === true;
 
-/** 一个方向开关（表格里的 ↑ / ↓）。 */
-function cellDir(on, kind, title, onToggle) {
-  const td = h('td', 'tiny');
+/** 一个方向开关（↑ / ↓）。
+ *
+ * ⚠️ 返回的是那个 `<span>` 本身，**不带 `<td>`** —— 2026-09-30 房间清单改成卡片之后
+ * 它不再住在表格里（`#roomauth-table` 没有这一列，所以也不用像 `cellInput` 那样留一层包装）。
+ */
+function dirToggle(on, kind, title, onToggle) {
   const box = h('span', on ? `dir ${kind} on` : `dir ${kind}`, kind === 'up' ? '↑' : '↓');
   box.title = title;
   box.addEventListener('click', () => onToggle(!on));
-  td.append(box);
-  return td;
+  return box;
 }
 
 /** 房间图标那一格：**点选**，不是输入框。
@@ -1829,9 +1849,11 @@ function cellDir(on, kind, title, onToggle) {
  * `clip9_client::EMOJI_POOL`）—— **不在这里抄一份**。
  * ⚠️ 第一项是**空值 = 自动**：它对应 `Channel::emoji` 里「用户没选过」那件事
  *（不是「选了某一项」）—— 见 `SettingsView::rooms` 那段注释。
+ *
+ * ⚠️ 与 `dirToggle` 同一条：返回的是那个 `<select>` 本身，**不带 `<td>`**
+ *（2026-09-30 房间清单改成卡片，这一格不再住在表格里）。
  */
-function cellEmoji(value, onChange) {
-  const td = h('td', 'tiny');
+function emojiPicker(value, onChange) {
   const pick = document.createElement('select');
   pick.className = 'ico';
   // ⚠️ 第一项固定是「自动」（`value=''`）—— 顺序不跟着池子走。
@@ -1862,10 +1884,23 @@ function cellEmoji(value, onChange) {
   }
   pick.title = t('房间图标：不选就是自动挑一个不重样的（侧栏那个就是）');
   pick.addEventListener('change', () => onChange(pick.value));
-  td.append(pick);
-  return td;
+  return pick;
 }
 
+/** 房间清单（设置 →「服务端与房间」）。
+ *
+ * ⚠️★ 2026-09-30，Jonny：「添加房间可否换个形式，目前的列表编辑框都太窄了，
+ * 展示不全，编辑的时候也不看见自己写了啥」。
+ * 原来是一张 **8 列的 `<table class="ra">`**（图标/名字/服务端/房间/凭据/↑/↓/删），
+ * 而它是 `table-layout: fixed` —— 列宽按百分比**硬切**，660px 的窗口里
+ * 「服务端」只分到 26%（约 170px），一个 `https://…` 的地址在里面只能看见开头，
+ * 光标一进去什么都读不出来。改成卡片之后每一行**横向分两层**，
+ * 两个长字段（服务端 / 凭据）各占半宽（约 290px），名字与房间在上层同宽。
+ *
+ * ⚠️★ 布局全部交给 CSS（`.rlist` / `.rcard` / `.rc-top` / `.rc-bot`，见 `index.html`）——
+ * 这里只负责**把哪些控件放进哪一层**。行内 `style` 一律不写：窗口宽度是变的，
+ * 写着像素的样式在窄窗口上就是溢出（这正是上一版那张表踩过的坑）。
+ */
 function renderRoomRows() {
   // ⚠️ 放**最前面**：下面「一个房间都没有」那条会提前 return，
   // 放末尾的话那一格会留着上一次的内容（而列表已经空了）。
@@ -1873,47 +1908,74 @@ function renderRoomRows() {
   const body = el('rooms-body');
   body.textContent = '';
   if (!roomDraft.length) {
-    const tr = h('tr');
-    const td = h('td', 'sub', t('还没有房间。点下面的「添加房间」—— 服务端留空就是本机那个。'));
-    td.colSpan = 8;
-    tr.append(td);
-    body.append(tr);
+    // ⚠️ 从「一行 8 列的表格」改成卡片之后，这条空态也从 `<tr><td colspan=8>` 变成
+    // 一个普通块 —— `colspan` 那个数（8）在卡片里已经没有意义，留着它就是一句谎话。
+    body.append(h('div', 'empty', t('还没有房间。点下面的「添加房间」—— 服务端留空就是本机那个。')));
     return;
   }
   roomDraft.forEach((room, index) => {
-    const tr = h('tr');
-    // ⚠️ 图标放**第一格**：与侧栏那个房间行的顺序一致（先图标、再名字）。
-    tr.append(cellEmoji(room.emoji, (v) => { roomDraft[index].emoji = v; }));
-    tr.append(cellInput(room.name, (v) => { roomDraft[index].name = v; }));
-    tr.append(cellInput(room.server, (v) => { roomDraft[index].server = v; }, 'http://127.0.0.1:9502'));
-    tr.append(cellInput(room.room, (v) => { roomDraft[index].room = v; }, 'default'));
-    // ⚠️★ 凭据走 `cellSecret`（**不明文显示**，2026-09-29）—— 别改回 `cellInput`。
-    tr.append(cellSecret(room.auth_token, (v) => { roomDraft[index].auth_token = v; }, t('（空 = 无密码）')));
+    const card = h('div', 'rcard');
+
+    const top = h('div', 'rc-top');
+    // ⚠️ 图标放**最前面**：与侧栏那个房间行的顺序一致（先图标、再名字）。
+    top.append(emojiPicker(room.emoji, (v) => { roomDraft[index].emoji = v; }));
+    top.append(inputEl(room.name, (v) => { roomDraft[index].name = v; }));
+    top.append(inputEl(room.room, (v) => { roomDraft[index].room = v; }, 'default'));
+
     // ⚠️ ↓ 是**全局单选**：点开一个，别的自动关掉。做成多选再靠后端「取第一个」
     // 的话，用户点第二个会**没反应** —— 那正是「配了不生效」。
     // ⚠️★ 悬停提示与侧栏那两个开关**逐字一致**（Jonny 2026-09-26 给的文案）——
     // 同一个图标在同一个 app 里说两句不同的话，就是第二份定义。
     // ⚠️「可多选」「全局只能一个」不再写进 title：这一页的说明文字
     //（上面那段 `.sub`）已经写着「收进剪贴板全局只能一个」了。
-    tr.append(cellDir(uploadOn(room), 'up', t('发送本地剪贴板到远程房间'), (on) => {
+    const dirs = h('span', 'rc-dirs');
+    dirs.append(dirToggle(uploadOn(room), 'up', t('发送本地剪贴板到远程房间'), (on) => {
       roomDraft[index].enable_upload = on;
       renderRoomRows();
     }));
-    tr.append(cellDir(room.enable_download === true, 'dn', t('获取远程房间最新消息写入本地剪贴板'), (on) => {
+    dirs.append(dirToggle(room.enable_download === true, 'dn', t('获取远程房间最新消息写入本地剪贴板'), (on) => {
       roomDraft.forEach((other, position) => { other.enable_download = on && position === index; });
       renderRoomRows();
     }));
-    const del = h('td', 'tiny');
-    const button = h('button', 'btn', t('删'));
-    button.style.padding = '2px 7px';
+    top.append(dirs);
+
+    const button = h('button', 'btn rc-del', t('删'));
     button.addEventListener('click', () => {
       roomDraft.splice(index, 1);
       renderRoomRows();
     });
-    del.append(button);
-    tr.append(del);
-    body.append(tr);
+    top.append(button);
+    card.append(top);
+
+    // ⚠️★ 第二层：两个**长字段**。它们是这一页唯一会填 `https://…` / 长凭据的地方，
+    // 所以这一层的两个格子带 `flex-basis: 280px`（见 CSS 里 `.rc-bot` 那段）——
+    // 装得下就并排、装不下就各占一行。⚠️ 别改成固定两列：设置窗口是**固定 640px**
+    // （`.overlay .win.settings`），并排之后每个输入框约 173px，
+    // 而一个 `https://clip9.example.com/clip9` 要 190px 才够 —— 那等于没修。
+    // ⚠️ 带标签（`.rc-l`）：表格那张版式靠**表头**说明每一格是什么，卡片没有表头，
+    // 不补标签就只能靠占位符猜 —— 而占位符在**用户填上东西之后就消失了**。
+    const bottom = h('div', 'rc-bot');
+    bottom.append(labelField(t('服务端'),
+      inputEl(room.server, (v) => { roomDraft[index].server = v; }, 'http://127.0.0.1:9502')));
+    // ⚠️★ 凭据走 `secretEl`（**不明文显示**，2026-09-29）—— 别改回 `inputEl`。
+    bottom.append(labelField(t('凭据'),
+      secretEl(room.auth_token, (v) => { roomDraft[index].auth_token = v; }, t('（空 = 无密码）'))));
+    card.append(bottom);
+
+    body.append(card);
   });
+}
+
+/** 卡片第二层的一格：一个小标签 + 控件（横排，控件吃掉剩下的宽度）。
+ *
+ * ⚠️ 标签是**这里传进来的**（`t('服务端')` 那一句在调用点上）—— 不在这里按索引或
+ * 字段名反查：那种「一个看不到的映射表」在改字段名时会静默错位（标签还在，只是配错了格）。
+ */
+function labelField(label, control) {
+  const box = h('label', 'rc-f');
+  box.append(h('span', 'rc-l', label));
+  box.append(control);
+  return box;
 }
 
 /** 「来源房间」那一格（稿 2 里是只读的：写着房间名 + 一句「在左侧栏用 ↓ 选」）。
