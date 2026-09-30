@@ -55,7 +55,7 @@ function readNativeRoomAuth() {
 // （默认就是不推）。
 //
 // 于是这里不再需要「这个后端会不会 `/content`」那套能力探测 + 跨刷新缓存 ——
-// 原来它防的是「新 SPA 连用户自己没重新部署的老 Worker」（`docs/specs/ws-live-only.md` §0.4）。
+// 原来它防的是「新 SPA 连用户自己没重新部署的老 Worker」（`dev-docs/specs/ws-live-only.md` §0.4）。
 // 现在两个方向都通：新后端不推历史、由 SPA 自己请求；**老后端仍然推历史**、SPA 照收
 // （它对 `/content` 的请求会失败，但那不影响实时 —— 见 `loadHistoryFromHttp` 里那个 catch）。
 
@@ -521,7 +521,7 @@ export const useWebSocketStore = defineStore('websocket', {
         // 从 `GET /content` 取这个房间的历史 —— 握手不再推历史之后，历史就只剩这一条路。
         //
         // ⚠️★ **必须真的去请求一次**：不请求的话「刷新一下就什么都看不到了」——
-        // 这是这个变更最容易漏的一条，`docs/specs/ws-live-only.md` §5 第 8 条专门点了它。
+        // 这是这个变更最容易漏的一条，`dev-docs/specs/ws-live-only.md` §5 第 8 条专门点了它。
         async loadHistoryFromHttp(room = this.room) {
             const normalizedRoom = this.normalizeRoomName(room);
             try {

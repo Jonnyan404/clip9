@@ -133,7 +133,7 @@ export class WebSocketRoom {
 
   // 握手时依次发：config → 房间里已有的设备。
   //
-  // ⚠️★ **顺序是契约，不是碰巧**（`docs/specs/ws-live-only.md` §2.2）：
+  // ⚠️★ **顺序是契约，不是碰巧**（`dev-docs/specs/ws-live-only.md` §2.2）：
   // `config` 事件**必须**在实时之前发 —— 客户端在拿到 `config.latestId` 之前
   // **一条都不该写剪贴板**（它要用那个 id 对齐「HTTP 取回的历史」与「WS 推来的实时」）。
   // 别为了首屏快一点把 config 挪到后面去。
@@ -161,7 +161,7 @@ export class WebSocketRoom {
   // 有了 `latestId`，客户端才能对齐那条边界：`id <= latestId` 只当历史认领（**不写剪贴板**），
   // `id > latestId` 才是实时。少了它，边界上的消息会被处理两次（或把历史灌进剪贴板）。
   // 它**兼作能力探测信号**：老后端（没有 `/content`、也就没这个字段）不下发它，
-  // 新客户端据此退回「靠 WS 推历史」的老路（`docs/specs/ws-live-only.md` §0.4）。
+  // 新客户端据此退回「靠 WS 推历史」的老路（`dev-docs/specs/ws-live-only.md` §0.4）。
   //
   // ⚠️ 用 `MAX(id)`，不是「取最新那条的 id」：最新那条是按 `timestamp DESC, id DESC` 挑的，
   // 而 `POST /text?id=` **原地改正文**会把 timestamp 往前刷、id 不变 —— 于是它可能给出一个
@@ -220,7 +220,7 @@ export class WebSocketRoom {
           // SPA 工具栏那个入口正是按它决定渲不渲染（PageToolbar.vue 的 automationEnabled），
           // 而前端读的 `app.config` 就是**这条 config 事件**的载荷（不是 /server 的响应）。
           // 缺失的话，前端分不清「这个后端不支持」和「字段还没送到」。
-          // ⚠️ 哪天 Worker 侧真的实现了，记得连同 docs/api*.md §8 的「仅 Go 实现」一起改。
+          // ⚠️ 哪天 Worker 侧真的实现了，记得连同 dev-docs/api*.md §8 的「仅 Go 实现」一起改。
           automation: { enabled: false }
         }
       };

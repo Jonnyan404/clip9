@@ -711,7 +711,7 @@ function kotlinComments() {
 //       `AT_MOST` **返回整个 specSize** —— 一根 1dp 宽的分隔线会被量成一整屏高，
 //       把容器、面板一路撑爆，直到把旁边 `ScrollView`（`0dp + weight=1`）挤到 0 高：
 //       页签与三页内容全部消失，**不报错也不崩**，看起来像「界面坏了」。
-//       （2026-09-29 真机塌陷就是它，见 `docs/specs/android-client.md` §0.4 第 11 条。）
+//       （2026-09-29 真机塌陷就是它，见 `dev-docs/specs/android-client.md` §0.4 第 11 条。）
 
 /**
  * 从 `config.rs` 里抽出「结构体名 → { JSON 键 → 字段类型 }」。

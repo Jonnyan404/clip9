@@ -23,7 +23,7 @@ tauri-plugin-notification = "2"
 # 有机会插手之前处理掉「已经有一个实例在跑」。
 # ⚠️ 没有它的后果**不是**「多开一个窗口」那么轻：`Debouncer` 是**进程内**的，
 # 于是两个实例会互相把对方写进剪贴板的内容当成一次新复制、再传回房间（来回弹）。
-# 完整推导见 `docs/specs/desktop-client.md` §1.1 缺口 A。
+# 完整推导见 `dev-docs/specs/desktop-client.md` §1.1 缺口 A。
 # ⚠️ 它**不需要** capabilities 里加权限：我们只在 Rust 侧用它，页面碰不到它的 JS API
 #（与 `autostart` 同理 —— 那里也只注册、不在页面上调用）。
 tauri-plugin-single-instance = "2"
@@ -49,7 +49,7 @@ tauri-plugin-global-shortcut = "2"
 # 自己再写一份镜像就是「第二份定义」，而两份一定会漂（这个项目已经为这个付过几次代价）。
 clip9-core = { path = "../core" }
 # ⚠️ 业务逻辑全在这个 crate 里（去重 / 防抖 / 分类 / 边界水印 / 上下行）。
-# 壳只做「把事件转成它的调用」+ 窗口 —— 见 docs/specs/desktop-client.md §2 的硬边界。
+# 壳只做「把事件转成它的调用」+ 窗口 —— 见 dev-docs/specs/desktop-client.md §2 的硬边界。
 clip9-client = { path = "../client" }
 # 条目形状（`ReceiveHolder`）。⚠️ 单独引它是为了**读协议字段**，
 # 而不是重新定义一份：页面上的「文件条目没有正文」这类坑要对着它写。

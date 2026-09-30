@@ -30,17 +30,22 @@
 #
 # 这些文档（设计 / 交接 / 行为规格 / 契约）是**工作过程记录**，不是成品文档：
 # 里面混着「我上一版错在哪」、提交 hash 对照表、踩坑复盘，还有未公开的决策过程。
-# 它们**留在本地磁盘上**（改代码的人照样看得到，`docs/README.md` 是索引），
+# 它们**留在本地磁盘上**（改代码的人照样看得到，`dev-docs/README.md` 是索引），
 # 只是不推给远端。
 #
-# ⚠️ 光写这一行**挡不住历史** —— `docs/` 在拆库前的 40 个提交里都存在过。
-# 所以拆库时用 `git filter-branch --index-filter 'git rm -r --cached --ignore-unmatch docs'`
-# 把它从历史里摘掉了。**以后新增文档也不要入库**，这一行会挡住。
+# ⚠️★ 目录名是 **`dev-docs/`，不是 `docs/`**（2026-09-30 改的名）：`docs/` 要留给
+# GitHub Pages 的站点（父仓库就是这么用的，见那边的 `pages.yml`）。两者别混 ——
+# 一个是给用户看的站点，一个是给改代码的人看的过程记录。
 #
-# ⚠️ 代价（写在这儿免得下一个人困惑）：代码注释里有大量「见 docs/ARCHITECTURE.md §8」
+# ⚠️ 光写这一行**挡不住历史** —— **旧名字** `docs/` 在拆库前的 40 个提交里都存在过。
+# 所以拆库时用 `git filter-branch --index-filter 'git rm -r --cached --ignore-unmatch docs'`
+# 把它从历史里摘掉了。⚠️ 那条命令里的 `docs` 是**当时的名字**，别跟着改成 dev-docs。
+# **以后新增文档也不要入库**，这一行会挡住。
+#
+# ⚠️ 代价（写在这儿免得下一个人困惑）：代码注释里有大量「见 dev-docs/ARCHITECTURE.md §8」
 # 这样的指针 —— 对只拿到仓库的人来说那些指向不存在的东西。这是**有意的**取舍：
 # 宁可注释里留着指针（本地读得通），也不把过程记录公开。
-docs/
+dev-docs/
 
 # 本地运行数据（redb 库、uploads/、config.json）—— 由服务自己创建，不入库
 /data/
@@ -62,7 +67,7 @@ config.json
 #   ├── web-vue3/    前端源码（构建产物编进服务端二进制）
 #   ├── cloudflare/  Worker + D1 + R2
 #   ├── shortcuts/   快捷指令（web-vue3 构建的输入）
-#   └── cases/ tools/ docs/
+#   └── cases/ tools/ dev-docs/
 #
 # ⚠️★ 所有 `cargo` 命令都要在 `rust/` 里跑 —— 仓库根没有 `Cargo.toml`。
 

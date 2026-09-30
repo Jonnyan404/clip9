@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
-  管理页（方案 B「控制台」）—— 稿子在 `docs/design/android-ui/b-console.html`。
+  管理页（方案 B「控制台」）—— 稿子在 `dev-docs/design/android-ui/b-console.html`。
 
   ⚠️★ 这一页**没有看板** —— 看板在 WebAppActivity 里由服务端下发。
   这一页管的是「服务端本身」：起停、地址、服务端配置、远端服务器清单。

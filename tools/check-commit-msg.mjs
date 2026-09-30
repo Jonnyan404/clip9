@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// 提交信息门禁。约定见 `docs/CONTRIBUTING.md` §8。
+// 提交信息门禁。约定见 `dev-docs/CONTRIBUTING.md` §8。
 //
 // 三种用法：
 //   node tools/check-commit-msg.mjs .git/COMMIT_EDITMSG   # 当 commit-msg 钩子用

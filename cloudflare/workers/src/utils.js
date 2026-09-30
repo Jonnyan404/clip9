@@ -104,7 +104,7 @@ function normalizeRoomName(room = '') {
 // **客户端看得见的那三处**（`GET /content` 的上限、WS 推历史、握手 config 的 `server.history`）
 // 从这里取同一个数，别在别处再算一遍。
 //
-// 为什么必须只有一份：`docs/specs/ws-live-only.md` §2.1 要求 `GET /content` 的
+// 为什么必须只有一份：`dev-docs/specs/ws-live-only.md` §2.1 要求 `GET /content` 的
 // **缺省值和上限是同一个数（同一根旋钮）** —— 各写各的迟早会漂成
 // 「HTTP 给 100、WS 给 50」，而 SPA 换数据来源时就会看出历史变了一截。
 //

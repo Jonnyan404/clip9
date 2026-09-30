@@ -6,7 +6,7 @@
 //! ⚠️ **端口被占用时要明确报错**，不能静默换端口：Android 上服务端和客户端在同一个
 //! 应用进程里，静默换端口会让客户端连到别人身上，而用户看到的只是「莫名其妙连不上」。
 //!
-//! ⚠️ **路径由外壳决定**，业务代码只认传进来的路径（`docs/ARCHITECTURE.md` §4.2）。
+//! ⚠️ **路径由外壳决定**，业务代码只认传进来的路径（`dev-docs/ARCHITECTURE.md` §4.2）。
 //! 四种分发形态的目录约定完全不同（Docker 挂载点 / OpenWrt `/etc/config` + `/var/lib` /
 //! Android 私有目录 / 桌面标准目录），把路径逻辑写进 `core` 会让它们互相打架。
 //!
@@ -172,11 +172,11 @@ async fn main() -> anyhow::Result<()> {
     //
     // ⚠️★ 原来是「`-static` > `CLIP9_STATIC` > **不挂**」—— 于是桌面端那份**自带**服务端
     // 静默地没有前端：浏览器打开设置页那个「🌐 打开网页版」的地点是一片空白 **404**
-    //（2026-09-28 查出，见 `docs/specs/desktop-client.md` §3.5.1.1）。
+    //（2026-09-28 查出，见 `dev-docs/specs/desktop-client.md` §3.5.1.1）。
     // 现在「有没有前端」是**构建期**定的：内嵌那一份缺了会让构建失败
     //（`build.rs` 里那个 panic），运行时**不再有**「没给参数所以没有界面」这种状态。
     //
-    // ⚠️ 路径由**外壳**决定（`docs/ARCHITECTURE.md` §4.2）：Docker 挂载点 / OpenWrt 的
+    // ⚠️ 路径由**外壳**决定（`dev-docs/ARCHITECTURE.md` §4.2）：Docker 挂载点 / OpenWrt 的
     // `/var/lib` / Android 私有目录各不相同，把路径逻辑写进业务代码会让它们互相打架。
     let static_dir = args.get("static").map(PathBuf::from);
     match &static_dir {

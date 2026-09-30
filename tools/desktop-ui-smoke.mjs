@@ -20,7 +20,7 @@
 // 这类错**不需要跑起来才能发现**：两侧都是静态文本，比一下就知道。
 // 对照：SPA 有 `web-vue3/scripts/check-display-semantics.mjs`、服务端渲染页有
 // `cloud-clip/tools/page-smoke.mjs`，**只有手写 UI 这一侧是裸奔的**
-//（见 `docs/specs/desktop-client.md` §1.1 缺口 C）。
+//（见 `dev-docs/specs/desktop-client.md` §1.1 缺口 C）。
 //
 // # 判据（**第 1、2、4、5、6、7、8、9、10、11、12、13、14、15、16、17、18、19、20 条算失败**）
 //
@@ -327,7 +327,7 @@ const [
    * `client` 是它下面那一层，两边的 `Msg` 都会变成界面上的话）。
    * `server` / `core` / `actions` / `store` **故意不在里面** —— 它们的中文是**服务端 API
    * 的报错文案**（与 Go 版逐字对齐，随 `{"error":…}` 出去），这一版不翻它们
-   *（见 `docs/specs/desktop-client.md` §8.10 的边界）。 */
+   *（见 `dev-docs/specs/desktop-client.md` §8.10 的边界）。 */
   rustSrcArg = join(root, 'rust/crates/desktop/src') + ':' + join(root, 'rust/crates/client/src'),
   /** ⚠️ 判据 18：两份渲染器（壳 / 页面）共用的那份夹具。 */
   sayFixturePath = join(root, 'rust/crates/desktop/tests/fixtures/say-cases.json'),

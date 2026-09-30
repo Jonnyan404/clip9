@@ -63,7 +63,7 @@ pub struct AppState {
     ///
     /// ⚠️ 它是**外壳**传进来的，不是配置项 —— 四种分发形态的目录约定完全不同
     /// （Docker 挂载点 / OpenWrt `/var/lib` / Android 私有目录 / 桌面标准目录），
-    /// 见 `docs/ARCHITECTURE.md` §4.2。
+    /// 见 `dev-docs/ARCHITECTURE.md` §4.2。
     pub static_dir: Option<PathBuf>,
     /// 分享 / 会话令牌的签名密钥。启动时按配置派生一次（见 [`ShareKey::derive`]）。
     pub share_key: ShareKey,

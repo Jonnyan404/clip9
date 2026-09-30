@@ -8,7 +8,7 @@
 //! 而框架默认的 2 MiB 与它无关。所以「把 `text.limit` 调到 8 MB」在超过 2 MiB 的那一刻
 //! 就已经不生效了 —— 请求根本到不了 handler，客户端拿到的是一句**没有数字**的话
 //!（`clip9-client/src/uploader.rs` 的模块文档明说「必须照抄服务端带数字那一句」）。
-//! 完整推导见 `docs/specs/long-message-hardening.md` 的 S1。
+//! 完整推导见 `dev-docs/specs/long-message-hardening.md` 的 S1。
 
 use std::net::SocketAddr;
 

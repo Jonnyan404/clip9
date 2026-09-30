@@ -28,7 +28,7 @@ pub trait ClipboardSink: Send + Sync {
 
     /// 写一批文件（**绝对路径**）。
     ///
-    /// ⚠️★ **图片也走这条路**（`docs/specs/desktop-client.md` §4.1 末：
+    /// ⚠️★ **图片也走这条路**（`dev-docs/specs/desktop-client.md` §4.1 末：
     /// 「上传时按文件发、**下载时按文件收**」）。所以下行的实现是：
     /// 先把字节落盘，再把这个文件的路径交给这里 —— 而不是去调
     /// `set_image`。理由有两条：

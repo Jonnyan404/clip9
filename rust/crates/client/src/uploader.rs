@@ -2,7 +2,7 @@
 //!
 //! # 发的是什么、发到哪
 //!
-//! 只有两条接口（`docs/api.md` §5）：
+//! 只有两条接口（`dev-docs/api.md` §5）：
 //!
 //! | 内容 | 接口 | 正文 |
 //! |---|---|---|
@@ -13,7 +13,7 @@
 //!
 //! # ⚠️★ 限额从哪来：**WS 握手的 `config` 事件**，不是 `/server`
 //!
-//! `docs/api.md` §3 原来把**握手 `config` 的载荷**当成 `/server` 的响应贴了出来，
+//! `dev-docs/api.md` §3 原来把**握手 `config` 的载荷**当成 `/server` 的响应贴了出来，
 //! 于是 §11 那句「Call `/server` first for the limits」**在三个实现上都拿不到东西**。
 //! 2026-09-26 实测 + 读源码确认：Go 与 Rust 的 `/server` 都不含 `text` / `file`
 //! （也没有 `version`），它们返回的是
@@ -32,7 +32,7 @@
 //!
 //! 1. **不自己拼 URL** —— 一律走 [`crate::endpoint`]，那里有「`http://` 不会被吃成 `http:/`」
 //!    和「凭据不进 URL」的断言。
-//! 2. **不硬编码限额、也不自己编一句拒绝的话** —— `docs/api.md` §11 第 1、2 条：
+//! 2. **不硬编码限额、也不自己编一句拒绝的话** —— `dev-docs/api.md` §11 第 1、2 条：
 //!    限额先问 `/server`；文案要**照抄服务端那句**（它带了具体数字，而我们编的那句没有）。
 //!    所以这里**不预先拦文本**：直接发，让服务端用 413 + `message` 回答，我们把那句原样带出来。
 //!    ⚠️ **唯一一处例外是文件大小**：那是**在本地先拦**的，因为不拦就要把整个文件读进内存
@@ -439,7 +439,7 @@ pub fn build_client() -> Result<Client, Msg> {
 ///
 /// ⚠️ 为什么由这个 crate 提供，而不是让上层自己取：`upload_event` 要一个时间戳
 /// （图片文件名 `clipboard_<时间戳>.png` 靠它，而那个名字是**本机时区**的，
-/// 与行为基准 `clip-sync` 逐字一致），而 `docs/api.md` 里的 `timestamp`
+/// 与行为基准 `clip-sync` 逐字一致），而 `dev-docs/api.md` 里的 `timestamp`
 /// 是**服务端**落的秒级绝对时间 —— 两者不是一回事。上层各自造一个时钟，
 /// 就会出现「文件名是 UTC 的」这种没人能一眼看出来的偏差。
 ///
@@ -615,7 +615,7 @@ pub(crate) async fn post_to_channel(
         )?),
     };
 
-    // ⚠️★ **凭据只走请求头**，不进 URL（`docs/api.md` §1.2 + §8 审计清单）。
+    // ⚠️★ **凭据只走请求头**，不进 URL（`dev-docs/api.md` §1.2 + §8 审计清单）。
     if let Some(token) = channel.auth_token.as_deref().map(str::trim)
         && !token.is_empty()
     {
@@ -624,7 +624,7 @@ pub(crate) async fn post_to_channel(
 
     let response = match payload {
         UploadPayload::Text(text) => builder
-            // ⚠️ `text/plain` + 整个请求体就是文本 —— 这是 `docs/api.md` §5 的首选形状
+            // ⚠️ `text/plain` + 整个请求体就是文本 —— 这是 `dev-docs/api.md` §5 的首选形状
             // （另外两种 JSON / multipart 是给 Apple 捷径用的，我们不需要）。
             .header(CONTENT_TYPE, "text/plain; charset=utf-8")
             .body(text.clone())
@@ -632,7 +632,7 @@ pub(crate) async fn post_to_channel(
             .await
             .map_err(|e| Msg::key("requestFailed").param("reason", e))?,
         UploadPayload::File { name, bytes } => builder
-            // ⚠️ 字段名恒为 `file`（`docs/api.md` §5）。
+            // ⚠️ 字段名恒为 `file`（`dev-docs/api.md` §5）。
             .multipart(multipart::Form::new().part(
                 "file",
                 multipart::Part::bytes(bytes.clone()).file_name(name.clone()),
@@ -654,7 +654,7 @@ pub(crate) async fn post_to_channel(
 
 /// 从上行成功的响应体里抠出「服务端给这条内容编的号」。
 ///
-/// 形状是 `docs/api.md` §5 那一份：`{"url": "…", "id": "7", "type": "text"}`。
+/// 形状是 `dev-docs/api.md` §5 那一份：`{"url": "…", "id": "7", "type": "text"}`。
 ///
 /// ⚠️★ **字符串和数字都要认**：Go 服务端与 Worker 回的 `id` 都是**字符串**
 /// （`strconv.Itoa` / `toString()`），但这件事**不是契约**里最稳的一条 ——
@@ -693,7 +693,7 @@ pub fn parse_upload_id(body: &str) -> Option<i32> {
 
 /// 把服务端的错误响应变成一句话。
 ///
-/// 优先级照 `docs/api.md` §11 第 3 条：**读 `message`（中文，给人看）**，退到 `error`，
+/// 优先级照 `dev-docs/api.md` §11 第 3 条：**读 `message`（中文，给人看）**，退到 `error`，
 /// 再退到原始正文。⚠️ **别按 `Accept` 分**（同一条的规定）。
 ///
 /// ⚠️ 服务端那句 `message` 里带具体数字（「最大 4096 字符」），所以**照抄它**，
@@ -774,7 +774,7 @@ mod tests {
     /// 「所有条目都显示我发的」，看起来完全正常。
     #[test]
     fn the_upload_id_is_read_from_both_shapes() {
-        // ① Go 服务端（`docs/api.md` §5 那一份，`id` 是**字符串**）。
+        // ① Go 服务端（`dev-docs/api.md` §5 那一份，`id` 是**字符串**）。
         assert_eq!(
             parse_upload_id(r#"{"url":"http://h:9502/content/7","id":"7","type":"text"}"#),
             Some(7)
@@ -839,7 +839,7 @@ mod tests {
             ServerLimits::default()
         );
 
-        // ⚠️★ **这条是防回归**：`/server` 的响应**没有**限额（`docs/api.md` §3 曾经
+        // ⚠️★ **这条是防回归**：`/server` 的响应**没有**限额（`dev-docs/api.md` §3 曾经
         // 把握手载荷错标成 `/server` 的响应，客户端照着写就会永远拿到 0）。
         // 真拿这份载荷去读，得到的必须是「不知道」，而不是某个看起来对的数。
         let real_server_response = serde_json::json!({

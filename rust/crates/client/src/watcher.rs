@@ -18,7 +18,7 @@ use crate::source::ClipboardSource;
 pub struct WatchConfig {
     /// 轮询间隔。
     ///
-    /// ⚠️★ **默认 500ms，而且必须可配**（`docs/specs/desktop-client.md` §8 审计清单那条）：
+    /// ⚠️★ **默认 500ms，而且必须可配**（`dev-docs/specs/desktop-client.md` §8 审计清单那条）：
     /// macOS / X11 上剪贴板**没有变更通知**，只能轮询 —— 所以这个间隔是
     /// 「**延迟 vs 空转**」的取舍，写死一个数就等于替用户做了这个取舍。
     pub poll_interval: Duration,
@@ -58,7 +58,7 @@ fn read_image(ctx: &ClipboardContext) -> Option<Vec<u8>> {
         return None;
     }
     // ⚠️ 统一转 **PNG**：剪贴板里的原始格式各平台不同（DIB / TIFF / …），
-    // 服务端与对端都不认，而 `docs/api.md` 的文件链路上 PNG 是通行的。
+    // 服务端与对端都不认，而 `dev-docs/api.md` 的文件链路上 PNG 是通行的。
     let png = ctx.get_image().ok()?.to_png().ok()?;
     let bytes = png.get_bytes().to_vec();
     if bytes.is_empty() {

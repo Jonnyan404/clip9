@@ -58,7 +58,7 @@ app.use(vuetify);
 app.use(i18n);
 
 // 外壳入口（分享菜单）：`window.clip9Share`，契约见 share.js 抬头与
-// `docs/specs/android-client.md` §4。
+// `dev-docs/specs/android-client.md` §4。
 // ⚠️ 位置有讲究：必须在 pinia 装好之后（里面要读 store），也必须在 `mount` 之前 ——
 // 外壳是「页面加载完就调」，晚一步那次分享就落在空的 window 上。
 // ⚠️ 分享页也照挂（那边 room 为空 → 老实回 `no-room`），理由见 share.js。

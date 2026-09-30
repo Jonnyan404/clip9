@@ -10,7 +10,7 @@
 - `ServerService` —— 前台服务。它让服务端在 App 退到后台之后继续活着，并且**是唯一起停服务端的地方**。
 
 ⚠️★ 看板**不**是原生写的：`web-vue3` 那一份产物由服务端下发，Android 只是把它显示出来。
-设计稿与取舍在 `docs/specs/android-client.md`（⚠️ `docs/` **不进仓库**，交接要单独把文件给人）。
+设计稿与取舍在 `dev-docs/specs/android-client.md`（⚠️ `dev-docs/` **不进仓库**，交接要单独把文件给人）。
 
 ---
 
@@ -89,7 +89,7 @@ frontend job）。它管六组：
 不是误报。
 
 ⚠️ 分享**只支持文本**（manifest 里只声明 `text/plain`）：文件那条路在 WebView 里做不通
-（页面拿不到路径），候选与取舍在 `docs/specs/android-client.md` §4.3。
+（页面拿不到路径），候选与取舍在 `dev-docs/specs/android-client.md` §4.3。
 ⚠️ 投递是「等 `isReady()` 为真 → 把 payload 交给 `sendText` → 轮询取回 `{ok, reason}`」，
 **两条路都有超时**（各 20 秒），超时**会说出来**而不是静默吞掉。
 
@@ -393,7 +393,7 @@ wrapper 的发行版已经缓存在 `~/.gradle/wrapper/dists/gradle-8.13-bin`。
 
 - **A5 的文件那条**（分享图片/文件）：原稿的 `sendFiles(uris)` 做不到（WebView 拿不到路径），
   四条候选（base64 / 分块 base64 / `WebViewAssetLoader` / `addWebMessageListener`）
-  与取舍在 `docs/specs/android-client.md` §4.3。⚠️ 倾向最后一条，但它要加 `androidx.webkit`、
+  与取舍在 `dev-docs/specs/android-client.md` §4.3。⚠️ 倾向最后一条，但它要加 `androidx.webkit`、
   还要面对「`allowedOriginRules` 对运行时填的远端地址」这件事 —— **是一片单独的活**。
 - **A6 打包**：**CI 那条路已经搭好了** —— `.github/workflows/android.yml` 两个入口
   （`workflow_call` 给 `release.yml` 发版时调，`workflow_dispatch` 单独手动跑并可**覆盖上传**
@@ -404,7 +404,7 @@ wrapper 的发行版已经缓存在 `~/.gradle/wrapper/dists/gradle-8.13-bin`。
   ② 本机第三次 `bash tools/build-android.sh`（§三里那条修法还没重跑过）；
   ③ **release 那条从来没出过产物**（本机两次都是 `assembleDebug`）—— R8 与签名 APK 都没验过。
 
-（切片表在 `docs/specs/android-client.md` §0.2。）
+（切片表在 `dev-docs/specs/android-client.md` §0.2。）
 
 ---
 

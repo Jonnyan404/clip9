@@ -2,7 +2,7 @@
 //!
 //! # 为什么不各拼各的
 //!
-//! `docs/specs/desktop-client.md` §8 审计清单里有两条：
+//! `dev-docs/specs/desktop-client.md` §8 审计清单里有两条：
 //!
 //! - 「**没有自己拼 URL**」（尤其别用会清洗路径的 join）；
 //! - 「**凭据不进 URL**」。
@@ -14,11 +14,11 @@
 //!    而错误信息只会说「连接失败」。这里一律走 [`url::Url`] 的 `set_path`，
 //!    它按 URL 语法改路径，不做「猜你想去哪」的清洗。
 //! 2. **子路径前缀**：服务端可以部署在 `/clip9` 这种子路径下
-//!    （`docs/api.md` §1.1），所以拼的时候必须**保留** `server` 里已有的路径前缀。
+//!    （`dev-docs/api.md` §1.1），所以拼的时候必须**保留** `server` 里已有的路径前缀。
 //!    丢了它，表现是「主页能开、接口全 404」。
 //! 3. **凭据**：房间密码 / 会话令牌一律走 `Authorization: Bearer` 请求头。
 //!    进了 URL 就会进服务端访问日志、进反代日志、进用户随手分享的那串地址 ——
-//!    而这个项目为「密码泄进日志」付过代价（`docs/api.md` §1.2 专门写了这一条）。
+//!    而这个项目为「密码泄进日志」付过代价（`dev-docs/api.md` §1.2 专门写了这一条）。
 
 use url::Url;
 
@@ -68,7 +68,7 @@ pub fn api_url(server: &str, path: &str, params: &[(&str, &str)]) -> Result<Endp
 /// `POST /text` —— 文本上行。
 ///
 /// 带 `name`（给人看的设备名）与 `client`（程序判断「是不是我自己发的」）。
-/// ⚠️ 两个都带上是**刻意的**，不是冗余：`docs/api.md` §11 第 5 条点名不许混用它们。
+/// ⚠️ 两个都带上是**刻意的**，不是冗余：`dev-docs/api.md` §11 第 5 条点名不许混用它们。
 /// 空值也带（`name=`）—— 「空」和「没这个参数」含义不同，服务端对前者会去推 User-Agent。
 pub fn text_url(
     server: &str,
@@ -88,7 +88,7 @@ pub fn upload_url(server: &str, room: &str, device_name: &str) -> Result<Endpoin
     api_url(server, "/upload", &[("room", room), ("name", device_name)])
 }
 
-/// `GET /content` —— 取历史（**游标是 id、返回正序**，见 `docs/api.md` §2）。
+/// `GET /content` —— 取历史（**游标是 id、返回正序**，见 `dev-docs/api.md` §2）。
 ///
 /// ⚠️ 不带 `?format=`：这个端点**永远**是 JSON（`{"messages":[…]}`），
 /// 而 `?format=` 那套只对 `/content/latest` 与 `/content/:id` 生效（§1.3）。
@@ -137,7 +137,7 @@ pub fn download_url(server: &str, cache: &str, name: &str) -> Result<Endpoint, M
 mod tests {
     use super::*;
 
-    /// ⚠️★ 子路径前缀**必须保留**（`docs/api.md` §1.1）。
+    /// ⚠️★ 子路径前缀**必须保留**（`dev-docs/api.md` §1.1）。
     /// 丢了它的表现是「主页能开、接口全 404」—— 一个很难往回推的症状。
     #[test]
     fn keeps_the_sub_path_prefix() {

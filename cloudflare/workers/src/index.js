@@ -217,7 +217,7 @@ async function handleServer(request, env) {
     // 缺失时前端分不清「这个后端不支持」和「这个字段还没送到」，
     // 而 SPA 工具栏上那个入口正是按它决定渲不渲染（见 PageToolbar.vue 的 automationEnabled）。
     // 显式声明之后，Cloudflare 部署里那个图标会稳定地不出现，而不是先闪出来再消失。
-    // ⚠️ 哪天 Worker 侧真的实现了，记得连同 docs/api*.md §8 的「仅 Go 实现」一起改。
+    // ⚠️ 哪天 Worker 侧真的实现了，记得连同 dev-docs/api*.md §8 的「仅 Go 实现」一起改。
     automation: { enabled: false },
   }), {
     headers: {

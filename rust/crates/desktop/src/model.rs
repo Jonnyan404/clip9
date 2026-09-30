@@ -2,7 +2,7 @@
 //!
 //! # 这一层为什么存在
 //!
-//! 页面是手写的（`docs/specs/desktop-client.md` §6），而剪贴板同步是 `clip9-client`
+//! 页面是手写的（`dev-docs/specs/desktop-client.md` §6），而剪贴板同步是 `clip9-client`
 //! 的活（§2 的硬边界）。中间这一层**只做三件事，一件业务逻辑都不做**：
 //!
 //! 1. 把 `ReceiveHolder`（线上协议形状）压成界面要的那几个字段；
@@ -87,7 +87,7 @@ pub struct EntryView {
     /// 定时任务的**预定触发时刻**（Unix 秒）。`0` = 没有。
     ///
     /// ⚠️ 这三个字段（`source` / `scheduledAt` / `late`）是 2026-09-26 才补进投影的
-    /// （`docs/specs/ws-live-only.md` §0.6），漏掉它们的表现是「定时消息看不出是自动发的」，
+    /// （`dev-docs/specs/ws-live-only.md` §0.6），漏掉它们的表现是「定时消息看不出是自动发的」，
     /// 而且**不会有任何报错**。所以下面有专门的测试钉住它们。
     pub scheduled_at: i64,
 }
@@ -99,7 +99,7 @@ pub struct EntryView {
 /// 快照体积被钉在「200 条 × 4 KiB ≈ 0.8 MB」，与用户把上限调到多大**无关**。
 ///
 /// 这是 2026-09-27 拍板的形态：**快照只带截断预览，正文按需取**（原话：
-/// 「放截断预览正文按需取」）。理由与业内做法见 `docs/specs/desktop-client.md` §8.3 ④
+/// 「放截断预览正文按需取」）。理由与业内做法见 `dev-docs/specs/desktop-client.md` §8.3 ④
 /// 与 `long-message-hardening.md` S5。
 pub(crate) const PREVIEW_BYTES: usize = 4096;
 

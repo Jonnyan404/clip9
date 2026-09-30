@@ -1,7 +1,7 @@
 /**
  * 外壳 → SPA 的入口（`window.clip9Share`）。
  *
- * 契约、取舍与「为什么 `sendFiles` 还没做」都在 `docs/specs/android-client.md` §4。
+ * 契约、取舍与「为什么 `sendFiles` 还没做」都在 `dev-docs/specs/android-client.md` §4。
  * ⚠️★ 这是**跨端契约**：下面那三个方法名与 [SHARE_REASONS] 里的键，
  * **另一侧（Android/Kotlin）是按字面量用的** —— 那边没有编译器替我们检查，
  * 对不上的症状是「什么都没发生」（`undefined is not a function` 会被 WebView 吞掉）。
@@ -118,7 +118,7 @@ export function installShareBridge() {
          * 而 SPA 的上传路径要的是真正的 `File`（`formData.set('file', file)`、
          * `file.slice(...)`）。壳与页面之间唯一的通道是**字符串**，所以文件得由外壳
          * 读成字节再以 base64（或换更现代的通道）递进来。这条路怎么走还没定，
-         * 候选与取舍记在 `docs/specs/android-client.md` §4。
+         * 候选与取舍记在 `dev-docs/specs/android-client.md` §4。
          */
         async sendFiles() {
             return { ok: false, reason: SHARE_REASONS.FILES_UNSUPPORTED };

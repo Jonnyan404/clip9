@@ -6,7 +6,7 @@
 //! # 为什么是一个独立 crate，而不是给 `crates/server` 加 `crate-type`
 //!
 //! 依赖方向是 `protocol ← core ← store ← server ← {desktop, bin, android}`
-//! （`docs/ARCHITECTURE.md` §4）—— Android 在**末端**，与桌面端平级。
+//! （`dev-docs/ARCHITECTURE.md` §4）—— Android 在**末端**，与桌面端平级。
 //! 把 `Java_…` 那些符号挂到 `server` 上，等于让服务端 crate 认识 JNI，
 //! 而桌面端/独立二进制都不需要它。
 //!
@@ -31,7 +31,7 @@
 //! | Kotlin 类 | `com.clip9.app.ServerBridge`（下面每个符号里都写死了） |
 //!
 //! ⚠️ **路径也在这里写死了**（`com.clip9.app.ServerBridge`）—— 改包名/类名要一起改这里，
-//! 否则 Kotlin 那边是 `UnsatisfiedLinkError`。设计见 `docs/specs/android-client.md` §5。
+//! 否则 Kotlin 那边是 `UnsatisfiedLinkError`。设计见 `dev-docs/specs/android-client.md` §5。
 //!
 //! ⚠️★ 下面每个函数的第二个参数是 [`JObject`]（**不是 `JClass`**）：
 //! Kotlin 侧写的是 `object ServerBridge { external fun … }`，那是**实例方法**，
@@ -48,7 +48,7 @@
 //! # 现在到哪一步了
 //!
 //! 启停 API 已实现，但**还没有 Kotlin 那半边**，也**没在真机上跑过**
-//! （见 `docs/specs/android-client.md` §0.2 的切片表）。
+//! （见 `dev-docs/specs/android-client.md` §0.2 的切片表）。
 
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, MutexGuard};
@@ -81,7 +81,7 @@ const STARTUP_PROBE: Duration = Duration::from_millis(800);
 /// 这个是「连收尾都算上」。取一样大就会在临界点上误报超时。
 const STOP_TIMEOUT: Duration = Duration::from_secs(15);
 
-/// 服务端状态。数值是**与 Kotlin 的契约**（见 `docs/specs/android-client.md` §5.2）。
+/// 服务端状态。数值是**与 Kotlin 的契约**（见 `dev-docs/specs/android-client.md` §5.2）。
 ///
 /// ⚠️ `STARTING` 取 3 而不是插在中间 —— 0/1/2 是先前就写进设计稿的值，
 /// 新值一律往后加，免得「文档里的数字」和「代码里的数字」对不上。
@@ -195,7 +195,7 @@ pub extern "system" fn Java_com_clip9_app_ServerBridge_nativeVersion(
 /// 回 `null` 就是在撒谎。分别回一句「请稍候」和一个明确的错误，让调用方去看
 /// [`Java_com_clip9_app_ServerBridge_nativeStatus`]。
 ///
-/// ⚠️★ **绝不静默换端口**（`docs/ARCHITECTURE.md` §4.1 第 1 条）：
+/// ⚠️★ **绝不静默换端口**（`dev-docs/ARCHITECTURE.md` §4.1 第 1 条）：
 /// 端口被占用就如实报错。换一个端口的后果是「用户填进别的设备的地址永远连不上」，
 /// 而两边都不报错（这边起来了、对端说超时）。
 ///
@@ -536,7 +536,7 @@ fn build_and_launch(config_path: &str, data_dir: &str) -> Result<Running, String
     let mut config =
         config_file::load_or_create(Path::new(config_path)).map_err(|e| e.to_string())?;
 
-    // ⚠️ 路径由外壳算（`docs/ARCHITECTURE.md` §4.2）：Android 上就是应用私有目录。
+    // ⚠️ 路径由外壳算（`dev-docs/ARCHITECTURE.md` §4.2）：Android 上就是应用私有目录。
     // ⚠️★ 「建目录 → 解析路径 → 开库」走**服务端那一份**（`paths::open_store`），
     // 不在这里重写：这件事里有一半是看不见的（目录不建出来只会在第一次写文件时炸），
     // 而这个 crate 的第一版手抄了一遍，抄漏了 `uploads/`。
@@ -549,7 +549,7 @@ fn build_and_launch(config_path: &str, data_dir: &str) -> Result<Running, String
 
     // ⚠️ `static_dir = None` → 用**编进服务端的那一份**前端产物。
     // Android 就是这个形态：界面是服务端给的，App 里不放 dist
-    // （`docs/specs/android-client.md` §1.1）。
+    // （`dev-docs/specs/android-client.md` §1.1）。
     let mut join = runtime.spawn(serve::serve_with_shutdown(config, store, None, shutdown));
 
     // ⚠️★ 用 `select!` 而不是「睡一觉再问」：**先发生哪个就返回哪个**。

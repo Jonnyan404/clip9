@@ -2,7 +2,7 @@
 //!
 //! 对应 Go `handler.go` 里的各个 `handle_*`。**形状逐字对齐** ——
 //! 每条响应的字段名、错误码、状态码都不是「大致这样」，而是照着 Go 抄的，
-//! 并且用「起两个真实实例并排比对」验过（见 `docs/HANDOVER.md` §4）。
+//! 并且用「起两个真实实例并排比对」验过（见 `dev-docs/HANDOVER.md` §4）。
 
 use std::collections::HashMap;
 use std::net::SocketAddr;
@@ -441,7 +441,7 @@ pub async fn text(
     // 而 Go 那边是 `authMiddleware` 兜着的（`/text` 也在它的名单里）。
     // 为什么一直没被发现：验收脚本用的恰好是**正确凭据**，双跑比对也没覆盖
     // 「不带凭据往受保护房间发消息」这一条 —— 两个验证都恰好绕开了它。
-    // 教训写在这里，也写进 `docs/HANDOVER.md` §4（那是「假绿」那节）。
+    // 教训写在这里，也写进 `dev-docs/HANDOVER.md` §4（那是「假绿」那节）。
     if let Some(response) = require_room_access(&state, &headers, &query, &room) {
         return response;
     }
@@ -777,7 +777,7 @@ fn page_bytes_to_drop(sizes_oldest_first: &[usize], budget: usize) -> usize {
 /// ⚠️ **为什么要补它们**：`components/received-item/Text.vue` 的「定时」/「补发」两个标记
 /// 读的就是这三个字段（`util.js` 的 `isAutomationMessage` / `isLateMessage`）——
 /// 历史改走 `GET /content` 之后，少了它们会让标记**刷新后静默消失**（不报错、不 4xx）。
-/// 详见 `docs/specs/ws-live-only.md` §0.6。
+/// 详见 `dev-docs/specs/ws-live-only.md` §0.6。
 ///
 /// ⚠️ 判「空」的三个阈值与 Go 的 `omitempty` 逐条对应：`""` / `0` / `false`。
 fn apply_automation_fields(value: &mut serde_json::Value, base: &clip9_protocol::ReceiveBase) {
@@ -800,7 +800,7 @@ fn apply_automation_fields(value: &mut serde_json::Value, base: &clip9_protocol:
 /// 正是「两份实现必然漂」（`CONTRIBUTING.md` §6 点名的反模式）。
 ///
 /// ⚠️ 形状与 `cases/protocol/content_{entry_text,entry_file}.json` 逐字对齐 ——
-/// 那两份是 **Go 导出的 fixture**（`docs/specs/ws-live-only.md` 的 W0），
+/// 那两份是 **Go 导出的 fixture**（`dev-docs/specs/ws-live-only.md` 的 W0），
 /// 改这里之前先看那两份文件。
 #[must_use]
 pub fn content_entry(entry: &ReceiveHolder) -> serde_json::Value {
@@ -815,7 +815,7 @@ pub fn content_entry(entry: &ReceiveHolder) -> serde_json::Value {
             // ⚠️★ **拼上文件名**，与 `/content/latest` 逐字一致（2026-09-26 统一的）。
             //
             // 为什么统一到**这个**形式而不是裸的 `/file/<uuid>`：
-            //   ① 它与 `docs/api.md` 记的路由形状（`GET /file/:uuid/:name`）一致；
+            //   ① 它与 `dev-docs/api.md` 记的路由形状（`GET /file/:uuid/:name`）一致；
             //   ② url **直接就能下载** —— 客户端不用自己拼，也就不会把转义漏掉或写错
             //      （Android 捷径是自己拼的，而拼错正是这个项目付过一次代价的
             //      「文本正常、文件 401」）；
@@ -829,8 +829,8 @@ pub fn content_entry(entry: &ReceiveHolder) -> serde_json::Value {
             // （SPA 就是按那个形状渲染历史的，逐字段相等 → 它换数据来源时渲染一行都不用改）。
             // 补之前这里是最小投影，而 SPA **每个**渲染模式都在读 `senderDevice` / `senderIP`
             // → 换来源会让气泡上的「谁发的」标签和 IP 行**静默消失**（`v-if` 判空，不报错）。
-            // 而且 Worker 一直是富的、`docs/api.md` 的例子里也有这两个字段 ——
-            // **少数派是这里，不是 Worker**。见 `docs/specs/ws-live-only.md` §0.5。
+            // 而且 Worker 一直是富的、`dev-docs/api.md` 的例子里也有这两个字段 ——
+            // **少数派是这里，不是 Worker**。见 `dev-docs/specs/ws-live-only.md` §0.5。
             "room": f.base.room,
             "senderIP": f.base.sender_ip,
             "senderClientID": f.base.sender_client_id,
@@ -852,7 +852,7 @@ pub fn content_entry(entry: &ReceiveHolder) -> serde_json::Value {
         }),
     };
 
-    // ⚠️★ 定时消息专有的三个字段 —— **只在有值时补**（`docs/specs/ws-live-only.md` §0.6）。
+    // ⚠️★ 定时消息专有的三个字段 —— **只在有值时补**（`dev-docs/specs/ws-live-only.md` §0.6）。
     // 写成「总是给」会让**每一**条普通消息多出三个空键，见 `apply_automation_fields`。
     let base = match entry {
         ReceiveHolder::File(f) => &f.base,
@@ -866,7 +866,7 @@ pub fn content_entry(entry: &ReceiveHolder) -> serde_json::Value {
 ///
 /// 为什么要有它：历史以前只能从 WS 握手推来，于是「往回翻」做不到、而且每次连接都要把
 /// 整个房间的历史推一遍。现在 WS 只推实时（握手不再推历史），历史走这个正经的查询接口。
-/// 完整规格见 `docs/specs/ws-live-only.md`。
+/// 完整规格见 `dev-docs/specs/ws-live-only.md`。
 ///
 /// 契约要点（每条都有理由，改之前先读那份 spec）：
 ///
@@ -952,7 +952,7 @@ pub async fn latest_content(
     //
     // 原来（Go）是「不传 room = 跨所有房间取全局最新」，有两个问题：
     // · **和其余端点不一致** —— `/text`、`/content/<id>`、`/revoke`、`/push` 不传 room 都是 `default`；
-    // · `docs/api.md` 自己写的是 "the newest entry **in the room**" —— **文档和实现早就对不上**。
+    // · `dev-docs/api.md` 自己写的是 "the newest entry **in the room**" —— **文档和实现早就对不上**。
     //
     // 现在：不传 room = `default` 房间（和文档一致）；要全局最新就显式 `?all=1`。
     // 这条改动本身就是「按最佳实践来」的样子：**把隐式行为变显式**。
@@ -1039,7 +1039,7 @@ pub async fn latest_content(
             // `{type, content, id, timestamp, column}` —— 不管你是用 `?format=json`
             // 还是只带 `Accept: application/json` 问的。
             //
-            // ⚠️ 这里**故意和 Go 不同**（见 `docs/CONTRIBUTING.md` §0）：Go 那边
+            // ⚠️ 这里**故意和 Go 不同**（见 `dev-docs/CONTRIBUTING.md` §0）：Go 那边
             // 显式那条给扁平对象、只带 `Accept` 那条给 **PostEvent 信封** `{event, data}`，
             // 而且信封里的 `event` 是 `text`/`file`，WS 推送用的却是 `receive` ——
             // 同一个接口两种形状、同一个概念两个名字，客户端得写两套解析。
@@ -1244,7 +1244,7 @@ pub async fn rooms(
 /// ⚠️★ **Go 那边没有方法检查** —— 任何方法（含 GET）都会真的执行撤销。
 /// 这是既有行为，暂时照抄：改成只认 POST 会让某个用 GET 的老客户端失效。
 /// 但它是个**该修的洞**（浏览器直接访问 `/revoke/5` 就会删掉 5 号条目），
-/// 记在 `docs/HANDOVER.md` §6 的未决问题里。
+/// 记在 `dev-docs/HANDOVER.md` §6 的未决问题里。
 pub async fn revoke(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,

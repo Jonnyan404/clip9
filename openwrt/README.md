@@ -51,7 +51,7 @@ scp clip9-luci-openwrt-v0.1.0-all.ipk root@192.168.1.1:/tmp/
 - **数据目录**：`/etc/clip9/data` —— redb 库与 `uploads/` 都挂在它下面
 - **config.json**：`/etc/clip9/config.json` —— 房间密码、过期时间等高级项
 
-⚠️★ **数据目录为什么在 `/etc` 下面，而不是 `/var/lib`**：`docs/ARCHITECTURE.md` §4.2
+⚠️★ **数据目录为什么在 `/etc` 下面，而不是 `/var/lib`**：`dev-docs/ARCHITECTURE.md` §4.2
 提到过 OpenWrt 用 `/var/lib`，但 OpenWrt 的 `/var` 通常是**指向 `/tmp` 的软链**（tmpfs）——
 把 redb 库放那儿，**每次重启历史就没了**。`/etc` 在 overlay 上、重启还在，所以数据
 跟 UCI 配置一起放在 `/etc/clip9/` 下。

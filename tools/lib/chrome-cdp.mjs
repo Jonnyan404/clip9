@@ -3,7 +3,7 @@
 // 用它的两个脚本：`tools/spa-acceptance.mjs`（P0）与 `tools/share-page-acceptance.mjs`（P1）。
 //
 // ⚠️ **为什么抽成模块**：这套东西里有四处**踩出来的**坑，写第二份就等于让下一个踩坑的人改两处 ——
-// 正是 `docs/CONTRIBUTING.md` §6 说的「靠人肉同步的第二份定义」。四处坑分别写在下面各自的注释里：
+// 正是 `dev-docs/CONTRIBUTING.md` §6 说的「靠人肉同步的第二份定义」。四处坑分别写在下面各自的注释里：
 //
 // 1. 必须连 **page target**（`/json/list`），不能连浏览器级的 `/json/version`；
 // 2. CDP 调用**必须带超时**，否则页面崩了会静默挂死；
@@ -11,7 +11,7 @@
 // 4. 调试端口要避开正式实例（9501/9599/9600/9602），撞上会拿到 SPA 的 index.html。
 //
 // ⚠️ 本机跑它**必须在沙箱外**：Chrome 在沙箱里能起来、调试端口也通，但 `Runtime.enable`
-// 永远不返回（表现成「超时」而不是报错）。见 `docs/HANDOVER.md` §2。
+// 永远不返回（表现成「超时」而不是报错）。见 `dev-docs/HANDOVER.md` §2。
 
 import { spawn } from 'node:child_process';
 import { join } from 'node:path';

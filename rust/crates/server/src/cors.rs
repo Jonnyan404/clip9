@@ -16,14 +16,14 @@
 //! （`*` 只在「带凭据模式」下才被浏览器拒绝，而那个模式管的是 cookie / TLS 客户端证书；
 //! 一个开放的房间**压根不需要凭据**，所以 `*` 拦不住它。）
 //!
-//! ⚠️ 这条同时也是 `docs/specs/desktop-client.md` §8 审计清单里那条
+//! ⚠️ 这条同时也是 `dev-docs/specs/desktop-client.md` §8 审计清单里那条
 //! 「**只放该 origin**，别开 `*`」的落地。
 //!
 //! # 放行谁（就这三类）
 //!
 //! | 来源 | 为什么 |
 //! |---|---|
-//! | `tauri://localhost` | **桌面客户端**（`docs/specs/desktop-client.md` §3 的 B 方案）。 ⚠️ 实测确认过：webview 发的就是**这一个**字符串（§0.1.3 那套记录型代理抓到的） |
+//! | `tauri://localhost` | **桌面客户端**（`dev-docs/specs/desktop-client.md` §3 的 B 方案）。 ⚠️ 实测确认过：webview 发的就是**这一个**字符串（§0.1.3 那套记录型代理抓到的） |
 //! | `http(s)://localhost[:port]` | 本机开发（`vite dev` 是 `http://localhost:5173` → `http://localhost:9501`） |
 //! | `http(s)://127.0.0.1[:port]` | 同上，只是写法不同 |
 //!

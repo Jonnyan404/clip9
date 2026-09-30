@@ -14,7 +14,7 @@
 //!
 //! ⚠️★ `capabilities/default.json` **故意没有 `notification:*`** —— 页面一行都调不到，
 //! 只有 Rust 侧（直接调 `NotificationExt`）能发。**刻意**的，不是忘了配：项目的硬边界是
-//! 「页面只跟 IPC 命令说话」（`docs/specs/desktop-client.md` §2）。
+//! 「页面只跟 IPC 命令说话」（`dev-docs/specs/desktop-client.md` §2）。
 //!
 //! ⚠️ 句柄**后填**（`OnceLock`）：`Runtime` 必须在 `tauri::Builder` **之前**造出来
 //!（那时才拿得到 tokio 句柄），而 `AppHandle` 只有 `setup` 里才有。

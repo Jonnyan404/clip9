@@ -12,7 +12,7 @@ members = [
     "crates/server",
     "crates/client",
     # 桌面端（Tauri 壳）—— 骨架阶段：窗口 + 本地手写界面（`ui/`）已立起来，
-    # 业务逻辑在 `crates/client`。见 `docs/specs/desktop-client.md` §0.1 的切片表。
+    # 业务逻辑在 `crates/client`。见 `dev-docs/specs/desktop-client.md` §0.1 的切片表。
     # ⚠️ 第一次编译要几分钟（Tauri 的依赖树是几百个 crate）。
     "crates/desktop",
     # Android 外壳的 JNI 桥（`cdylib`）。⚠️ 与 `desktop` 平级、同属**末端** crate ——
@@ -81,7 +81,7 @@ futures-util = "0.3"
 # ── 客户端（`crates/client`）─────────────────────────────────────────
 # 剪贴板读写 + 监听。**只给客户端用**（服务端不碰剪贴板）。
 #
-# ⚠️ 选它的理由（`docs/specs/desktop-client.md` §1）：它对**文件**与**富文本/HTML**
+# ⚠️ 选它的理由（`dev-docs/specs/desktop-client.md` §1）：它对**文件**与**富文本/HTML**
 # 是原生支持，而 Go 侧的 `golang.design/x/clipboard` 这两项分别是「仅桌面端」与
 # 「自定义 MIME 透传」—— 而剪贴板同步里这两类恰好是高频内容。
 # 而且 `clip-sync/src-tauri`（同父仓库的 Tauri 客户端）**已经在生产用它跑通**了
@@ -89,12 +89,12 @@ futures-util = "0.3"
 clipboard-rs = "0.3"
 
 # ── 客户端的网络层（`crates/client`）─────────────────────────────────
-# ⚠️ 选型纪律见 `docs/CONTRIBUTING.md` §1：**先查它还活着吗，再比参数**。
+# ⚠️ 选型纪律见 `dev-docs/CONTRIBUTING.md` §1：**先查它还活着吗，再比参数**。
 # 这两个都查过：reqwest 0.13（2026 年在发版）、tokio-tungstenite 0.29。
 #
 # · `reqwest` —— 上行（`POST /text`、`POST /upload` 的 multipart）与
 #   取历史（`GET /content`）。**multipart 内置**是选它的关键：自己拼 multipart
-#   边界字符串是另一处「能过但会漂」的地方，而 `docs/api.md` §5 对
+#   边界字符串是另一处「能过但会漂」的地方，而 `dev-docs/api.md` §5 对
 #   `Content-Type` 的形状是有要求的。
 #   ⚠️ 它的 `default-tls` 在 0.13 里**已经是 rustls**（不再是 openssl）——
 #   对 OpenWrt / Android 这两条目标平台很重要（没有系统 OpenSSL 可依赖）。

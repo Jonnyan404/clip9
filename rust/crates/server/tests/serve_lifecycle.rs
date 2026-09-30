@@ -5,7 +5,7 @@
 //! 因为根本没有 listener。
 //!
 //! ⚠️ 为什么这几条非有不可：Android 那侧要**在应用进程里启停同一个服务端**
-//! （`docs/specs/android-client.md` §5），而「停」这件事最怕的是**停不掉**：
+//! （`dev-docs/specs/android-client.md` §5），而「停」这件事最怕的是**停不掉**：
 //! 表现是「点了停止，按钮一直转」，而日志里什么都没有。
 
 use std::time::Duration;
@@ -68,7 +68,7 @@ async fn stopping_the_server_returns_and_frees_the_port() {
 
 /// ★ 端口被占用时，**错误里要说得出是哪个端口**。
 ///
-/// ⚠️ 这条对应 `docs/ARCHITECTURE.md` §4.1 第 1 条：**绝不能静默换端口**。
+/// ⚠️ 这条对应 `dev-docs/ARCHITECTURE.md` §4.1 第 1 条：**绝不能静默换端口**。
 /// 静默换端口的后果是「用户填进别的设备的地址永远连不上」，
 /// 而两边都不报错（这边起来了、对端说超时）。
 ///

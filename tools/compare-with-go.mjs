@@ -302,7 +302,7 @@ function normalize(value, port) {
       // ⚠️ 非空时照常比 —— 归一的是空值形态，不是整个字段。
       else if ((k === 'byWeekday' || k === 'chain') && v === null) out[k] = [];
       // ⚠️ UA 解析是**已知的刻意偏离**：Go 用 uap-core 的正则库、Rust 用关键词匹配，
-      // 而且 Rust 那边还把 `"Other "` 的尾随空格 trim 掉了（`docs/HANDOVER.md` §6 有记）。
+      // 而且 Rust 那边还把 `"Other "` 的尾随空格 trim 掉了（`dev-docs/HANDOVER.md` §6 有记）。
       // ⚠️ 不抹平的话，`/content` 那一族（条目里带整个 `senderDevice`）会把那条**已经记在案**的
       // 偏离重复报成失败 —— 而失败清单一旦有常驻的假红，整个工具就没人看了。
       else if (k === 'os' || k === 'browser' || k === 'device') out[k] = '<ua>';
@@ -659,7 +659,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 /** WS 载荷的规范化。比 HTTP 那边多抹三样**已知差异**：
  *  · `version`：两个实现本来就不是同一个版本号
- *  · `device` / `os` / `browser`：UA 解析是近似实现（见 docs/HANDOVER.md §6）
+ *  · `device` / `os` / `browser`：UA 解析是近似实现（见 dev-docs/HANDOVER.md §6）
  *  · 字符串形态的 `id`：设备 ID 是**带随机种子的哈希**，两边必然不同
  *    （消息 id 是数字，**不**抹 —— 那个必须一致） */
 function normalizeWs(value, port) {
@@ -1038,7 +1038,7 @@ console.log('\n=== 文件过期：fileExpire 的三档 ===');
 
 // ── 历史分页（`GET /content`）与 WS 握手（不推历史）/ `latestId` ───────
 //
-// `docs/specs/ws-live-only.md` 的 W0（Go）+ W1（Rust）。两边都实现了才比得了 ——
+// `dev-docs/specs/ws-live-only.md` 的 W0（Go）+ W1（Rust）。两边都实现了才比得了 ——
 // 这也是为什么这一段是在 W1 之后才加的。
 console.log('\n=== 历史分页 GET /content ===');
 {
@@ -1484,7 +1484,7 @@ await compareVia(
   (port) => viaId(port, 'POST', '/run', `?room=locked&auth=pw${ATQ}`),
   TASK_MASK
 );
-// ⚠️ `?at=` 是 `docs/api.md` §8.7 写明的参数，**两种写法都要认**（RFC3339 与日期 token）。
+// ⚠️ `?at=` 是 `dev-docs/api.md` §8.7 写明的参数，**两种写法都要认**（RFC3339 与日期 token）。
 // 认不出时必须 400 —— 悄悄回落到「下次触发时刻」会让用户以为预览的正是他要的那个基准。
 await compareVia(
   'POST /tasks/{id}/run 试跑（?at= 用日期 token 写法）',
@@ -1772,7 +1772,7 @@ async function expectOn(label, port, method, path, check, opts = {}) {
 }
 
 // ⚠️★ 分享令牌**只放行读**。Go 那边 `handleContentColumn` 也走 `canAccessContent`，
-// 所以一张只读的分享令牌在 Go 上**能挪列**（而 `docs/api.md` 写的是「分享令牌不行」
+// 所以一张只读的分享令牌在 Go 上**能挪列**（而 `dev-docs/api.md` 写的是「分享令牌不行」
 // —— 文档和实现本来就对不上）。写操作只认房间凭据是按最佳实践收的，
 // 所以这两条不能拿 Go 当基准，直接断言我们自己的行为。
 //
