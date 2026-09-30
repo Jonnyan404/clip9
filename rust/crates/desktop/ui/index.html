@@ -466,6 +466,8 @@
     .srv .hd { padding: 12px 14px; border-bottom: 1px solid var(--border); font-weight: 600; display: flex; align-items: center; gap: 8px; }
 
     .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--ok); }
+    /* ⚠️ 2026-09-30：「端口上那个不是这个客户端起的」用它 —— 那时画绿灯是假话。 */
+    .dot.warn { background: var(--warn); }
 
     .dot.off { background: var(--sidebar-sub); }
 
@@ -948,8 +950,8 @@ table.ra td input[type='checkbox'] { margin: 0; }
     border-bottom: 1px solid var(--border); word-break: break-word;
 }
 .notice.ok { background: color-mix(in srgb, var(--ok) 12%, transparent); }
-.notice.err { background: color-mix(in srgb, var(--danger) 12%, transparent); }
-.notice.skip { background: var(--sidebar-hover); color: var(--text-2); }
+.notice.error { background: color-mix(in srgb, var(--danger) 12%, transparent); }
+.notice.warn { background: var(--sidebar-hover); color: var(--text-2); }
 .problems {
     margin: 0 10px 8px; padding: 6px 8px; border-radius: 6px; font-size: 11px;
     line-height: 1.5; color: var(--warn);

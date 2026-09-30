@@ -35,7 +35,7 @@ use clip9_client::{
 use clip9_protocol::ReceiveHolder;
 
 use crate::notify::Notifier;
-use crate::store::Store;
+use crate::store::{NoticeLevel, Store};
 
 /// 客户端运行时。
 pub struct Runtime {
@@ -323,7 +323,9 @@ fn watch_config(config: &clip9_client::ClientConfig) -> WatchConfig {
 /// ⚠️★ 用枚举而不是直接带着 `"ok"` / `"err"` / `"skip"` 三个字符串走：
 /// 「成功不弹通知」这条判据要比较它，而**字符串比错了不会报错** ——
 /// 打错一个字母的表现是「成功也弹」，用户很快就把这软件的通知关掉了
-///（于是真正要紧的那条也没人看）。[`Outcome::kind`] 是那三个字面量**唯一**的出处。
+///（于是真正要紧的那条也没人看）。
+/// ⚠️★ 2026-09-30 起它还**一路走到界面上**：[`Outcome::level`] 直接给出
+/// [`NoticeLevel`]（那边自己管序列化）—— 于是这条路上**一个字符串字面量都不剩**。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Outcome {
     /// 真的送达了（至少一个房间）。
@@ -335,15 +337,16 @@ enum Outcome {
 }
 
 impl Outcome {
-    /// 给界面那一格用的分类（`store::Notice` 的 `kind`）。
+    /// 给界面那一格用的等级（[`NoticeLevel`]）。
     ///
-    /// ⚠️ 语义与页面的 `.notice.ok / .err / .skip` 三套颜色一一对应 ——
-    /// 改这里等于改界面，两边一起看（`ui/index.html` 的 `.notice` 样式）。
-    fn kind(self) -> &'static str {
+    /// ⚠️★ 这是「上行的结果 → 界面的等级」**唯一**的翻译点，而且它是一次**改语义**的
+    /// 翻译：`skip` 是**结果**（被跳过），`warn` 才是**等级**（没做成，但不是错误）——
+    /// 别让调用点各自判这一件事（判错了不会有任何报错，只是那条提示的颜色说错话）。
+    fn level(self) -> NoticeLevel {
         match self {
-            Self::Ok => "ok",
-            Self::Err => "err",
-            Self::Skip => "skip",
+            Self::Ok => NoticeLevel::Ok,
+            Self::Err => NoticeLevel::Error,
+            Self::Skip => NoticeLevel::Warn,
         }
     }
 }
@@ -529,7 +532,8 @@ impl Runtime {
                 let Some(channel) = self.store.selected_channel() else {
                     // ⚠️ 一个房间都没配：**说出来**。静默吞掉的话，用户按了发送
                     // 只看到「什么都没发生」—— 那是这个项目最忌讳的一类。
-                    self.store.notice("err", Msg::key("noRoomToSend"));
+                    self.store
+                        .notice(NoticeLevel::Error, Msg::key("noRoomToSend"));
                     return;
                 };
                 Some(channel)
@@ -567,7 +571,7 @@ impl Runtime {
             None => notify_upload(self.notifier.as_ref(), &config, outcome, &text),
             Some(channel) => {
                 self.store
-                    .notice_in(&channel.server, &channel.room, outcome.kind(), text)
+                    .notice_in(&channel.server, &channel.room, outcome.level(), text)
             }
         }
     }
@@ -631,7 +635,7 @@ impl Runtime {
             .unwrap_or_else(|e| e.into_inner())
             .prime(&ClipboardContent::Text(text.to_owned()));
         if let Err(reason) = SystemClipboard.set_text(text) {
-            self.store.notice("err", reason);
+            self.store.notice(NoticeLevel::Error, reason);
         }
     }
 
@@ -646,7 +650,9 @@ impl Runtime {
         match self.store.entry_text(id) {
             Some(text) => self.copy_to_clipboard(&text),
             // ⚠️ 找不到要**说出来**：静默什么都不做的话，用户以为复制好了。
-            None => self.store.notice("skip", Msg::key("entryGoneCannotCopy")),
+            None => self
+                .store
+                .notice(NoticeLevel::Warn, Msg::key("entryGoneCannotCopy")),
         }
     }
 
@@ -656,7 +662,8 @@ impl Runtime {
     /// 而界面可以选中任何一个房间。
     pub fn refresh_history(self: &Arc<Self>) {
         let Some(channel) = self.store.selected_channel() else {
-            self.store.notice("err", Msg::key("noRoomsConfigured"));
+            self.store
+                .notice(NoticeLevel::Error, Msg::key("noRoomsConfigured"));
             return;
         };
         let this = Arc::clone(self);
@@ -680,7 +687,9 @@ impl Runtime {
                 // 「这个房间的历史取不到、所以列表是空的」最该被说出来的时刻。
                 // ⚠️ `reason` 整句话递过去（`historyFailed` 那条 `Msg` 本来就带
                 // 「取历史失败」+ 底层原因），**不在这里 `format!` 拼**。
-                Err(reason) => this.store.notice_in(&server, &room, "err", reason),
+                Err(reason) => this
+                    .store
+                    .notice_in(&server, &room, NoticeLevel::Error, reason),
             }
         });
     }
@@ -690,7 +699,7 @@ impl Runtime {
     pub fn persist(&self) {
         if let Err(reason) = self.store.save() {
             self.store.notice(
-                "err",
+                NoticeLevel::Error,
                 Msg::key("configNotSaved").param_msg("reason", reason),
             );
         }

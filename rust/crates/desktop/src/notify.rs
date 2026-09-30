@@ -74,6 +74,7 @@ impl SystemNotifier {
     /// 真被调两次说明顺序写错了，那时「用第一个接上的」比「悄悄换成第二个」好查。
     pub fn attach(&self, app: tauri::AppHandle) {
         if self.app.set(app).is_err() {
+            // log-only-ok: 启动顺序写错才会走到这儿（重复 attach），用户侧没有任何动作
             eprintln!("窗口句柄已经接过了，这次忽略（通知照旧走第一次那个）。");
         }
     }
@@ -94,6 +95,8 @@ impl Notifier for SystemNotifier {
         let Some(app) = self.app.get() else {
             // ⚠️ 窗口还没建起来（`setup` 还没跑）。丢掉 + 说一句 ——
             // 静默丢掉的话，这一条唯一的线索也没了。
+            // log-only-ok: 通知是**旁路**（`Notifier::send` 没有返回值）；这条发生在
+            //   窗口还没建起来的那一刻，提示区那时也还不存在
             eprintln!("窗口还没接上，这条通知发不出去：{title} / {body}");
             return;
         };
@@ -101,6 +104,8 @@ impl Notifier for SystemNotifier {
         //（见它的 `desktop.rs`），所以这里能报出来的只有「插件这一层」的错。
         // 能报的都报出来：通知发不出去这件事，用户与我们都只有日志这一条线索。
         if let Err(err) = app.notification().builder().title(title).body(body).show() {
+            // log-only-ok: 通知发不出去是**旁路失败**（那条同步照常发生），
+            //   而能报出来的只有插件这一层（见上面那段注释）
             eprintln!("发系统通知失败：{err}（title={title}）");
         }
     }

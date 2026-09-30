@@ -655,9 +655,12 @@ el('btn-lang').addEventListener('click', () => {
  * ⚠️ 抽出来是因为同一段三行已经抄了三四遍 —— 而抄的时候最容易漏掉
  * `hidden = false`（漏了的症状是「设了文字但看不见」，而且不报错）。
  *
- * ⚠️★ **自己设的提示要自己收**：`render` 里那条清理走的是「壳里有没有 notice」
- *（`invoke('clear_notice')`），而这里设的那些**壳里没有** —— 于是它们只会在
- * 「下一次形状变化」时才被抹掉，而那可能是几分钟后。
+ * ⚠️★ **所有提示都归这个计时器收**（2026-09-30 改）：壳里来的那条（页面显示之后 ack 一次）
+ * 与页面自己设的那几条**共用这一条路径**，而「结束」只有两个事件 —— 计时器到点，
+ * 或者新的一条把它顶掉（后者覆盖前者是定下来的语义）。
+ * ⚠️★ 别再从「快照里还有没有 notice」去收：那一拍是 `clear_notice` 之后的下一拍，
+ * 照着 `null` 抹就会把刚显示的那条一闪抹掉 —— 上一版正是为它留了 `noticeVisible`
+ * 那个补丁，现在整条路删掉了（判据 22 钉着「只有这一个所有者」）。
  *
  * ⚠️★ **3 秒**（Jonny 2026-09-27：「提示停留时间过长了，3s 就挺好的」）。
  * 原来写的是 15 秒，理由写的是「够看清、够去点一下」—— 那是**替用户做的取舍，而做错了**：
@@ -666,21 +669,9 @@ el('btn-lang').addEventListener('click', () => {
  *（Jonny 同时报的「提示串房间了」有一半是这么来的：不是内容串了，是**它活得比
  * 你看那个房间的时间还长**）。真要留住的信息该进时间线 / 状态栏，不是靠一条提示挂久一点。
  *
- * ⚠️★★ 而且**壳里那条也归这里管**（2026-09-27 修）。原来 `render` 自己把壳里那条
- * 写进 DOM，然后 `clear_notice` —— 清掉会**前进版本号**，于是**下一拍**（≤700ms）
- * 的重绘就走 `else` 把它 `hidden = true`。用户看到的是一次闪动：
- * 「已发送 3 个文件」这种提示**根本来不及看**（他报的就是这条）。
- * 现在「显示多久」只有一个说法（这个计时器），`render` 那边只负责**喂**给它。
+ * ⚠️★★ 而且**壳里那条也归这里管**（2026-09-27 修）：`render` 那边只负责**喂**给它。
  */
 let noticeTimer = null;
-
-/** 「那条提示现在正显示着吗」—— `render` 用它决定能不能抹掉。
- *
- * ⚠️ 必须单独记：清了壳里那条之后**还会再来一次重绘**（版本号前进过），
- * 而那一拍 `state.notice` 已经是 `null` 了 —— 不记这个标志就会**立刻**把它抹掉，
- * 也就是把那个 bug 原样搬到了另一个分支里。
- */
-let noticeVisible = false;
 
 const NOTICE_MS = 3000;
 
@@ -696,16 +687,14 @@ const NOTICE_MS = 3000;
  *
  * ⚠️ 内容（含用户配置里的自由文本）整句只走 `textContent`，绝不进 innerHTML。
  */
-function showNotice(kind, text) {
+function showNotice(level, text) {
   const notice = el('notice');
   notice.hidden = false;
-  notice.className = `notice ${kind}`;
+  notice.className = `notice ${level}`;
   notice.textContent = text;
-  noticeVisible = true;
   clearTimeout(noticeTimer);
   noticeTimer = setTimeout(() => {
     notice.hidden = true;
-    noticeVisible = false;
   }, NOTICE_MS);
 }
 
@@ -878,7 +867,7 @@ async function toggleEntry(card, entry, button) {
       // ⚠️ 取不到要**说出来**：最常见的原因是这条已经被挤出去了（或换了房间）。
       button.disabled = false;
       button.textContent = expandLabel(entry);
-      showNotice('skip', t('取不到全文：{error}', { error: errorText(error) }));
+      showNotice('warn', t('取不到全文：{error}', { error: errorText(error) }));
       return;
     }
     button.disabled = false;
@@ -1171,13 +1160,12 @@ function render(state) {
     //（没有才退回与房间无关的那一格）—— 见 `showNotice` 的注释。
     // ⚠️★ `state.notice.text` 是壳的一句话（`{key, params}`），要走 `say` 渲染 ——
     // 直接塞进 `textContent` 会印出 `[object Object]`。
-    showNotice(state.notice.kind, say(state.notice.text));
+    showNotice(state.notice.level, say(state.notice.text));
     // ⚠️ 顺手把壳里那条清掉：否则一条三分钟前的错误会一直重播。
-    // 清掉会前进版本号 → 下一拍还会重绘一次，而那一拍会走到下面的 `else` ——
-    // 那时提示**正在显示**，所以用 `noticeVisible` 挡住，别把它抹掉。
+    // ⚠️★ 清掉之后**还会**再来一次重绘（版本号前进过），而那一拍 `state.notice` 已经是
+    // `null` 了 —— 但这里**没有**「否则就抹掉」那一支：收尾只归 `showNotice` 的计时器
+    //（上一版在这儿照着 `null` 抹，才需要 `noticeVisible` 那个补丁）。
     invoke('clear_notice');
-  } else if (!noticeVisible) {
-    el('notice').hidden = true;
   }
 }
 
@@ -1244,7 +1232,7 @@ async function tick() {
   } catch (error) {
     // ⚠️ 取不到状态要把「为什么」说出来：最常见的是窗口比壳活得久（壳崩了/正在退出）。
     // 主界面上没有地方放它（侧栏那块调试信息已删），所以进一次性提示。
-    showNotice('err', t('取不到状态：{error}', { error: errorText(error) }));
+    showNotice('error', t('取不到状态：{error}', { error: errorText(error) }));
   } finally {
     ticking = false;
   }
@@ -1262,7 +1250,7 @@ function sendCurrentInput() {
   const input = el('input');
   const text = input.value;
   if (!text.trim()) return;
-  invoke('send_text', { text }).catch((error) => showNotice('err', t('发不出去：{error}', { error: errorText(error) })));
+  invoke('send_text', { text }).catch((error) => showNotice('error', t('发不出去：{error}', { error: errorText(error) })));
   input.value = '';
 }
 
@@ -1286,7 +1274,7 @@ function sendCurrentInput() {
 function sendFiles(paths) {
   const list = (paths || []).filter((path) => typeof path === 'string' && path.trim() !== '');
   if (!list.length) return;
-  invoke('send_files', { paths: list }).catch((error) => showNotice('err', t('发不出去：{error}', { error: errorText(error) })));
+  invoke('send_files', { paths: list }).catch((error) => showNotice('error', t('发不出去：{error}', { error: errorText(error) })));
 }
 
 /** 📎 / 🖼：让**壳**弹系统文件选择框（页面自己没有这个能力，见 `commands::pick_files`）。 */
@@ -1294,7 +1282,7 @@ async function pickAndSend(imagesOnly) {
   try {
     sendFiles(await invoke('pick_files', { imagesOnly }));
   } catch (error) {
-    showNotice('err', t('打不开文件选择框：{error}', { error: errorText(error) }));
+    showNotice('error', t('打不开文件选择框：{error}', { error: errorText(error) }));
   }
 }
 
@@ -1630,15 +1618,31 @@ async function refreshServerState() {
     el('srv-state').textContent = t('读不到本地服务端的状态：{error}', { error: errorText(error) });
     return;
   }
-  const { bundled, running } = status;
+  const { bundled, running, owned, startError } = status;
 
   // `.hd`：状态灯 + 一句话。⚠️ 「没有自带服务端」要说出来 —— 那时起停按钮点了也不会有反应。
+  //
+  // ⚠️★ 2026-09-30 起要把**三件不同的事**分开说（`running` 只说明「端口上有人答话」，
+  // 见 `ServerStatusView` 那两个字段的注释）：
+  //   · 那个服务端**不是这个客户端起的**（上次没收干净的孤儿 / 用户自己跑的）→ 灯换成
+  //     警告色、并把这件事说出来；写「运行中」是**假话**（跑的是别人那一份前端）；
+  //   · 起不来（`startError`：端口被占 / 15 秒没答话 / 二进制起不来）→ 把**原因**摆在这儿。
+  //     启动那一拍没有「用户点了什么」，这句话只进日志就等于没人看得见；
+  //   · 其余照旧。
+  // ⚠️ `startError` 是壳给的一句话（`{key, params}`），要走 `say` 渲染 —— 别直接塞进 textContent。
   el('srv-dot').className = running ? 'dot' : 'dot off';
-  el('srv-state').textContent = !bundled
-    ? t('没有自带服务端（找不到 clip9-server）')
-    : running
-      ? t('本地服务端运行中')
-      : t('本地服务端没在跑');
+  let stateLine;
+  if (!bundled) {
+    stateLine = t('没有自带服务端（找不到 clip9-server）');
+  } else if (running && !owned) {
+    stateLine = startError ? say(startError) : t('端口上是别的服务端（不是这个客户端起的）');
+    el('srv-dot').className = 'dot warn';
+  } else if (!running && startError) {
+    stateLine = say(startError);
+  } else {
+    stateLine = running ? t('本地服务端运行中') : t('本地服务端没在跑');
+  }
+  el('srv-state').textContent = stateLine;
 
   // `.kv` 五行 —— **逐行对着稿子**。
   el('srv-version').textContent = status.version || '—';
@@ -1659,10 +1663,18 @@ async function refreshServerState() {
   // 顺带刷另外两处显示同一件事的地方。
   el('server-state').textContent = !bundled
     ? t('本地服务端：这个客户端没有自带（找不到 clip9-server）')
-    : running
-      ? t('本地服务端：运行中')
-      : t('本地服务端：没在跑');
-  el('dg-server').textContent = !bundled ? t('没有自带') : running ? t('运行中') : t('没在跑');
+    : running && !owned
+      ? t('本地服务端：端口上那个不是这个客户端起的')
+      : running
+        ? t('本地服务端：运行中')
+        : t('本地服务端：没在跑');
+  el('dg-server').textContent = !bundled
+    ? t('没有自带')
+    : running && !owned
+      ? t('不是本客户端起的')
+      : running
+        ? t('运行中')
+        : t('没在跑');
 }
 
 // ── 本地服务端那一页（设置 → 本机）───────────────────────────────

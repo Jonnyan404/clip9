@@ -30,7 +30,7 @@ use crate::runtime::Runtime;
 use crate::server_config::ServerConfigFile;
 use crate::server_process::ServerProcess;
 use crate::shell_text::ShellText;
-use crate::store::{Snapshot, Store};
+use crate::store::{NoticeLevel, Snapshot, Store};
 
 // ── 「设置」窗口（客户端自己的配置）──────────────────────────────────
 
@@ -123,7 +123,7 @@ pub fn apply_settings(
         // 「系统里的真相」（`hotkey_registered`），那个一直在。
         if let Err(problem) = crate::hotkeys::apply(&app, on) {
             eprintln!("{problem:?}");
-            store.notice("err", problem);
+            store.notice(NoticeLevel::Error, problem);
         }
     }
     runtime.persist();
@@ -395,6 +395,17 @@ pub struct ServerStatusView {
     pub bundled: bool,
     /// 它现在答不答话（**问出来的**，真的打一条 `GET /server`，不是记的）。
     pub running: bool,
+    /// 端口上那个**是不是这个客户端起的**（`ServerProcess::owns_live_child`）。
+    ///
+    /// ⚠️★ 2026-09-30 加：`running` 只说明「有人在答话」—— 端口上坐着上次没收干净的孤儿、
+    /// 或者用户自己跑的服务端时它也是 `true`，而界面上那句「运行中」就成了**假话**。
+    /// 少了这一条，`running && !owned` 与「我们自己起的那个在跑」在界面上长得一模一样。
+    pub owned: bool,
+    /// **最近一次启动为什么没成**（`ServerProcess::last_start_error`）。
+    ///
+    /// ⚠️ `None` = 最近一次是成功的（或者还没试过）。它给「启动那一拍」的失败
+    ///（随客户端启动 / 开机自启）一个**常驻的去处** —— 那一条路上没有「用户点了什么」。
+    pub start_error: Option<Msg>,
     /// `0.1.0`。⚠️ 探不出来就是 `None`（界面显示 `—`）。
     pub version: Option<String>,
     /// `127.0.0.1:9502`。⚠️ 稿子里就是 `host:port` 这个形状（**不带协议**）。
@@ -640,6 +651,8 @@ fn server_status_now(
         return ServerStatusView {
             bundled: false,
             running: false,
+            owned: false,
+            start_error: None,
             version: None,
             listen: None,
             data_dir,
@@ -660,6 +673,8 @@ fn server_status_now(
     ServerStatusView {
         bundled: true,
         running,
+        owned: process.owns_live_child(),
+        start_error: process.last_start_error(),
         version: process.version(),
         listen: Some(format!(
             "{}:{}",
