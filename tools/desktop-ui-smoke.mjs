@@ -1931,6 +1931,99 @@ if (entryViewFiles.length !== 1) {
   }
 }
 
+// ── 判据 24：默认视图是「列表」，而且选过的那个记得住（理由见下）──────────────
+//
+// ⚠️★ 2026-09-30 加。Jonny 报的原话：「桌面端为什么一直默认加载网页，即使改了列表，
+//    重启又变成网页了？**默认就列表好了，然后记住用户的偏好**」。
+//
+// ⚠️★ 这不是「忘了加持久化」那么简单 —— 它是**实现违背了已经写下的设计决定**：
+//    `dev-docs/specs/desktop-client.md` 的 §3.5.1 更正注记里写着「**别把它做成默认** ——
+//    那等于把『桌面端』做成『带壳的浏览器』」，而 `app.js` 当时是 `let mainView = 'spa';`。
+//    → 所以这条判据钉的不是「有没有那几行」，是**那个立场**。
+//
+// ⚠️ 拆掉任何一个零件**都不报错**，症状全是「重启之后才发现」：
+//   ① 初值写死 `'spa'` → 默认又变网页（用户报的那个原样回来）；
+//   ② 点击不走 `setMainView` → 点一下能换、重启变回去（「记不住」）；
+//   ③ `setMainView` 不写存储 → 同上；
+//   ④ 兜底不是「列表」而是「网页」→ 存储读不到（隐私模式）时去加载 iframe。
+{
+  const problems = [];
+  const bareApp = stripComments(js);
+  // ⚠️★ 哨兵还原**必须补回引号**：`stripJs` 写的是 `out += '\u0000' + body + '\u0000'`
+  //    —— 它把 `'spa'` 变成 `\u0000spa\u0000`，**引号是吃掉的**（见它的实现）。
+  //    所以 `split('\u0000').join('')` 得到的是 `=== spa`，拿 `'spa'` 去匹配**永远匹配不上**，
+  //    而报出来的是一句很像真话的「少了这个零件」——判据 21 就是在这上面栽过一次。
+  //    ⚠️ 这份界面通篇单引号，所以统一还原成单引号；哪天有人改用双引号，这条判据会红
+  //    （那时把这里的 `'` 换成 `['"]?` 那种写法即可）。
+  const code = bareApp.split('\u0000').join("'");
+
+  // ① 初值必须**经过 `storedView()`**（写死一个字面量就是用户报的那个 bug）。
+  const init = /\nlet mainView = ([^;]+);/.exec(code)?.[1] ?? '';
+  if (!init.includes('storedView(')) {
+    problems.push(
+      `\`mainView\` 的初值不是从存储里读的（现在是 \`${init || '(找不到这一行)'}\`）——\n` +
+        '    默认视图又变回写死的那个：用户改了、重启又回去。',
+    );
+  }
+  // ② 兜底那一侧必须是「列表」：只认 `'spa'`，其余一律当列表。
+  //    ⚠️ 与侧栏「只认 narrow」同一条理由 —— 兜底要落在**安全**的那一边，
+  //    而这里的「安全」= 不去加载那个 iframe（它自己开 WebSocket，是第二个客户端）。
+  if (!/getItem\(VIEW_KEY\) === 'spa' \? 'spa' : 'timeline'/.test(code)) {
+    problems.push(
+      '`storedView` 不再「只认 spa、其余一律当列表」——\n' +
+        '    存储读不到（隐私模式 / 被策略挡）时会去加载那个 iframe。',
+    );
+  }
+  // ③ 切换函数：写存储 + 立刻画。两个都少不得（少了前者＝记不住，少了后者＝点了没反应）。
+  const setter = /function setMainView\(view\) \{[\s\S]*?\n\}/.exec(code)?.[0] ?? '';
+  if (!setter) {
+    problems.push('找不到 `function setMainView(view)` —— 这条判据要跟着代码改。');
+  } else {
+    if (!setter.includes('localStorage.setItem(VIEW_KEY, view)')) {
+      problems.push('`setMainView` 没有写存储 —— 点一下能换、**重启就变回去**。');
+    }
+    if (!setter.includes('applyView()')) {
+      problems.push('`setMainView` 没有调 `applyView()` —— 点了什么都不会发生。');
+    }
+  }
+  // ④ 两颗按钮**都**走它。⚠️ 不钉的话「只给其中一颗接上」这种半吊子会全绿，
+  //    而它的症状恰好是「网页记得住、列表记不住」（或者反过来）——
+  //    用户只会说「有时候记得住有时候记不住」。
+  //    ⚠️ 不用「整行一模一样」当判据（那样改个空格、换行就假红）；
+  //    用**惰性区间**：从这颗按钮的监听器出发，160 个字符内要出现它该切的那一版。
+  for (const [id, view] of [
+    ['view-list', 'timeline'],
+    ['view-web', 'spa'],
+  ]) {
+    const wired = new RegExp(`el\\('${id}'\\)[\\s\\S]{0,160}?setMainView\\('${view}'\\)`).test(code);
+    if (!wired) {
+      problems.push(
+        `\`${id}\` 那颗按钮没有走 \`setMainView('${view}')\` ——\n` +
+          '    它那一边的选择就记不住（症状是「另一版记得住、这一版记不住」），\n' +
+          '    或者反过来（点列表却切到网页）。',
+      );
+    }
+  }
+  // ⑤ 默认值要和 **DOM 初值同向**：`#timeline` 不带 `hidden`、`#spa` 带 `hidden`。
+  //    不同向的表现是「默认这一版**先空一帧**再跳」（时间线那一刻还是空的，看不出内容，
+  //    但那正是主题闪白屏 / 侧栏先宽后窄那一族病）。
+  if (!/<div class="tl" id="timeline"><\/div>/.test(html)) {
+    problems.push('`index.html` 里 `#timeline` 的初值带上了 `hidden` —— 默认列表时会先空一帧。');
+  }
+  if (!/id="spa"[^>]*\shidden/.test(html)) {
+    problems.push('`index.html` 里 `#spa` 的初值不再带 `hidden` —— 启动时会先露一下 iframe 那格。');
+  }
+
+  if (problems.length) {
+    failed = true;
+    console.error(`✗ 判据 24：「默认列表 + 记住偏好」这条链断了（${problems.length} 处）：`);
+    for (const one of problems) console.error(`    · ${one}`);
+    console.error('  ⚠️ 症状全是**重启之后才看得出来**的，而且不报错。');
+  } else {
+    console.log('· 判据 24：默认视图是列表、选过的那个记得住、两颗按钮都接上了（7 个零件都在）。');
+  }
+}
+
 if (cssOnly.length) {
   console.log(`· ${cssOnly.length} 个 id 只被选择器用（形如 #id { … }），正常：${cssOnly.join('、')}`);
 }
