@@ -93,4 +93,24 @@
     <color name="console_ring_track">#12FFFFFF</color>
     <!-- 未运行时那一小段弧（设计稿 `stroke="#3b4d6b"`）。 -->
     <color name="console_arc_idle">#FF3B4D6B</color>
+
+    <!-- ════ 配置页（稿子 ⑥⑦⑧ 的 `.cfg` / `.frow`）══════════════════════
+         ⚠️ 行分隔线与输入框底色是**两个不同的深**（#1b2740 / #0c1524），
+         别合并：分不清的话行与行之间的层次就没了。 -->
+    <!-- `.frow` 行与行、卡头与内容的分隔线（比卡片描边 console_card_edge 再暗一档）。 -->
+    <color name="console_row_edge">#FF1B2740</color>
+    <!-- `.fin` 右侧小输入框 / `.redit` 房间编辑区：比卡片底再深的「洞」。 -->
+    <color name="console_fin_bg">#FF0C1524</color>
+    <color name="console_fin_edge">#FF2A3B58</color>
+    <!-- `.cfg-h .flag` 徽章：默认（橙，警示类）与 ok（绿，状态良好）两副脸色。 -->
+    <color name="console_flag_text">#FFE0A03C</color>
+    <color name="console_flag_bg">#FF2A2010</color>
+    <color name="console_flag_ok_text">#FF4CD08C</color>
+    <color name="console_flag_ok_bg">#FF122A20</color>
+
+    <!-- ════ 其它页（稿子 ⑨ 的 `.row-v` / `.banner.err`）═══════════════════
+         ⚠️ 徽章的橙是**暖黄偏暗**（#E0A03C），而这一条是**亮橙**（#F0A04B）：
+         稿子里它们就是两个色号（`.row-v` 的「未加入」比 `.flag` 亮一档），
+         压在同一种深底上，亮的那条才像是「要你注意」。别合并成一个。 -->
+    <color name="console_warn">#FFF0A04B</color>
 </resources>

@@ -4,10 +4,12 @@
   ⚠️ `Base.Theme.Clip9` 这一层是为了让 `values-night` 能只覆盖它需要覆盖的项，
   见同目录的 `values-night/themes.xml`。
 
-  ⚠️ 这里**只定义主题**，不定义 `TextAppearance.*` 之类的自定义样式：
+  ⚠️ 这里**只定义主题与控制台在用的样式**：
   最开始写过两个（`TextAppearance.Clip9.Section` / `.Note`），但布局里用的是
-  主题自带的 `?attr/textAppearanceTitleSmall` 那些 —— 那两个样式没有任何引用。
-  没人读的资源比没有资源更糟（下一个人会以为它在生效）。
+  主题自带的 `?attr/textAppearanceTitleSmall` 那些 —— 那两个样式没有任何引用，删掉了。
+  2026-09-30 配置页照稿子 ⑥⑦⑧ 重排（`cfg` 卡 + `frow` 行）之后，那套字号 / 颜色
+  在二十来个字段上重复出现，才有了下面 `Text.Clip9.Cfg*` / `Widget.Clip9.CfgInput` 这一组 ——
+  每一条都有布局里的引用者，别再往这里堆「以防万一」的样式。
 -->
 <resources>
     <style name="Base.Theme.Clip9" parent="Theme.Material3.DayNight.NoActionBar" />
@@ -86,5 +88,70 @@
         <item name="cornerRadius">10dp</item>
         <item name="elevation">0dp</item>
         <item name="android:stateListAnimator">@null</item>
+    </style>
+
+    <!--
+      ── 配置页那一组（稿子 ⑥⑦⑧ 的 `.cfg` / `.frow`）────────────────────────
+      字号与颜色逐条对照稿子的 CSS，值只引 colors.xml —— 稿子改色号时改那一份就够。
+
+      ⚠️★ 布局里**不再**用 `?attr/textAppearance*`：那套落在 Material3 语义色上，
+      颜色归 `colorOnSurface` 管 —— 主题里已经把它拨到 console_text，但**字号**那层
+      （TitleMedium 16sp / TitleSmall 14sp / BodySmall 12sp）与稿子（卡头 12 / 行标题 14 /
+      说明 11.5）对不上。照稿子重排之后全部走这一组写死的样式。
+    -->
+    <!-- 卡头标题（`.cfg-h b`）：小号大字距，是「分区名」不是「行标题」。 -->
+    <style name="Text.Clip9.CfgHead" parent="">
+        <item name="android:textSize">12sp</item>
+        <item name="android:textStyle">bold</item>
+        <item name="android:letterSpacing">0.14</item>
+        <item name="android:textColor">@color/console_say</item>
+    </style>
+
+    <!-- 卡头右侧徽章的文字（`.cfg-h .flag`）。底色两副脸色见
+         bg_console_flag（橙）/ bg_console_flag_ok（绿），由代码按状态换。 -->
+    <style name="Text.Clip9.CfgFlag" parent="">
+        <item name="android:textSize">10.5sp</item>
+        <item name="android:textStyle">bold</item>
+        <item name="android:letterSpacing">0.06</item>
+        <item name="android:textColor">@color/console_flag_text</item>
+    </style>
+
+    <!-- 行标题（`.frow-t > b`）与行说明（`.frow-t span`）。 -->
+    <style name="Text.Clip9.CfgTitle" parent="">
+        <item name="android:textSize">14sp</item>
+        <item name="android:textColor">@color/console_text</item>
+    </style>
+
+    <style name="Text.Clip9.CfgHint" parent="">
+        <item name="android:textSize">11.5sp</item>
+        <item name="android:lineSpacingMultiplier">1.5</item>
+        <item name="android:textColor">@color/console_text_body</item>
+    </style>
+
+    <!--
+      `.fin` 右侧小输入框：38dp 高、mono、写死一套配色（不跟 hint 走）。
+
+      ⚠️★ parent 用**平台**的 `Widget.EditText` 而不是 `Widget.Material3.EditText`：
+      后者是给 `TextInputLayout` 的FilledBox 体系预备的，直接套在裸 EditText 上
+      会拖进一套背景与最小高度的假设 —— 而我们本来就要用自己的 `bg_console_fin`
+      整个盖掉背景。
+      ⚠️ 输入框**没有** `backgroundTint`：默认底会被 `android:background` 整个盖掉，
+      这正是想要的（稿子的 fin 是一块圆角面板）。
+    -->
+    <style name="Widget.Clip9.CfgInput" parent="@android:style/Widget.EditText">
+        <item name="android:minWidth">96dp</item>
+        <item name="android:maxWidth">150dp</item>
+        <item name="android:minHeight">38dp</item>
+        <item name="android:paddingStart">10dp</item>
+        <item name="android:paddingTop">8dp</item>
+        <item name="android:paddingEnd">10dp</item>
+        <item name="android:paddingBottom">8dp</item>
+        <item name="android:fontFamily">monospace</item>
+        <item name="android:textSize">13.5sp</item>
+        <item name="android:textStyle">bold</item>
+        <item name="android:textColor">@color/console_text</item>
+        <item name="android:textColorHint">@color/console_text_faint</item>
+        <item name="android:background">@drawable/bg_console_fin</item>
+        <item name="android:imeOptions">actionDone</item>
     </style>
 </resources>
