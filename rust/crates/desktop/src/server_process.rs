@@ -50,6 +50,16 @@ use clip9_client::Msg;
 /// 9502 紧挨着它，好记，而且不撞。
 pub const DEFAULT_PORT: u16 = 9502;
 
+/// 「宿主没了就退出」那个环境变量的名字。
+///
+/// ⚠️★ **服务端里也有一份**（`crates/server/src/bin/clip9-server.rs` 的 `EXIT_WITH_PARENT`）。
+/// 这里刻意重复：桌面端不该为了一个字符串去**链接**整个服务端（那会把 axum 拖进壳里，
+/// 而壳压根不跑 HTTP）。
+///
+/// ⚠️★ 两份定义靠一条**端到端**的测试钉住（`a_bundled_server_dies_with_its_host`）——
+/// 它真的起那个二进制、真的关掉管子。名字写错、或者这个变量哪天被改名，它当场红。
+const EXIT_WITH_PARENT: &str = "CLIP9_EXIT_WITH_PARENT";
+
 /// 起来最多等多久（超时就报错，不无限等）。
 const START_TIMEOUT: Duration = Duration::from_secs(15);
 /// 探测一次的读超时。
@@ -179,14 +189,37 @@ impl ServerProcess {
     /// ⚠️ 只 `spawn` 不等待是不够的：进程起来了但还没 bind 端口，紧接着的请求会失败，
     /// 而用户看到的是「点了启动、然后界面说没在跑」—— 他会以为按钮坏了。
     ///
-    /// ⚠️ 已经在跑（不管是谁起的）就**直接返回成功**，不重复起：
-    /// 重复起的后果是第二个进程 bind 失败、静默退出，而界面上「看起来起了」。
+    /// # ⚠️★ 端口上已经有人答话时：**两件事长得一模一样，必须分开**（2026-09-30）
+    ///
+    /// | 端口上那个是谁 | 该怎么办 |
+    /// |---|---|
+    /// | **我们自己起的那个还活着**（本进程手里的 child） | 幂等，直接返回成功 |
+    /// | **别的**（上一次没收干净的孤儿 / 用户自己跑的） | **绝不复用**，报错说清 |
+    ///
+    /// 原来这两种都走「已经在跑就返回成功」，于是一个**两天前**留下的孤儿服务端被新版本
+    /// 的桌面端复用了 —— 界面里跑的是**两天前那一份前端**，用户看到的是「这个功能怎么没了」，
+    /// 而代码一行没丢（`dev-docs` 里那次故障，`LESSONS.md §8.7`）。
+    ///
+    /// ⚠️★ 判据是「**我起过没有**」，不是「版本号对不对」：这个仓库的版本号只在 tag 里，
+    /// 两个二进制都答 `0.1.0`，比不出来。也不是「端口上那个报的构建标识和我的对不对」——
+    /// 那要求桌面端手里有**另一份事实的副本**（`build.rs` 烤一个进来，或者去解析 `-v`
+    /// 的输出），而两份定义一定会漂：只重编一半时，桌面端会拿着旧副本判「端口上那个不是我的」，
+    /// 于是**本机服务端永远起不来**。这里用的事实是「这个进程是不是我自己生的」——
+    /// 它由内核保证，没有第二份、也不可能漂。
+    ///
+    /// ⚠️ 问 `try_wait()`（真的问内核）而**不是**记一个「我起过」的布尔：
+    /// 服务端被系统杀掉之后，那个布尔会一直说「起过」，而这一路上「记的」正是错的那一侧。
     pub fn start(&self) -> Result<(), Msg> {
         // ⚠️★ 端口**每次现读配置**：用户在「服务端配置」里改完、点「保存并重启」，
         // 那一下必须真的换到新端口上（原来写死常量 → 改哪个都白改）。
         let port = self.port();
+        // ① 我们自己起的那个还活着 → 幂等（等它答话就行，别再起第二个）。
+        if self.owns_live_child() {
+            return self.wait_until_running(port);
+        }
+        // ② 端口上有人，但不是我们起的 → **不复用**（见上面那张表）。
         if probe(port) {
-            return Ok(());
+            return Err(port_taken_by_stranger(port));
         }
         // ⚠️ 起之前先把配置准备好（见 `seed_config`）：不写的话服务端自己会写一份
         // 端口是 9501 的，而它实际跑在我们这个端口上 —— 两处打架。
@@ -215,6 +248,12 @@ impl ServerProcess {
             // 给到数据目录下，那也正是 W5c 那个「配置可视化」要编辑的文件。
             .arg("-config")
             .arg(config_path(&self.data_dir))
+            // ⚠️★ **给它一条管子**（`piped`）+ 告诉它「管子断了就退出」——
+            // 这两句是**一对**，少一句都白搭（详见 `CLIP9_EXIT_WITH_PARENT` 的文档）。
+            // 有它之后，宿主**无论怎么死**（优雅退出 / 崩溃 / 被强杀 / 升级时被替换）
+            // 这个子进程都会跟着退 —— 孤儿从源头没有了。
+            .stdin(Stdio::piped())
+            .env(EXIT_WITH_PARENT, "1")
             .stdout(Stdio::from(log2))
             .stderr(Stdio::from(log))
             .spawn()
@@ -225,9 +264,18 @@ impl ServerProcess {
             })?;
         *self.child.lock().unwrap_or_else(|e| e.into_inner()) = Some(child);
 
+        self.wait_until_running(port)
+    }
+
+    /// 等端口**真的答话**（超时就报错，错误里带上日志最后一行）。
+    ///
+    /// ⚠️ 拆出来是因为有**两条**路要等：刚 `spawn` 完那条，以及「自己起的那个已经活着」
+    /// 那条（幂等调用）。两条等待的语义、超时、失败话术必须一样 —— 写两份就会漂。
+    fn wait_until_running(&self, port: u16) -> Result<(), Msg> {
+        let log_path = log_path(&self.data_dir);
         let deadline = Instant::now() + START_TIMEOUT;
         while Instant::now() < deadline {
-            if self.is_running() {
+            if probe(port) {
                 // ⚠️ 起来了才记时刻（「运行时长」那一行靠它）。记在 spawn 那一刻的话，
                 // 一个起不来的进程也会让界面显示「跑了 5 分钟」。
                 *self.started_at.lock().unwrap_or_else(|e| e.into_inner()) = Some(Instant::now());
@@ -238,6 +286,20 @@ impl ServerProcess {
         // ⚠️ 端口报**这一个**（刚起时用的那个），别现读一次配置 ——
         // 中间被人改过的话，报出来的会是一个根本没试过的端口。
         Err(start_failure(&log_path, port))
+    }
+
+    /// **本进程起的那个服务端还活着吗**（真的问内核，不是记的）。
+    ///
+    /// ⚠️★ 只有这一句能回答「端口上那个是不是我的」：
+    /// `try_wait()` 给 `Ok(None)` = 子进程还在跑；`Ok(Some(_))` = 它已经退出了
+    ///（那时端口上那个**一定**是别人）。
+    fn owns_live_child(&self) -> bool {
+        let mut guard = self.child.lock().unwrap_or_else(|e| e.into_inner());
+        match guard.as_mut() {
+            Some(child) => matches!(child.try_wait(), Ok(None)),
+            // ⚠️ 没起过（或者已经被 `stop` 收走了）→ 端口上那个不可能是我们的。
+            None => false,
+        }
     }
 
     /// 停掉**我们起的那个**。
@@ -350,6 +412,34 @@ fn config_port(path: &Path) -> Option<u16> {
 #[must_use]
 pub fn log_path(data_dir: &Path) -> PathBuf {
     data_dir.join("server.log")
+}
+
+/// 端口上那个服务端**不是本进程起的** —— 报错说清，并尽量告诉用户那是哪一版。
+///
+/// ⚠️ 两条键（问得到它的构建标识 / 问不到）而不是一句模板塞个空值：它们不一样 ——
+/// 「它答得出自己发的是哪一版」与「它旧到连这个都不报」是两件事，而后者恰恰是
+/// 「那是个很旧的服务端」的样子。用同一句模板加个空参数，用户看到的是
+/// 「它在发 版前端」这种半截话。（`serverStartTimeout` 那两条键是同一个理由。）
+fn port_taken_by_stranger(port: u16) -> Msg {
+    match served_build(port) {
+        Some(build) => Msg::key("serverPortTaken")
+            .param("port", port)
+            .param("build", build),
+        None => Msg::key("serverPortTakenUnknown").param("port", port),
+    }
+}
+
+/// **端口上那个服务端说自己在发哪一版前端**（`GET /server` 的 `staticBuild`）。
+///
+/// ⚠️★ 它**不参与**「要不要复用」那个判据（那个判据是「我起过没有」，见 [`ServerProcess::start`]）。
+/// 它唯一的用途是让那句报错**说得具体**：用户看到「它在发 `9089fa78` 这一版前端」，
+/// 就知道「哦，是个旧版本」，而不是对着一句「端口被占用」干着急
+/// ——2026-09-30 那次光把「界面是旧的」定位到「端口上那个服务端是旧的」花了大半天。
+///
+/// ⚠️ `None` = 问不到（没在跑 / 不是我们的服务端 / 它太旧、没有这个字段）。
+fn served_build(port: u16) -> Option<String> {
+    let body: serde_json::Value = serde_json::from_str(&get(port, "/server")?).ok()?;
+    body.get("staticBuild")?.as_str().map(str::to_owned)
 }
 
 /// 起不来时给用户的那句话 —— **带上日志里最后一行**。
@@ -681,6 +771,186 @@ mod tests {
         assert!(!server.is_running(), "停了就不该再探测到");
         // ⚠️ 「运行时长」也要跟着清 —— 不清的话停了之后界面还显示「跑了 2 小时」。
         assert!(server.uptime().is_none(), "停了就没有运行时长");
+    }
+
+    /// ⚠️★ **端口上那个不是自己起的 → 绝不复用**（2026-09-30 那次故障的回归测试）。
+    ///
+    /// 那次是：上一次没收干净的孤儿服务端（两天前那一版）占着 9502，新版本的桌面端
+    /// 探测到有人答话就复用它 —— 于是界面里跑的是两天前那一份前端，
+    /// 用户看到的是「这个功能怎么没了」，而代码一行没丢。
+    #[test]
+    fn start_refuses_a_server_it_did_not_start() {
+        let binary = test_binary();
+        if !binary.is_file() {
+            eprintln!("跳过：{} 不在", binary.display());
+            return;
+        }
+        let dir = tempfile::tempdir().expect("建临时目录");
+        let port = free_port();
+
+        // A：上一次留下的那个（这里用同一个二进制模拟 —— 关键在**不是 B 起的**）。
+        let a = ServerProcess::new(binary.clone(), dir.path().join("a"), port);
+        a.start().expect("A 起");
+
+        // B：新一次启动的桌面端。它手里没有 child → 端口上那个不是它的。
+        let b = ServerProcess::new(binary, dir.path().join("b"), port);
+        let err = b.start().expect_err("端口上那个不是自己起的，不许复用");
+        // ⚠️ 只钉**键**（与 `stop_refuses_to_kill_a_server_we_did_not_start` 同一条规矩）：
+        // 那句话住在 `ui/i18n.js` 里，改文案不该让这条测试红。
+        // ⚠️★ 键是 `serverPortTaken`（而**不是** `serverPortTakenUnknown`）这件事本身
+        // 也在钉 `served_build`：A 是个真的服务端，它答得出自己在发哪一版。
+        assert_eq!(err.key, "serverPortTaken", "要说清为什么不起：{err:?}");
+        let build = err
+            .params
+            .get("build")
+            .and_then(clip9_client::ParamValue::as_str);
+        assert!(
+            build.is_some_and(|value| !value.is_empty()),
+            "该把「它在发哪一版前端」一起报出来（用户一眼就知道那是个旧版本）：{err:?}"
+        );
+        // ⚠️ 只是**拒绝复用**，不是去停它 —— A 必须还活着（`stop` 那条的边界同此）。
+        assert!(a.is_running(), "不许动别人的服务端");
+        a.stop().expect("A 自己停");
+    }
+
+    /// ⚠️★ **我们自己起的那个已经死了**（句柄还在手里）→ 端口上那个照样不是我们的。
+    ///
+    /// 这一条钉的是「**问内核**，不是记一个『我起过』的布尔」：判据是
+    /// `try_wait()`（真的问这个进程还在不在），而**不是**「`self.child` 里有没有东西」。
+    /// 两种写法在本文件**别处**的测试里看不出区别（那几处的句柄要么是活的、要么是 `None`），
+    /// 只有这一条分得开 —— 而它正是 2026-09-30 那次故障的形状：上一次那个服务端**已经不在了**
+    /// （崩了 / 被换掉了），同一个端口上换了**另一个**东西在答话。
+    /// ⚠️ 若写成「句柄非空就算我的」，这里会**静默复用**端口上那个陌生服务端 —— 也就是
+    ///「界面怎么是旧的」的原路。
+    #[test]
+    fn a_dead_child_does_not_make_us_claim_the_port() {
+        let binary = test_binary();
+        if !binary.is_file() {
+            eprintln!("跳过：{} 不在", binary.display());
+            return;
+        }
+        let dir = tempfile::tempdir().expect("建临时目录");
+        let port = free_port();
+
+        // A 起了自己的那一个，然后把它**弄死、但把句柄留在手里**。
+        // ⚠️ 刻意不走 `stop()`（那会清掉句柄）—— 要的就是「句柄还在、进程没了」这个形状，
+        // 它对应的是「它自己崩了」或「被人从外面杀了」，而不是「我们停的」。
+        let a = ServerProcess::new(binary.clone(), dir.path().join("a"), port);
+        a.start().expect("A 起");
+        {
+            let mut guard = a.child.lock().unwrap_or_else(|e| e.into_inner());
+            let child = guard.as_mut().expect("刚起的那个该在手里");
+            child.kill().expect("杀掉它");
+            // ⚠️ 收尸（不然它是个僵尸，端口仍然占着）。
+            let _ = child.wait();
+        }
+        assert!(
+            wait_until_port_is_quiet(&a, Duration::from_secs(10)),
+            "A 那个死了，端口该空出来"
+        );
+
+        // 别人占了同一个端口。
+        let b = ServerProcess::new(binary, dir.path().join("b"), port);
+        b.start().expect("B 起");
+
+        // ★ A 手里的句柄**还在**（只是已经退出）—— 不许因此就说「端口上那个是我的」。
+        let err = a
+            .start()
+            .expect_err("自己那个已经死了：端口上那个不是我们的");
+        assert_eq!(err.key, "serverPortTaken", "该拒绝复用：{err:?}");
+        b.stop().expect("B 自己停");
+    }
+
+    /// ⚠️★ 宿主没了 → 自带的那个服务端**跟着退**（孤儿从源头消失）。
+    ///
+    /// 这一条钉的是**一处跨 crate 的约定**：`EXIT_WITH_PARENT` 这个名字在桌面端与
+    /// `clip9-server` 里各写了一遍（壳不该为了一个字符串去链接整个服务端，那会把 axum
+    /// 拖进来）。名字写错、或者哪天被改名，症状是「孤儿又回来了」—— 而那是**无症状的**，
+    /// 要等到下一次「界面怎么是旧的」才会暴露。所以这里**真的起那个二进制、真的关掉那条管子**。
+    ///
+    /// ⚠️★ 下面有**对照组**：同一个二进制、**不给**那个变量时，关掉管子它**不会**退。
+    /// 少了它，这一条可能因为别的原因变绿（比如二进制根本没起来 → 一直「不在跑」）。
+    #[test]
+    fn a_bundled_server_dies_with_its_host() {
+        let binary = test_binary();
+        if !binary.is_file() {
+            eprintln!("跳过：{} 不在", binary.display());
+            return;
+        }
+        let dir = tempfile::tempdir().expect("建临时目录");
+
+        // ① 桌面端起的那个（`start()` 会带管子 + 那个变量）。
+        let port = free_port();
+        let server = ServerProcess::new(binary.clone(), dir.path().join("ours"), port);
+        server.start().expect("起服务端");
+        assert!(server.is_running(), "先确认它真的在跑");
+
+        // ★ 模拟「宿主没了」：**只**关掉那条管子的写端。真实的宿主死亡（含 `SIGKILL`）
+        //   在内核看来就是这个效果。⚠️ 这里刻意**不调 `stop()`** —— 要验的正是
+        //  「不用谁去 kill 它，它自己走」。
+        {
+            let mut guard = server.child.lock().unwrap_or_else(|e| e.into_inner());
+            let child = guard.as_mut().expect("刚起的那个该在手里");
+            drop(child.stdin.take());
+        }
+        assert!(
+            wait_until_port_is_quiet(&server, Duration::from_secs(10)),
+            "宿主没了之后它该自己退出 —— 不然孤儿就会一直占着 9502"
+        );
+
+        // ② 对照组：同一个二进制，**不给**那个变量。
+        let port = free_port();
+        let data = dir.path().join("no-variable");
+        std::fs::create_dir_all(&data).expect("建目录");
+        let mut raw = Command::new(&binary)
+            .arg("-port")
+            .arg(port.to_string())
+            .arg("-data")
+            .arg(&data)
+            // ⚠️ 必须给 `-config`：不给的话服务端会在**当前工作目录**写一份 config.json。
+            .arg("-config")
+            .arg(config_path(&data))
+            .stdin(Stdio::piped())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .expect("起对照那个");
+        assert!(
+            port_answers_within(port, Duration::from_secs(15)),
+            "对照组那个该起来"
+        );
+        drop(raw.stdin.take());
+        std::thread::sleep(Duration::from_secs(3));
+        assert!(
+            probe(port),
+            "没给那个变量时，管子断了它**不该**退 —— 否则这一条测的根本不是那个变量"
+        );
+        let _ = raw.kill();
+        let _ = raw.wait();
+    }
+
+    /// 等它**不再答话**（最多等 `limit`）。
+    fn wait_until_port_is_quiet(server: &ServerProcess, limit: Duration) -> bool {
+        let deadline = Instant::now() + limit;
+        while Instant::now() < deadline {
+            if !server.is_running() {
+                return true;
+            }
+            std::thread::sleep(Duration::from_millis(100));
+        }
+        false
+    }
+
+    /// 等端口**开始答话**（对照那一组用的裸进程，没有 `ServerProcess` 可问）。
+    fn port_answers_within(port: u16, limit: Duration) -> bool {
+        let deadline = Instant::now() + limit;
+        while Instant::now() < deadline {
+            if probe(port) {
+                return true;
+            }
+            std::thread::sleep(Duration::from_millis(100));
+        }
+        false
     }
 
     /// ⚠️ 重复 `start` 不该起第二个进程（第二个会 bind 失败、静默退出，
