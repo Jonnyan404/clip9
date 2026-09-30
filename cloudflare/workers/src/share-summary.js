@@ -23,11 +23,36 @@ export function truncateRunes(value, limit) {
  *
  * 刻意只取第一行有内容的行：正文可能含账号、验证码、完整密码 —— 摘要少搬一点，
  * 第三方预览缓存里就少留一点（那段缓存删不掉，见 share-landing.js 的说明）。
+ *
+ * ⚠️★ 下面那个字符类里的 `-` **必须转义**（`\\-`），不能写成 `[#>*-·|\s]`。
+ *
+ * 原因是 JS 的字符类里 `-` 夹在两个字符之间会被解析成**范围**：`[#>*-·]` 里的 `*`(U+002A)
+ * 与 `·`(U+00B7) 之间那条 `-` 不是字面量，而是「U+002A 到 U+00B7」——
+ * ⚠️ 而 **ASCII 的数字（U+0030–U+0039）与大小写字母（U+0041–U+005A / U+0061–U+007A）
+ * 全部落在这个区间里**。于是「去掉行首行尾的 Markdown 装饰符」实际变成了
+ * 「吃掉行首行尾的所有字母数字」：
+ *
+ *   `123`               → `''`（整行吃光 → 落地页退回「有人分享了一段文本」）
+ *   `hello`             → `''`（同上）
+ *   `password: hunter2` → `''`（同上）
+ *   `hello 世界`         → `'世界'`（开头的 ASCII 被吃掉）
+ *   `你好 123456`        → `'你好'`（结尾的数字被吃掉）
+ *   `招行 APP 登录密码`  → 正常 —— **汉字（U+4E00+）不在那个范围里**，
+ *                          削到第一个汉字就停住了
+ *
+ * ⚠️★ 这正是它长期没被发现的原因：中文内容看不出问题，而测试夹具的首尾又恰好都是中文。
+ * 2026-10-01 由 Jonny 报「发短文本比如 123，只显示有人分享了一段内容」才发现。
+ * ⚠️ 同一个函数还管着**分享记录列表的名字**（`share.js`），所以那边纯 ASCII 的记录
+ * 名字以前也是空的。
+ *
+ * ⚠️ 这边的语义是**首尾都削**（对应 Go 侧那句 `strings.Trim(clean, "#>*-·|")`）；
+ * Rust 侧的 `first_summary_line` 用 `trim_start_matches`，**只削行首** ——
+ * 那个偏差是「少削一点」（不会吃内容），所以这一轮没跟着改。
  */
 export function firstSummaryLine(text, limit = SHARE_TITLE_LIMIT) {
   for (const line of String(text == null ? '' : text).split('\n')) {
     let clean = line.replace(/\s+/g, ' ').trim();
-    clean = clean.replace(/^[#>*-·|\s]+/, '').replace(/[#>*-·|\s]+$/, '').trim();
+    clean = clean.replace(/^[#>|\-*·\s]+/, '').replace(/[#>|\-*·\s]+$/, '').trim();
     if (clean) {
       return truncateRunes(clean, limit);
     }
