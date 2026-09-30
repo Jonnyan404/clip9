@@ -73,6 +73,8 @@
     <color name="console_dirty">#FF24344F</color>
     <color name="console_dirty_edge">#FF37517A</color>
     <color name="console_strip_top">#FF152238</color>
+    <!-- 迷你条的渐变终点（稿子 `.strip` 的 `linear-gradient(180deg,#152238,#101a2c)`）。 -->
+    <color name="console_strip_bottom">#FF101A2C</color>
     <color name="console_panel_top">#FF1B3050</color>
     <color name="console_panel_bottom">#FF0C1524</color>
     <color name="console_core_top">#FF16233A</color>
@@ -81,6 +83,9 @@
     <color name="console_core_ic">#FF8FA6C6</color>
     <color name="console_live_top">#FF123024</color>
     <color name="console_live_bottom">#FF0D2419</color>
+    <!-- 运行中圆心那颗电源图标（稿子 `.ringwrap.live .core .ic`）——
+         ⚠️ 它比 `console_ok`（圆弧与 led 的绿）亮一档：图标小，同色会显得发闷。 -->
+    <color name="console_live_ic">#FF4CD08C</color>
     <color name="console_bad_top">#FF2F1614</color>
     <color name="console_bad_bottom">#FF241110</color>
     <color name="console_bad_ic">#FFFF7A6C</color>

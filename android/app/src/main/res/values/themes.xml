@@ -32,6 +32,16 @@
         <item name="android:statusBarColor">@color/console_bg</item>
         <item name="android:navigationBarColor">@color/console_bg</item>
         <item name="colorPrimary">@color/console_accent</item>
+        <!--
+          ⚠️★ 配置页那一大片的标题 / 正文用的是 `?attr/textAppearance*`（Material3 的
+          语义色），落到默认的 `colorOnSurface` 上是**暖灰**（#E6E1E5 那一族）—— 而设计稿
+          通篇是**冷蓝白**（#eaf0fa / #8296b3）。这就是「配置页颜色和稿子差一层」的来源，
+          在这两个属性上盖掉，整页语义色就归到稿子那组冷色。
+          ⚠️ 输入框的 hint 走 `android:textColorHint`，也一并归到 faint。
+        -->
+        <item name="colorOnSurface">@color/console_text</item>
+        <item name="colorOnSurfaceVariant">@color/console_text_body</item>
+        <item name="android:textColorHint">@color/console_text_faint</item>
     </style>
 
     <!--

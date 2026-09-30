@@ -522,7 +522,9 @@ class MainActivity : AppCompatActivity() {
                 ringView.setRing(RingView.ARC_LIVE, getColor(R.color.console_ok))
                 ringCore.setBackgroundResource(R.drawable.bg_console_core_live)
                 ringIcon.setImageResource(R.drawable.ic_console_power)
-                ringIcon.imageTintList = ColorStateList.valueOf(getColor(R.color.console_ok))
+                // ⚠️ 图标用比圆弧亮一档的绿（稿子 `.live .core .ic` 是 #4cd08c）：
+                //    同用圆弧那个 #34c07a 的话，30dp 的小图标在深底上会发闷。
+                ringIcon.imageTintList = ColorStateList.valueOf(getColor(R.color.console_live_ic))
                 ringAction.text = getString(R.string.action_stop)
                 ringSub.text = getString(R.string.console_core_live_sub)
                 consoleSay.text = getString(R.string.console_say_live)
