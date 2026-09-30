@@ -1,9 +1,9 @@
 # clip9 前端产物的同步清单 —— 由 tools/sync-web-assets.mjs 生成，别手改。
-source 9b7fd3031c3b18d4b10fd100c887e71066d8963305f2012e0b0416fd9551ac41
+source 3e58b1ef5bafaec421e6b719bf5e2e71f23653fd4dcb1fcb3d1b1727d8b0a855
 apple-touch-icon.png
-assets/ShareView-CIcPycAw.js
-assets/ShareView-CIcPycAw.js.br
-assets/ShareView-CIcPycAw.js.gz
+assets/ShareView-4zS8kGfN.js
+assets/ShareView-4zS8kGfN.js.br
+assets/ShareView-4zS8kGfN.js.gz
 assets/ShareView-DjLm0d4-.css
 assets/ShareView-DjLm0d4-.css.br
 assets/ShareView-DjLm0d4-.css.gz
@@ -13,9 +13,9 @@ assets/highlight-langs-Dt8YXhtn.js.gz
 assets/i18n-B2E8evwD.js
 assets/i18n-B2E8evwD.js.br
 assets/i18n-B2E8evwD.js.gz
-assets/index-DpKyaNxO.js
-assets/index-DpKyaNxO.js.br
-assets/index-DpKyaNxO.js.gz
+assets/index-DYGirDG0.js
+assets/index-DYGirDG0.js.br
+assets/index-DYGirDG0.js.gz
 assets/index-ifumBe6s.css
 assets/index-ifumBe6s.css.br
 assets/index-ifumBe6s.css.gz

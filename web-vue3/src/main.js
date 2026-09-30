@@ -13,6 +13,7 @@ import { useWebSocketStore } from './store/websocket';
 import { useAppStore } from './store/app';
 import { setupServiceWorkerUpdate } from './sw-update.js';
 import { installShareBridge } from './share.js';
+import { installHostBridge } from './host-bridge.js';
 import { readLocationParam } from './util.js';
 
 // 全部接口调用都用**相对路径**（`share`、`content/7`…），而 history 模式下文档目录不再是
@@ -74,6 +75,11 @@ router.isReady().then(() => {
     }
     wsStore.initFromRoute(router.currentRoute.value.query.room || '');
     wsStore.connect();
+    // 嵌入态的宿主消息通道（`?embed=1` 才真的装上）—— 桌面端用它切房间 / 切主题，
+    // 免得每次重设 `iframe.src` 把整个页面重载一遍。契约见 `host-bridge.js` 的文件头。
+    // ⚠️ 位置：放在**这个分岔之后** —— 上面那句对分享页提前 `return`，于是分享页天然装不上
+    //（它不建 WS、不碰房间，让它接受「切房间」只会把状态搅乱）。
+    installHostBridge();
 });
 
 app.mount('#app');

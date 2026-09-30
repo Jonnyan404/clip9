@@ -1,16 +1,23 @@
 <!DOCTYPE html>
-<html lang="zh" data-build-id="fb121b72">
+<html lang="zh" data-build-id="b6bb1b2e">
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=0">
     <link rel="icon" href="./favicon.ico">
     <link rel="apple-touch-icon" href="./apple-touch-icon.png">
     <meta name="theme-color" content="#1e88e5">
+    <!-- ⚠️★ 「这是 clip9 的网页版」的**身份标记**（桌面端嵌 iframe 之前要读它）。
+         `content` 是**协议版本**，与 `src/host-bridge.js` 的 `HOST_PROTOCOL` 一个数。
+         ⚠️ 桌面端读的是**这个 HTML 源文件**（不是渲染后的 DOM），所以放在模板里就够。
+         ⚠️★ 老版本的服务端没有这一行 → 桌面端探测不到 → 显示「这个站点不支持内嵌网页 ·
+         请把服务器更新到 clip9」，而不是傻傻地把一个陌生页面嵌进去。改协议时要连
+         `host-bridge.js` 的 `HOST_PROTOCOL` 一起改。 -->
+    <meta name="clip9-web" content="1">
     <title>clip9</title>
     <style>
         html, body { height: 100%; margin: 0; }
     </style>
-  <script type="module" crossorigin src="./assets/index-DpKyaNxO.js"></script>
+  <script type="module" crossorigin src="./assets/index-DYGirDG0.js"></script>
   <link rel="modulepreload" crossorigin href="./assets/vue-core-0sVBZCoF.js">
   <link rel="modulepreload" crossorigin href="./assets/vendor-XysI45BE.js">
   <link rel="modulepreload" crossorigin href="./assets/vuetify-BurkFjyD.js">
