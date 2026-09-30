@@ -47,6 +47,20 @@
 # 宁可注释里留着指针（本地读得通），也不把过程记录公开。
 dev-docs/
 
+# ⚠️★ 工作日志**也不入库**（2026-09-30 定）—— 与上面 `dev-docs/` 同一条理由：
+#    它是「这一轮为什么这么做、上一版错在哪」的过程记录，不是成品文档。
+#
+# ⚠️ 它当初**不是有意**入库的：`.workbuddy/memory/2026-09-30.md` 是在
+#    `chore: rename the local design notes from docs/ to dev-docs/`（06c5f3b）
+#    那一次被一起收进去的 —— 那次是**改名**提交，却顺带带了 51 行日志。
+#    也就是说：那条提交的 `git add` 扫到了它，而不是谁决定要公开它。
+#    → 补上这条规则的同时，把那一份从索引里摘掉（`git rm --cached`，
+#      **文件留在本地磁盘**，照样读得到）。规则不摘索引的话等于没写。
+#
+# ⚠️ 与 `dev-docs/` 不同的是：这个目录是**工具的数据目录**（不是缓存），
+#    所以只忽略、**绝不要删** —— 删了会丢历史日志。
+/.workbuddy/
+
 # 本地运行数据（redb 库、uploads/、config.json）—— 由服务自己创建，不入库
 /data/
 *.redb
@@ -59,6 +73,15 @@ config.json
 #    OpenWrt 的二进制、ipk、apk 全在 `openwrt/build/`（见 `openwrt/README.md`）。
 /dist/
 /openwrt/build/
+# ⚠️★ 上面那条 `/dist/` **盖不到**这两个 —— `release.yml` 的四个打包 job
+#    （linux / macos / windows / desktop）都在 `rust/` 里干活（与「cargo 命令都要在
+#    `rust/` 里跑」同一条规矩），所以它们的产物落在 `rust/dist/`、临时日志落在
+#    `rust/cross.log`（linux job 那句 `cross build … 2>&1 | tee cross.log`）。
+#    ⚠️ 2026-09-30 实地核过：本机照那条命令跑一次，这两个就会出现在工作区，
+#    而当时 `.gitignore` 里**没有**任何一条能盖住它们（`/dist/` 只匹配根目录）——
+#    下一次 `git add -A` 就会把打好的包与那份日志一起收进来。
+/rust/dist/
+/rust/cross.log
 
 # ── 顶层摆法：`rust/` 一格里是**全部 Rust**，其余各占一格（2026-09-28）──
 #
