@@ -140,6 +140,8 @@
       'configRoomNoServer': '房间「{room}」没填服务端地址',
       'configRoomBadServer': '房间「{room}」的服务端地址不对：{reason}',
       'configRoomBadScheme': '房间「{room}」的地址用了 {scheme}，只支持 http/https',
+      'configRoomDuplicate':
+        '房间「{room}」和另一个房间指向同一台服务端的同一个房间（地址只差大小写或尾斜杠）—— 其中一个的状态不会更新',
       'configRoomEmojiIgnored': '房间「{room}」的图标「{emoji}」不像 emoji，已忽略',
       'configMultipleDownloads': '{count} 个房间同时开着下载：{rooms}',
       'configNotSaved': '配置没存下去：{reason}',
@@ -636,6 +638,8 @@
       'configRoomNoServer': 'Room "{room}" has no server address',
       'configRoomBadServer': 'Room "{room}" has a bad server address: {reason}',
       'configRoomBadScheme': 'Room "{room}" uses {scheme}; only http/https is supported',
+      'configRoomDuplicate':
+        'Room "{room}" points at the same room on the same server as another room (the addresses differ only in case or a trailing slash), so one of them will never update',
       'configRoomEmojiIgnored': 'Room "{room}" has an icon "{emoji}" that does not look like an emoji, so it was ignored',
       'configMultipleDownloads': '{count} rooms download at once: {rooms}',
       'configNotSaved': 'The config was not saved: {reason}',
