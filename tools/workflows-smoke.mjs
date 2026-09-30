@@ -940,6 +940,87 @@ const pkgApk = read('openwrt/scripts/package-openwrt-apk.sh');
   if (problems.length) fail(label, problems.join('\n    '));
 }
 
+// ── 判据 10：发版在 main 上留一条版本标记（空提交，不改任何文件）────────────
+//
+// ⚠️★ 为什么要它：`record-version` 是**漏了也不报错**的那一类 —— 没有它，发布照样全绿、
+//    资产照样传上去，只是 `git log` 里一条版本信息都没有。Jonny 2026-09-30 就是这么发现的
+//    （「我发版,git记录为什么没有版本信息,类似 `bump version` 这样」）—— clip9 移植发布
+//    流程时漏了这个 job（Go 版 `cloud-clipboard-go` 的 `record-version` 从 v5.1.0 起就在跑）。
+//
+// ⚠️★ 第二件事：这条记录**不许改文件**。版本号的唯一权威是 **tag 本身**（`CHANGELOG.md`
+//    抬头那条）；往仓库里再写一份就有两个真值，而那类漂移**只在发布那天才响**
+//    （平时两份数并排躺着、谁也不报错）。所以判的是「空提交」这个形状。
+//
+// ⚠️★ 第三件事：判重**必须是整行相等**，而且**不走 `grep -q`**。这是两个都发生过的坑：
+//    ① 用 `git log --grep` 是**子串**匹配 —— `chore(release): v0.1.0` 会撞上
+//       `chore(release): v0.1.0-beta4`，于是 beta 先发之后**正式版的记录被吞掉**
+//       （而「beta 先、正式版后」正是本仓库的常规顺序，这一撞是必然的）；
+//    ② `| grep -q` 一命中就退出 → 上游 `git log` 吃 SIGPIPE → `set -euo pipefail` 下
+//       **匹配成功也判成失败** → 每次重跑多堆一条（Go 版 v5.1.0 就因此出现了**两条**，
+//       那边用 `fix(release): stop the version marker duplicating on re-run` 修的）。
+//    正确形状是 `git log --format=%s | grep -Fx -- "<整行>"`（`-Fx` = 整行字面，无 `-q`）。
+//
+// ⚠️★ 扫之前**先剥注释**：这个 job 的注释里**刻意举了 `grep -q` 这个反例**，
+//    不剥就会把注释当成代码 → 判据永远红（LESSONS 一：扫全文的判据会把注释里的示例当数据）。
+{
+  const label = '判据 10：record-version 在 main 上留版本标记（空提交 · 不改文件 · 判重不走管道）';
+  const raw = jobBlock(release, 'record-version');
+  const problems = [];
+  if (raw === null) {
+    problems.push(
+      'release.yml 里没有 `record-version` job —— 发完版 `git log` 里看不到任何版本信息。\n' +
+        '    Go 版（父仓库 cloud-clipboard-go）有这个 job，clip9 移植发布流程时漏了。',
+    );
+  } else {
+    // 剥注释：只留 `#` 不占行首的整行（YAML 与 `run: |` 里的 shell 注释一并剥掉）。
+    const body = raw
+      .split('\n')
+      .filter((l) => !/^\s*#/.test(l))
+      .join('\n');
+    const needs = jobNeeds(release, 'record-version');
+    if (needs === null || !needs.includes('publish')) {
+      problems.push(
+        `needs 里没有 \`publish\`（读到的是 ${JSON.stringify(needs)}）—— 记录要排在资产传完之后`,
+      );
+    }
+    if (!/git commit --allow-empty -m "chore\(release\): [^"]+"/.test(body)) {
+      problems.push(
+        '提交不是 `git commit --allow-empty -m "chore(release): <tag>"` 这个形状。\n' +
+          '    `--allow-empty` 是**必须**的：它保证这条记录**不改任何文件** —— 改了就等于往\n' +
+          '    仓库里放了第二份版本号，那种漂移只在发布那天才响。',
+      );
+    }
+    if (/git add /.test(body)) {
+      problems.push('job 里出现了 `git add` —— 这条记录不允许改任何文件（版本号只认 tag）');
+    }
+    if (/grep -q/.test(body)) {
+      problems.push(
+        '判重用了 `grep -q` —— 在 `set -euo pipefail` 下 SIGPIPE 会把「匹配成功」判成失败，\n' +
+          '    于是每次重跑都多堆一条记录（Go 版 v5.1.0 就因此出现了两条）。用不带 `-q` 的 `grep`。',
+      );
+    }
+    if (/--grep/.test(body)) {
+      problems.push(
+        '判重用了 `git log --grep` —— 那是**子串**匹配：`chore(release): v0.1.0` 会撞上\n' +
+          '    `chore(release): v0.1.0-beta4`，于是 beta 先发之后**正式版的记录被吞掉**\n' +
+          '    （「beta 先、正式版后」正是本仓库的常规顺序）。要整行相等。',
+      );
+    }
+    // 整行相等两种写法都认（不必钉死一种形状）。
+    const exactLine =
+      /grep -Fx/.test(body) ||
+      /\[\s*"\$[A-Za-z_]\w*"\s*=\s*"chore\(release\): /.test(body);
+    if (!exactLine) {
+      problems.push(
+        '判重看不出「整行相等」的形状（既没有 `grep -Fx`，也没有 `[ "$x" = "chore(release): …" ]`）\n' +
+          '    —— 子串匹配会让正式版撞上同名 beta 那条记录。',
+      );
+    }
+    if (!problems.length) ok(label);
+  }
+  if (problems.length) fail(label, problems.join('\n    '));
+}
+
 // ── 输出 ────────────────────────────────────────────────────────────────────
 
 if (failures.length) {

@@ -990,3 +990,75 @@ jobs:
           git commit -m "clip9 ${TAG}"
           git push
           echo "· 已更新 ${TAP}"
+
+  # ══════════════════════════════════════════════════════════════════════════
+  # 在 main 上留一条「vX.Y.Z 发过了」的记录 —— **不动任何文件**
+  #
+  # ⚠️★ 为什么是**空提交**（`--allow-empty`），而不是「改一个版本号文件再提交」：
+  #   本仓库刻意**不让版本号落进文件里**（`CHANGELOG.md` 抬头那条）——
+  #   版本号的唯一权威是 **tag 本身**。要是再往仓库里写一份，就有了两个真值，
+  #   而那种漂移**只在发布那天响**（平时两份数并排躺着、谁也不报错）。
+  #   不改文件 ⇒ 没有第二份真值可漂移，同时 `git log` 里还是留得下一条
+  #   `chore(release): vX.Y.Z`，一眼看出发过哪几版、各自在哪天。
+  #
+  # ⚠️★ 这条是照 Go 版（父仓库 `cloud-clipboard-go` 的 `record-version` job）抄的，
+  #   那边从 v5.1.0 起就这么发。clip9 移植发布流程时**漏掉了这一个 job**（2026-09-30 补）
+  #   —— 症状就是翻 `git log` 一条版本信息都找不到。
+  #
+  # ⚠️★ **判重**这件事踩过两个坑，两个都发生在 Go 版，两个都不报错（下面那段脚本里逐条写着）：
+  #   ① 只用 `git log --grep` 是**子串**匹配 → `chore(release): v0.1.0` 撞上
+  #      `chore(release): v0.1.0-beta4` → **正式版的记录被吞掉**（beta 先、正式版后是本仓库的
+  #      常规顺序，所以这一撞是必然，不是偶然）；
+  #   ② `| grep -q` 一命中就退出 → 上游 `git log` 吃 SIGPIPE → `set -euo pipefail` 下
+  #      **匹配成功也判成失败** → 每次重跑多堆一条（Go 版 v5.1.0 因此出现**两条**，那边后来用
+  #      `fix(release): stop the version marker duplicating on re-run` 修的）。
+  #   结论：`git log --format=%s | grep -Fx -- "<整行>"` —— `-Fx` 是整行**字面**相等，
+  #   不带 `-q`（读完全部输入，无 SIGPIPE）。两个坑一次绕开。
+  #
+  # ⚠️ 排在 `publish` 之后：先保证资产传完，记录是收尾动作，它失败也不影响已发布的产物。
+  #
+  # ⚠️★ 与 Go 版的一处**已知差异**（2026-09-30 核实过，别以为是照抄漏了）：
+  #   那边只有 `pages.yml` 挂 `push → main`，且带 `paths: docs/**` —— 空 diff 判定为
+  #   **不匹配**，所以那条空提交**不触发任何 workflow**。clip9 的 `ci.yml` 是
+  #   `push: branches: [main]`、**没有 paths 过滤** ⇒ 会多跑一次 CI（rust + frontend 全套）。
+  #   那一次必然绿（一个文件都没动），代价是几分钟 runner 时间，换来「`git log` 里看得见版本」。
+  #   ⚠️ **别**为了省这一次去给 `ci.yml` 加 `paths-ignore`：那会真的放走改动。
+  # ══════════════════════════════════════════════════════════════════════════
+  record-version:
+    needs: [info, publish]
+    # 与 `publish` 同一个条件：手动跑、tag 留空的那次冒烟**只构建、不记录**。
+    if: github.event_name == 'release' || inputs.tag != ''
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Commit and push the version marker
+        shell: bash
+        run: |
+          set -euo pipefail
+          TAG="${{ needs.info.outputs.tag }}"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          # ⚠️★ 判重**必须整行相等**（`grep -Fx`），不能只用 `git log --grep` ——
+          #   那是**子串**匹配，而 `chore(release): v0.1.0` 正是
+          #   `chore(release): v0.1.0-beta4` 的**前缀**：于是「先发 beta、再发正式版」
+          #   （本仓库的常规顺序）时，正式版会被误判成「已经记过」→ **它的记录被吞掉**，
+          #   而这件事**没有任何症状**（发布照样绿）。2026-09-30 在假仓库里实测到过：
+          #   `--grep="chore(release): v0.1.0"` 命中的是 beta4 那条。
+          #
+          # ⚠️★ 这里也**不用 `grep -q`**：一命中就退出，上游的 `git log` 还在写就会吃到
+          #   SIGPIPE；脚本开头是 `set -euo pipefail`，于是**匹配成功也被判成失败**
+          #   （实测 `set -o pipefail; yes | grep -q y` 退出码非 0，去掉 pipefail 才是 0）。
+          #   结果就是每次重跑都多堆一条记录 —— Go 版 v5.1.0 因此出现了两条。
+          #   不带 `-q` 的 `grep` 会读完全部输入，从根上没有这个坑。
+          if [ -n "$(git log --format=%s | grep -Fx -- "chore(release): ${TAG}" || true)" ]; then
+            echo "main 上已有 ${TAG} 的记录，跳过"
+            exit 0
+          fi
+          git pull --rebase origin main
+          git commit --allow-empty -m "chore(release): ${TAG}"
+          git push origin HEAD:main
+          echo "已记录 ${TAG}"
