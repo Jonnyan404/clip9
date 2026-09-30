@@ -198,11 +198,93 @@ async fn main() -> anyhow::Result<()> {
         None => tracing::info!("前端产物：用编进二进制的那一份（rust/crates/server/static）"),
     }
 
+    // ⚠️★ 「宿主没了就跟着退出」——**桌面端会让它开**（见 [`exit_with_parent`] 的文档）。
+    // 放在这里而不是更早：起服务之前失败（配置坏了 / 目录不存在）本来就该照常报错退出，
+    // 不需要那条管子来告诉它。
+    if exit_with_parent_requested() {
+        watch_parent();
+    }
+
     // ⚠️★ 「绑定端口 + 起服务」那一段**不在这个文件里** —— 它在 `clip9_server::serve`。
     // 抽出去的理由是**一处定义**：它里面那句 `into_make_service_with_connect_info` 漏了
     // 会让直连场景的 `senderIP` 为空（不报错），而 Android 那侧也要起同一个服务端。
     // 见 `crates/server/src/serve.rs` 的模块文档。
     clip9_server::serve::serve_until_first_error(config, store, static_dir).await
+}
+
+/// 让这个进程**在宿主消失时自己退出**的那个开关（环境变量）。
+///
+/// # 为什么要有它（2026-09-30）
+///
+/// 桌面端把服务端当**子进程**起（`server_process::start`）。子进程**不会**跟着父进程一起死，
+/// 所以桌面端在退出时显式 `stop()` 它。但那条路只盖住**优雅退出** ——
+/// 崩溃、被强杀、安装器在它跑着的时候把 app 包换掉，都会留下一个**孤儿服务端**。
+///
+/// 而孤儿的后果不只是「占着端口」：**新版本的桌面端启动时探测到端口有人答话就复用它**
+/// （原来的行为），于是界面里跑的是**旧版本那一份前端**。2026-09-30 Jonny 看到的
+/// 「主题切换同步没了、首启隐藏输入框也没了」，就是这么来的 —— 代码一行没丢，
+/// 只是那个界面上还没有这些功能。
+///
+/// # 为什么是「读标准输入到 EOF」而不是别的
+///
+/// 三种候选里只有它能**跨平台、不加依赖、也不要新参数**：
+/// - `prctl(PR_SET_PDEATHSIG)`：只有 Linux。
+/// - 轮询 `getppid()`：Windows 上没有这个语义。
+/// - **stdin 的写端在宿主手里**：宿主一死（哪怕是 `SIGKILL`），内核关掉那个 fd，
+///   这边 `read` 就返回 `0`（EOF）→ 退出。Windows 上一样成立。
+///
+/// ⚠️★ 前提是宿主真的**开了一条给我们的管子**（`Stdio::piped()`）。所以这个开关与那句
+/// `piped()` 是**一对**，桌面端那边有测试钉着；从终端手工带上这个变量也不会被误伤
+/// （终端不会 EOF，除非你把终端关了 —— 那时也确实该退）。
+///
+/// ⚠️ 退出用 `std::process::exit`（跳过析构），与 `stop()` 那边用 `SIGKILL` 同一个理由：
+/// redb 的写是事务性的、崩溃安全（见 `ARCHITECTURE.md`）。而「优雅退出」要跨平台发信号，
+/// 为一个「宿主没了」的场景引入那套不划算。
+///
+/// ⚠️ 名字按**意图**取（跟宿主同生共死），不是按实现（stdin）。实现可能换，意图不会。
+const EXIT_WITH_PARENT: &str = "CLIP9_EXIT_WITH_PARENT";
+
+/// 桌面端（或别的宿主）有没有要求「宿主没了就退出」。
+///
+/// ⚠️ 与命令行参数刻意**不是一套**：加一个 `-exit_with_parent` 会让参数表与 Go 版分叉
+///（那张表的注释里写着为什么不能分叉）。而这是个**宿主与子进程之间的私事**，
+/// 用户不该在 `-h` 里看到它 —— 环境变量正好是那个层级的接口（`CLIP9_STATIC` 也是这么用的）。
+fn exit_with_parent_requested() -> bool {
+    match std::env::var(EXIT_WITH_PARENT) {
+        Ok(value) => {
+            tracing::info!(
+                variable = EXIT_WITH_PARENT,
+                value = %value,
+                "宿主没了就退出：已启用（这个进程是宿主起的子进程）"
+            );
+            true
+        }
+        Err(_) => false,
+    }
+}
+
+/// 盯着标准输入，**读到 EOF 就退出**（见 [`EXIT_WITH_PARENT`] 的文档）。
+///
+/// ⚠️ 别人真往这跟管子里写东西不会被打断：只在**读不动了**（EOF / 出错）时才退。
+/// 宿主根本不会往里写 —— 这条管子唯一的用途就是「我还活着」这个信号。
+fn watch_parent() {
+    std::thread::spawn(|| {
+        let mut sink = [0u8; 64];
+        let mut stdin = std::io::stdin();
+        loop {
+            match std::io::Read::read(&mut stdin, &mut sink) {
+                // ★ 这一句就是「宿主没了」：写端在宿主手里，它一死内核就关掉那个 fd。
+                Ok(0) => break,
+                Ok(_) => continue,
+                Err(error) if error.kind() == std::io::ErrorKind::Interrupted => continue,
+                Err(_) => break,
+            }
+        }
+        // ⚠️ 只进日志（stdout/stderr 被宿主重定向到 `server.log`）——
+        // 这是「这个服务端为什么自己没了」的唯一线索。
+        tracing::info!("宿主没了（标准输入关闭）—— 本进程跟着退出");
+        std::process::exit(0);
+    });
 }
 
 /// 取一个**字符串**参数：**非空才算给了**。
