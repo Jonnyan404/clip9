@@ -31,8 +31,8 @@
   编得过、装得上、一调就炸）。用 `tools/sync-android-jni-libs.mjs` 搬，`--check` 能提前问一句。
 - `app/proguard-rules.pro` 里的 `-keep`：release 开了 R8，**类名一改短第 1 条就废了**。
 
-⚠️ 上面这五处现在**逐条有判据**：`node tools/android-contract-smoke.mjs`（16 条，已接进 CI 的
-frontend job）。它管五组：
+⚠️ 上面这五处现在**逐条有判据**：`node tools/android-contract-smoke.mjs`（已接进 CI 的
+frontend job）。它管六组：
 
 - 「ABI 名单在三处是否一致」+「库名 / JNI 符号名在六处是否一致」；
 - 「`jniLibs/<abi>/` 真的有占位」「构建产物路径（`app/build`、`build`、`.gradle`、`.kotlin`、
@@ -45,6 +45,11 @@ frontend job）。它管五组：
   内容高宽，`AT_MOST` 之下会被量成**整屏高**（2026-09-29 一根 1dp 的分隔线就这样把
   整个管理页撑没了：面板 827dp、`ScrollView` 0 高，页签与三页内容全消失且不报错）。
   分隔线这类东西用稿子的 gap 做法（相邻格 margin 露出容器底色）。
+- **契约 G**：全屏覆盖子页（`layout_height="match_parent"`、id 以 `Page` 结尾）必须是**根
+  `FrameLayout` 的直接子**。`match_parent` 高只在 FrameLayout 里等于「铺满窗口」，塞进 vertical
+  `LinearLayout` 就变成「父的整高」并被排到前面兄弟之后 —— 前面若有 `0dp + weight=1` 的
+  兄弟，子页会被推到**屏幕外**，而它内部那个 ScrollView 自认为有整屏高 → **怎么划都不动**
+  （2026-09-30：「远端服务器添加页面划不动」就是这个，层错了而症状在滚动上）。
 
 ⚠️ 变异验证分三份台本（都在 `/tmp`，仓库文件一行不碰；夹具是那边一个真的 git 仓库）：
 
