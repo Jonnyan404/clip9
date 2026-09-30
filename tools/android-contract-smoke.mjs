@@ -1275,6 +1275,95 @@ function bareViewBlowups() {
   }
 }
 
+// ── 契约 G：主体之外的全屏子页必须顶格挂在根上 ─────────────────────────────
+
+/**
+ * 找出 `activity_main.xml` 里所有「**覆盖子页**」—— 判据是两个条件同时成立：
+ * id 以 `Page` 结尾（本页的命名约定：`remoteListPage` / `remoteEditPage`）
+ * + `layout_height="match_parent"`（要铺满整个窗口）。
+ *
+ * ⚠️ 这里**故意不带 `visibility` 条件**：带上它就有个洞 —— 把子页改成默认
+ * `visible`（那本身就是错的，会盖住主体）反而让它从判据里消失。
+ * 三页签那三个 `pageConnect/pageConfig/pageOther` 是 `wrap_content`，命中不了。
+ *
+ * ⚠️★ 为什么必须是**根 FrameLayout 的直接子**（2026-09-30 踩过，症状极难反推）：
+ * `match_parent` 的含义由父容器给：FrameLayout 里是「铺满整个窗口」，
+ * 而在 **vertical LinearLayout** 里是「父的整高」—— 子会被**按整屏高**测量，
+ * 再顺着兄弟依次往下排。于是：
+ *   ① 它前面的兄弟（`connectTop` 大面板，943px）先占掉顶部 → 子页从 y=1047 起；
+ *   ② 兄弟里那个 `0dp + weight=1` 的 ScrollView 在**第一轮测量**就把「剩余空间」
+ *      认领走，子页第二轮按整屏高往下排 → **第二个子页的起点落到 y=3219，屏幕外**；
+ *   ③ 子页内部那个 ScrollView 自认为有整屏高、内容还没超出 → **怎么划都不动**。
+ * 用户看到的就是「远端服务器添加页面划不动」这七个字，而真实原因在**层的归属**上，
+ * 与滚动、与 EditText、与 ScrollView 全都无关 —— 所以只能靠这条判据问住它。
+ *
+ * ⚠️ 与契约 F 同一套手写标签扫描（Node 没有内置 XML 解析器），注释先剥掉。
+ * ⚠️ 覆盖面止于此：它只管**层**（depth）。把某个子页**改个不以 `Page` 结尾的名字**
+ * 会让它从这条判据里消失 —— 那一步由**契约 D** 兜（Kotlin 里的 `R.id.<旧名>`
+ * 会立刻变成「布局里没有 @+id」）。变异验证时两个方向都试过。
+ */
+function fullScreenSubPages() {
+  const file = join(ROOT, 'android/app/src/main/res/layout/activity_main.xml');
+  if (!existsSync(file)) return null;
+  const text = stripXmlComments(readFileSync(file, 'utf8'));
+  const TAG = /<(\/?)([A-Za-z][\w.]*)((?:\s+[\w:]+="[^"]*")*)\s*(\/?)>/g;
+  const stack = [];
+  const found = [];
+  let rootTag = '';
+  let m;
+  while ((m = TAG.exec(text)) !== null) {
+    const [, closing, tag, attrs, selfClose] = m;
+    if (closing) {
+      stack.pop();
+      continue;
+    }
+    const depth = stack.length;
+    if (depth === 0) rootTag = tag;
+    const get = (prop) => {
+      const hit = new RegExp(`android:${prop}="([^"]*)"`).exec(attrs);
+      return hit ? hit[1] : '';
+    };
+    const id = get('id').replace('@+id/', '');
+    if (/Page$/.test(id) && get('layout_height') === 'match_parent') {
+      found.push({ id, depth, line: text.slice(0, m.index).split('\n').length });
+    }
+    if (!selfClose) stack.push({ tag, get });
+  }
+  return { rootTag, found };
+}
+
+{
+  const label = '契约 G：全屏覆盖子页（match_parent 高的 *Page）是根 FrameLayout 的直接子';
+  const scan = fullScreenSubPages();
+  if (scan === null) {
+    fail(label, '读不到 android/app/src/main/res/layout/activity_main.xml');
+  } else if (!scan.found.length) {
+    // ⚠️ 这条判据靠「找得到那几个 id」成立：一个都没找到时说明**扫描没对上**
+    //    （改名了？换文件了？），不是「没问题」—— 所以这里判红而不是跳过。
+    fail(
+      label,
+      '一个全屏覆盖子页都没扫到 —— 这几个 id 不在这个文件里了？\n' +
+        '        （扫描面失效时判红，别让它悄悄变成一条永远为真的判据）',
+    );
+  } else {
+    const bad = scan.found.filter((p) => p.depth !== 1 || scan.rootTag !== 'FrameLayout');
+    if (bad.length) {
+      fail(
+        label,
+        bad
+          .map((p) => `activity_main.xml:${p.line}  #${p.id} 挂在第 ${p.depth} 层（根是 <${scan.rootTag}>）`)
+          .join('\n    ') +
+          '\n    ⚠️★ `match_parent` 高只在 **FrameLayout** 里等于「铺满窗口」；放进 vertical\n' +
+          '       LinearLayout 就变成「父的整高」，还会被排到前面兄弟之后 —— 前面若有\n' +
+          '       `0dp + weight=1` 的兄弟，子页会被推到屏幕外，症状是「子页划不动」。\n' +
+          '       → 把这段**顶格**搬到根下面（与主体那层 LinearLayout 并列）。',
+      );
+    } else {
+      ok(`${label} —— ${scan.found.map((p) => p.id).join(' / ')}`);
+    }
+  }
+}
+
 // ── 输出 ────────────────────────────────────────────────────────────────────
 
 function report() {
