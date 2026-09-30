@@ -426,13 +426,53 @@ jobs:
           mkdir -p crates/desktop/binaries
           cp "target/${{ matrix.target }}/release/$BIN$exe" "crates/desktop/binaries/$BIN$exe"
 
+      # ★ 把 tag 里的版本号注进这次构建 —— **发布产物上唯一的版本真值**。
+      #
+      # ⚠️★ 为什么必须有这一步：版本号只住在 tag 里（`CHANGELOG.md` 开头那条纪律），
+      #    而 `tauri.conf.json` 里原来那个 `version`（2026-09-30 已删）与
+      #    `rust/Cargo.toml` 的 `[workspace.package] version` 都只是**本地兜底**。
+      #    没有这一步，发出去的桌面端**每一个版本都自称 0.1.0**（当时最新 tag 已经是
+      #    `v0.1.1-beta1`）—— 界面上那个「客户端版本」与用户手里那个包各说各话，
+      #    而两份看起来都正常。Android 早就是这么做的（`android.yml` 用 `-PversionName`
+      #    注入），这一步是给桌面端补上同一件事。
+      # ⚠️★ 它同时是**任何更新检查的前置**：updater 比的是「当前版本 vs 线上清单」，
+      #    当前版本恒为 0.1.0 的话，装了新版的人会永远被提示「有新版本」。
+      #
+      # ⚠️ 版本号与 versionCode 的换算**只在 `tools/release-version.mjs`** ——
+      #    这里不许自己拼（那正是「两处会漂」的起点）。
+      # ⚠️ 用 `--config <文件>` 而不是内联 JSON：内联那份要穿过 shell 与 tauri-action
+      #    的参数拆分，引号少一个就变成非法 JSON，而报错发生在打包那一步，很难对上。
+      #    路径放 `$RUNNER_TEMP`：三个平台都带不出空格（`D:\a\_temp`），也不进仓库。
+      # ⚠️ `bundle.macOS.bundleVersion` 要**一起**给：它是 Info.plist 里的 `CFBundleVersion`，
+      #    不给就取 `version` 那份，而预发布的 `0.1.1-beta1` **不是** Apple 认的点分数字形状。
+      #    `version_code`（`MAJOR*100000+MINOR*1000+PATCH`）正好是个整数。
+      - name: 把 tag 的版本号注进构建
+        shell: bash
+        run: |
+          set -euo pipefail
+          out="$(node tools/release-version.mjs --tag "${{ needs.info.outputs.tag }}")"
+          version="$(printf '%s\n' "$out" | sed -n 's/^version=//p')"
+          code="$(printf '%s\n' "$out" | sed -n 's/^version_code=//p')"
+          if [ -z "$version" ] || [ -z "$code" ]; then
+            echo "::error::取不到版本号 —— tools/release-version.mjs 的输出是：$out"
+            exit 1
+          fi
+          printf '{"version":"%s","bundle":{"macOS":{"bundleVersion":"%s"}}}\n' \
+            "$version" "$code" > "$RUNNER_TEMP/tauri-version.json"
+          cat "$RUNNER_TEMP/tauri-version.json"
+
       # ② 桌面端打包。⚠️ 不传任何 release 参数：发 Release 归下面那个唯一的 publish job。
       - uses: tauri-apps/tauri-action@v1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           projectPath: rust/crates/desktop
-          args: --target ${{ matrix.target }} --bundles ${{ matrix.bundles }}
+          # ⚠️ 末尾那份 `--config` 就是上面那一步写的文件（与 `tauri.windows.conf.json`
+          #    是同一套 JSON Merge Patch 机制：只盖 `version` 与 macOS 的 `bundleVersion`，
+          #    其余整份配置照旧）。⚠️ 路径里**不能有空格** —— tauri-action 会按空格拆参数。
+          args: >-
+            --target ${{ matrix.target }} --bundles ${{ matrix.bundles }}
+            --config ${{ runner.temp }}/tauri-version.json
 
       # ⚠️ 只收**能当 Release 资产的文件**：`.app` 是目录，当不了资产（它的内容在 dmg 里）。
       # ⚠️ 扩展名从文件名上取（`${f##*.}`），所以这里不写死 dmg/deb/AppImage 之外的清单，

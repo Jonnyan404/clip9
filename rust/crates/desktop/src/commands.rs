@@ -201,6 +201,21 @@ pub struct SettingsView {
     /// 抄第二遍，而两份一定会漂 —— 漂了的表现是界面显示一个**不生效**的键。
     /// 算法只有一处（`hotkeys::display_toggle_window`）。
     pub hotkey_toggle_window: String,
+    /// 桌面客户端**壳自己的**版本（`0.1.1-beta1`），关于页那一行就用它。
+    ///
+    /// ⚠️★ 为什么是 `package_info()` 而不是 `env!("CARGO_PKG_VERSION")` ——
+    /// 这两个在**发布时**会不一致，而且差得刚好是这个字段的意义：
+    /// 发版时把 tag 里的版本注进构建，走的是 `tauri build --config …`
+    ///（`release.yml` 的 desktop job；它的值由 `tools/release-version.mjs` 算），
+    /// 它覆盖的是 **Tauri 的配置版本**，**一个字都不动 `Cargo.toml`**。
+    /// 于是用 cargo 那个常量的话，界面上会印着仓库里那份兜底的 `0.1.0`，
+    /// 而用户手里那个包装的其实是 `0.1.1-beta1` —— 正是这个项目最忌讳的
+    /// 「两处各说各话，且看起来一样正常」。
+    ///
+    /// ⚠️ 与「本地服务端」那一页的「版本」（[`ServerStatusView::version`]，问的是
+    /// 那个二进制自己 `-v`）是**两件事**，别合并：一个是客户端壳的版本、一个是内嵌服务端的。
+    /// 界面稿那张卡上的「版本」指的是**后者**，这一行是 2026-09-30 补的。
+    pub client_version: String,
     pub data_dir: String,
     pub config_path: String,
 }
@@ -228,6 +243,10 @@ pub fn settings_view(app: tauri::AppHandle, store: State<'_, Arc<Store>>) -> Set
         // ⚠️ 给界面看的写法由壳算（`hotkeys::display_toggle_window`）——
         // 算法只有一处，否则界面会显示一个已经不生效的键。
         hotkey_toggle_window: crate::hotkeys::display_toggle_window(),
+        // ⚠️★ 客户端的版本**问 Tauri 要**（配置版本）—— 不是 `env!("CARGO_PKG_VERSION")`：
+        // 发布时那份是 CI 用 `tauri build --config …` 注进来的，只改配置、不改 `Cargo.toml`
+        //（字段上那段注释写了为什么）。问 Tauri 要，显示的才是**这个包真正的**版本。
+        client_version: app.package_info().version.to_string(),
         data_dir: snapshot.data_dir,
         config_path: snapshot.config_path,
     }
