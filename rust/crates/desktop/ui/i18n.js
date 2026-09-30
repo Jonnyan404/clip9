@@ -618,7 +618,6 @@
       'spaProbeUnreachable': 'Cannot reach that server (timed out or unreachable)',
       'spaProbeNotClip9': 'That server has no embeddable web UI — please update it to clip9',
       '正在检查这个站点…': 'Checking this site…',
-      '这个站点没有可嵌入的网页版': 'This site has no embeddable web UI',
       '把它更新到 clip9 的新版本之后，这里就能直接看网页版。':
         'Update it to a newer clip9 and its web UI will show up right here.',
       '去 clip9 项目': 'Open the clip9 project',

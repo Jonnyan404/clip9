@@ -321,15 +321,28 @@ async function probeSite(base) {
 function renderBlocked() {
   el('spa-blocked-addr').textContent = spaBase || '';
   const why = el('spa-blocked-why');
+  const update = el('spa-blocked-update');
   const project = el('spa-blocked-project');
   if (spaSite === 'checking') {
     why.textContent = t('正在检查这个站点…');
+    update.hidden = true;
     project.hidden = true;
     return;
   }
   // ⚠️ 原因句是**壳给的 `Msg`**（键 + 参数），走 `I18N.say` 渲染 —— 不在这里拼中文。
+  // ⚠️★ 它是**标题**（`.t`），不是小字：这一格原来是写死的一句「这个站点没有可嵌入的
+  // 网页版」，而那句话只对三种原因里的第一种成立。2026-09-30 的实际后果：
+  // 用户配的地址写成 `Https://…`（大小写），界面却告诉他「这个站点没有可嵌入的网页版」，
+  // 于是他跑去查部署 —— 真正的原因在下一行，而那一行被当成了备注。
   why.textContent = spaReason ? I18N.say(spaReason) : '';
-  project.hidden = false;
+  // ⚠️★ 「把它更新到 clip9」这条建议**只对一种原因成立**（那台答了、答的不是我们的网页版）。
+  //    地址不是 http(s) / 连不上时，更新服务器改变不了任何事 —— 那时候摆着这句话和那颗
+  //    「去 clip9 项目」的按钮，等于把人指向**错误的方向**。
+  //    ⚠️ 判的是键名：`spaReason` 是壳递过来的 `Msg`（`{key, params}`），键名是两边的契约
+  //    （`probe_site` 那三个 `Msg::key`），不是抄一句中文。
+  const canUpdate = spaReason?.key === 'spaProbeNotClip9';
+  update.hidden = !canUpdate;
+  project.hidden = !canUpdate;
 }
 
 /** 给 iframe 里那份 SPA 发一条消息。
