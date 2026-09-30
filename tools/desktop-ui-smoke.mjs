@@ -539,6 +539,17 @@ if (!showNoticeDef) {
   }
 }
 
+// ③ 换房间要**立刻收起**上一条（2026-09-30，Jonny 报的「切到 B 还挂着 A 的」）。
+// ⚠️★ 钉的是那一句的形状：`state.selected !== noticeRoom` 时调 `hideNotice()`。
+//    拆掉它 = 提示又跨房间挂着，而界面看起来**完全正常** —— 只是主语错了
+//（「已发出」挂在 B 的房间标题下面，读起来就是 B 发的事）。
+if (!/state\.selected !== noticeRoom[^\n]*hideNotice\(\)/.test(js)) {
+  failed = true;
+  console.error('✗ 换房间那一拍不再收起提示了（`render` 里那句 `state.selected !== noticeRoom` → `hideNotice()`）：');
+  console.error('    症状是 Jonny 2026-09-30 报的那条：切到 B 房间，上面还挂着 A 房间那条提示 ——');
+  console.error('    提示归房间，而这一格长在那个房间的标题下面，挂着上一条读起来就是这个房间的事。');
+}
+
 // ── 判据 7：提示不许再挂十几秒（理由见文件头）──────────────────────────
 const noticeMs = js.match(/\bNOTICE_MS\s*=\s*(\d+)/);
 const NOTICE_MS_MAX = 5000;
@@ -1762,20 +1773,26 @@ if (entryViewFiles.length !== 1) {
 
     // ④ 所有者：`#notice` 只被 `showNotice` 碰。
     const showNoticeBody = /function showNotice\(level, text\)\s*\{[\s\S]*?\n\}/.exec(bareJs);
-    if (!showNoticeBody) {
-      problems.push('`app.js` 里找不到 `function showNotice(level, text)` —— 判据要跟着代码改');
+    const hideNoticeBody = /function hideNotice\(\)\s*\{[\s\S]*?\n\}/.exec(bareJs);
+    if (!showNoticeBody || !hideNoticeBody) {
+      problems.push(
+        '`app.js` 里找不到 `function showNotice(level, text)` / `function hideNotice()` —— 判据要跟着代码改',
+      );
     } else {
+      // ⚠️★ 恰好 **2** 处：显示（`showNotice`）与收起（`hideNotice`）各一处
+      //（2026-09-30 加 `hideNotice` 时这条从 1 → 2）。别处再碰它 = 又冒出第三个所有者。
       const touches = [...bareJs.matchAll(/el\(\s*\u0000?notice\u0000?\s*\)/g)].length;
-      if (touches !== 1) {
+      if (touches !== 2) {
         problems.push(
-          `\`el('notice')\` 在 app.js 里出现了 ${touches} 次 —— 只能有 1 次（在 showNotice 里）；` +
-            '别处再碰它，就等于又冒出第二个所有者',
+          `\`el('notice')\` 在 app.js 里出现了 ${touches} 次 —— 只能有 2 次（showNotice 与 hideNotice 各 1）；` +
+            '别处再碰它，就等于又冒出第三个所有者',
         );
       }
+      // ⚠️★ 恰好 **3** 处赋值：显示、计时器收起、换房间收起。
       const assignments = [...bareJs.matchAll(/notice\.hidden\s*=/g)].length;
-      if (assignments !== 2) {
+      if (assignments !== 3) {
         problems.push(
-          `\`notice.hidden =\` 出现了 ${assignments} 次 —— 只能有 2 次（showNotice 里显示、计时器里收）；` +
+          `\`notice.hidden =\` 出现了 ${assignments} 次 —— 只能有 3 次（显示 / 计时器 / 换房间）；` +
             '多在那一处就是从别的地方收（照着快照的 `null` 收会把提示闪掉）',
         );
       }
@@ -1843,6 +1860,74 @@ if (entryViewFiles.length !== 1) {
         `· 判据 22：等级三处一致（壳 ${[...fromRust].join(' / ')}），且 \`#notice\` 只有一个所有者。`,
       );
     }
+  }
+}
+
+// ── 判据 23：「连不上就别再去取历史」那条链（理由见下）────────────────────
+//
+// ⚠️★ 2026-09-30 加（Jonny 报的原话：「不管房间连不连得上，都会疯狂去获取历史消息，
+//    然后疯狂提示每 5 秒获取历史消息」）。这条链上的零件**拆掉任何一个都不会报错**：
+//   ① `store.rs` 记下「上一次取历史失败了」，而且**只说一次**（`note_history_failure`）；
+//   ② `runtime.rs` 的**自动**那条路（`Ask::Auto`）据此**停下**（不打服务端、也不再提示）；
+//   ③ `app.js` 的 `ensureHistory` 别再问、`nextDelay` 别再按 150ms 快轮询。
+//    ⚠️★ 而**手动**那条路（切房间 / 改下载 = `Ask::ByUser`）**必须留着**：
+//    那是用户的重试路径（空状态那句话就叫用户「点一下这个房间」）。
+{
+  const problems = [];
+  const read1 = (name) => {
+    const path = join(dirname(rustPath), name);
+    try {
+      return scanRust(readFileSync(path, 'utf8')).blanked;
+    } catch {
+      return null;
+    }
+  };
+  const storeSrc = read1('store.rs');
+  const runtimeSrc = read1('runtime.rs');
+  const commandsSrc = read1('commands.rs');
+  const bareApp = stripComments(js);
+
+  if (!storeSrc || !runtimeSrc || !commandsSrc) {
+    problems.push('读不到 `store.rs` / `runtime.rs` / `commands.rs` —— 判据要跟着仓库结构改');
+  } else {
+    // ① 记下来 + 只说一次（`first` 那个判断就是「只说一次」）。
+    if (!storeSrc.includes('fn note_history_failure')) {
+      problems.push('`store.rs` 里没有 `note_history_failure` —— 取历史的失败没地方记，自动重试就停不下来');
+    } else if (!storeSrc.includes('let first = !inner.rooms[index].history_failed;')) {
+      problems.push('`note_history_failure` 不再判断「是不是第一次」—— 每 5 秒一条提示那个毛病就回来了');
+    }
+    if (!storeSrc.includes('fn history_is_failed')) {
+      problems.push('`store.rs` 里没有 `history_is_failed` —— 自动那条路没得问');
+    }
+    // ② 自动那条路真的会停下。
+    if (!/ask == Ask::Auto\s*&&\s*self\.store\.history_is_failed\(/.test(runtimeSrc)) {
+      problems.push(
+        '`runtime.rs` 的 `refresh_history` 少了「自动那条路遇到失败过就返回」的闸' +
+          '（`ask == Ask::Auto && self.store.history_is_failed(…)`）—— 连不上也会每 5 秒打一次服务端',
+      );
+    }
+    // ③ 用户那条重试路径还在 —— ⚠️ 钉**`select` 的函数体**，不是「整个文件里有没有」：
+    //    文件里还有第二处（`set_download`），只要那一处在，全文搜索就永远绿
+    //（2026-09-30 的变异验证当场验到：删掉 `select` 里那行，全文搜索看不出来）。
+    const selectBody = /pub fn select\([\s\S]*?\n\}/.exec(commandsSrc)?.[0] ?? '';
+    if (!selectBody.includes('refresh_history(Ask::ByUser)')) {
+      problems.push('`select` 里没有 `refresh_history(Ask::ByUser)` —— 用户切回房间时不会重试了');
+    }
+    // ④ 界面上别问、也别快轮询。
+    if (!/function ensureHistory\(state\)\s*\{[\s\S]*?room\.historyFailed[\s\S]*?\n\}/.test(bareApp)) {
+      problems.push('`ensureHistory` 不再看 `room.historyFailed` —— 界面又会每 5 秒问一次壳');
+    }
+    if (!/room\.historyLoaded\s*&&\s*!room\.historyFailed/.test(bareApp)) {
+      problems.push('`nextDelay` 不再看 `room.historyFailed` —— 取不到历史的房间会一直按 150ms 快轮询');
+    }
+  }
+  if (problems.length) {
+    failed = true;
+    console.error(`✗ 判据 23：「连不上就别再取历史」这条链断了（${problems.length} 处）：`);
+    for (const one of problems) console.error(`    · ${one}`);
+    console.error('  ⚠️ 症状：连不上的房间每 5 秒打一次服务端、每 5 秒弹一条「取历史失败」。');
+  } else {
+    console.log('· 判据 23：取历史失败会记下、自动重试会停、手动那条路还在（5 个零件都在）。');
   }
 }
 

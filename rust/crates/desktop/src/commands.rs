@@ -26,7 +26,7 @@ use clip9_client::Msg;
 // ⚠️ `Manager` 是为了 `app.state::<…>()`（`pick_files` 从 `app` 上取字典，见那条注释）。
 use tauri::{Manager, State};
 
-use crate::runtime::Runtime;
+use crate::runtime::{Ask, Runtime};
 use crate::server_config::ServerConfigFile;
 use crate::server_process::ServerProcess;
 use crate::shell_text::ShellText;
@@ -799,7 +799,9 @@ pub fn select(
     index: usize,
 ) -> Result<(), Msg> {
     store.select(index)?;
-    runtime.refresh_history();
+    // ⚠️ `ByUser`：切房间是用户动作 —— 上一次取历史失败过也再试一次
+    //（这也正是界面上那条「点一下这个房间再试一次」的路）。
+    runtime.refresh_history(Ask::ByUser);
     Ok(())
 }
 
@@ -843,7 +845,8 @@ pub fn set_download(
     store.set_download(index)?;
     runtime.persist();
     runtime.restart_receiver();
-    runtime.refresh_history();
+    // ⚠️ `ByUser`：改下载方式是一大步（连接会重启）—— 之前失败过的那个标记不该挡着它。
+    runtime.refresh_history(Ask::ByUser);
     Ok(())
 }
 
@@ -856,10 +859,15 @@ pub fn send_text(runtime: State<'_, Arc<Runtime>>, text: String) {
     runtime.send_text(&text);
 }
 
-/// 手动刷新历史（`GET /content`，不碰剪贴板）。
+/// 刷新历史（`GET /content`，不碰剪贴板）。
+///
+/// ⚠️★ 调用者只有界面那条**自动重试**（`ensureHistory`，每 5 秒一次，见 `ui/app.js`）——
+/// 所以走 `Ask::Auto`：上一次就失败过的话**不再打服务端、也不再提示**
+///（Jonny 2026-09-30 报的「连不上还每 5 秒取一次」）。用户想要再试，点一下那个房间
+/// 就够了（走的是 `select` 那条 `ByUser`）。
 #[tauri::command]
 pub fn refresh(runtime: State<'_, Arc<Runtime>>) {
-    runtime.refresh_history();
+    runtime.refresh_history(Ask::Auto);
 }
 
 /// 「复制内容」（时间线的右键菜单，§4.4）。

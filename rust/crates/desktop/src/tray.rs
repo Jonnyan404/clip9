@@ -43,7 +43,7 @@ use tauri::{AppHandle, Manager, Wry};
 
 use clip9_client::Msg;
 
-use crate::runtime::Runtime;
+use crate::runtime::{Ask, Runtime};
 use crate::server_process::ServerProcess;
 use crate::shell_text::ShellText;
 use crate::store::{NoticeLevel, Store};
@@ -243,7 +243,8 @@ pub fn install(
                         store_for_menu.notice(NoticeLevel::Error, reason);
                         return;
                     }
-                    runtime_for_menu.refresh_history();
+                    // ⚠️ `ByUser`：用户点的托盘项 —— 上一次失败过也再试一次（他明确要看这个房间）。
+                    runtime_for_menu.refresh_history(Ask::ByUser);
                     show_main_window(app);
                 }
                 Action::ToggleAutostart => {

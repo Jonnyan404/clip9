@@ -136,6 +136,8 @@ pub struct RoomView {
     pub text_bytes: usize,
     /// 取过历史没有（界面上据此显示「还没加载」而不是一个空列表）。
     pub history_loaded: bool,
+    /// 取历史**失败过**（界面据此不再说「正在取…」，并停掉 150ms 的快轮询）。
+    pub history_failed: bool,
     /// 这个房间**自己那条连接**的状态（§4.7）。
     pub connection: ConnectionView,
 }
@@ -350,6 +352,14 @@ struct Room {
     /// 只是少说了一句「从剪贴板来的」。为一句标签维护一份会一直长的磁盘状态不划算。
     clipboard_ids: std::collections::HashSet<i32>,
     history_loaded: bool,
+    /// **上一次「按需取历史」失败了**（2026-09-30 加）。
+    ///
+    /// ⚠️★ 它存在是为了**停下来**：界面那条自动重试（`refresh` 命令，每 5 秒一次）看到它
+    /// 就不再打服务端、也不再提示 —— Jonny 2026-09-30 报的「连不上还每 5 秒取一次、
+    /// 每 5 秒弹一次取历史失败」。清掉它的只有**取成功**（[`Store::push_history`] /
+    /// 收到实时条目）；用户**切回这个房间**（`select` → `refresh_history(ByUser)`）会再试
+    /// 一次 —— 那是界面上的手动重试路径（房间那一行点一下就够，见 `ui/app.js` 的空状态）。
+    history_failed: bool,
     /// 这个房间**自己的**一条待显示的提示（取历史失败、界面上发到这个房间的结果…）。
     ///
     /// ⚠️★ 放在 [`Room`] 里而不是一张按房间名索引的表里（2026-09-27）：`set_rooms`
@@ -527,6 +537,7 @@ impl Store {
                 // 谁要改成计数器，先回答：省下的那点求和，值不值得换来「漂了也不报错」。
                 text_bytes: room.entries.iter().map(|entry| entry.text_bytes).sum(),
                 history_loaded: room.history_loaded,
+                history_failed: room.history_failed,
                 connection: connection_view(&inner, room),
             })
             .collect();
@@ -702,6 +713,12 @@ impl Store {
                     inner.rooms[index].history_loaded = true;
                     changed = true;
                 }
+                // ⚠️ 收到实时条目 = 这条路是通的 → 上一次「取历史失败」翻篇
+                //（`history_failed` 挡的是自动重试，2026-09-30）。
+                if inner.rooms[index].history_failed {
+                    inner.rooms[index].history_failed = false;
+                    changed = true;
+                }
                 if changed {
                     inner.touch();
                 }
@@ -791,8 +808,46 @@ impl Store {
                 inner.rooms[index].upsert(view);
             }
             inner.rooms[index].history_loaded = true;
+            // ⚠️ 取成功 = 上一次那条失败翻篇（`history_failed` 挡的是自动重试，2026-09-30）。
+            inner.rooms[index].history_failed = false;
             inner.touch();
         }
+    }
+
+    /// 一次「按需取历史」失败了 —— **记下来**，并且**只说一次**。
+    ///
+    /// ⚠️★ 两件事一起才真的安静（Jonny 2026-09-30）：记下来让**自动重试停下**
+    ///（见 [`Room::history_failed`]），只说一次让「每 5 秒弹一条」不再发生。
+    ///
+    /// ⚠️ 认不出 (服务端, 房间) 时**什么都不做**：那个房间已经被删了 / 改过名，
+    /// 这时连「第几次」都无从记起（提示那条路有 [`Store::notice_in`] 的回落）。
+    pub fn note_history_failure(&self, server: &str, room: &str, reason: Msg) {
+        let first = {
+            let mut inner = self.lock();
+            let Some(index) = inner.room_index(server, room) else {
+                return;
+            };
+            let first = !inner.rooms[index].history_failed;
+            if first {
+                inner.rooms[index].history_failed = true;
+                inner.touch();
+            }
+            first
+        };
+        // ⚠️ 锁**已经放掉**了才发提示：`notice_in` 自己要再拿一次锁，
+        // 而那个 `Mutex` 不是可重入的（拿着它调 = 死锁）。
+        if first {
+            self.notice_in(server, room, NoticeLevel::Error, reason);
+        }
+    }
+
+    /// 这个房间上一次「按需取历史」失败过吗（自动重试据此停下）。
+    #[must_use]
+    pub fn history_is_failed(&self, server: &str, room: &str) -> bool {
+        let inner = self.lock();
+        inner
+            .room_index(server, room)
+            .is_some_and(|index| inner.rooms[index].history_failed)
     }
 
     /// 记下「刚才这几条是**本机剪贴板**同步过去的」（界面上的标签用）。
@@ -1999,6 +2054,54 @@ mod tests {
             }
             other => panic!("里层该是**另一句话**（不是拼好的字符串）：{other:?}"),
         }
+    }
+
+    /// ⚠️★ 「取历史失败」要**两件事一起**才真的安静（Jonny 2026-09-30）：
+    /// **记下来**（自动重试据此停下，见 [`Room::history_failed`]）与**只说一次**
+    ///（连不上的房间每 5 秒弹一条「取历史失败」就是他报的那条）。
+    ///
+    /// 这一条钉的是：「第一次说一句、第二次不再说、取成功之后清掉」。
+    #[test]
+    fn a_history_failure_is_remembered_and_said_once() {
+        let (_dir, store) = temp_store();
+        assert!(
+            !store.history_is_failed(FIXTURE_SERVER, "work"),
+            "开局不该是「失败过」"
+        );
+
+        // 第一次失败：记下来 + 说一句（那一格挂在它自己的房间上）。
+        store.select(1).unwrap();
+        store.note_history_failure(
+            FIXTURE_SERVER,
+            "work",
+            Msg::key("historyFailed").param("reason", "x"),
+        );
+        assert!(store.history_is_failed(FIXTURE_SERVER, "work"));
+        let notice = store.snapshot().notice.expect("第一次失败要说一句");
+        assert_eq!(notice.text.key, "historyFailed");
+
+        // 第二次失败：**不再说**（用户已经看过了；每 5 秒重说一遍就是刷屏）。
+        store.clear_notice();
+        store.note_history_failure(
+            FIXTURE_SERVER,
+            "work",
+            Msg::key("historyFailed").param("reason", "x"),
+        );
+        assert!(
+            store.snapshot().notice.is_none(),
+            "同一条失败不许每 5 秒重说一遍"
+        );
+        assert!(
+            store.history_is_failed(FIXTURE_SERVER, "work"),
+            "标记要还在"
+        );
+
+        // 取成功（哪怕是空历史）→ 翻篇：下一次自动重试又允许试、也允许说。
+        store.push_history(FIXTURE_SERVER, "work", Vec::new());
+        assert!(
+            !store.history_is_failed(FIXTURE_SERVER, "work"),
+            "取成功之后不该还挂着「失败过」"
+        );
     }
 
     /// ⚠️★ 提示**跟着房间走**：房间清单变了（加 / 删 / 挪位置）时，

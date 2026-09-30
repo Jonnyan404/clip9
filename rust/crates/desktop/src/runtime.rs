@@ -318,6 +318,18 @@ fn watch_config(config: &clip9_client::ClientConfig) -> WatchConfig {
     }
 }
 
+/// 这一问是谁发起的 —— 决定「上一次取失败过之后还试不试」（2026-09-30）。
+///
+/// ⚠️★ 两种调用者的差别**不是**礼仪问题：界面那条自动重试每 5 秒来一次，而连不上的房间
+/// 每次都失败 —— 不分的话就是「每 5 秒打一次服务端、每 5 秒弹一条提示」（Jonny 报的）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Ask {
+    /// **用户动作**（切房间 / 改下载方式）：试 —— 这也是界面上的手动重试路径。
+    ByUser,
+    /// 界面那条**自动重试**：上一次失败过就不再打服务端。
+    Auto,
+}
+
 /// 一次上行**怎么了** —— 界面那一格的颜色 / 系统通知发不发，都看它。
 ///
 /// ⚠️★ 用枚举而不是直接带着 `"ok"` / `"err"` / `"skip"` 三个字符串走：
@@ -660,12 +672,22 @@ impl Runtime {
     ///
     /// ⚠️ 为什么要单独一条：下行的历史只覆盖**下载通道那一个房间**，
     /// 而界面可以选中任何一个房间。
-    pub fn refresh_history(self: &Arc<Self>) {
+    ///
+    /// ⚠️★ `ask` 是 2026-09-30 加的：**自动重试**遇到「上一次就失败过」直接返回 ——
+    /// 不去打服务端、也不再提示（Jonny 报的「连不上还每 5 秒取一次、每 5 秒弹一次」）。
+    /// 用户动作（切房间 / 改下载方式）仍然会试：那是他明确要再看一眼这个房间，
+    /// 也正好是界面上那条手动重试的路径。
+    pub fn refresh_history(self: &Arc<Self>, ask: Ask) {
         let Some(channel) = self.store.selected_channel() else {
             self.store
                 .notice(NoticeLevel::Error, Msg::key("noRoomsConfigured"));
             return;
         };
+        // ⚠️★ 自动那条路：上次失败过就**安静地不做** —— 连日志都不打（这一拍每 5 秒来一次，
+        // 打日志等于换个地方刷屏）。停下来的依据是 `store` 里那个按房间记的标记。
+        if ask == Ask::Auto && self.store.history_is_failed(&channel.server, &channel.room) {
+            return;
+        }
         let this = Arc::clone(self);
         self.tokio.spawn(async move {
             // ⚠️ 一次要多少条 = 界面上留多少条（`MAX_ENTRIES_PER_ROOM`）——
@@ -687,9 +709,7 @@ impl Runtime {
                 // 「这个房间的历史取不到、所以列表是空的」最该被说出来的时刻。
                 // ⚠️ `reason` 整句话递过去（`historyFailed` 那条 `Msg` 本来就带
                 // 「取历史失败」+ 底层原因），**不在这里 `format!` 拼**。
-                Err(reason) => this
-                    .store
-                    .notice_in(&server, &room, NoticeLevel::Error, reason),
+                Err(reason) => this.store.note_history_failure(&server, &room, reason),
             }
         });
     }
