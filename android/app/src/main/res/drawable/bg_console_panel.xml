@@ -2,21 +2,30 @@
 <!--
   连接页顶部那张大面板（设计稿 `.panel`）。
 
-  ⚠️ 设计稿用的是 `radial-gradient(120% 110% at 50% 0%, …)`（顶部中心亮）。
-  Android 的 `<gradient type="radial">` 要写死 `gradientRadius`，而这个面板的宽度
-  是 match_parent —— 半径写死之后在不同屏幕上要么溢出要么缩成一小团。
-  所以这里用**从上到下的纵向渐变**近似：观感上都是「顶亮底暗」，
-  而它在任何宽度下都正确。
+  ⚠️★ 设计稿是 `radial-gradient(120% 110% at 50% 0%, #1b3050 0%, #111d31 46%, #0c1524 100%)`
+  —— **径向**（顶部中心亮、往四周压暗），不是「上亮下暗」。2026-09-29 之前这里用
+  纵向线性渐变近似（当时的理由是 radial 要写死 gradientRadius），Jonny 看了真机后
+  说「视觉颜色和设计稿还是差点」，改回径向。
+
+  ⚠️ radial 必须给 `gradientRadius`，而它不能按百分比写。取法：稿子的 `120%`
+  按面板宽（屏宽 − 左右 12dp 边距 ≈ 356dp @ 本机）算 ≈ 427dp，取 **430dp**。
+  ⚠️ 已知代价：面板宽度随屏幕变，这个半径不跟着变 —— 屏幕更宽时亮斑相对小一点、
+  更窄时压到边缘。1080p 手机（≈356dp）上与稿子一致；要彻底跟随宽度得自绘
+  （`RingView` 那条路），为一个渐变不值得。
+  ⚠️ 三色 stop 的位置写不了（Android 的 XML gradient 只有 start/center/end，
+  center 固定在 0.5）；稿子的 0.46 按 0.5 处理，肉眼不可分。
 -->
 <shape xmlns:android="http://schemas.android.com/apk/res/android"
     android:shape="rectangle">
     <corners android:radius="26dp" />
     <gradient
-        android:angle="270"
         android:centerColor="@color/console_surface"
+        android:centerX="0.5"
+        android:centerY="0"
         android:endColor="@color/console_panel_bottom"
+        android:gradientRadius="430dp"
         android:startColor="@color/console_panel_top"
-        android:type="linear" />
+        android:type="radial" />
     <stroke
         android:width="1dp"
         android:color="@color/console_edge" />

@@ -12,7 +12,7 @@
     <corners android:radius="16dp" />
     <gradient
         android:angle="270"
-        android:endColor="@color/console_surface"
+        android:endColor="@color/console_strip_bottom"
         android:startColor="@color/console_strip_top"
         android:type="linear" />
     <stroke
