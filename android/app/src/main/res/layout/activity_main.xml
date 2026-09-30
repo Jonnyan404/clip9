@@ -676,7 +676,16 @@
             <!-- ══════════════ ④ 配置 ══════════════
                  ⚠️★ 这一页的字段清单由 `ConfigPage.kt` 的 `fields` / `switches` 两张表驱动，
                  而 `tools/android-contract-smoke.mjs` 有两条判据盯着「表 ↔ config.rs」双向对上。
-                 改这一页里的 id **必须**同步改那两张表 —— 那两条判据会拦住你。 -->
+                 改这一页里的 id **必须**同步改那两张表 —— 那两条判据会拦住你。
+
+                 ⚠️★ 结构照稿子 ⑥⑦⑧（`b-console.html`）重排（2026-09-30）：四个分区四张
+                 `cfg` 卡（`bg_console_card` 与稿子 `.cfg` 同规格：18dp 圆角 + 1dp 描边），
+                 卡头 = 图标 + 分区名 + 徽章；卡内每一项一行 `frow`
+                 （图标 + 标题/说明 + 右侧控件），行间分隔线由 LinearLayout 的
+                 `divider` 统一画（见 `bg_console_row_edge`）。
+                 ⚠️ 这一页**不再**用 `?attr/textAppearance*` —— 字号与颜色全部走
+                 `Text.Clip9.Cfg*` / `Widget.Clip9.CfgInput`（themes.xml），
+                 与稿子逐条对上，也不随主题漂。 -->
             <LinearLayout
                 android:id="@+id/pageConfig"
                 android:layout_width="match_parent"
@@ -690,7 +699,7 @@
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:layout_marginTop="16dp"
-                    android:textAppearance="?attr/textAppearanceBodySmall"
+                    style="@style/Text.Clip9.CfgHint"
                     android:textColor="@color/console_err_text"
                     android:visibility="gone" />
 
@@ -700,496 +709,1306 @@
                     android:layout_height="wrap_content"
                     android:layout_marginTop="16dp"
                     android:text="@string/config_not_created"
-                    android:textAppearance="?attr/textAppearanceBodySmall"
+                    style="@style/Text.Clip9.CfgHint"
                     android:visibility="gone" />
 
-                <!-- ── 访问与安全 ── -->
-                <TextView
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:layout_marginTop="20dp"
-                    android:text="@string/config_section_access"
-                    android:textAppearance="?attr/textAppearanceTitleMedium" />
-
-                <TextView
-                    android:id="@+id/configAuthFlag"
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:textAppearance="?attr/textAppearanceBodySmall" />
-
-                <TextView
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:layout_marginTop="12dp"
-                    android:text="@string/config_global_password"
-                    android:textAppearance="?attr/textAppearanceTitleSmall" />
-
-                <EditText
-                    android:id="@+id/configGlobalPassword"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:autofillHints=""
-                    android:hint="@string/config_global_password"
-                    android:imeOptions="actionDone"
-                    android:inputType="textVisiblePassword" />
-
-                <TextView
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:text="@string/config_global_password_hint"
-                    android:textAppearance="?attr/textAppearanceBodySmall" />
-
-                <TextView
-                    android:id="@+id/configRoomsTitle"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:layout_marginTop="20dp"
-                    android:text="@string/config_rooms"
-                    android:textAppearance="?attr/textAppearanceTitleSmall" />
-
-                <TextView
-                    android:id="@+id/configRoomsEmpty"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:text="@string/config_rooms_none"
-                    android:textAppearance="?attr/textAppearanceBodySmall" />
-
-                <!-- ⚠️ 行是代码生成的（房间数量不定）—— 见 ConfigPage.renderRooms -->
+                <!-- ── 卡 1 · 访问与安全 ────────────────────────────────────
+                     徽章（configAuthFlag）的两副脸色由代码换（见 ConfigPage.refreshAuthFlag）：
+                     框里没密码 = 「不需要密码」（绿）／有 = 「需要密码」（橙）。 -->
                 <LinearLayout
-                    android:id="@+id/configRoomList"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:orientation="vertical" />
+                    android:layout_marginTop="16dp"
+                    android:background="@drawable/bg_console_card"
+                    android:divider="@drawable/bg_console_row_edge"
+                    android:orientation="vertical"
+                    android:showDividers="middle">
 
-                <Button
-                    android:id="@+id/configAddRoomButton"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:layout_marginTop="8dp"
-                    android:text="@string/config_room_add" />
+                    <LinearLayout
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:gravity="center_vertical"
+                        android:orientation="horizontal"
+                        android:paddingStart="15dp"
+                        android:paddingTop="13dp"
+                        android:paddingEnd="15dp"
+                        android:paddingBottom="11dp">
 
-                <TextView
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:layout_marginTop="20dp"
-                    android:text="@string/config_room_list"
-                    android:textAppearance="?attr/textAppearanceTitleSmall" />
+                        <ImageView
+                            android:layout_width="17dp"
+                            android:layout_height="17dp"
+                            android:contentDescription="@null"
+                            android:src="@drawable/ic_console_lock"
+                            app:tint="@color/console_icon" />
 
-                <Switch
-                    android:id="@+id/configRoomListSwitch"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:text="@string/config_room_list" />
+                        <TextView
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_marginStart="9dp"
+                            android:layout_weight="1"
+                            android:text="@string/config_section_access"
+                            style="@style/Text.Clip9.CfgHead" />
 
-                <TextView
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:text="@string/config_room_list_hint"
-                    android:textAppearance="?attr/textAppearanceBodySmall" />
+                        <TextView
+                            android:id="@+id/configAuthFlag"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:background="@drawable/bg_console_flag"
+                            android:paddingStart="7dp"
+                            android:paddingTop="2dp"
+                            android:paddingEnd="7dp"
+                            android:paddingBottom="2dp"
+                            style="@style/Text.Clip9.CfgFlag" />
+                    </LinearLayout>
 
-                <TextView
+                    <!-- 全局密码（稿子 `.frow` + `.fin.wide`）。
+                         ⚠️ passwordForReal 是「看得到原文」的输入框 —— 与稿子 ⑥ 一致
+                         （稿子里也是明文小框，右侧那格就是给人确认的）。 -->
+                    <LinearLayout
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:gravity="center_vertical"
+                        android:minHeight="56dp"
+                        android:orientation="horizontal"
+                        android:paddingStart="15dp"
+                        android:paddingTop="10dp"
+                        android:paddingEnd="15dp"
+                        android:paddingBottom="10dp">
+
+                        <ImageView
+                            android:layout_width="19dp"
+                            android:layout_height="19dp"
+                            android:contentDescription="@null"
+                            android:src="@drawable/ic_console_key"
+                            app:tint="@color/console_text_faint" />
+
+                        <LinearLayout
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_marginStart="12dp"
+                            android:layout_weight="1"
+                            android:orientation="vertical">
+
+                            <TextView
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:text="@string/config_global_password"
+                                style="@style/Text.Clip9.CfgTitle" />
+
+                            <TextView
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:layout_marginTop="2dp"
+                                android:text="@string/config_global_password_hint"
+                                style="@style/Text.Clip9.CfgHint" />
+                        </LinearLayout>
+
+                        <EditText
+                            android:id="@+id/configGlobalPassword"
+                            android:layout_width="150dp"
+                            android:layout_height="wrap_content"
+                            android:layout_marginStart="12dp"
+                            android:autofillHints=""
+                            android:inputType="textVisiblePassword"
+                            android:maxLines="1"
+                            style="@style/Widget.Clip9.CfgInput" />
+                    </LinearLayout>
+                </LinearLayout>
+
+                <!-- ── 卡 2 · 房间（动态行）────────────────────────────────
+                     徽章（configRoomsTitle）是「N 个房间」，文字由 ConfigPage.refreshRoomsHeader
+                     设（房间行增删时跟着变）；底色固定橙色那副。 -->
+                <LinearLayout
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:layout_marginTop="12dp"
-                    android:text="@string/config_room_cleanup"
-                    android:textAppearance="?attr/textAppearanceTitleSmall" />
+                    android:background="@drawable/bg_console_card"
+                    android:orientation="vertical">
 
-                <EditText
-                    android:id="@+id/configRoomCleanup"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:autofillHints=""
-                    android:hint="@string/config_room_cleanup"
-                    android:imeOptions="actionDone"
-                    android:inputType="numberSigned" />
+                    <LinearLayout
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:gravity="center_vertical"
+                        android:orientation="horizontal"
+                        android:paddingStart="15dp"
+                        android:paddingTop="13dp"
+                        android:paddingEnd="15dp"
+                        android:paddingBottom="11dp">
 
-                <TextView
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:text="@string/config_room_cleanup_hint"
-                    android:textAppearance="?attr/textAppearanceBodySmall" />
+                        <ImageView
+                            android:layout_width="17dp"
+                            android:layout_height="17dp"
+                            android:contentDescription="@null"
+                            android:src="@drawable/ic_console_globe"
+                            app:tint="@color/console_icon" />
 
-                <!-- ── 内容限制 ── -->
-                <TextView
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:layout_marginTop="24dp"
-                    android:text="@string/config_section_content"
-                    android:textAppearance="?attr/textAppearanceTitleMedium" />
+                        <TextView
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_marginStart="9dp"
+                            android:layout_weight="1"
+                            android:text="@string/config_rooms"
+                            style="@style/Text.Clip9.CfgHead" />
 
-                <TextView
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:layout_marginTop="12dp"
-                    android:text="@string/config_history"
-                    android:textAppearance="?attr/textAppearanceTitleSmall" />
+                        <TextView
+                            android:id="@+id/configRoomsTitle"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:background="@drawable/bg_console_flag"
+                            android:paddingStart="7dp"
+                            android:paddingTop="2dp"
+                            android:paddingEnd="7dp"
+                            android:paddingBottom="2dp"
+                            style="@style/Text.Clip9.CfgFlag" />
+                    </LinearLayout>
 
-                <EditText
-                    android:id="@+id/configHistory"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:autofillHints=""
-                    android:hint="@string/config_history"
-                    android:imeOptions="actionDone"
-                    android:inputType="numberSigned" />
+                    <TextView
+                        android:id="@+id/configRoomsEmpty"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:paddingStart="15dp"
+                        android:paddingEnd="15dp"
+                        android:paddingBottom="13dp"
+                        android:text="@string/config_rooms_none"
+                        style="@style/Text.Clip9.CfgHint" />
 
-                <TextView
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:text="@string/config_history_hint"
-                    android:textAppearance="?attr/textAppearanceBodySmall" />
+                    <!-- ⚠️ 行是代码生成的（房间数量不定）—— 见 ConfigPage.renderRooms -->
+                    <LinearLayout
+                        android:id="@+id/configRoomList"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:orientation="vertical" />
 
-                <TextView
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:layout_marginTop="12dp"
-                    android:text="@string/config_text_limit"
-                    android:textAppearance="?attr/textAppearanceTitleSmall" />
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/configAddRoomButton"
+                        style="@style/Widget.Clip9.ConsoleButton"
+                        android:layout_width="match_parent"
+                        android:layout_height="44dp"
+                        android:layout_marginTop="4dp"
+                        android:insetTop="0dp"
+                        android:insetBottom="0dp"
+                        android:text="@string/config_room_add"
+                        android:textColor="@color/console_icon"
+                        app:backgroundTint="@android:color/transparent"
+                        app:rippleColor="@android:color/transparent" />
+                </LinearLayout>
 
-                <EditText
-                    android:id="@+id/configTextLimit"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:autofillHints=""
-                    android:hint="@string/config_text_limit"
-                    android:imeOptions="actionDone"
-                    android:inputType="numberSigned" />
-
-                <TextView
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:text="@string/config_text_limit_hint"
-                    android:textAppearance="?attr/textAppearanceBodySmall" />
-
-                <TextView
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:layout_marginTop="12dp"
-                    android:text="@string/config_file_limit"
-                    android:textAppearance="?attr/textAppearanceTitleSmall" />
-
-                <EditText
-                    android:id="@+id/configFileLimit"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:autofillHints=""
-                    android:hint="@string/config_file_limit"
-                    android:imeOptions="actionDone"
-                    android:inputType="numberSigned" />
-
-                <TextView
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:text="@string/config_file_limit_hint"
-                    android:textAppearance="?attr/textAppearanceBodySmall" />
-
-                <TextView
+                <!-- ── 卡 3 · 房间列表与清理 ────────────────────────────────
+                     ⚠️ roomCleanup 只在 roomList 开着时才会跑 —— 那层关系写在
+                     room_list_hint 的说明里（稿子也是这么办的），不做成联动的禁用：
+                     「开着但间隔填 0」也是合法的（= 不清理），禁用反而表达不了。 -->
+                <LinearLayout
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:layout_marginTop="12dp"
-                    android:text="@string/config_file_chunk"
-                    android:textAppearance="?attr/textAppearanceTitleSmall" />
+                    android:background="@drawable/bg_console_card"
+                    android:divider="@drawable/bg_console_row_edge"
+                    android:orientation="vertical"
+                    android:showDividers="middle">
 
-                <EditText
-                    android:id="@+id/configFileChunk"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:autofillHints=""
-                    android:hint="@string/config_file_chunk"
-                    android:imeOptions="actionDone"
-                    android:inputType="numberSigned" />
+                    <LinearLayout
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:gravity="center_vertical"
+                        android:orientation="horizontal"
+                        android:paddingStart="15dp"
+                        android:paddingTop="13dp"
+                        android:paddingEnd="15dp"
+                        android:paddingBottom="11dp">
 
-                <TextView
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:text="@string/config_file_chunk_hint"
-                    android:textAppearance="?attr/textAppearanceBodySmall" />
+                        <ImageView
+                            android:layout_width="17dp"
+                            android:layout_height="17dp"
+                            android:contentDescription="@null"
+                            android:src="@drawable/ic_console_globe"
+                            app:tint="@color/console_icon" />
 
-                <TextView
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:layout_marginTop="12dp"
-                    android:text="@string/config_file_expire"
-                    android:textAppearance="?attr/textAppearanceTitleSmall" />
+                        <TextView
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:layout_marginStart="9dp"
+                            android:text="@string/config_section_rooms"
+                            style="@style/Text.Clip9.CfgHead" />
+                    </LinearLayout>
 
-                <EditText
-                    android:id="@+id/configFileExpire"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:autofillHints=""
-                    android:hint="@string/config_file_expire"
-                    android:imeOptions="actionDone"
-                    android:inputType="numberSigned" />
+                    <LinearLayout
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:gravity="center_vertical"
+                        android:minHeight="56dp"
+                        android:orientation="horizontal"
+                        android:paddingStart="15dp"
+                        android:paddingTop="10dp"
+                        android:paddingEnd="15dp"
+                        android:paddingBottom="10dp">
 
-                <TextView
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:text="@string/config_file_expire_hint"
-                    android:textAppearance="?attr/textAppearanceBodySmall" />
+                        <ImageView
+                            android:layout_width="19dp"
+                            android:layout_height="19dp"
+                            android:contentDescription="@null"
+                            android:src="@drawable/ic_console_globe"
+                            app:tint="@color/console_text_faint" />
 
-                <!-- ── 定时自动化 ── -->
-                <!-- ⚠️ 这里原来有一个 `@+id/configAutomationTitle`，2026-09-29 去掉了：
-                     它一个读者都没有（既有的残留），而没人读的 id 会让人以为
-                     「某处会按它显示 / 隐藏」——`android-contract-smoke.mjs` 的契约 D
-                     只查「Kotlin 用的 id 在不在布局里」，查不到这个方向。 -->
-                <TextView
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:layout_marginTop="24dp"
-                    android:text="@string/config_automation"
-                    android:textAppearance="?attr/textAppearanceTitleMedium" />
+                        <LinearLayout
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_marginStart="12dp"
+                            android:layout_weight="1"
+                            android:orientation="vertical">
 
-                <Switch
-                    android:id="@+id/configAutomationEnabled"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:text="@string/config_automation_enabled" />
+                            <TextView
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:text="@string/config_room_list"
+                                style="@style/Text.Clip9.CfgTitle" />
 
-                <TextView
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:text="@string/config_automation_enabled_hint"
-                    android:textAppearance="?attr/textAppearanceBodySmall" />
+                            <TextView
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:layout_marginTop="2dp"
+                                android:text="@string/config_room_list_hint"
+                                style="@style/Text.Clip9.CfgHint" />
+                        </LinearLayout>
 
-                <TextView
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:layout_marginTop="12dp"
-                    android:text="@string/config_tick_seconds"
-                    android:textAppearance="?attr/textAppearanceTitleSmall" />
+                        <Switch
+                            android:id="@+id/configRoomListSwitch"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:layout_marginStart="12dp" />
+                    </LinearLayout>
 
-                <EditText
-                    android:id="@+id/configTickSeconds"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:autofillHints=""
-                    android:hint="@string/config_tick_seconds"
-                    android:imeOptions="actionDone"
-                    android:inputType="numberSigned" />
+                    <LinearLayout
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:gravity="center_vertical"
+                        android:minHeight="56dp"
+                        android:orientation="horizontal"
+                        android:paddingStart="15dp"
+                        android:paddingTop="10dp"
+                        android:paddingEnd="15dp"
+                        android:paddingBottom="10dp">
 
-                <TextView
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:text="@string/config_tick_seconds_hint"
-                    android:textAppearance="?attr/textAppearanceBodySmall" />
+                        <ImageView
+                            android:layout_width="19dp"
+                            android:layout_height="19dp"
+                            android:contentDescription="@null"
+                            android:src="@drawable/ic_console_clock"
+                            app:tint="@color/console_text_faint" />
 
-                <TextView
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:layout_marginTop="12dp"
-                    android:text="@string/config_grace_seconds"
-                    android:textAppearance="?attr/textAppearanceTitleSmall" />
+                        <LinearLayout
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_marginStart="12dp"
+                            android:layout_weight="1"
+                            android:orientation="vertical">
 
-                <EditText
-                    android:id="@+id/configGraceSeconds"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:autofillHints=""
-                    android:hint="@string/config_grace_seconds"
-                    android:imeOptions="actionDone"
-                    android:inputType="numberSigned" />
+                            <TextView
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:text="@string/config_room_cleanup"
+                                style="@style/Text.Clip9.CfgTitle" />
 
-                <TextView
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:text="@string/config_grace_seconds_hint"
-                    android:textAppearance="?attr/textAppearanceBodySmall" />
+                            <TextView
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:layout_marginTop="2dp"
+                                android:text="@string/config_room_cleanup_hint"
+                                style="@style/Text.Clip9.CfgHint" />
+                        </LinearLayout>
 
-                <TextView
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:layout_marginTop="12dp"
-                    android:text="@string/config_default_tz"
-                    android:textAppearance="?attr/textAppearanceTitleSmall" />
+                        <EditText
+                            android:id="@+id/configRoomCleanup"
+                            android:layout_width="96dp"
+                            android:layout_height="wrap_content"
+                            android:layout_marginStart="12dp"
+                            android:autofillHints=""
+                            android:inputType="numberSigned"
+                            android:maxLines="1"
+                            android:gravity="center"
+                            style="@style/Widget.Clip9.CfgInput" />
+                    </LinearLayout>
+                </LinearLayout>
 
-                <EditText
-                    android:id="@+id/configDefaultTz"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:autofillHints=""
-                    android:hint="@string/config_default_tz"
-                    android:imeOptions="actionDone"
-                    android:inputType="text" />
-
-                <TextView
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:text="@string/config_default_tz_hint"
-                    android:textAppearance="?attr/textAppearanceBodySmall" />
-
-                <!-- ── 网络与存储（危险区）── -->
-                <TextView
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:layout_marginTop="24dp"
-                    android:text="@string/config_section_network"
-                    android:textAppearance="?attr/textAppearanceTitleMedium" />
-
-                <TextView
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:text="@string/config_section_network_note"
-                    android:textAppearance="?attr/textAppearanceBodySmall"
-                    android:textColor="@color/console_err_text" />
-
-                <TextView
+                <!-- ── 卡 4 · 内容限制 ────────────────────────────────────── -->
+                <LinearLayout
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:layout_marginTop="12dp"
-                    android:text="@string/config_host"
-                    android:textAppearance="?attr/textAppearanceTitleSmall" />
+                    android:background="@drawable/bg_console_card"
+                    android:divider="@drawable/bg_console_row_edge"
+                    android:orientation="vertical"
+                    android:showDividers="middle">
 
-                <EditText
-                    android:id="@+id/configHost"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:autofillHints=""
-                    android:hint="@string/config_host"
-                    android:imeOptions="actionDone"
-                    android:inputType="textUri" />
+                    <LinearLayout
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:gravity="center_vertical"
+                        android:orientation="horizontal"
+                        android:paddingStart="15dp"
+                        android:paddingTop="13dp"
+                        android:paddingEnd="15dp"
+                        android:paddingBottom="11dp">
 
-                <TextView
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:text="@string/config_host_hint"
-                    android:textAppearance="?attr/textAppearanceBodySmall" />
+                        <ImageView
+                            android:layout_width="17dp"
+                            android:layout_height="17dp"
+                            android:contentDescription="@null"
+                            android:src="@drawable/ic_console_text"
+                            app:tint="@color/console_icon" />
 
-                <TextView
+                        <TextView
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:layout_marginStart="9dp"
+                            android:text="@string/config_section_content"
+                            style="@style/Text.Clip9.CfgHead" />
+                    </LinearLayout>
+
+                    <LinearLayout
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:gravity="center_vertical"
+                        android:minHeight="56dp"
+                        android:orientation="horizontal"
+                        android:paddingStart="15dp"
+                        android:paddingTop="10dp"
+                        android:paddingEnd="15dp"
+                        android:paddingBottom="10dp">
+
+                        <ImageView
+                            android:layout_width="19dp"
+                            android:layout_height="19dp"
+                            android:contentDescription="@null"
+                            android:src="@drawable/ic_console_text"
+                            app:tint="@color/console_text_faint" />
+
+                        <LinearLayout
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_marginStart="12dp"
+                            android:layout_weight="1"
+                            android:orientation="vertical">
+
+                            <TextView
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:text="@string/config_history"
+                                style="@style/Text.Clip9.CfgTitle" />
+
+                            <TextView
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:layout_marginTop="2dp"
+                                android:text="@string/config_history_hint"
+                                style="@style/Text.Clip9.CfgHint" />
+                        </LinearLayout>
+
+                        <EditText
+                            android:id="@+id/configHistory"
+                            android:layout_width="96dp"
+                            android:layout_height="wrap_content"
+                            android:layout_marginStart="12dp"
+                            android:autofillHints=""
+                            android:inputType="numberSigned"
+                            android:maxLines="1"
+                            android:gravity="center"
+                            style="@style/Widget.Clip9.CfgInput" />
+                    </LinearLayout>
+
+                    <LinearLayout
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:gravity="center_vertical"
+                        android:minHeight="56dp"
+                        android:orientation="horizontal"
+                        android:paddingStart="15dp"
+                        android:paddingTop="10dp"
+                        android:paddingEnd="15dp"
+                        android:paddingBottom="10dp">
+
+                        <ImageView
+                            android:layout_width="19dp"
+                            android:layout_height="19dp"
+                            android:contentDescription="@null"
+                            android:src="@drawable/ic_console_text"
+                            app:tint="@color/console_text_faint" />
+
+                        <LinearLayout
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_marginStart="12dp"
+                            android:layout_weight="1"
+                            android:orientation="vertical">
+
+                            <TextView
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:text="@string/config_text_limit"
+                                style="@style/Text.Clip9.CfgTitle" />
+
+                            <TextView
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:layout_marginTop="2dp"
+                                android:text="@string/config_text_limit_hint"
+                                style="@style/Text.Clip9.CfgHint" />
+                        </LinearLayout>
+
+                        <EditText
+                            android:id="@+id/configTextLimit"
+                            android:layout_width="96dp"
+                            android:layout_height="wrap_content"
+                            android:layout_marginStart="12dp"
+                            android:autofillHints=""
+                            android:inputType="numberSigned"
+                            android:maxLines="1"
+                            android:gravity="center"
+                            style="@style/Widget.Clip9.CfgInput" />
+                    </LinearLayout>
+
+                    <LinearLayout
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:gravity="center_vertical"
+                        android:minHeight="56dp"
+                        android:orientation="horizontal"
+                        android:paddingStart="15dp"
+                        android:paddingTop="10dp"
+                        android:paddingEnd="15dp"
+                        android:paddingBottom="10dp">
+
+                        <ImageView
+                            android:layout_width="19dp"
+                            android:layout_height="19dp"
+                            android:contentDescription="@null"
+                            android:src="@drawable/ic_console_file"
+                            app:tint="@color/console_text_faint" />
+
+                        <LinearLayout
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_marginStart="12dp"
+                            android:layout_weight="1"
+                            android:orientation="vertical">
+
+                            <TextView
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:text="@string/config_file_limit"
+                                style="@style/Text.Clip9.CfgTitle" />
+
+                            <TextView
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:layout_marginTop="2dp"
+                                android:text="@string/config_file_limit_hint"
+                                style="@style/Text.Clip9.CfgHint" />
+                        </LinearLayout>
+
+                        <EditText
+                            android:id="@+id/configFileLimit"
+                            android:layout_width="96dp"
+                            android:layout_height="wrap_content"
+                            android:layout_marginStart="12dp"
+                            android:autofillHints=""
+                            android:inputType="numberSigned"
+                            android:maxLines="1"
+                            android:gravity="center"
+                            style="@style/Widget.Clip9.CfgInput" />
+                    </LinearLayout>
+
+                    <LinearLayout
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:gravity="center_vertical"
+                        android:minHeight="56dp"
+                        android:orientation="horizontal"
+                        android:paddingStart="15dp"
+                        android:paddingTop="10dp"
+                        android:paddingEnd="15dp"
+                        android:paddingBottom="10dp">
+
+                        <ImageView
+                            android:layout_width="19dp"
+                            android:layout_height="19dp"
+                            android:contentDescription="@null"
+                            android:src="@drawable/ic_console_file"
+                            app:tint="@color/console_text_faint" />
+
+                        <LinearLayout
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_marginStart="12dp"
+                            android:layout_weight="1"
+                            android:orientation="vertical">
+
+                            <TextView
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:text="@string/config_file_chunk"
+                                style="@style/Text.Clip9.CfgTitle" />
+
+                            <TextView
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:layout_marginTop="2dp"
+                                android:text="@string/config_file_chunk_hint"
+                                style="@style/Text.Clip9.CfgHint" />
+                        </LinearLayout>
+
+                        <EditText
+                            android:id="@+id/configFileChunk"
+                            android:layout_width="96dp"
+                            android:layout_height="wrap_content"
+                            android:layout_marginStart="12dp"
+                            android:autofillHints=""
+                            android:inputType="numberSigned"
+                            android:maxLines="1"
+                            android:gravity="center"
+                            style="@style/Widget.Clip9.CfgInput" />
+                    </LinearLayout>
+
+                    <LinearLayout
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:gravity="center_vertical"
+                        android:minHeight="56dp"
+                        android:orientation="horizontal"
+                        android:paddingStart="15dp"
+                        android:paddingTop="10dp"
+                        android:paddingEnd="15dp"
+                        android:paddingBottom="10dp">
+
+                        <ImageView
+                            android:layout_width="19dp"
+                            android:layout_height="19dp"
+                            android:contentDescription="@null"
+                            android:src="@drawable/ic_console_clock"
+                            app:tint="@color/console_text_faint" />
+
+                        <LinearLayout
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_marginStart="12dp"
+                            android:layout_weight="1"
+                            android:orientation="vertical">
+
+                            <TextView
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:text="@string/config_file_expire"
+                                style="@style/Text.Clip9.CfgTitle" />
+
+                            <TextView
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:layout_marginTop="2dp"
+                                android:text="@string/config_file_expire_hint"
+                                style="@style/Text.Clip9.CfgHint" />
+                        </LinearLayout>
+
+                        <EditText
+                            android:id="@+id/configFileExpire"
+                            android:layout_width="96dp"
+                            android:layout_height="wrap_content"
+                            android:layout_marginStart="12dp"
+                            android:autofillHints=""
+                            android:inputType="numberSigned"
+                            android:maxLines="1"
+                            android:gravity="center"
+                            style="@style/Widget.Clip9.CfgInput" />
+                    </LinearLayout>
+                </LinearLayout>
+
+                <!-- ── 卡 5 · 定时自动化 ────────────────────────────────────
+                     卡头徽章（configAutomationFlag）跟着总开关走：
+                     开 = 「已开启」（绿）/ 关 = 「未开启」（橙）—— 见 ConfigPage。 -->
+                <LinearLayout
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:layout_marginTop="12dp"
-                    android:text="@string/config_port"
-                    android:textAppearance="?attr/textAppearanceTitleSmall" />
+                    android:background="@drawable/bg_console_card"
+                    android:divider="@drawable/bg_console_row_edge"
+                    android:orientation="vertical"
+                    android:showDividers="middle">
 
-                <EditText
-                    android:id="@+id/configPort"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:autofillHints=""
-                    android:hint="@string/config_port"
-                    android:imeOptions="actionDone"
-                    android:inputType="number" />
+                    <LinearLayout
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:gravity="center_vertical"
+                        android:orientation="horizontal"
+                        android:paddingStart="15dp"
+                        android:paddingTop="13dp"
+                        android:paddingEnd="15dp"
+                        android:paddingBottom="11dp">
 
-                <TextView
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:text="@string/config_port_hint"
-                    android:textAppearance="?attr/textAppearanceBodySmall" />
+                        <ImageView
+                            android:layout_width="17dp"
+                            android:layout_height="17dp"
+                            android:contentDescription="@null"
+                            android:src="@drawable/ic_console_clock"
+                            app:tint="@color/console_icon" />
 
-                <TextView
+                        <TextView
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_marginStart="9dp"
+                            android:layout_weight="1"
+                            android:text="@string/config_automation"
+                            style="@style/Text.Clip9.CfgHead" />
+
+                        <TextView
+                            android:id="@+id/configAutomationFlag"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:background="@drawable/bg_console_flag"
+                            android:paddingStart="7dp"
+                            android:paddingTop="2dp"
+                            android:paddingEnd="7dp"
+                            android:paddingBottom="2dp"
+                            style="@style/Text.Clip9.CfgFlag" />
+                    </LinearLayout>
+
+                    <LinearLayout
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:gravity="center_vertical"
+                        android:minHeight="56dp"
+                        android:orientation="horizontal"
+                        android:paddingStart="15dp"
+                        android:paddingTop="10dp"
+                        android:paddingEnd="15dp"
+                        android:paddingBottom="10dp">
+
+                        <ImageView
+                            android:layout_width="19dp"
+                            android:layout_height="19dp"
+                            android:contentDescription="@null"
+                            android:src="@drawable/ic_console_clock"
+                            app:tint="@color/console_text_faint" />
+
+                        <LinearLayout
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_marginStart="12dp"
+                            android:layout_weight="1"
+                            android:orientation="vertical">
+
+                            <TextView
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:text="@string/config_automation_enabled"
+                                style="@style/Text.Clip9.CfgTitle" />
+
+                            <TextView
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:layout_marginTop="2dp"
+                                android:text="@string/config_automation_enabled_hint"
+                                style="@style/Text.Clip9.CfgHint" />
+                        </LinearLayout>
+
+                        <Switch
+                            android:id="@+id/configAutomationEnabled"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:layout_marginStart="12dp" />
+                    </LinearLayout>
+
+                    <LinearLayout
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:gravity="center_vertical"
+                        android:minHeight="56dp"
+                        android:orientation="horizontal"
+                        android:paddingStart="15dp"
+                        android:paddingTop="10dp"
+                        android:paddingEnd="15dp"
+                        android:paddingBottom="10dp">
+
+                        <ImageView
+                            android:layout_width="19dp"
+                            android:layout_height="19dp"
+                            android:contentDescription="@null"
+                            android:src="@drawable/ic_console_clock"
+                            app:tint="@color/console_text_faint" />
+
+                        <LinearLayout
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_marginStart="12dp"
+                            android:layout_weight="1"
+                            android:orientation="vertical">
+
+                            <TextView
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:text="@string/config_tick_seconds"
+                                style="@style/Text.Clip9.CfgTitle" />
+
+                            <TextView
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:layout_marginTop="2dp"
+                                android:text="@string/config_tick_seconds_hint"
+                                style="@style/Text.Clip9.CfgHint" />
+                        </LinearLayout>
+
+                        <EditText
+                            android:id="@+id/configTickSeconds"
+                            android:layout_width="96dp"
+                            android:layout_height="wrap_content"
+                            android:layout_marginStart="12dp"
+                            android:autofillHints=""
+                            android:inputType="numberSigned"
+                            android:maxLines="1"
+                            android:gravity="center"
+                            style="@style/Widget.Clip9.CfgInput" />
+                    </LinearLayout>
+
+                    <LinearLayout
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:gravity="center_vertical"
+                        android:minHeight="56dp"
+                        android:orientation="horizontal"
+                        android:paddingStart="15dp"
+                        android:paddingTop="10dp"
+                        android:paddingEnd="15dp"
+                        android:paddingBottom="10dp">
+
+                        <ImageView
+                            android:layout_width="19dp"
+                            android:layout_height="19dp"
+                            android:contentDescription="@null"
+                            android:src="@drawable/ic_console_clock"
+                            app:tint="@color/console_text_faint" />
+
+                        <LinearLayout
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_marginStart="12dp"
+                            android:layout_weight="1"
+                            android:orientation="vertical">
+
+                            <TextView
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:text="@string/config_grace_seconds"
+                                style="@style/Text.Clip9.CfgTitle" />
+
+                            <TextView
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:layout_marginTop="2dp"
+                                android:text="@string/config_grace_seconds_hint"
+                                style="@style/Text.Clip9.CfgHint" />
+                        </LinearLayout>
+
+                        <EditText
+                            android:id="@+id/configGraceSeconds"
+                            android:layout_width="96dp"
+                            android:layout_height="wrap_content"
+                            android:layout_marginStart="12dp"
+                            android:autofillHints=""
+                            android:inputType="numberSigned"
+                            android:maxLines="1"
+                            android:gravity="center"
+                            style="@style/Widget.Clip9.CfgInput" />
+                    </LinearLayout>
+
+                    <LinearLayout
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:gravity="center_vertical"
+                        android:minHeight="56dp"
+                        android:orientation="horizontal"
+                        android:paddingStart="15dp"
+                        android:paddingTop="10dp"
+                        android:paddingEnd="15dp"
+                        android:paddingBottom="10dp">
+
+                        <ImageView
+                            android:layout_width="19dp"
+                            android:layout_height="19dp"
+                            android:contentDescription="@null"
+                            android:src="@drawable/ic_console_globe"
+                            app:tint="@color/console_text_faint" />
+
+                        <LinearLayout
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_marginStart="12dp"
+                            android:layout_weight="1"
+                            android:orientation="vertical">
+
+                            <TextView
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:text="@string/config_default_tz"
+                                style="@style/Text.Clip9.CfgTitle" />
+
+                            <TextView
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:layout_marginTop="2dp"
+                                android:text="@string/config_default_tz_hint"
+                                style="@style/Text.Clip9.CfgHint" />
+                        </LinearLayout>
+
+                        <EditText
+                            android:id="@+id/configDefaultTz"
+                            android:layout_width="150dp"
+                            android:layout_height="wrap_content"
+                            android:layout_marginStart="12dp"
+                            android:autofillHints=""
+                            android:inputType="text"
+                            android:maxLines="1"
+                            android:gravity="center"
+                            style="@style/Widget.Clip9.CfgInput" />
+                    </LinearLayout>
+                </LinearLayout>
+
+                <!-- ── 卡 6 · 网络与存储（危险区）────────────────────────────
+                     ⚠️ 稿子里「危险的东西退一层」是把证书 / 路径这些「改错会丢数据」的
+                     项换底色单独分组；这里整张卡都是危险区，所以把那层意思放进
+                     卡头的橙色徽章（config_flag_danger），行结构保持一致 ——
+                     再嵌一层换底色反而和稿子的卡片节奏打架。 -->
+                <LinearLayout
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:layout_marginTop="12dp"
-                    android:text="@string/config_prefix"
-                    android:textAppearance="?attr/textAppearanceTitleSmall" />
+                    android:layout_marginBottom="8dp"
+                    android:background="@drawable/bg_console_card"
+                    android:divider="@drawable/bg_console_row_edge"
+                    android:orientation="vertical"
+                    android:showDividers="middle">
 
-                <EditText
-                    android:id="@+id/configPrefix"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:autofillHints=""
-                    android:hint="@string/config_prefix"
-                    android:imeOptions="actionDone"
-                    android:inputType="textUri" />
+                    <LinearLayout
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:gravity="center_vertical"
+                        android:orientation="horizontal"
+                        android:paddingStart="15dp"
+                        android:paddingTop="13dp"
+                        android:paddingEnd="15dp"
+                        android:paddingBottom="11dp">
 
-                <TextView
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:text="@string/config_prefix_hint"
-                    android:textAppearance="?attr/textAppearanceBodySmall" />
+                        <ImageView
+                            android:layout_width="17dp"
+                            android:layout_height="17dp"
+                            android:contentDescription="@null"
+                            android:src="@drawable/ic_console_db"
+                            app:tint="@color/console_icon" />
 
-                <TextView
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:layout_marginTop="12dp"
-                    android:text="@string/config_cert"
-                    android:textAppearance="?attr/textAppearanceTitleSmall" />
+                        <TextView
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_marginStart="9dp"
+                            android:layout_weight="1"
+                            android:text="@string/config_section_network"
+                            style="@style/Text.Clip9.CfgHead" />
 
-                <EditText
-                    android:id="@+id/configCert"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:autofillHints=""
-                    android:hint="@string/config_cert"
-                    android:imeOptions="actionDone"
-                    android:inputType="textUri" />
+                        <TextView
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:background="@drawable/bg_console_flag"
+                            android:paddingStart="7dp"
+                            android:paddingTop="2dp"
+                            android:paddingEnd="7dp"
+                            android:paddingBottom="2dp"
+                            android:text="@string/config_flag_danger"
+                            style="@style/Text.Clip9.CfgFlag" />
+                    </LinearLayout>
 
-                <EditText
-                    android:id="@+id/configKey"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:layout_marginTop="4dp"
-                    android:autofillHints=""
-                    android:hint="@string/config_key"
-                    android:imeOptions="actionDone"
-                    android:inputType="textUri" />
+                    <LinearLayout
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:gravity="center_vertical"
+                        android:minHeight="56dp"
+                        android:orientation="horizontal"
+                        android:paddingStart="15dp"
+                        android:paddingTop="10dp"
+                        android:paddingEnd="15dp"
+                        android:paddingBottom="10dp">
 
-                <TextView
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:text="@string/config_tls_hint"
-                    android:textAppearance="?attr/textAppearanceBodySmall" />
+                        <ImageView
+                            android:layout_width="19dp"
+                            android:layout_height="19dp"
+                            android:contentDescription="@null"
+                            android:src="@drawable/ic_console_net"
+                            app:tint="@color/console_text_faint" />
 
-                <TextView
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:layout_marginTop="12dp"
-                    android:text="@string/config_db_path"
-                    android:textAppearance="?attr/textAppearanceTitleSmall" />
+                        <LinearLayout
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_marginStart="12dp"
+                            android:layout_weight="1"
+                            android:orientation="vertical">
 
-                <EditText
-                    android:id="@+id/configDbPath"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:autofillHints=""
-                    android:hint="@string/config_db_path"
-                    android:imeOptions="actionDone"
-                    android:inputType="textUri" />
+                            <TextView
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:text="@string/config_host"
+                                style="@style/Text.Clip9.CfgTitle" />
 
-                <TextView
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:text="@string/config_db_path_hint"
-                    android:textAppearance="?attr/textAppearanceBodySmall" />
+                            <TextView
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:layout_marginTop="2dp"
+                                android:text="@string/config_host_hint"
+                                style="@style/Text.Clip9.CfgHint" />
+                        </LinearLayout>
 
-                <TextView
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:layout_marginTop="12dp"
-                    android:text="@string/config_storage_dir"
-                    android:textAppearance="?attr/textAppearanceTitleSmall" />
+                        <EditText
+                            android:id="@+id/configHost"
+                            android:layout_width="150dp"
+                            android:layout_height="wrap_content"
+                            android:layout_marginStart="12dp"
+                            android:autofillHints=""
+                            android:inputType="textUri"
+                            android:maxLines="1"
+                            android:gravity="center"
+                            style="@style/Widget.Clip9.CfgInput" />
+                    </LinearLayout>
 
-                <EditText
-                    android:id="@+id/configStorageDir"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:autofillHints=""
-                    android:hint="@string/config_storage_dir"
-                    android:imeOptions="actionDone"
-                    android:inputType="textUri" />
+                    <LinearLayout
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:gravity="center_vertical"
+                        android:minHeight="56dp"
+                        android:orientation="horizontal"
+                        android:paddingStart="15dp"
+                        android:paddingTop="10dp"
+                        android:paddingEnd="15dp"
+                        android:paddingBottom="10dp">
 
-                <TextView
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:text="@string/config_storage_dir_hint"
-                    android:textAppearance="?attr/textAppearanceBodySmall" />
+                        <ImageView
+                            android:layout_width="19dp"
+                            android:layout_height="19dp"
+                            android:contentDescription="@null"
+                            android:src="@drawable/ic_console_plug"
+                            app:tint="@color/console_text_faint" />
 
-                <TextView
-                    android:id="@+id/configDataDir"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:layout_marginTop="12dp"
-                    android:textAppearance="?attr/textAppearanceBodySmall"
-                    android:textIsSelectable="true" />
+                        <LinearLayout
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_marginStart="12dp"
+                            android:layout_weight="1"
+                            android:orientation="vertical">
 
-                <TextView
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:text="@string/config_data_dir_note"
-                    android:textAppearance="?attr/textAppearanceBodySmall" />
+                            <TextView
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:text="@string/config_port"
+                                style="@style/Text.Clip9.CfgTitle" />
+
+                            <TextView
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:layout_marginTop="2dp"
+                                android:text="@string/config_port_hint"
+                                style="@style/Text.Clip9.CfgHint" />
+                        </LinearLayout>
+
+                        <EditText
+                            android:id="@+id/configPort"
+                            android:layout_width="96dp"
+                            android:layout_height="wrap_content"
+                            android:layout_marginStart="12dp"
+                            android:autofillHints=""
+                            android:inputType="number"
+                            android:maxLines="1"
+                            android:gravity="center"
+                            style="@style/Widget.Clip9.CfgInput" />
+                    </LinearLayout>
+
+                    <LinearLayout
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:gravity="center_vertical"
+                        android:minHeight="56dp"
+                        android:orientation="horizontal"
+                        android:paddingStart="15dp"
+                        android:paddingTop="10dp"
+                        android:paddingEnd="15dp"
+                        android:paddingBottom="10dp">
+
+                        <ImageView
+                            android:layout_width="19dp"
+                            android:layout_height="19dp"
+                            android:contentDescription="@null"
+                            android:src="@drawable/ic_console_link"
+                            app:tint="@color/console_text_faint" />
+
+                        <LinearLayout
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_marginStart="12dp"
+                            android:layout_weight="1"
+                            android:orientation="vertical">
+
+                            <TextView
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:text="@string/config_prefix"
+                                style="@style/Text.Clip9.CfgTitle" />
+
+                            <TextView
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:layout_marginTop="2dp"
+                                android:text="@string/config_prefix_hint"
+                                style="@style/Text.Clip9.CfgHint" />
+                        </LinearLayout>
+
+                        <EditText
+                            android:id="@+id/configPrefix"
+                            android:layout_width="150dp"
+                            android:layout_height="wrap_content"
+                            android:layout_marginStart="12dp"
+                            android:autofillHints=""
+                            android:inputType="textUri"
+                            android:maxLines="1"
+                            android:gravity="center"
+                            style="@style/Widget.Clip9.CfgInput" />
+                    </LinearLayout>
+
+                    <!-- ── 证书与私钥（稿子 ⑧ 的 tlsrow）：两个路径都比较长，
+                         塞进右侧小框放不下 —— 这一行做成「说明在上、两个全宽
+                         输入框在下」的变体，是整张卡里唯一的例外。 -->
+                    <LinearLayout
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:orientation="horizontal"
+                        android:paddingStart="15dp"
+                        android:paddingTop="10dp"
+                        android:paddingEnd="15dp"
+                        android:paddingBottom="10dp">
+
+                        <ImageView
+                            android:layout_width="19dp"
+                            android:layout_height="19dp"
+                            android:layout_marginTop="3dp"
+                            android:contentDescription="@null"
+                            android:src="@drawable/ic_console_shield"
+                            app:tint="@color/console_text_faint" />
+
+                        <LinearLayout
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_marginStart="12dp"
+                            android:layout_weight="1"
+                            android:orientation="vertical">
+
+                            <TextView
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:text="@string/config_tls_title"
+                                style="@style/Text.Clip9.CfgTitle" />
+
+                            <TextView
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:layout_marginTop="2dp"
+                                android:text="@string/config_tls_hint"
+                                style="@style/Text.Clip9.CfgHint" />
+
+                            <EditText
+                                android:id="@+id/configCert"
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:layout_marginTop="8dp"
+                                android:autofillHints=""
+                                android:hint="@string/config_cert"
+                                android:inputType="textUri"
+                                android:maxLines="1"
+                                style="@style/Widget.Clip9.CfgInput" />
+
+                            <EditText
+                                android:id="@+id/configKey"
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:layout_marginTop="6dp"
+                                android:autofillHints=""
+                                android:hint="@string/config_key"
+                                android:inputType="textUri"
+                                android:maxLines="1"
+                                style="@style/Widget.Clip9.CfgInput" />
+                        </LinearLayout>
+                    </LinearLayout>
+
+                    <LinearLayout
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:gravity="center_vertical"
+                        android:minHeight="56dp"
+                        android:orientation="horizontal"
+                        android:paddingStart="15dp"
+                        android:paddingTop="10dp"
+                        android:paddingEnd="15dp"
+                        android:paddingBottom="10dp">
+
+                        <ImageView
+                            android:layout_width="19dp"
+                            android:layout_height="19dp"
+                            android:contentDescription="@null"
+                            android:src="@drawable/ic_console_db"
+                            app:tint="@color/console_text_faint" />
+
+                        <LinearLayout
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_marginStart="12dp"
+                            android:layout_weight="1"
+                            android:orientation="vertical">
+
+                            <TextView
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:text="@string/config_db_path"
+                                style="@style/Text.Clip9.CfgTitle" />
+
+                            <TextView
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:layout_marginTop="2dp"
+                                android:text="@string/config_db_path_hint"
+                                style="@style/Text.Clip9.CfgHint" />
+                        </LinearLayout>
+
+                        <EditText
+                            android:id="@+id/configDbPath"
+                            android:layout_width="150dp"
+                            android:layout_height="wrap_content"
+                            android:layout_marginStart="12dp"
+                            android:autofillHints=""
+                            android:inputType="textUri"
+                            android:maxLines="1"
+                            android:gravity="center"
+                            style="@style/Widget.Clip9.CfgInput" />
+                    </LinearLayout>
+
+                    <LinearLayout
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:gravity="center_vertical"
+                        android:minHeight="56dp"
+                        android:orientation="horizontal"
+                        android:paddingStart="15dp"
+                        android:paddingTop="10dp"
+                        android:paddingEnd="15dp"
+                        android:paddingBottom="10dp">
+
+                        <ImageView
+                            android:layout_width="19dp"
+                            android:layout_height="19dp"
+                            android:contentDescription="@null"
+                            android:src="@drawable/ic_console_folder"
+                            app:tint="@color/console_text_faint" />
+
+                        <LinearLayout
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_marginStart="12dp"
+                            android:layout_weight="1"
+                            android:orientation="vertical">
+
+                            <TextView
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:text="@string/config_storage_dir"
+                                style="@style/Text.Clip9.CfgTitle" />
+
+                            <TextView
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:layout_marginTop="2dp"
+                                android:text="@string/config_storage_dir_hint"
+                                style="@style/Text.Clip9.CfgHint" />
+                        </LinearLayout>
+
+                        <EditText
+                            android:id="@+id/configStorageDir"
+                            android:layout_width="150dp"
+                            android:layout_height="wrap_content"
+                            android:layout_marginStart="12dp"
+                            android:autofillHints=""
+                            android:inputType="textUri"
+                            android:maxLines="1"
+                            android:gravity="center"
+                            style="@style/Widget.Clip9.CfgInput" />
+                    </LinearLayout>
+
+                    <!-- 数据目录：只读（稿子 `.fin.blank` 那一格）。 -->
+                    <LinearLayout
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:gravity="center_vertical"
+                        android:minHeight="56dp"
+                        android:orientation="horizontal"
+                        android:paddingStart="15dp"
+                        android:paddingTop="10dp"
+                        android:paddingEnd="15dp"
+                        android:paddingBottom="10dp">
+
+                        <ImageView
+                            android:layout_width="19dp"
+                            android:layout_height="19dp"
+                            android:contentDescription="@null"
+                            android:src="@drawable/ic_console_folder"
+                            app:tint="@color/console_text_faint" />
+
+                        <LinearLayout
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_marginStart="12dp"
+                            android:layout_weight="1"
+                            android:orientation="vertical">
+
+                            <TextView
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:text="@string/config_data_dir"
+                                style="@style/Text.Clip9.CfgTitle" />
+
+                            <TextView
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:layout_marginTop="2dp"
+                                android:text="@string/config_data_dir_note"
+                                style="@style/Text.Clip9.CfgHint" />
+
+                            <TextView
+                                android:id="@+id/configDataDir"
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:layout_marginTop="8dp"
+                                android:background="@drawable/bg_console_fin"
+                                android:fontFamily="monospace"
+                                android:paddingStart="10dp"
+                                android:paddingTop="8dp"
+                                android:paddingEnd="10dp"
+                                android:paddingBottom="8dp"
+                                android:textColor="@color/console_text_faint"
+                                android:textIsSelectable="true"
+                                android:textSize="12.5sp" />
+                        </LinearLayout>
+                    </LinearLayout>
+                </LinearLayout>
             </LinearLayout>
+            <!-- ══════════════ ⑤ 其它 ══════════════
+                 ⚠️★ 2026-09-30 照稿子 ⑨（`b-console.html`）重排：原来是
+                 「一个按钮 + 一段说明」的堆叠，现在是一张 `.list` 卡里**一行一件事**，
+                 右侧放值 / 开关；下面挂一条 `.banner.err`（只在没加白时出现）；
+                 最后是 `.foot`（版本 + 一句话）。
 
-            <!-- ══════════════ ⑤ 其它 ══════════════ -->
+                 ⚠️★ 这一页**没有标题**：稿子里 ⑥⑦⑧⑨ 四张图都是「页签直接接内容」，
+                 「其它」两个字由上面的 `.seg` 说了 —— 再加一行标题就是同一句话说两遍。
+
+                 ⚠️★ 四行里只有 ①②④ 可点。③（通知权限）**整行也不可点**：
+                 它的值由系统授予结果决定，点它只能把用户丢进系统设置里再自己回来 ——
+                 那种「点完看不出发生了什么」的按钮不如不做，开关只当**指示灯**用。 -->
             <LinearLayout
                 android:id="@+id/pageOther"
                 android:layout_width="match_parent"
@@ -1197,52 +2016,327 @@
                 android:orientation="vertical"
                 android:visibility="gone">
 
-                <TextView
+                <LinearLayout
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:layout_marginTop="20dp"
-                    android:text="@string/section_other"
-                    android:textAppearance="?attr/textAppearanceTitleSmall" />
+                    android:background="@drawable/bg_console_card"
+                    android:divider="@drawable/bg_console_row_edge"
+                    android:orientation="vertical"
+                    android:showDividers="middle">
 
-                <Button
-                    android:id="@+id/batteryButton"
+                    <!-- ── ① 电池优化白名单（稿子 `.row` 第一行）──────────────
+                         ⚠️ 右侧的值有两副脸色（未加入=橙 / 已加入=绿），由
+                         MainActivity.refreshOther() 换；换色的同时它也是**下面那条
+                         警示横幅**的开关 —— 两处读的是同一个 isIgnoringBatteryOptimizations。 -->
+                    <LinearLayout
+                        android:id="@+id/batteryRow"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:background="?attr/selectableItemBackground"
+                        android:clickable="true"
+                        android:focusable="true"
+                        android:gravity="center_vertical"
+                        android:minHeight="56dp"
+                        android:orientation="horizontal"
+                        android:paddingStart="15dp"
+                        android:paddingEnd="15dp">
+
+                        <ImageView
+                            android:layout_width="19dp"
+                            android:layout_height="19dp"
+                            android:contentDescription="@null"
+                            android:src="@drawable/ic_console_battery"
+                            app:tint="@color/console_text_faint" />
+
+                        <LinearLayout
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_marginStart="12dp"
+                            android:layout_weight="1"
+                            android:orientation="vertical">
+
+                            <TextView
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:text="@string/battery_whitelist"
+                                style="@style/Text.Clip9.CfgTitle" />
+
+                            <TextView
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:text="@string/battery_note"
+                                style="@style/Text.Clip9.CfgHint" />
+                        </LinearLayout>
+
+                        <TextView
+                            android:id="@+id/batteryState"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:layout_marginStart="10dp"
+                            android:fontFamily="monospace"
+                            android:maxWidth="118dp"
+                            android:singleLine="true"
+                            android:ellipsize="end"
+                            android:textColor="@color/console_text_dim"
+                            android:textSize="12.5sp" />
+
+                        <ImageView
+                            android:layout_width="16dp"
+                            android:layout_height="16dp"
+                            android:layout_marginStart="8dp"
+                            android:contentDescription="@null"
+                            android:src="@drawable/ic_console_chev"
+                            app:tint="@color/console_text_faint" />
+                    </LinearLayout>
+
+                    <!-- ── ② WebView 版本 ────────────────────────────────────
+                         ⚠️ 右侧的值在**页面显示时**就填好（读 UA 是一次纯内存调用），
+                         不用等用户点 —— 稿子里那格写的就是「Chrome 118」。
+                         点整行 = 重新读一次 + 用 toast 说结论（旧了才展开那句长解释）。 -->
+                    <LinearLayout
+                        android:id="@+id/webViewRow"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:background="?attr/selectableItemBackground"
+                        android:clickable="true"
+                        android:focusable="true"
+                        android:gravity="center_vertical"
+                        android:minHeight="56dp"
+                        android:orientation="horizontal"
+                        android:paddingStart="15dp"
+                        android:paddingEnd="15dp">
+
+                        <ImageView
+                            android:layout_width="19dp"
+                            android:layout_height="19dp"
+                            android:contentDescription="@null"
+                            android:src="@drawable/ic_console_refresh"
+                            app:tint="@color/console_text_faint" />
+
+                        <LinearLayout
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_marginStart="12dp"
+                            android:layout_weight="1"
+                            android:orientation="vertical">
+
+                            <TextView
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:text="@string/webview_title"
+                                style="@style/Text.Clip9.CfgTitle" />
+
+                            <TextView
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:text="@string/webview_note"
+                                style="@style/Text.Clip9.CfgHint" />
+                        </LinearLayout>
+
+                        <TextView
+                            android:id="@+id/webViewVersionText"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:layout_marginStart="10dp"
+                            android:fontFamily="monospace"
+                            android:maxWidth="118dp"
+                            android:singleLine="true"
+                            android:ellipsize="end"
+                            android:textColor="@color/console_text_dim"
+                            android:textSize="12.5sp" />
+
+                        <ImageView
+                            android:layout_width="16dp"
+                            android:layout_height="16dp"
+                            android:layout_marginStart="8dp"
+                            android:contentDescription="@null"
+                            android:src="@drawable/ic_console_chev"
+                            app:tint="@color/console_text_faint" />
+                    </LinearLayout>
+
+                    <!-- ── ③ 通知权限 ────────────────────────────────────────
+                         ⚠️★ 开关是**指示灯**，不是控件：`clickable=false` +
+                         `focusable=false`，让触摸落到这一行（行本身也没设 clickable，
+                         于是整行**不可点** —— 见文件里那段「四行里只有 ①②④ 可点」）。 -->
+                    <LinearLayout
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:gravity="center_vertical"
+                        android:minHeight="56dp"
+                        android:orientation="horizontal"
+                        android:paddingStart="15dp"
+                        android:paddingEnd="15dp">
+
+                        <ImageView
+                            android:layout_width="19dp"
+                            android:layout_height="19dp"
+                            android:contentDescription="@null"
+                            android:src="@drawable/ic_console_bell"
+                            app:tint="@color/console_text_faint" />
+
+                        <LinearLayout
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_marginStart="12dp"
+                            android:layout_weight="1"
+                            android:orientation="vertical">
+
+                            <TextView
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:text="@string/notification_title"
+                                style="@style/Text.Clip9.CfgTitle" />
+
+                            <TextView
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:text="@string/notification_note"
+                                style="@style/Text.Clip9.CfgHint" />
+                        </LinearLayout>
+
+                        <Switch
+                            android:id="@+id/notificationSwitch"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:layout_marginStart="10dp"
+                            android:clickable="false"
+                            android:focusable="false" />
+                    </LinearLayout>
+
+                    <!-- ── ④ 数据目录 ────────────────────────────────────────
+                         ⚠️ 右侧那格是**路径本身**（mono、从中间截断，因为完整路径两头都有信息），
+                         点整行 = 复制路径。所以它右边的箭头是「还有东西」的意思（复制走 toast 说），
+                         不是「点进去有下一页」—— 这里没有下一页，别为一个目录再造一层。 -->
+                    <LinearLayout
+                        android:id="@+id/dataDirRow"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:background="?attr/selectableItemBackground"
+                        android:clickable="true"
+                        android:focusable="true"
+                        android:gravity="center_vertical"
+                        android:minHeight="56dp"
+                        android:orientation="horizontal"
+                        android:paddingStart="15dp"
+                        android:paddingEnd="15dp">
+
+                        <ImageView
+                            android:layout_width="19dp"
+                            android:layout_height="19dp"
+                            android:contentDescription="@null"
+                            android:src="@drawable/ic_console_folder"
+                            app:tint="@color/console_text_faint" />
+
+                        <LinearLayout
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_marginStart="12dp"
+                            android:layout_weight="1"
+                            android:orientation="vertical">
+
+                            <TextView
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:text="@string/data_dir_title"
+                                style="@style/Text.Clip9.CfgTitle" />
+
+                            <TextView
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:text="@string/data_dir_note"
+                                style="@style/Text.Clip9.CfgHint" />
+                        </LinearLayout>
+
+                        <TextView
+                            android:id="@+id/dataDirText"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:layout_marginStart="10dp"
+                            android:ellipsize="middle"
+                            android:fontFamily="monospace"
+                            android:maxWidth="118dp"
+                            android:singleLine="true"
+                            android:textColor="@color/console_text_dim"
+                            android:textSize="12.5sp" />
+
+                        <ImageView
+                            android:layout_width="16dp"
+                            android:layout_height="16dp"
+                            android:layout_marginStart="8dp"
+                            android:contentDescription="@null"
+                            android:src="@drawable/ic_console_chev"
+                            app:tint="@color/console_text_faint" />
+                    </LinearLayout>
+                </LinearLayout>
+
+                <!-- ── 电池白名单警示（稿子 `.banner.err`）──────────────────
+                     ⚠️★ 它和第一行的「未加入」说的是同一件事，看着像重复 ——
+                     这是**故意**的：第一行是清单里的一格（滚上去就看不见了），
+                     这条是滚到哪儿都跟着的结论 + 后果（「锁屏时会被系统杀掉」）。
+                     只在没加白时出现，加了白就整条收起来（MainActivity.refreshOther）。 -->
+                <LinearLayout
+                    android:id="@+id/otherBatteryBanner"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:layout_marginTop="4dp"
-                    android:text="@string/battery_whitelist" />
+                    android:layout_marginTop="14dp"
+                    android:background="@drawable/bg_console_banner_err"
+                    android:orientation="horizontal"
+                    android:paddingStart="14dp"
+                    android:paddingTop="13dp"
+                    android:paddingEnd="14dp"
+                    android:paddingBottom="13dp"
+                    android:visibility="gone">
+
+                    <ImageView
+                        android:layout_width="19dp"
+                        android:layout_height="19dp"
+                        android:layout_marginTop="1dp"
+                        android:contentDescription="@null"
+                        android:src="@drawable/ic_console_alert"
+                        app:tint="@color/console_err_text" />
+
+                    <LinearLayout
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_marginStart="11dp"
+                        android:layout_weight="1"
+                        android:orientation="vertical">
+
+                        <TextView
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:text="@string/battery_banner_title"
+                            android:textColor="@color/console_err"
+                            android:textSize="13sp"
+                            android:textStyle="bold" />
+
+                        <TextView
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:layout_marginTop="3dp"
+                            android:text="@string/battery_banner_body"
+                            android:textColor="@color/console_err_text"
+                            android:textSize="12.5sp" />
+                    </LinearLayout>
+                </LinearLayout>
+
+                <!-- ── 页脚（稿子 `.foot`）：版本 + 一句话 ── -->
+                <TextView
+                    android:id="@+id/otherVersionText"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="14dp"
+                    android:textColor="@color/console_foot"
+                    android:textSize="11sp" />
 
                 <TextView
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:text="@string/battery_note"
-                    android:textAppearance="?attr/textAppearanceBodySmall" />
-
-                <Button
-                    android:id="@+id/webViewCheckButton"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:layout_marginTop="12dp"
-                    android:text="@string/webview_check" />
-
-                <TextView
-                    android:id="@+id/webViewVersionText"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:textAppearance="?attr/textAppearanceBodySmall"
-                    android:visibility="gone" />
-
-                <TextView
-                    android:id="@+id/dataDirText"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:layout_marginTop="20dp"
-                    android:textAppearance="?attr/textAppearanceBodySmall" />
-
-                <TextView
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:text="@string/other_server_note"
-                    android:textAppearance="?attr/textAppearanceBodySmall" />
+                    android:layout_marginTop="3dp"
+                    android:text="@string/other_foot_note"
+                    android:textColor="@color/console_foot"
+                    android:textSize="11sp" />
             </LinearLayout>
         </LinearLayout>
     </ScrollView>
