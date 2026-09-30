@@ -20,6 +20,7 @@
 
 use std::path::Path;
 use std::sync::Arc;
+use std::time::Duration;
 
 use clip9_client::Msg;
 // ⚠️ `Manager` 是为了 `app.state::<…>()`（`pick_files` 从 `app` 上取字典，见那条注释）。
@@ -445,25 +446,154 @@ fn local_server_url(server: &ServerProcess, config_path: &Path) -> String {
     crate::server_process::client_url(&host, server.port(), &prefix, tls)
 }
 
-/// 「内容区里嵌的那个网页版」该指向哪 —— **就是上面那一个地址**（`open_web` 用的同一个），
-/// 只是**返回给页面**而不是丢给系统浏览器。
+// ── 「这个站点能不能嵌网页」的探测（需求：网页视图跟着当前房间的服务端走）──────
+//
+// ⚠️★ 背景：以前「网页」那一格拿的是**本机**那一个地址（一个只算本机的命令，
+//    2026-09-30 删掉了 —— 见 `main.rs` 里那段注释），所以房间连的是别处时，
+//    网页视图照样显示本机的内容。
+//    而房间列表里每个房间**各自带一个服务端地址**（`Channel::server`，快照的 `RoomView.server`
+//    已经把它给了界面）—— 用户部署在别处的那几台（Docker / OpenWrt / Cloudflare）**自己
+//    都带网页版**，只是桌面端从来没指过去。
+//
+// ⚠️★ 探测**必须**在壳这一侧做：桌面端要把**别人的**服务端嵌进 iframe，而「先问一句它是不是
+//    clip9」这件事在页面里做不到 —— 跨源 `fetch` 会被 CORS 挡掉（对方不会给我们
+//    `Access-Control-Allow-Origin`）。所以只有壳自己的 HTTP 客户端能问这一句。
+
+/// 探测一个站点有没有**可嵌的网页版**。
 ///
-/// ⚠️★ 与 [`open_web`] 共用 [`local_server_url`] 是刻意的：两处各拼一份的话，
-/// 「配了证书 / 配了路径前缀」时必然漂 —— 而那种漂**不报错**，只是一个白屏。
+/// ⚠️ 认的是网页版 `index.html` 里的身份标记（`<meta name="clip9-web" content="N">`，
+/// 见 `web-vue3/index.html` 与 `web-vue3/src/host-bridge.js` 的 `HOST_PROTOCOL`）——
+/// **那就是「这台有没有可嵌的网页版」的定义**。老版本的服务端没有这一行 → 回
+/// `supported: false` → 界面显示「请把服务器更新到 clip9」。
 ///
-/// ⚠️ 返回 `Option`：**找不到自带服务端那个二进制**时是 `None`。那不是错误 ——
-/// 页面该做的是留在手写时间线上（它本来就在），而不是弹一条红条。
+/// ⚠️ 走 [`clip9_client::uploader::build_client`]（rustls + **系统信任库**）：
+/// 用户自己部署的服务端很可能是自签证书 / 内网 CA，自带的那套根证书认不了它。
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SiteProbeView {
+    /// 拿到身份标记了没有。
+    pub supported: bool,
+    /// 标记里的**协议版本**（`None` = 有标记但那个值不是数）。
+    pub protocol: Option<u32>,
+    /// 不支持时的**原因键**（支持时是 `None`）。
+    ///
+    /// ⚠️ 是键不是成文的中文 —— 壳不知道用户选了哪个语种（判据 16 盯着这件事）。
+    pub reason: Option<Msg>,
+}
+
+/// 探测的超时。
 ///
-/// ⚠️★ **服务端没在跑时这个地址照样返回**（[`ServerProcess::port`] 从它自己的配置里读，
-/// 不探活）：那一拍 iframe 是白屏。这是接受的 —— 探活要最多 800ms，而页面每次初始化
-/// 都要问一次；「白屏」与「服务端没起」在页面上本来就长得一样，多花那 800ms 换不来区别。
+/// ⚠️★ 用它而不是那个客户端自己的 30 秒（`uploader::CHANNEL_TIMEOUT_SECS`）：
+/// 探测是「切一下就出结论」的事，等 30 秒用户早就不看那一眼了 ——
+/// 3 秒还答不上来的站点，对用户来说和「连不上」是同一件事。
+const PROBE_SITE_TIMEOUT: Duration = Duration::from_secs(3);
+
+/// 探测那个站点是不是 clip9 的网页版（界面据此决定嵌不嵌）。
 #[tauri::command]
-pub fn spa_url(
-    server: State<'_, Option<Arc<ServerProcess>>>,
-    config: State<'_, ServerConfigFile>,
-) -> Option<String> {
-    let server = server.as_ref()?;
-    Some(local_server_url(server, config.path()))
+pub async fn probe_site(base: String) -> SiteProbeView {
+    // ⚠️★ 三个原因**各写一个闭包、每个都把键写全**（`Msg::key("…")`），不图省事写成
+    //    一个 `failed(key: &str)` —— 判据 17 抠的就是那个字面量形态，**参数化的调用点
+    //    它抠不到**，于是「键打错一个字母」会一路绿到界面上（用户看到的是 `spaProbeUnreachble`
+    //    这种键名本身）。`commands.rs` 抬头那段注释写的就是这条规矩。
+    let bad_address = || SiteProbeView {
+        supported: false,
+        protocol: None,
+        reason: Some(Msg::key("spaProbeBadAddress")),
+    };
+    let unreachable = || SiteProbeView {
+        supported: false,
+        protocol: None,
+        reason: Some(Msg::key("spaProbeUnreachable")),
+    };
+    let not_clip9 = || SiteProbeView {
+        supported: false,
+        protocol: None,
+        reason: Some(Msg::key("spaProbeNotClip9")),
+    };
+
+    let Some(url) = site_root(&base) else {
+        return bad_address();
+    };
+    let Ok(client) = clip9_client::uploader::build_client() else {
+        // 连 HTTP 客户端都建不起来（TLS 后端初始化失败这类）—— 对界面来说与连不上同类。
+        return unreachable();
+    };
+    let Ok(response) = client.get(&url).timeout(PROBE_SITE_TIMEOUT).send().await else {
+        return unreachable();
+    };
+    // ⚠️ 非 2xx 一律算「答了，但不是 clip9」：那台机器活着，只是这个地址上没有我们的网页版
+    //（反代配错、路径写错、别的应用占了那个端口 —— 都落在这一类）。
+    if !response.status().is_success() {
+        return not_clip9();
+    }
+    let Ok(html) = response.text().await else {
+        return unreachable();
+    };
+
+    match clip9_web_mark(&html) {
+        Some(protocol) => SiteProbeView {
+            supported: true,
+            protocol,
+            reason: None,
+        },
+        None => not_clip9(),
+    }
+}
+
+/// 把配置里那份地址变成「网页版的根」：补一个尾斜杠。
+///
+/// ⚠️★ 校验直接复用 [`openable_url`]（它已经定好了「什么样的地址能交给外部」：只放行
+/// `http(s)`、去空白、去尾斜杠）—— 再写一份 `starts_with("http://")` 就是**第二份定义**，
+/// 两份迟早会漂（那边哪天加一个白名单项，这里就漏了）。
+/// ⚠️ 配置里那一格是**自由文本**，而结果会被塞进 `iframe.src`，所以这道闸必须有。
+fn site_root(base: &str) -> Option<String> {
+    let base = openable_url(base).ok()?;
+    Some(format!("{base}/"))
+}
+
+/// 从网页版的 HTML 里读身份标记。
+///
+/// 返回三层意思：
+/// * `None` —— 整篇里**没有**那个 meta（= 不是 clip9 的网页版，或版本太老）；
+/// * `Some(None)` —— 有那个 meta，但 `content` 不是数（协议号读不出，**仍算支持**）；
+/// * `Some(Some(n))` —— 有，且协议号是 `n`。
+///
+/// ⚠️ 手写而不是上正则：形状固定（一个 `<meta>` 标签），而 `desktop` 这一侧没有 `regex`
+/// 依赖 —— 为一句话加一个依赖不划算。
+/// ⚠️★ 判据是「**标签内部**有 `name="clip9-web"`」，不是「整篇里有 `clip9-web` 这几个字」：
+/// 后者会被页面上随便一句提到它的文字满足（而那种「看起来通过、其实没通过」的判据，
+/// 这个项目已经为它付过几次代价）。
+fn clip9_web_mark(html: &str) -> Option<Option<u32>> {
+    // ⚠️ 属性名不区分大小写，所以比较用小写副本；⚠️ 但**取 content 的值要从原文取**
+    //（免得把用户可见的东西改掉大小写 —— 这里读的是数字，但那不是因为数字就无所谓）。
+    let lower = html.to_ascii_lowercase();
+    let mut from = 0usize;
+    while let Some(offset) = lower[from..].find("<meta") {
+        let start = from + offset;
+        let Some(close) = lower[start..].find('>') else {
+            break;
+        };
+        let end = start + close;
+        let tag_lower = &lower[start..end];
+        if tag_lower.contains("name=\"clip9-web\"") || tag_lower.contains("name='clip9-web'") {
+            return Some(content_number(&html[start..end]));
+        }
+        from = end + 1;
+    }
+    None
+}
+
+/// 从一个 `<meta>` 标签的原文里取出 `content="…"` 并解析成数字。
+fn content_number(tag: &str) -> Option<u32> {
+    let lower = tag.to_ascii_lowercase();
+    let at = lower.find("content=")? + "content=".len();
+    let rest = &tag[at..];
+    let quote = rest.chars().next()?;
+    if quote != '"' && quote != '\'' {
+        return None;
+    }
+    let value = rest[1..].split(quote).next()?;
+    value.trim().parse().ok()
 }
 
 /// 把一次**阻塞**的起 / 停丢进线程池，等它回来。
@@ -855,6 +985,24 @@ pub async fn open_web(
     .map_err(|reason| Msg::key("openWebTaskFailed").param("reason", reason))?
 }
 
+/// 打开 clip9 的项目主页 —— 「你这个站点的网页版太老了，去更新」那个按钮。
+///
+/// ⚠️★ 刻意**不从页面收 URL**：收了就等于给页面一个「用系统浏览器打开任意地址」的能力，
+/// 而这里要的只有一个固定地址。哪天要能开别处，就再加一条**同样窄**的命令，
+/// 别把它改成一个通用的 `open_url`。
+///
+/// ⚠️ 地址是写死的，但**仍然过一遍** [`openable_url`]：那条规矩是「交给系统 opener 之前的
+/// 最后一道闸」—— 因为「这次是常量」而破例，破掉的就是下次漏掉的那次。
+#[tauri::command]
+pub async fn open_project_page() -> Result<(), Msg> {
+    const PROJECT: &str = "https://github.com/Jonnyan404/clip9";
+    let url = openable_url(PROJECT)?;
+    // ⚠️ 与 `open_web` 同一条理由丢进线程池：起那个 opener 进程是阻塞的，而这是一次点击。
+    tauri::async_runtime::spawn_blocking(move || open_in_system_browser(&url))
+        .await
+        .map_err(|reason| Msg::key("openWebTaskFailed").param("reason", reason))?
+}
+
 /// 交给系统 opener 之前的**最后一道**校验：只放行 `http(s)`。
 ///
 /// ⚠️ 地址现在是**我们自己拼的**（[`local_server_url`]，协议由证书决定），
@@ -926,7 +1074,7 @@ pub fn set_shell_messages(
 
 #[cfg(test)]
 mod tests {
-    use super::openable_url;
+    use super::{clip9_web_mark, openable_url, site_root};
 
     /// ⚠️ 只放行 `http(s)` —— 这个字符串最后要交给 shell 解释的 opener，
     /// `file://` / `javascript:` 进来就是另一类事了。
@@ -948,6 +1096,68 @@ mod tests {
             "127.0.0.1:9502",
         ] {
             assert!(openable_url(bad).is_err(), "{bad:?} 不该被放行");
+        }
+    }
+
+    /// ⚠️★ 判据是「**那个 meta 标签内部**有 `name="clip9-web"`」——
+    /// 整篇里出现 `clip9-web` 这几个字**不算**（最后那几条反例就是为这件事写的：
+    /// 网页上随便一句提到标记名的正文，不该让探测通过）。
+    #[test]
+    fn the_web_ui_mark_must_be_a_meta_tag() {
+        // 正例：真标记，顺带把协议号读出来
+        assert_eq!(
+            clip9_web_mark(
+                r#"<head><meta name="clip9-web" content="1"><title>clip9</title></head>"#
+            ),
+            Some(Some(1))
+        );
+        // 属性顺序反了 / 单引号 / 大小写不一 —— HTML 都不区分，这里也不该区分
+        assert_eq!(
+            clip9_web_mark("<meta content='2' NAME='Clip9-Web'>"),
+            Some(Some(2))
+        );
+        // 标记在、但协议号读不出 → **仍算支持**，只是没有版本号
+        assert_eq!(
+            clip9_web_mark(r#"<meta name="clip9-web" content="abc">"#),
+            Some(None)
+        );
+        // ⚠️ 反例：这三个里都有 `clip9-web` 那几个字，但都不是我们的标记
+        assert_eq!(
+            clip9_web_mark("<p>see the clip9-web marker for details</p>"),
+            None
+        );
+        assert_eq!(
+            clip9_web_mark(r#"<meta name="other" content="clip9-web">"#),
+            None
+        );
+        // 没有标记（= 老版本的服务端 / 别的应用）
+        assert_eq!(clip9_web_mark("<html><body>hello</body></html>"), None);
+        assert_eq!(clip9_web_mark(""), None);
+    }
+
+    /// 只放行 `http(s)`（复用 `openable_url` 的规矩），并补一个尾斜杠。
+    ///
+    /// ⚠️ 尾斜杠不是装饰：`https://host/clip9` 少了它，反代那一层会把根路径与子路径分开
+    ///（有的反代对 `/clip9` 与 `/clip9/` 行为不同），而我们要的是**网页版的根**。
+    #[test]
+    fn the_site_root_needs_a_scheme_and_gets_a_slash() {
+        assert_eq!(
+            site_root("http://127.0.0.1:9502").unwrap(),
+            "http://127.0.0.1:9502/"
+        );
+        // 已经带了的别加成两个
+        assert_eq!(
+            site_root("https://host/clip9/").unwrap(),
+            "https://host/clip9/"
+        );
+        for bad in [
+            "",
+            "   ",
+            "file:///tmp/x",
+            "javascript:alert(1)",
+            "host/clip9",
+        ] {
+            assert!(site_root(bad).is_none(), "{bad:?} 不该被嵌");
         }
     }
 }

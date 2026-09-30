@@ -388,11 +388,24 @@ fn main() {
             commands::send_files,
             commands::refresh,
             commands::open_web,
-            // ⚠️ 「内容区里嵌的那个网页版」该指向哪 —— 与 `open_web` **共用同一个
-            // 拼地址的函数**（`local_server_url`），所以配了证书 / 路径前缀时两处不会漂。
-            // 少注册一个的表现是 iframe **永远空白**：页面那边只会 `catch` 到一个
-            // 「命令不存在」，从它自己的代码里看不出问题。
-            commands::spa_url,
+            // ⚠️★ 网页视图跟着**当前房间的服务端**走（用户部署在别处的那几台也一样），
+            // 所以这里**没有**「本机地址」那条命令了 —— 地址由房间自己带
+            //（`RoomView.server`，界面早就拿到了、只是以前没读）。
+            // ⚠️ 与 `open_web` 共用 `local_server_url` 的那条老规矩还在：`open_web`
+            // 仍然拼本机地址（配了证书 / 路径前缀时两处不会漂）。
+            // 少注册下面这个的表现是「切到网页永远停在『正在检查』」——
+            // 没有超时、没有失败提示，页面自己看不出问题。
+            commands::probe_site,
+            // 「这个站点没有可嵌入的网页版」那一块上的按钮（打开项目主页）。
+            // ⚠️ 刻意**窄**：只开一个写死的地址，不从页面收 URL —— 收了就等于
+            // 给页面一个「用系统浏览器打开任意地址」的能力。
+            commands::open_project_page,
+            // ⚠️ 网页视图跟着**当前房间的服务端**走之后，要先问一句「那台有没有可嵌的
+            // 网页版」—— 跨源 `fetch` 会被 CORS 挡掉，所以这一步只能在壳里做。
+            // 少注册一个的表现是「切到网页永远停在『正在检查』」，而页面自己看不出问题。
+            commands::probe_site,
+            // 「这个站点没有可嵌入的网页版」那一块上的按钮（打开项目主页）。
+            commands::open_project_page,
             commands::apply_settings,
             commands::autostart_enabled,
             commands::hotkey_registered,

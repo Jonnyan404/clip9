@@ -186,35 +186,50 @@ const el = (id) => document.getElementById(id);
    ⚠️ 原时间线**一行没删**：iframe 白屏时它是兜底，切回去也是对照的那一份。
    ⚠️ 这一版**不做持久化**：只想看效果，不值得为它多一个要跟 `boot.js` 对齐的存储键。 */
 let mainView = 'spa';
-/** 本机自带服务端的地址（`http://127.0.0.1:9502`）。`null` = 没有那个二进制 → 不给切换按钮。 */
+/* ── 网页视图：跟着**当前房间的服务端**走，而且**先探测再嵌**（2026-09-30）────────
+ *
+ * ⚠️★ 2026-09-30 之前这里只认**本机**那一个地址（`spa_url` 命令），于是房间连的是别处的
+ * 服务端（Docker / OpenWrt / Cloudflare）时，网页视图**照样显示本机**的内容 —— 而房间里
+ * 那台服务端**自己也带网页版**（前端就编在它的二进制里）。用户报的「切到网页什么都没提示、
+ * 直接显示本机的」就是这一条。
+ *
+ * ⚠️★ 现在按当前房间的 `RoomView.server` 走，并且**先问一句那台有没有可嵌的网页版**
+ *（`probe_site`；跨源 `fetch` 会被 CORS 挡掉，所以只能问壳）。三种状态各自的样子：
+ *
+ *   `checking` → 覆盖层（「正在检查…」），**什么都不嵌** —— 别先闪一下那个陌生页面
+ *   `ready`    → 设 iframe 的 `src`；之后切房间 / 切主题走 postMessage，不再重载
+ *   `blocked`  → 覆盖层（那台不是 clip9 的网页版 / 连不上 / 地址不是 http(s)）
+ */
+/** 当前站点的基址（去掉尾斜杠；跟着房间走）。`null` = 那个房间没配服务端 → 不给切换按钮。 */
 let spaBase = null;
+/** 那个站点的探测状态：`'checking' | 'ready' | 'blocked'`。 */
+let spaSite = 'checking';
+/** `checking` / `blocked` 时覆盖层上那句话（**壳给的 `Msg`**，见 `probe_site`）。 */
+let spaReason = null;
 /** 已经设进 iframe 的地址。
  *
  * ⚠️★ 只在**变了**的时候才重设 `src`：快照每 700ms 来一次，每次都重设等于把整个 SPA
  * 重载一遍（WebSocket 跟着重连）。「当前房间」变了下一次快照就会看见，所以不会漏。
+ * ⚠️ 它现在只承载**首屏那一次**（URL 是唯一的初始入口：房间名 / `embed` / 主题三个参数）；
+ * 之后的切换走 postMessage（见 `postToSpa`）。
  */
 let spaSrc = null;
+/** iframe 里那份 SPA 回过一声没有 —— 回过了才敢用 postMessage 驱动它（见 `sayHello`）。 */
+let spaReady = false;
 
-/** 问壳要一次地址。⚠️ 失败 / 没有自带服务端都当 `null` —— 那不是错误，留在时间线上继续用。
- *（与 `open_web` 报错的那条路不同：那是用户**点了**一个按钮，说不出地址才该报。）
+/** 那个房间该嵌哪个站点。
+ *
+ * ⚠️ 只做最轻的规范化（去尾斜杠）—— **scheme 的校验不在这里**：真正拦住 `iframe.src` 的
+ * 是「探测没通过就不设 `src`」（`probe_site` 会回 `spaProbeBadAddress`）。页面里再判一次
+ * 就是第二份定义，而它其实管不住什么。
  */
-async function loadSpaBase() {
-  try {
-    spaBase = await invoke('spa_url');
-  } catch (error) {
-    spaBase = null;
-  }
-  el('view-switch').hidden = !spaBase;
-  // ⚠️★ 拿不到地址就**别停在「网页」那一版上**：那一版会是一块永远的白屏，
-  // 而且切换按钮也藏着（`view-switch` 整块不显示）—— 用户就卡在那儿，连切回去的路都没有。
-  if (!spaBase && mainView === 'spa') mainView = 'timeline';
-  // ⚠️★ 无条件调一次：`mainView` 的默认值是 `spa`，而 **DOM 的初值是「时间线可见」**
-  // （HTML 里 `hidden` 挂在 iframe 上）—— 两边对不齐的话，第一屏是时间线，
-  // 看起来就像「切换没生效」。`applyView` 是幂等的，多调一次没有代价。
-  applyView();
+function siteBaseOf(room) {
+  const raw = (room?.server || '').trim();
+  if (!raw) return null;
+  return raw.replace(/\/+$/, '');
 }
 
-/** 把 iframe 的地址对齐到「当前房间」。⚠️ 只在真的变了时才动 `src`。
+/** 把 iframe 的地址对齐到「当前房间 / 当前站点」。⚠️ 只在真的变了时才动 `src`。
  *
  * ⚠️★ 传的是 **`room.room`（服务端那边的房间名）**，**不是** `room.name`（给用户看的名字）——
  * 两个是**两个配置字段**（`Channel::name` / `Channel::room`），可以一个叫「默认」一个叫
@@ -226,18 +241,169 @@ async function loadSpaBase() {
  *（Jonny 2026-09-29：「模式切换网页带的有」—— 那版下拉已经删了）。
  */
 function syncSpa(state) {
-  if (mainView !== 'spa' || !spaBase) return;
   const room = state.rooms[state.selected];
-  if (!room) return;
-  // ⚠️ `embed=1`：让网页版把发送区整个让给宿主（SPA 的 `display` getter 把 composer
-  // 那组预置成关，走的就是个性化里「关掉输入区」同一条路）——
-  // 不然网页视图里会有两个输入框（桌面端底下一条 + 网页版自己的）。
-  // ⚠️ `theme=`：把桌面端选的深浅色同步给网页版（SPA 只在 embed 下认这个参数）。
-  const url = `${spaBase}/?room=${encodeURIComponent(room.room)}&embed=1&theme=${currentTheme()}`;
+  const base = siteBaseOf(room);
+  // ⚠️ 「有没有可嵌的地址」决定那颗切换按钮露不露：那个房间没配服务端就不给 ——
+  //    与原来的老规矩同一条（不给一个点下去是白屏的按钮）。
+  el('view-switch').hidden = !base;
+  if (!base) return;
+
+  if (base !== spaBase) {
+    // 站点换了（或头一次）：⚠️ 换站点**必须**重设 `src`（跨源，postMessage 过不去），
+    // 而在此之前**什么都不嵌** —— 探测没回来之前不许把 `src` 设出去，否则用户会先看到
+    // 那个陌生页面的首页（那正是要修的那个毛病）。
+    spaBase = base;
+    spaSite = 'checking';
+    spaReason = null;
+    spaReady = false;
+    spaSrc = null;
+    closeHello();
+    paintSpa(mainView === 'spa');
+    renderBlocked();
+    probeSite(base);
+    return;
+  }
+
+  // 不在网页那一版上就不必往下（探测与 `src` 都只为「要显示的那一格」服务）。
+  if (mainView !== 'spa' || spaSite !== 'ready') return;
+  if (spaReady) {
+    // ⚠️★ 握手过了 → 让 SPA **自己**切房间：`host-bridge.js` 那条 `clip9:room` 走的是它
+    // 内部的 `navigateToRoom`（只 `router.replace` 改地址，**不重载**、不重连、不跳）。
+    postToSpa({ type: 'clip9:room', room: room.room });
+  } else {
+    // 还没握手（首屏正在加载）→ 走 URL（那是唯一的初始入口）。
+    setSpaSrc(room.room);
+  }
+}
+
+/** 设 iframe 的地址（首屏 / 换站点那一次）。
+ *
+ * ⚠️ `embed=1`：让网页版把发送区整个让给宿主（SPA 的 `display` getter 把 composer
+ * 那组预置成关，走的就是个性化里「关掉输入区」同一条路）——
+ * 不然网页视图里会有两个输入框（桌面端底下一条 + 网页版自己的）。
+ * ⚠️ `theme=`：首屏那次把桌面端选的深浅色带过去（SPA 只在 embed 下认这个参数）；
+ * 之后换主题走 `clip9:theme` 那条消息。
+ */
+function setSpaSrc(roomName) {
+  const url = `${spaBase}/?room=${encodeURIComponent(roomName)}&embed=1&theme=${currentTheme()}`;
   if (url === spaSrc) return;
   spaSrc = url;
+  spaReady = false;
   el('spa').src = url;
 }
+
+/** 问壳「那台站点有没有可嵌的网页版」。 */
+async function probeSite(base) {
+  let view = null;
+  try {
+    view = await invoke('probe_site', { base });
+  } catch (error) {
+    view = null;
+  }
+  // ⚠️★ 探测回来时用户可能已经切到别的房间了 —— 那这次结果**作废**
+  //（拿它去画覆盖层或设 `src`，就是「网速慢一点就按上一个站点画」）。
+  if (base !== spaBase) return;
+  if (view && view.supported) {
+    spaSite = 'ready';
+    spaReason = null;
+    const room = lastState?.rooms?.[lastState.selected];
+    if (room && mainView === 'spa') setSpaSrc(room.room);
+  } else {
+    spaSite = 'blocked';
+    // ⚠️ 壳没给原因就拿「连不上」兜底 —— 那是唯一一种「我们说不出更细的话」的情形。
+    spaReason = view?.reason ?? { key: 'spaProbeUnreachable' };
+  }
+  paintSpa(mainView === 'spa');
+  renderBlocked();
+}
+
+/** 覆盖层上那几句（`checking` 与 `blocked` 共用这一块，只有文案与按钮不同）。 */
+function renderBlocked() {
+  el('spa-blocked-addr').textContent = spaBase || '';
+  const why = el('spa-blocked-why');
+  const project = el('spa-blocked-project');
+  if (spaSite === 'checking') {
+    why.textContent = t('正在检查这个站点…');
+    project.hidden = true;
+    return;
+  }
+  // ⚠️ 原因句是**壳给的 `Msg`**（键 + 参数），走 `I18N.say` 渲染 —— 不在这里拼中文。
+  why.textContent = spaReason ? I18N.say(spaReason) : '';
+  project.hidden = false;
+}
+
+/** 给 iframe 里那份 SPA 发一条消息。
+ *
+ * ⚠️ 目标 origin 只能写 `'*'`：那份页面在**另一个源**上（用户自己那台服务端），而宿主这边
+ * **拿不到**它的 origin 串（协议 / 端口 / 路径前缀都是用户配的）。
+ * ⚠️ 消息里只有房间名与主题，没有凭据 —— 别往里加东西（加了这条 `'*'` 就得重新算）。
+ */
+function postToSpa(payload) {
+  const frame = el('spa');
+  if (!frame.contentWindow) return;
+  frame.contentWindow.postMessage(payload, '*');
+}
+
+/* 握手：iframe 里那份 SPA 说一声「我是 clip9 的网页版」之后，才敢用消息驱动它。
+ *
+ * ⚠️★ 为什么要握手而不是看 `load` 事件：`load` 只说明**文档**加载完了，而那份 SPA 的消息
+ * 监听是在 `router.isReady()` **之后**才装的（见 `web-vue3/src/host-bridge.js`）—— 早发的
+ * 消息会**静默丢失**，表现是「切了房间网页没反应」，而且什么都不报。所以 `load` 之后要
+ * **重试着问**。
+ * ⚠️ 重试完还是没有回应就停手（不弹东西）：那份页面可能只是慢。这时 `spaReady` 仍是
+ * `false` → 下一次切房间会走 `setSpaSrc`（重载一次，但**结果是对的**）。
+ * 「退化到重载」比「假装成功」好。
+ */
+const HELLO_RETRY_MS = 250;
+const HELLO_TRIES = 12; // ≈ 3 秒
+let helloTries = 0;
+let spaHelloTimer = null;
+
+function sayHello() {
+  const frame = el('spa');
+  if (!frame.contentWindow) return;
+  frame.contentWindow.postMessage({ type: 'clip9:ping' }, '*');
+  helloTries += 1;
+  if (helloTries < HELLO_TRIES) {
+    clearTimeout(spaHelloTimer);
+    spaHelloTimer = setTimeout(sayHello, HELLO_RETRY_MS);
+  }
+}
+
+function closeHello() {
+  clearTimeout(spaHelloTimer);
+  spaHelloTimer = null;
+  helloTries = 0;
+}
+
+// 覆盖层上那颗「去 clip9 项目」。
+// ⚠️ 命令刻意是**窄的**（`open_project_page` 只开项目主页，不从页面收 URL）——
+// 页面这里也就不拼地址、不传参。
+el('spa-blocked-project').addEventListener('click', () => {
+  // ⚠️ 失败就只写一条控制台日志：那条命令只打开一个写死的地址，真失败（比如这台机器没有
+  // 默认浏览器）也没有「下一步」可以给用户。⚠️ 但**要 catch** —— 未处理的 reject 会在
+  // 控制台留一条没人看的红字（这一版连控制台都不给用户看）。
+  invoke('open_project_page').catch((error) => {
+    console.error('opening the project page failed:', error);
+  });
+});
+
+el('spa').addEventListener('load', () => {
+  // 每次加载（首屏 / 换站点）都重新握一次手。
+  spaReady = false;
+  closeHello();
+  sayHello();
+});
+
+window.addEventListener('message', (event) => {
+  const frame = el('spa');
+  // ⚠️ 只认**那个 iframe** 发来的（同源的别的窗口、这份页面里再嵌的东西都不算）。
+  if (!frame.contentWindow || event.source !== frame.contentWindow) return;
+  const data = event.data;
+  if (!data || typeof data !== 'object' || data.type !== 'clip9:hello') return;
+  spaReady = true;
+  closeHello();
+});
 
 /** 两个视图的可见性。
  *
@@ -247,17 +413,28 @@ function syncSpa(state) {
 function applyView() {
   const web = mainView === 'spa';
   el('timeline').hidden = web;
-  el('spa').hidden = !web;
+  el('view-list').classList.toggle('on', !web);
+  el('view-web').classList.toggle('on', web);
   // ⚠️★ 「网页」视图里把桌面端自己的状态栏**整条藏掉**（房间名 / 条数 / 设备圆圈）：
   // Jonny 2026-09-29：「列表的右侧状态栏和网页的顶部菜单栏叠一起了」——
   // SPA 自己的头部有房间名，桌面端再挂一条就是上下两根横杆。
   // ⚠️ 代价明说：「N 台在线」在网页视图里没地方看（拿「看得见」换「不叠」）。
   el('main-head').hidden = web;
-  el('view-list').classList.toggle('on', !web);
-  el('view-web').classList.toggle('on', web);
+  paintSpa(web);
   // ⚠️ 切到「网页」时**立刻**对齐地址（用最后那份快照）—— 不然要等下一拍（700ms）才动，
   // 点了像卡了一下。⚠️ 放在这里而不是点击处理器里：启动时的那次 `applyView` 也要走这条路。
   if (web && lastState) syncSpa(lastState);
+}
+
+/** 网页那一格里到底露哪一个：正常时是 iframe，`checking` / `blocked` 时是覆盖层。
+ *
+ * ⚠️★ 这两个的显隐**只在这里**定 —— 别处再写一次 `el('spa').hidden = …` 就是第二份定义，
+ * 而两份漂起来的表现是「覆盖层和 iframe 叠在一起」或者「一片空白」，都不报错。
+ */
+function paintSpa(web) {
+  const blocked = spaSite !== 'ready';
+  el('spa').hidden = !web || blocked;
+  el('spa-blocked').hidden = !web || !blocked;
 }
 
 /** 一个方框开关（稿子里的 `<span class="sq">`）。
@@ -327,12 +504,17 @@ function setTheme(theme) {
   // `data-i18n-title` —— 后者只能给一句固定的。⚠️ 换语种时这里**要再调一次**
   //（`applyLocale` 里做了），否则那句话会留在上一个语种里。
   button.title = theme === 'dark' ? t('side.theme.tip.light') : t('side.theme.tip.dark');
-  // ⚠️ 主题要**同步给网页视图**（Jonny 2026-09-29）—— iframe 是跨源的，没法从外面
-  // 改它里面的样式，唯一能做的就是把它**重载**一遍（URL 里的 `theme=` 变了，
-  // `syncSpa` 会自己发现并重设 `src`）。代价明说：切一次主题 = iframe 重连一次。
-  // ⚠️ 启动那一次（下面紧跟着的 `setTheme(currentTheme())`）`spaBase` 还没拿到，
-  // `syncSpa` 自己会早退，不用额外挡。
-  if (lastState) syncSpa(lastState);
+  // ⚠️★ 主题同步给网页视图（Jonny 2026-09-29）。**现在走消息**：`clip9:theme` 让 SPA 自己
+  // 改 `app.dark`（它内部只落 localStorage + 换主题，**不重载**）。
+  // ⚠️ 只有握手没过时才退回「重载一次」（URL 里的 `theme=` 变了，`syncSpa` 会发现）——
+  // 所以原来那句「切一次主题 = iframe 重连一次」现在只在**退化路径**上成立。
+  // ⚠️ 启动那一次（下面紧跟着的 `setTheme(currentTheme())`）`spaReady` 一定是 `false`
+  //（iframe 还没加载），于是走 `syncSpa`，而那边 `spaBase` 还没定 → 自己早退，不用额外挡。
+  if (spaReady) {
+    postToSpa({ type: 'clip9:theme', theme });
+  } else if (lastState) {
+    syncSpa(lastState);
+  }
 }
 
 // 启动时先对一次：`boot.js` 贴的是存储里的值，而按钮的图标 / 悬停提示得跟它一致
@@ -1232,7 +1414,10 @@ window.addEventListener('resize', () => {
 });
 
 // ⚠️ 不 `await`：地址拿不到就一直留在时间线上 —— **不该**为它拦住 `tick()`（那是整个界面）。
-loadSpaBase();
+// ⚠️ 启动时只把两个视图的可见性对一次就够（`mainView` 的默认值是 `spa`，而 DOM 的初值是
+// 「时间线可见」）。「有没有可嵌的站点」现在由 `syncSpa` 按**当前房间**决定，不再问壳要一个
+// 本机地址 —— 所以这里不需要异步那一步；切换按钮等第一份快照到了才会露出来。
+applyView();
 
 tick();
 

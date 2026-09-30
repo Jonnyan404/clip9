@@ -1551,6 +1551,101 @@ if (entryViewFiles.length !== 1) {
   }
 }
 
+// ── 判据 21：网页视图跟着**当前房间的站点**，而且**先探测再嵌**（理由见文件头）─────
+//
+// ⚠️★ 它钉的是 2026-09-30 修掉的那条毛病，而那条毛病**修不修都一个样**：
+//    改之前 `syncSpa` 用的是壳递来的**本机**地址，于是房间连的是别处的服务端
+//    （Docker / VPS / Cloudflare）时，网页视图照样显示本机的内容 —— 不报错、控制台干净，
+//    列表里那个房间的名字与条数**全是对的**，只有看见的那个网页不是那台的。
+//    ⚠️ 另一半同样静默：探测命令没注册的话，那一格永远停在「正在检查这个站点…」——
+//    没有超时、没有失败提示，用户只会以为「这个站点很慢」。
+//
+// ⚠️ 五条各自对应一个「拆掉就静默变坏」的零件，都是**一句话**的改动
+//（把基址换回本机、删掉早退那行、删掉作废那行、少注册一条命令），
+// 而后果都要用户报过来才知道。所以宁可写得碎一点、每条都点名。
+{
+  const mainPath = join(dirname(rustPath), 'main.rs');
+  let mainSource = null;
+  let mainError = null;
+  try {
+    mainSource = readFileSync(mainPath, 'utf8');
+  } catch (error) {
+    mainError = error;
+  }
+
+  if (mainSource === null) {
+    failed = true;
+    console.error(`✗ 判据 21 跑不了：读不出 ${mainPath}（${mainError.message}）`);
+    console.error('  ⚠️ 读不到就看不出「探测命令没注册」—— 那正是「网页永远停在检查中」。');
+  } else {
+    // ⚠️ 先剥注释：`app.js` 与 `main.rs` 的注释里都**大量**提到这些名字
+    //    （说明「以前是那样」），不剥的话删掉真正的代码也照样绿 —— 判据 8 就是这么栽的。
+    const bareJs = stripComments(js);
+    const bareMain = stripComments(mainSource);
+    const syncSpaBody = bareJs.match(/function syncSpa\(state\)\s*\{[\s\S]*?\n\}/);
+    const probeSiteBody = bareJs.match(/async function probeSite\(base\)\s*\{[\s\S]*?\n\}/);
+
+    if (!syncSpaBody || !probeSiteBody) {
+      failed = true;
+      console.error('✗ 判据 21 找不到要比对的东西 —— 这条自检要跟着代码改：');
+      if (!syncSpaBody) console.error('    · `app.js` 里找不到 `function syncSpa(state)`');
+      if (!probeSiteBody) console.error('    · `app.js` 里找不到 `async function probeSite(base)`');
+    } else {
+      const sync = syncSpaBody[0];
+      const probe = probeSiteBody[0];
+      const problems = [];
+
+      if (!sync.includes('siteBaseOf(')) {
+        problems.push(
+          '`syncSpa` 不再按**当前房间**算站点基址（`siteBaseOf(`）—— 那就会退回\n' +
+            '    「网页视图永远嵌本机」那条老路，而界面上看不出来（房间名 / 条数都对）。',
+        );
+      }
+      if (!sync.includes('probeSite(')) {
+        problems.push('`syncSpa` 换站点时不再探测那台有没有网页版（`probeSite(`）。');
+      }
+      // ⚠️★ 下面两条要匹配**字符串字面量**，而 `stripJs` 把字面量换成了 `\0内容\0`
+      //（见判据 15 那一段）—— 直接写 `'ready'` / `'spa_url'` 会**永远匹配不上**，
+      // 而它报出来的却是一句很像真话的「少了这个零件」。
+      // 2026-09-30 就是这么踩到的：`spaSite !== 'ready'` 明明在代码里，基线却报红。
+      // 加上哨兵（`\u0000?` 允许它缺席，这样剥与不剥都能匹配）才是对的。
+      if (!/spaSite\s*!==\s*\u0000?ready/.test(sync)) {
+        problems.push(
+          '`syncSpa` 少了「探测没通过就别往下」那条早退（`spaSite !== ready`）——\n' +
+            '    后果是**先嵌上去再问**，用户会先看到那个陌生页面的首页。',
+        );
+      }
+      if (!probe.includes('!== spaBase')) {
+        problems.push(
+          '`probeSite` 少了「回来时用户已经切走 → 这次结果作废」（`!== spaBase`）——\n' +
+            '    后果是网速慢一点就按**上一个**站点画那一格。',
+        );
+      }
+      if (/invoke\(\s*\u0000?spa_url/.test(bareJs)) {
+        problems.push(
+          '页面又在调 `spa_url` —— 那条命令已经删了（它只会算**本机**地址），\n' +
+            '    重新调它只可能是回退到老路上，而且调用处只会 `catch` 到一个「命令不存在」。',
+        );
+      }
+      if (!/commands::probe_site\b/.test(bareMain)) {
+        problems.push(
+          '`main.rs` 的 `generate_handler!` 里没有 `commands::probe_site` ——\n' +
+            '    那一格会永远停在「正在检查这个站点…」，没有超时也没有失败提示。',
+        );
+      }
+
+      if (problems.length) {
+        failed = true;
+        console.error(`✗ 判据 21：「网页视图跟着房间走、先探测再嵌」这条链上少了 ${problems.length} 个零件：`);
+        for (const one of problems) console.error(`    · ${one}`);
+        console.error('  ⚠️ 症状全都**不报错**：网页显示的是**另一个站点**的内容，或者永远停在检查中。');
+      } else {
+        console.log('· 判据 21：网页视图按当前房间的站点走，且先探测再嵌（6 个零件都在）。');
+      }
+    }
+  }
+}
+
 if (cssOnly.length) {
   console.log(`· ${cssOnly.length} 个 id 只被选择器用（形如 #id { … }），正常：${cssOnly.join('、')}`);
 }

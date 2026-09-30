@@ -198,6 +198,25 @@
        iframe 是一片空白，深色主题下那块白会很扎眼。 */
     .spa { flex: 1; border: 0; width: 100%; background: var(--bg); }
 
+    /* 「这个站点没有可嵌入的网页版」（2026-09-30）。
+       ⚠️★ 与 `.spa` **互斥显示**（都在同一个 flex 容器里，各占一份 `flex: 1`）：探测没通过时
+       露出来的是它，iframe 那颗 DOM 一直留着（只是不设 `src`），探测一通过立刻能换回去。
+       ⚠️ `display: flex` 与 `hidden` 的冲突由样式表里那条 `[hidden] { display: none !important }`
+       兜住（判据 20 盯着「全表只有这一处 `!important`」）—— 所以这里**不要**再自己写一个。 */
+    .spa-blocked {
+        flex: 1; display: flex; align-items: center; justify-content: center;
+        padding: 24px; background: var(--bg);
+    }
+
+    .spa-blocked .box {
+        max-width: 430px; text-align: center; padding: 18px 20px;
+        border: 1px solid var(--border); border-radius: 10px;
+    }
+
+    .spa-blocked .t { font-size: 13.5px; font-weight: 500; margin-bottom: 8px; }
+    .spa-blocked .d { font-size: 12px; color: var(--text-2); line-height: 1.7; margin: 0 0 10px; }
+    .spa-blocked .addr { font-size: 11.5px; word-break: break-all; }
+
     .card {
         background: var(--bg); border: 1px solid var(--border);
         border-radius: 9px; padding: 9px 11px; max-width: 88%;
@@ -994,9 +1013,27 @@ table.ra td input[type='checkbox'] { margin: 0; }
 
             <div class="notice" id="notice" hidden></div>
             <div class="tl" id="timeline"></div>
-            <!-- 「网页」那个视图。⚠️ 地址**不在这里写死** —— 端口是运行时从服务端配置里
-                 读出来的（`spa_url` 命令），写死一个端口迟早会指错。 -->
+            <!-- 「网页」那个视图。⚠️ 地址**不在这里写死** —— 它是**当前房间**配的那台服务端
+                 （`RoomView.server`），端口 / 路径前缀 / 协议都是运行时才知道的，
+                 写死一个迟早会指错。⚠️ 而且**先探测再嵌**（`probe_site`），
+                 见 `app.js` 的 `syncSpa` 那套状态机。 -->
             <iframe class="spa" id="spa" title="SPA" hidden></iframe>
+            <!-- ⚠️★ 「这个站点没法嵌网页」的那一块（2026-09-30）。
+                 为什么要它：房间列表里每个房间**各自带一个服务端**，而那台可能压根没有可嵌的
+                 网页版（老版本的服务端、或者那个地址上站着别的应用）。没有它的话，用户看到的
+                 是一片白或者一个**陌生页面的首页** —— 「切到网页什么都没提示」就是这么来的。
+                 ⚠️ 与 `#spa` 互斥（见上面 `.spa-blocked` 那段样式），切换由 `app.js` 的
+                 `syncSpa` 那套状态机做；⚠️ 探测**先于**设 `iframe.src`，所以不会先闪一下
+                 那个陌生页面。 -->
+            <div class="spa-blocked" id="spa-blocked" hidden>
+                <div class="box">
+                    <div class="t" data-i18n="这个站点没有可嵌入的网页版">这个站点没有可嵌入的网页版</div>
+                    <p class="d" id="spa-blocked-why"></p>
+                    <p class="d" data-i18n="把它更新到 clip9 的新版本之后，这里就能直接看网页版。">把它更新到 clip9 的新版本之后，这里就能直接看网页版。</p>
+                    <p class="d addr" id="spa-blocked-addr"></p>
+                    <button class="btn" id="spa-blocked-project" data-i18n="去 clip9 项目">去 clip9 项目</button>
+                </div>
+            </div>
 
             <div class="composer" id="composer">
                 <!-- 拖这条边改输入区高度（2026-09-29）。⚠️ 它是**独立的 6px 细带**，

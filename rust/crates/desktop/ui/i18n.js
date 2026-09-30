@@ -100,6 +100,10 @@
       // ── 侧栏：按钮的悬停提示（句子随状态变，`data-i18n-title` 表达不了二选一）──
       'side.theme.tip.dark': '切到深色模式',
       'side.theme.tip.light': '切到浅色模式',
+      // 「这个站点的网页视图」那一块（壳探测完回的原因键，见 commands.rs 的 probe_site）
+      'spaProbeBadAddress': '这个房间的服务端地址不是 http(s)，没法嵌网页',
+      'spaProbeUnreachable': '连不上那台服务端（超时或不可达）',
+      'spaProbeNotClip9': '那台服务端没有可嵌入的网页版 —— 请把它更新到 clip9',
       'side.collapse.tip': '收起侧栏',
       'side.expand.tip': '展开侧栏',
       'side.lang.tip': '切换界面语言（当前中文）',
@@ -610,6 +614,14 @@
       // ── 侧栏：按钮的悬停提示（句子随状态变，`data-i18n-title` 表达不了二选一）──
       'side.theme.tip.dark': 'Switch to dark mode',
       'side.theme.tip.light': 'Switch to light mode',
+      'spaProbeBadAddress': 'That room server address is not http(s): nothing can be embedded',
+      'spaProbeUnreachable': 'Cannot reach that server (timed out or unreachable)',
+      'spaProbeNotClip9': 'That server has no embeddable web UI — please update it to clip9',
+      '正在检查这个站点…': 'Checking this site…',
+      '这个站点没有可嵌入的网页版': 'This site has no embeddable web UI',
+      '把它更新到 clip9 的新版本之后，这里就能直接看网页版。':
+        'Update it to a newer clip9 and its web UI will show up right here.',
+      '去 clip9 项目': 'Open the clip9 project',
       'side.collapse.tip': 'Collapse the sidebar',
       'side.expand.tip': 'Expand the sidebar',
       'side.lang.tip': 'Switch the interface language (currently English)',
