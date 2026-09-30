@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  配置卡里 `.frow` 行与行之间的分隔线（设计稿 `border-bottom:1px solid #1b2740`）。
+
+  ⚠️ 用 LinearLayout 的 `divider`（每张卡一份）而不是在每个 frow 底下手写一个
+  `<View height=1dp>`：前者「最后一条不放」是自动的（`showDividers=middle`），
+  后者容易在增删行的时候把「最后一行下面也多出一条线」这种小事搞错。
+-->
+<shape xmlns:android="http://schemas.android.com/apk/res/android"
+    android:shape="rectangle">
+    <size android:height="1dp" />
+    <solid android:color="@color/console_row_edge" />
+</shape>
