@@ -150,6 +150,19 @@ jobs:
             echo "senderClientID 列已在，跳过"
           fi
 
+      # ⚠️★ 在 deploy **之前**：把「这个 Worker 现在开没开 *.workers.dev」照原样写回配置。
+      #
+      # 为什么非有这一步：那个开关的主人是操作者（控制台 Settings → Domains & Routes），
+      # 而 wrangler **没有**「别管这个键」这一说 —— 配置里不写 = 用默认值 `true`，
+      # 于是每次部署都把操作者关掉的 workers.dev 重新打开（2026-09-30 报上来的那条）。
+      # 见 `cloudflare/sync-workers-dev.mjs` 的文件头。
+      #
+      # ⚠️ 它**读不到就红**（只有 HTTP 404「还没这个 Worker」= 首次部署才算正常）：
+      #    继续往下等于把 true 再写一遍，也就是回到那个 bug。
+      - name: 写回 workers.dev 的当前状态（部署不表态）
+        working-directory: cloudflare/workers
+        run: node ../sync-workers-dev.mjs wrangler.toml
+
       # ⚠️ 把 secrets 写进刚生成的 wrangler.toml，再 deploy —— 所以**线上跑的是 secret 里的值**。
       - name: 部署 Worker
         working-directory: cloudflare/workers

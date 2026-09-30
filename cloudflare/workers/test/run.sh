@@ -7,6 +7,7 @@
 #   shortcut-contract.test.mjs —— Android 快捷指令真正发出的请求形状（?auth= 查询串等）
 #   share-page.test.mjs    —— 分享页链路：POST /share 一律发 token + 指向 /s/<token>，GET /share 不消耗次数
 #   share-log-landing.test.mjs —— 分享记录与 OG 落地页（房间隔离 / 计数去重 / 外壳注入）
+#   deploy-subdomain.test.mjs —— 部署不该替操作者表态（workers.dev 的当前状态照原样写回配置）
 #
 # 端到端测试需要先打包处理器（Worker 源码用打包器风格的无后缀导入，Node 直接加载不了），
 # 并用 node:sqlite 充当 D1、Map 充当 R2，因此不需要 wrangler、不联网。
@@ -63,3 +64,7 @@ node --no-warnings test/share-page.test.mjs
 echo
 echo "── 分享记录与 OG 落地页（/share/list 房间隔离 / 打开计数与去重 / /s/<token> 摘要与不泄漏）"
 node --no-warnings test/share-log-landing.test.mjs
+
+echo
+echo "── 部署的 workers.dev 写回（模板显式声明 + 两条路径都在 deploy 前写回当前状态）"
+node --no-warnings test/deploy-subdomain.test.mjs
