@@ -226,7 +226,13 @@
 
     <!-- ── 远端服务器（可保存多台，各自带密码）────────────────────────────── -->
     <string name="remote_section">远端服务器</string>
-    <string name="remote_section_note">可以保存多台。打开哪一台就进哪一台的界面 —— 别人起好的 clip9 也能加进来。</string>
+    <!-- remote_section_note 已删：子页说明用 remote_subpage_note（稿子 ④ 那段更全的），这条没人读了。 -->
+    <!-- ── 远端服务器 · 子页（稿子 ④⑤）────────────────────────────────── -->
+    <string name="remote_subpage_note">连别人的 clip9 时用。填过的密码存在这台手机上 —— 打开界面之前先拿它换成会话令牌，所以不必先进网页、再输一遍密码。本机那个服务端不在这里，它在连接页上面那张卡里。</string>
+    <string name="remote_entry_none">还没选。点进来挑一台</string>
+    <string name="remote_open_with">用「%1$s」打开界面</string>
+    <string name="remote_credential_note">⚠️ 凭据只走 Authorization 头，不进 URL —— 进了 URL 就会进访问日志、浏览器历史和分享文本。换服务器 = 换一套凭据，不会串。</string>
+    <string name="remote_new_title">添加一台</string>
     <string name="remote_none">还没添加过。点下面的「添加」把一台加进来，就不用自己在本机起服务端了。</string>
     <string name="remote_add">＋ 添加服务器</string>
     <string name="remote_default_name">远端</string>
@@ -236,10 +242,8 @@
          为一个颜色去连一次是不值的，所以文案写成「可能」。 -->
     <string name="remote_status_logged_in">已登录</string>
     <string name="remote_status_needs_password">要密码</string>
-    <string name="remote_selected">当前用这一台</string>
+    <!-- remote_selected 已删：「当前用这一台」改由行首的绿 led 表达（稿子 ④）。 -->
 
-    <string name="remote_editor_new">添加服务器</string>
-    <string name="remote_editor_edit">编辑服务器</string>
     <string name="remote_name">名称</string>
     <string name="remote_name_hint">随便起一个（「家里」「公司」）—— 清单里靠它认。</string>
     <string name="remote_url">地址</string>

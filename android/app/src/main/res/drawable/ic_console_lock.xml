@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 设计稿 #i-lock：记住密码与访问安全卡头。 -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+    <path
+        android:fillColor="#00000000"
+        android:pathData="M7.5,10.5 h9 a2.5,2.5 0 0 1 2.5,2.5 v4.5 a2.5,2.5 0 0 1 -2.5,2.5 h-9 a2.5,2.5 0 0 1 -2.5,-2.5 V13 a2.5,2.5 0 0 1 2.5,-2.5 z M8.5,10.5 V8 a3.5,3.5 0 0 1 7,0 v2.5"
+        android:strokeColor="#FFFFFFFF"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:strokeWidth="1.8" />
+</vector>

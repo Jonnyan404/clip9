@@ -1,23 +1,30 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
-  远端服务器清单里的**一行**。
+  远端服务器**列表子页**里的一行（稿子 ④ 的 `.row`：led + 名字 + 地址·房间 + tag + chev）。
 
   ⚠️★ 这个布局被代码 inflate 多次（有几台就几份），所以：
   - 绑定一律用 `row.findViewById(...)`（在那**一份**视图树里找），
     千万不要在 Activity 里 `findViewById(R.id.remoteName)`（那只会拿到第一份）；
   - 这里的 id 不许与 `activity_main.xml` 重名。
 
-  ⚠️ 整行是可点的（点一下就打开这一台的界面），所以根布局要有
-  `?attr/selectableItemBackground` —— 没有的话点了没有任何反馈，
-  而用户会以为「这个 App 卡了」。
+  ⚠️ id 与弹窗时代保持一致（remoteLed / remoteName / remoteCurrent /
+  remoteAddress / remoteState / remoteEdit），但**含义有两处挪了**：
+  - `remoteLed`：绿 = **当前选中**的那台（稿子 ④「当前那台是绿的」）；
+  - `remoteState`：从「状态 · 房间」的长文本变成**右侧一枚 tag**
+    （「已登录」绿 /「要密码」橙，底色见 RemoteServerList）——
+    房间挪进 remoteAddress 那一行（`url · room`）。
 -->
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
     android:layout_width="match_parent"
     android:layout_height="wrap_content"
     android:background="?attr/selectableItemBackground"
     android:gravity="center_vertical"
+    android:minHeight="60dp"
     android:orientation="horizontal"
+    android:paddingStart="15dp"
     android:paddingTop="10dp"
+    android:paddingEnd="10dp"
     android:paddingBottom="10dp">
 
     <!-- ⚠️ 用「●」字而不是一张 drawable：省一个资源文件，而且跟着字号走。
@@ -26,7 +33,7 @@
         android:id="@+id/remoteLed"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
-        android:paddingEnd="8dp"
+        android:paddingEnd="10dp"
         android:text="@string/strip_led"
         android:textSize="13sp" />
 
@@ -36,49 +43,58 @@
         android:layout_weight="1"
         android:orientation="vertical">
 
-        <LinearLayout
+        <TextView
+            android:id="@+id/remoteName"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:gravity="center_vertical"
-            android:orientation="horizontal">
-
-            <TextView
-                android:id="@+id/remoteName"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:textAppearance="?attr/textAppearanceTitleSmall" />
-
-            <TextView
-                android:id="@+id/remoteCurrent"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:layout_marginStart="8dp"
-                android:text="@string/remote_selected"
-                android:textAppearance="?attr/textAppearanceBodySmall"
-                android:visibility="gone" />
-        </LinearLayout>
+            android:ellipsize="end"
+            android:maxLines="1"
+            android:textColor="@color/console_text"
+            android:textSize="14sp"
+            android:textStyle="bold" />
 
         <TextView
             android:id="@+id/remoteAddress"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
+            android:layout_marginTop="2dp"
             android:ellipsize="middle"
+            android:fontFamily="monospace"
             android:maxLines="1"
-            android:textAppearance="?attr/textAppearanceBodySmall" />
-
-        <TextView
-            android:id="@+id/remoteState"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:textAppearance="?attr/textAppearanceBodySmall" />
+            android:textColor="@color/console_text_body"
+            android:textSize="11.5sp" />
     </LinearLayout>
+
+    <!-- 稿子 ④ 里那枚 tag（已登录 绿 / 要密码 橙）：底与字色都在代码里按状态换，
+         与配置页卡头的徽章同一套（bg_console_flag / bg_console_flag_ok）。 -->
+    <TextView
+        android:id="@+id/remoteState"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginStart="10dp"
+        android:background="@drawable/bg_console_flag"
+        android:paddingStart="7dp"
+        android:paddingTop="2dp"
+        android:paddingEnd="7dp"
+        android:paddingBottom="2dp"
+        style="@style/Text.Clip9.CfgFlag" />
+
+    <ImageView
+        android:layout_width="16dp"
+        android:layout_height="16dp"
+        android:layout_marginStart="8dp"
+        android:contentDescription="@null"
+        android:src="@drawable/ic_console_chev"
+        app:tint="@color/console_text_faint" />
 
     <Button
         android:id="@+id/remoteEdit"
-        style="?attr/materialButtonOutlinedStyle"
+        style="@style/Widget.Clip9.ConsoleButton"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
         android:minWidth="0dp"
-        android:minHeight="36dp"
-        android:text="@string/remote_edit" />
+        android:minHeight="32dp"
+        android:text="@string/remote_edit"
+        android:textColor="@color/console_icon"
+        app:backgroundTint="@android:color/transparent" />
 </LinearLayout>
