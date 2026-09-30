@@ -1,6 +1,6 @@
 //! 把 `clip9-client` 跑起来 —— **这里是唯一碰「线程 / 任务 / 句柄」的地方**。
 //!
-//! 四件事（对应 `docs/specs/desktop-client.md` §0.5 的接缝表）：
+//! 四件事（对应 `dev-docs/specs/desktop-client.md` §0.5 的接缝表）：
 //!
 //! 1. **起监听（上行）**：[`spawn_watcher`]，回调里**不做 IO** —— 只把事件丢给异步任务再
 //!    [`upload_event`]（回调跑在**监控线程**上，阻塞它等于漏掉后面的变化）。⚠️★ 界面上

@@ -1,10 +1,10 @@
-//! 托盘菜单 —— 桌面端的**主入口**（`docs/specs/desktop-client.md` §7 第 5 条）。
+//! 托盘菜单 —— 桌面端的**主入口**（`dev-docs/specs/desktop-client.md` §7 第 5 条）。
 //!
 //! # 为什么托盘是主入口
 //!
 //! 窗口可以关掉，而同步要一直跑。所以「切房间」「退出」这些动作
 //! **不能只活在窗口里** —— 那等于「关掉窗口就没法退出」。
-//! 界面稿见 `docs/specs/desktop-client-mockup.html`。
+//! 界面稿见 `dev-docs/specs/desktop-client-mockup.html`。
 //!
 //! ⚠️ 托盘里原来还有一项「暂停 / 恢复剪贴板同步」。**2026-09-26 删掉了** ——
 //! 它背后的那个总开关（`ClientConfig::enable_monitoring`）整条没了：

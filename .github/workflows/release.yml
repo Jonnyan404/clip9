@@ -1018,7 +1018,7 @@ jobs:
   # ⚠️ 排在 `publish` 之后：先保证资产传完，记录是收尾动作，它失败也不影响已发布的产物。
   #
   # ⚠️★ 与 Go 版的一处**已知差异**（2026-09-30 核实过，别以为是照抄漏了）：
-  #   那边只有 `pages.yml` 挂 `push → main`，且带 `paths: docs/**` —— 空 diff 判定为
+  #   那边只有 `pages.yml` 挂 `push → main`，且带 `paths: dev-docs/**` —— 空 diff 判定为
   #   **不匹配**，所以那条空提交**不触发任何 workflow**。clip9 的 `ci.yml` 是
   #   `push: branches: [main]`、**没有 paths 过滤** ⇒ 会多跑一次 CI（rust + frontend 全套）。
   #   那一次必然绿（一个文件都没动），代价是几分钟 runner 时间，换来「`git log` 里看得见版本」。

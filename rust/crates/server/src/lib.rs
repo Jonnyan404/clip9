@@ -156,7 +156,7 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/server", get(handlers::server))
         // ⚠️ `/healthz` 是**这个实现自己加的**便利端点，契约里没有它（Go 那边也没有）。
         // 加它是因为验收脚本需要一个「活着吗」的探活口，而 `/server` 会做鉴权计算、
-        // 不适合当探活。**别把它写进 `docs/api.md`** —— 它不是契约的一部分。
+        // 不适合当探活。**别把它写进 `dev-docs/api.md`** —— 它不是契约的一部分。
         .route("/healthz", get(|| async { "ok" }))
         // ── 会话令牌（P1）──
         .route("/auth/token", post(auth_token::issue).fallback(only_post))
@@ -192,7 +192,7 @@ pub fn router(state: Arc<AppState>) -> Router {
         )
         // ⚠️ WS 用 `get` 注册是刻意的：握手是一个 GET + `Upgrade` 头。
         .route("/push", get(ws::push))
-        // ⚠️ `/content`（**没有**尾斜杠）是**历史分页**（`docs/specs/ws-live-only.md` W1）。
+        // ⚠️ `/content`（**没有**尾斜杠）是**历史分页**（`dev-docs/specs/ws-live-only.md` W1）。
         // axum 里静态段优先，所以它和 `/content/latest`、`/content/{id}` 不冲突。
         .route("/content", get(handlers::content_list).fallback(only_get))
         .route("/content/latest", get(handlers::latest_content))

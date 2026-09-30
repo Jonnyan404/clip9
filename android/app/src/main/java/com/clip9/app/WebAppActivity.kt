@@ -28,7 +28,7 @@ import java.security.MessageDigest
  * 网页界面：**一个全屏 WebView** 加载服务端地址。
  *
  * ⚠️★ 它加载的是**地址**，不是打进 App 里的那份产物 —— 理由见
- * `docs/specs/android-client.md` §1.1（`web-vue3/src/base.js` 的 `APP_BASE` 是从
+ * `dev-docs/specs/android-client.md` §1.1（`web-vue3/src/base.js` 的 `APP_BASE` 是从
  * `document.baseURI` 推的，页面不是从服务端那个 origin 加载时，axios / WS 的地址会全打错，
  * 而症状是「静态资源正常、服务端一条请求都收不到」）。
  *

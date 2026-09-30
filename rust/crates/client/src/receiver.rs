@@ -2,7 +2,7 @@
 //!
 //! # 边界为什么要服务端说，而不是客户端猜
 //!
-//! `docs/specs/desktop-client.md` §4.2 把这件事讲透了，这里是摘要 + 落地：
+//! `dev-docs/specs/desktop-client.md` §4.2 把这件事讲透了，这里是摘要 + 落地：
 //!
 //! 历史与实时**共用同一个事件名**（`receive`），所以客户端天生分不出来。行为基准
 //! （`clip-sync`）只好用**时间窗**兜：连上之后静默 `PRIMING_QUIET_SECS` 秒，
@@ -12,7 +12,7 @@
 //! - 窗口开长 → 连上之后别人马上复制的东西**被吞**（真消息收不到）✗。
 //!
 //! 所以这里**不猜**：握手 `config` 里的 `latestId`（= 连接时刻该房间的最大消息 id，
-//! 见 `docs/specs/ws-live-only.md`）就是那条边界。
+//! 见 `dev-docs/specs/ws-live-only.md`）就是那条边界。
 //!
 //! # 规则（[`Boundary`]）
 //!
@@ -31,7 +31,7 @@
 //!
 //! # 历史从哪来
 //!
-//! ⚠️ 握手**不再推历史**（`docs/specs/ws-live-only.md` W5）。历史由这边自己去
+//! ⚠️ 握手**不再推历史**（`dev-docs/specs/ws-live-only.md` W5）。历史由这边自己去
 //! `GET /content` 取 —— 取回来的一律**只认领**（[`Boundary::is_history`]）。
 //!
 //! ⚠️ 有一个**飞行窗口**要小心：取历史的请求在飞的时候，房间里可能已经推来几条实时消息。
@@ -66,7 +66,7 @@ use crate::uploader::{ServerLimits, build_client, parse_api_error};
 ///
 /// ⚠️ 只解析需要的字段（`config` 里还有 `auth` / `automation` 等 —— 那些是界面的事）。
 ///
-/// ⚠️★ `limits` 在这里是**刻意的**：`docs/api.md` §3 曾把握手载荷错标成 `/server` 的响应，
+/// ⚠️★ `limits` 在这里是**刻意的**：`dev-docs/api.md` §3 曾把握手载荷错标成 `/server` 的响应，
 /// 而限额**只在这条 `config` 事件里**（`text.limit` / `file.limit`；`version` 同理）。
 /// 详见 [`crate::uploader`] 的模块文档。
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -164,7 +164,7 @@ pub enum WsEvent {
     /// ⚠️ 装箱是**必须**的（`clippy::large_enum_variant` 会红）：`ReceiveHolder`
     /// 比其它变体大一个数量级，而这个枚举是**每条消息都要过一遍**的东西 ——
     /// 让 `config` / `revoke` 那些小事件陪着扛一个大结构，是白白的拷贝。
-    /// ⚠️ 别用 `#[allow]` 把它压下去（`docs/CONTRIBUTING.md` §4：不许为了让自己的切片过而放宽门禁）。
+    /// ⚠️ 别用 `#[allow]` 把它压下去（`dev-docs/CONTRIBUTING.md` §4：不许为了让自己的切片过而放宽门禁）。
     Entry(Box<ReceiveHolder>),
     /// 一台设备进/出了这个房间。
     ///
@@ -602,7 +602,7 @@ fn median(samples: &VecDeque<u32>) -> Option<u32> {
 /// 握手**不带** `latestId` 时（老服务端）取历史用的条数兜底。
 ///
 /// ⚠️ 这个数只在「读不到服务端 `server.history`」时用 —— 正常路径是照抄握手里那个值。
-/// 50 与三端统一的默认值一致（`docs/specs/ws-live-only.md` §2.1）。
+/// 50 与三端统一的默认值一致（`dev-docs/specs/ws-live-only.md` §2.1）。
 const FALLBACK_HISTORY: usize = 50;
 
 /// 建 WS 握手请求（**可测**：它不碰网络）。

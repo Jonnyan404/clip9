@@ -1,6 +1,6 @@
 // `GET /content`（历史分页）+ WS 握手（**不推历史**、带 `config.latestId`）。
 //
-// 规格：`docs/specs/ws-live-only.md`（三边同一份契约）。断言照 §5 的验收条目来，
+// 规格：`dev-docs/specs/ws-live-only.md`（三边同一份契约）。断言照 §5 的验收条目来，
 // 不做「读代码觉得对」那类检查。
 //
 // 为什么 Worker 侧必须自己测一遍：Rust 那边靠「对着 Go 的 fixture 比投影 + 双跑比对」，

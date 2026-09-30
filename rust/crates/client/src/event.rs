@@ -5,7 +5,7 @@ use std::path::PathBuf;
 /// 文本内容的子类型。
 ///
 /// ⚠️ 它**只影响界面上的标签与图标**，不改变上传方式 —— 服务端收到的都还是
-/// `POST /text` 的正文（见 `docs/api.md` §11）。别让它渗进接口。
+/// `POST /text` 的正文（见 `dev-docs/api.md` §11）。别让它渗进接口。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TextSubtype {
     Url,
@@ -37,7 +37,7 @@ pub enum ClipboardContent {
 /// 一次剪贴板变化（**已去重、已分类**）。
 ///
 /// ⚠️ 这是 `clip9-client` 对外的**唯一**产出形状 —— 上游（Tauri 壳 / Android）
-/// 只认它。改它等于改接缝，两边都要跟着改（`docs/specs/desktop-client.md` §0.4
+/// 只认它。改它等于改接缝，两边都要跟着改（`dev-docs/specs/desktop-client.md` §0.4
 /// 「接口先定死再并行」）。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ClipboardEvent {
@@ -57,8 +57,8 @@ pub enum ClipboardEvent {
 
 /// 上行里这条内容**走哪条接口**。
 ///
-/// ⚠️★ 只有两档，而且**图片走文件那条路**（`docs/specs/desktop-client.md` §4.1 末）：
-/// `docs/api.md` §5 就只有 `POST /text` 与 `POST /upload` 两条上行接口，
+/// ⚠️★ 只有两档，而且**图片走文件那条路**（`dev-docs/specs/desktop-client.md` §4.1 末）：
+/// `dev-docs/api.md` §5 就只有 `POST /text` 与 `POST /upload` 两条上行接口，
 /// 没有「图片接口」。自己加第三档就会多出一条服务端不认的路径。
 ///
 /// 这个类型同时是**上传/下载开关的键**（`ClientConfig::is_upload_enabled`）——

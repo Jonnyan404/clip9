@@ -7,7 +7,7 @@
 //! 而「加月夹取」「紧凑日期没有时间组」这类微妙规则如果各写一份，迟早会有一边漂，
 //! 那种漂在预览区和定时任务之间制造的是**最难看**的错（同一个输入两个结果）。
 //! 所以 `DateOffset` / `parse_date_token` 是纯逻辑基础工具，不该因为「某个动作分组被裁剪」
-//! 就跟着消失 —— `?at=` 是文档里写明的参数（`docs/api.md`），它不能因为 OpenWrt 那档
+//! 就跟着消失 —— `?at=` 是文档里写明的参数（`dev-docs/api.md`），它不能因为 OpenWrt 那档
 //! 关掉了 `date` 动作就变成 400。
 
 use std::sync::LazyLock;
@@ -156,7 +156,7 @@ pub(crate) fn at_local(offset: FixedOffset, naive: NaiveDateTime) -> DateTime<Fi
 // ── 日期 token ────────────────────────────────────────────────────────────
 //
 // 下面这一段原来在 `actions/date.rs`（被 `date` feature 关着）。提到这里是因为
-// **服务端的 `?at=` 也要认同一套写法** —— 而 `?at=` 是 `docs/api.md` 里写明的参数，
+// **服务端的 `?at=` 也要认同一套写法** —— 而 `?at=` 是 `dev-docs/api.md` 里写明的参数，
 // 不该因为某个部署把 `date` 动作分组裁掉就跟着失效。
 
 /// 日期 token 的三种写法，与前端 `parseDateToken` 认的一致：

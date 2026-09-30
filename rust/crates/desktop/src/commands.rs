@@ -233,7 +233,7 @@ pub fn settings_view(app: tauri::AppHandle, store: State<'_, Arc<Store>>) -> Set
     }
 }
 
-// ── 本地服务端 + 它的配置（`docs/specs/desktop-client.md` §3.5.2）──────
+// ── 本地服务端 + 它的配置（`dev-docs/specs/desktop-client.md` §3.5.2）──────
 //
 // ⚠️★ 这几条命令**就是**「配置可视化」的全部网络面 —— 也就是**没有网络面**：
 // 它们走 Tauri 的 IPC，不是服务端的一条 HTTP 路由。所以那个「能改密码」的界面
@@ -353,7 +353,7 @@ pub fn server_log(path: State<'_, std::path::PathBuf>) -> Result<ServerLogView, 
 // 而**打错字会被判据 17 抓住**。少打几个字换一条会瞎的静态检查，不划算。
 
 /// 「本地服务端」那一块要的**全部**信息 —— ⚠️★ **逐行对着界面稿 2 的 `.win.srv`**
-///（`docs/specs/desktop-client-settings-mockup.html` 的「本地服务端」那张卡）。
+///（`dev-docs/specs/desktop-client-settings-mockup.html` 的「本地服务端」那张卡）。
 ///
 /// 五个值各有各的来源，**没有一个是编的**：
 ///

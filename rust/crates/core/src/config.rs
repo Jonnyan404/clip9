@@ -158,7 +158,7 @@ pub struct ServerConfig {
     ///
     /// ⚠️ 缺省 50，与 Go 的 `defaultConfig()` 和 Worker 的 `HISTORY_LIMIT` 缺省
     /// **是同一个数**（Jonny 2026-09-26 定：三端统一 50）——
-    /// 见 `docs/specs/ws-live-only.md` §2.1。
+    /// 见 `dev-docs/specs/ws-live-only.md` §2.1。
     pub history: i64,
     /// **库文件的路径**（redb）。默认 `"clip9.redb"`。
     ///
@@ -248,7 +248,7 @@ impl Default for ServerConfig {
 /// （`rust/crates/desktop` 的 `Cargo.toml` 里那条注释写的就是同一个道理）。
 ///
 /// ⚠️ 别顺手把它调大来「支持长文」：主流 IM 的单条正文上限是 2k–4k 字符
-/// （`docs/specs/desktop-client.md` §8.3 ①），长内容该走**文件**（`/upload` + 分片）。
+/// （`dev-docs/specs/desktop-client.md` §8.3 ①），长内容该走**文件**（`/upload` + 分片）。
 /// 这个数只保证「配出来的值都是真的」，
 /// 8 MiB 本身已经比缺省的 4096 大三个数量级。
 pub const TEXT_LIMIT_MAX: i64 = 8 * 1024 * 1024;

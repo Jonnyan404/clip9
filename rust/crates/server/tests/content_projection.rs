@@ -4,7 +4,7 @@
 //! 而 `protocol` **不能依赖 `server`**（依赖方向是单向的：`protocol ← core ← store ← server`）。
 //! 所以那边只钉了形状（文件在不在、有没有 `type` / `id`），**「投影本身对不对」在这里**。
 //!
-//! fixture 是 Go 侧 `protocol_fixture_test.go` 导出的（`docs/specs/ws-live-only.md` 的 W0），
+//! fixture 是 Go 侧 `protocol_fixture_test.go` 导出的（`dev-docs/specs/ws-live-only.md` 的 W0），
 //! 同步方向永远是 Go → 本仓库。**别手工编辑 `cases/`** —— 它是导出产物。
 
 use std::path::PathBuf;
@@ -45,7 +45,7 @@ fn content_entry_matches_the_go_fixtures() {
     );
 }
 
-/// ⚠️★ **定时消息**的投影（`docs/specs/ws-live-only.md` §0.6）—— 单独一条测试。
+/// ⚠️★ **定时消息**的投影（`dev-docs/specs/ws-live-only.md` §0.6）—— 单独一条测试。
 ///
 /// 为什么要有它：上一轮只用「人发的消息」验「逐字段相等」，而 `source` / `scheduledAt` /
 /// `late` 是**只有定时消息才有**的键（人发的消息里根本不出现）。于是「相等 ✓」验过了、

@@ -1,5 +1,5 @@
 // 中华传统色 (742) 数据来源: https://github.com/nevertoday/zhongguo-traditional-colors
-// docs/chinese-color-master-list.md 按色相/饱和度自动分类, 每组内保持原清单顺序。
+// dev-docs/chinese-color-master-list.md 按色相/饱和度自动分类, 每组内保持原清单顺序。
 export const traditionalColorGroups = [
     {
         name: 'traditionalYellow',

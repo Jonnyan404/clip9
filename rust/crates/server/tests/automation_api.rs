@@ -271,7 +271,7 @@ async fn single_tier_issues_a_task_token() {
     assert_eq!(list["tasks"].as_array().map(|a| a.len()), Some(1));
 }
 
-/// ⚠️ `?at=` 是 `docs/api.md` §8.7 写明的参数，**两种写法都要认**（RFC3339 与日期 token），
+/// ⚠️ `?at=` 是 `dev-docs/api.md` §8.7 写明的参数，**两种写法都要认**（RFC3339 与日期 token），
 /// 而且认不出时**必须 400** —— 悄悄回落到「下次触发时刻」会让用户以为预览的正是他
 /// 要的那个基准，那是最难发现的一类错（返回 200，答案是错的）。
 ///

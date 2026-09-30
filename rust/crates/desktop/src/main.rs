@@ -1,6 +1,6 @@
 //! clip9 桌面客户端 —— Tauri 壳。
 //!
-//! # 职责边界（`docs/specs/desktop-client.md` §2）
+//! # 职责边界（`dev-docs/specs/desktop-client.md` §2）
 //!
 //! 这里**只有**「把事件转成 `clip9-client` 的调用」+ 窗口，**没有业务逻辑**。
 //! 剪贴板同步的全部逻辑在 `clip9-client` —— 那个 crate **不许出现 `tauri`**，
@@ -303,7 +303,7 @@ fn main() {
         //（`watcher.rs` 那条「谁记得上一次只能有一处」说的是同一个进程里的 watcher 与 receiver），
         // 所以两个实例会**互相把对方写进剪贴板的内容当成一次新复制**、再传回房间 —— 来回弹。
         // 而「开机自启 + 用户手点图标」就是造出两个实例的常见路径。
-        // 完整推导：`docs/specs/desktop-client.md` §1.1 缺口 A。
+        // 完整推导：`dev-docs/specs/desktop-client.md` §1.1 缺口 A。
         //
         // ⚠️ 第二个实例被挡掉时，**把已经在跑的那个窗口叫到前面来** —— 复用 `tray::show_main_window`
         // （那条路本来就是「把主窗口叫出来并聚焦」，多写一份就是第二份定义）。

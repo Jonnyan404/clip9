@@ -7,13 +7,13 @@
 //! Go 侧用 `uap-go`（uap-core 的正则库）取 OS / 浏览器的 family + major，再叠加一个
 //! 手写的 `detectDeviceType`。Rust 这边**没有引 uap-core 的正则库**，理由是体积：
 //! 那套正则集是 MB 级的数据，而这个项目的目标设备里有 16MB flash 的路由器
-//! （见 `docs/ARCHITECTURE.md` 的约束 2）。这里用关键词匹配代替。
+//! （见 `dev-docs/ARCHITECTURE.md` 的约束 2）。这里用关键词匹配代替。
 //!
 //! **受影响的只有「气泡上显示什么设备名」这一件事**，不影响鉴权、存储或任何接口形状。
 //! `type`（desktop / smartphone / tablet）是**逐字移植**的 —— 前端的图标按它选，
 //! 那条逻辑一个字符都不能差。
 //!
-//! ⚠️ 要换成 uap-core 的等价物，见 `docs/HANDOVER.md` §6 的未决问题。
+//! ⚠️ 要换成 uap-core 的等价物，见 `dev-docs/HANDOVER.md` §6 的未决问题。
 
 use std::collections::HashMap;
 
@@ -59,7 +59,7 @@ pub fn detect_device_type(ua: &str, os_family: &str) -> &'static str {
 /// ⚠️ **末尾要 trim** —— 认不出家族时是 `"Other"` + 空版本，不 trim 就得到 `"Other "`。
 /// 前端是**直接把这个串显示出来**的（副标题），尾随空格会让它看起来莫名多一格。
 /// Go 那边就是带空格的（`fmt.Sprintf("%s %s", ...)` 不做 trim）—— 这里是**故意不同**，
-/// 见 `docs/CONTRIBUTING.md` §0。
+/// 见 `dev-docs/CONTRIBUTING.md` §0。
 #[must_use]
 pub fn parse_user_agent(ua: &str, device_name: &str) -> HashMap<String, String> {
     let (os_family, os_major) = parse_os(ua);
@@ -296,7 +296,7 @@ mod tests {
     /// 认不出来时家族是 `Other`、版本是空串 → `"Other"`（**没有**尾随空格）。
     ///
     /// ⚠️ 这里**故意和 Go 不同**：Go 是 `Sprintf("%s %s", ...)` 不 trim，给出 `"Other "`，
-    /// 而前端是**直接把这个串显示出来**的。见 `docs/CONTRIBUTING.md` §0。
+    /// 而前端是**直接把这个串显示出来**的。见 `dev-docs/CONTRIBUTING.md` §0。
     #[test]
     fn unknown_ua_is_trimmed() {
         let info = parse_user_agent("完全认不出来的东西", "");

@@ -298,7 +298,7 @@ export class ContentHandler {
   //
   // 为什么要有它：历史以前只能从 WS 握手推来，于是「往回翻」做不到、而且**每次连接**
   // 都要把整个房间的历史推一遍。有了它，WS 可以只推实时（`?history=0`），
-  // 历史走这个正经的查询接口。完整规格见 `docs/specs/ws-live-only.md`
+  // 历史走这个正经的查询接口。完整规格见 `dev-docs/specs/ws-live-only.md`
   // （Go / Rust / Worker 三边同一份契约，另两边的实现在 `handler.go` 的
   // `handleContentList` 与 `server/src/handlers.rs` 的 `content_list`）。
   //

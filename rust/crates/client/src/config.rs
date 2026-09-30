@@ -1,6 +1,6 @@
 //! 客户端自己的配置。
 //!
-//! # ⚠️★ 方向是**两维**：上传 / 下载 × 内容（`docs/specs/desktop-client.md` §4.1）
+//! # ⚠️★ 方向是**两维**：上传 / 下载 × 内容（`dev-docs/specs/desktop-client.md` §4.1）
 //!
 //! 第一版设计稿把它压成了「同步哪些内容」**一个**列表 —— 丢掉了「方向」这一整维。
 //! 后果是那句问得很准的话：「如果我保存了多个房间，都同时往本地剪贴板灌数据，不就乱套了？」
@@ -54,7 +54,7 @@ fn default_false() -> bool {
     false
 }
 
-/// ⚠️ 空房间名**不能**当成 `default` 用：`docs/api.md` §11.6 明确写了
+/// ⚠️ 空房间名**不能**当成 `default` 用：`dev-docs/api.md` §11.6 明确写了
 /// 「省略 `room` 在部分端点上等于**任意房间**，要 default 就显式写 `default`」。
 /// 所以这里的默认值是字符串 `"default"`，而不是空串。
 fn default_room() -> String {
@@ -278,7 +278,7 @@ pub struct ClientConfig {
 
     /// 上行的文件大小上限（MB）。**0 = 不限，由服务端说了算。**
     ///
-    /// ⚠️ 默认 0 是刻意的：`docs/api.md` §11 第 1、2 条要求「先问 `/server`，别硬编码限额」。
+    /// ⚠️ 默认 0 是刻意的：`dev-docs/api.md` §11 第 1、2 条要求「先问 `/server`，别硬编码限额」。
     /// 这里再放一个**比服务端更小**的数，就会变成「明明服务端能收，客户端自己拒了」——
     /// 而用户看到的是一句客户端编的话，不是服务端那句带具体数字的话。
     #[serde(default)]
@@ -290,7 +290,7 @@ pub struct ClientConfig {
 
     /// 本机稳定 ID，上行时作为 `?client=` 下发。
     ///
-    /// ⚠️ 它和 `?name=` **不是一个东西**（`docs/api.md` §11 第 5 条）：
+    /// ⚠️ 它和 `?name=` **不是一个东西**（`dev-docs/api.md` §11 第 5 条）：
     /// `name` 给人看（设备名），`client` 让程序判断「这条是不是我自己发的」。
     #[serde(default = "new_client_id")]
     pub client_id: String,
@@ -362,7 +362,7 @@ pub struct ClientConfig {
     ///
     /// ⚠️ **只有桌面端会用**（Android / OpenWrt 那边忽略它）—— 与 `enable_autostart` 同一个理由。
     ///
-    /// 界面上是「运行方式」那两选一（`docs/specs/desktop-client-settings-mockup.html`）：
+    /// 界面上是「运行方式」那两选一（`dev-docs/specs/desktop-client-settings-mockup.html`）：
     /// - `true`（默认）= **随客户端启动**：客户端起它、退出时停它；
     /// - `false` = **连别人的服务端（本机不起）**：只做客户端，适合已有服务器 /
     ///   Docker / OpenWrt 的场景。⚠️ 这时默认房间指向的本机地址是**死的** ——

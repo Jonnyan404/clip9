@@ -31,7 +31,7 @@
     <color name="led_idle">#9E9E9E</color>
 
     <!-- ══════════════════════════════════════════════════════════════════
-         控制台配色（方案 B「控制台」）—— `docs/design/android-ui/b-console.html` 的 CSS 变量。
+         控制台配色（方案 B「控制台」）—— `dev-docs/design/android-ui/b-console.html` 的 CSS 变量。
 
          ⚠️★ 上面那条「不放主题里有的颜色」对**这一组**不适用，理由与 led_running 同源：
          这份稿子是**固定深色**的控制台（屏底 #0a111f、卡片 #111c2e），不是「亮暗各一套」。

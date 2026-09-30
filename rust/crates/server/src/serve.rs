@@ -11,7 +11,7 @@
 //! 这正是这个项目一直在防的那类 bug（同一形状、两处实现、只漂一处）。
 //!
 //! 调用方：`bin/clip9-server.rs`（独立二进制）与 `crates/android`（JNI cdylib）——
-//! 见 `docs/specs/android-client.md` §5。
+//! 见 `dev-docs/specs/android-client.md` §5。
 
 use std::net::{SocketAddr, ToSocketAddrs};
 use std::path::PathBuf;
@@ -39,10 +39,10 @@ const SHUTDOWN_GRACE: Duration = Duration::from_secs(5);
 /// ⚠️★ **端口被占用时这里会返回带地址的错**（`无法监听 <addr>（端口被占用？）`）。
 /// 调用方**绝对不要**在这一步失败之后「换一个端口再试」：
 /// 服务端一旦静默换端口，用户填进别的设备的地址就永远连不上，而**两边都不报错**
-/// （这边起来了、对端说超时）。见 `docs/ARCHITECTURE.md` §4.1 第 1 条。
+/// （这边起来了、对端说超时）。见 `dev-docs/ARCHITECTURE.md` §4.1 第 1 条。
 ///
 /// ⚠️ `config` 要**先把路径解析好**再传进来（`dbPath` / `storageDir` 都已是绝对路径）——
-/// 那是外壳的事，见 `docs/ARCHITECTURE.md` §4.2「由各外壳决定路径」。
+/// 那是外壳的事，见 `dev-docs/ARCHITECTURE.md` §4.2「由各外壳决定路径」。
 ///
 /// ⚠️ 这个入口**不接受停止信号**（独立二进制由信号杀）。要能停的用
 /// [`serve_with_shutdown`] —— Android 那侧用的就是它。

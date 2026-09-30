@@ -8,7 +8,7 @@ import android.content.Intent
  * ⚠️ 它们放在同一个文件里，是因为它们都不值得单独一个文件、而且**只有一起看才说得清**：
  * 解析（[ShareIntent]）→ 暂存（[PendingShare]）→ 投递（[WebAppActivity]）。
  *
- * 契约在 `docs/specs/android-client.md` §4；SPA 那一侧是 `web-vue3/src/share.js`。
+ * 契约在 `dev-docs/specs/android-client.md` §4；SPA 那一侧是 `web-vue3/src/share.js`。
  *
  * ⚠️★ **只支持文本**。文件那条路（`EXTRA_STREAM` / `ACTION_SEND_MULTIPLE`）还没做 ——
  * 原因不是懒：WebView 里拿不到文件路径，而 SPA 的上传路径要真正的 `File`。

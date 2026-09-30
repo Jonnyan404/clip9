@@ -1313,7 +1313,7 @@ table.ra td input[type='checkbox'] { margin: 0; }
                 <!-- ⚠️ 这条说明是**必须的**：上限判的是**字节**，而用户心里的单位是「字」——
                      一个汉字 3 字节，所以 4096 时中文大约只能发 1365 个字。
                      不写的话，用户填了 4096 会以为能发 4096 个字，然后被服务端拒掉
-                    （`docs/specs/desktop-client.md` §8.2 第 4 条）。
+                    （`dev-docs/specs/desktop-client.md` §8.2 第 4 条）。
                      ⚠️ S1 给服务端请求体加了**显式硬上限**之后，这里补上了真实天花板
                      （`#cfg-textlimit-max` 的那个数来自 `clip9-core` 的 `TEXT_LIMIT_MAX`，
                       不在页面里写死 —— 写死就是第二份定义，两份一定会漂）。

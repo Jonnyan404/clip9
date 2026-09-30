@@ -3,7 +3,7 @@
 //! # 为什么不能只写单元测试
 //!
 //! 单元测试是我写什么就测什么 —— 它验证的是「Rust 内部自洽」，
-//! 验证不了「和 Go 一致」。而这份契约的权威是 `docs/api.md`，
+//! 验证不了「和 Go 一致」。而这份契约的权威是 `dev-docs/api.md`，
 //! 字段名与 `omitempty` 的**实际效果**只有 Go 的 `encoding/json` 说了算。
 //!
 //! 所以：Go 侧 `protocol_fixture_test.go` 生成 `cases/protocol/*.json`
@@ -141,7 +141,7 @@ fn every_go_fixture_round_trips() {
             s if s.starts_with("text_receive") || s.starts_with("file_receive") => {
                 check::<ReceiveHolder>(&stem, &text);
             }
-            // `GET /content` 那一族的**投影**（`docs/specs/ws-live-only.md` 的 W0 导出）。
+            // `GET /content` 那一族的**投影**（`dev-docs/specs/ws-live-only.md` 的 W0 导出）。
             //
             // ⚠️ 它们**不是协议类型**，所以不能走 `check::<T>` —— 投影由 `rust/crates/server` 的
             // `content_entry()` 生成，而 `protocol` **不能依赖 `server`**（依赖方向是单向的：

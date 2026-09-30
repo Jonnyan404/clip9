@@ -230,7 +230,7 @@ async fn handle_socket(
     // 有了 `latestId`，客户端才能对齐那条边界：`id <= latestId` 只当历史认领（**不写剪贴板**），
     // `id > latestId` 才是实时。少了它，边界上的消息会被处理两次（或把历史灌进剪贴板）。
     // 它**兼作能力探测信号**：老后端（没有 `/content`、也就没这个字段）不下发它，
-    // 新客户端据此退回「靠 WS 推历史」的老路（`docs/specs/ws-live-only.md` §0.4）。
+    // 新客户端据此退回「靠 WS 推历史」的老路（`dev-docs/specs/ws-live-only.md` §0.4）。
     //
     // ⚠️★ **别用 `store.latest()`**：那个按 `(timestamp DESC, id DESC)` 取最新，
     // 而 `POST /text?id=` **原地改正文**会把 timestamp 往前刷、id 不变 ——

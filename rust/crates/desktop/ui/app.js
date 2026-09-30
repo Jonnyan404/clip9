@@ -182,7 +182,7 @@ const el = (id) => document.getElementById(id);
    跨源会被**直接拒**，而 WebView 里只留一条 console 消息、页面上什么都不发生）。
    ⚠️★ 嵌进来的那份 SPA **不是哑视图**：它自己开 WebSocket、自己取历史、自己拿
    `config.latestId` 对齐实时边界 —— 它是**第二个客户端**（「同一台机器在设备列表里
-   显示成两台」那条代价就是这么来的，见 `docs/specs/desktop-client.md`）。
+   显示成两台」那条代价就是这么来的，见 `dev-docs/specs/desktop-client.md`）。
    ⚠️ 原时间线**一行没删**：iframe 白屏时它是兜底，切回去也是对照的那一份。
    ⚠️ 这一版**不做持久化**：只想看效果，不值得为它多一个要跟 `boot.js` 对齐的存储键。 */
 let mainView = 'spa';
@@ -788,7 +788,7 @@ function renderTimeline(state) {
  * 这里**原来数码点**（`[...value].length`）—— 于是同一页上三个说法：标签说字节、
  * 服务端按字节判、而计数器和提示语说的是「字符」。后果：一条 3000 汉字的长文
  * 会显示「3000 / 4096」然后被服务端按 9000 字节拒掉，用户完全看不懂
- *（`docs/specs/desktop-client.md` §8.2 第 4 条 / `long-message-hardening.md` S2）。
+ *（`dev-docs/specs/desktop-client.md` §8.2 第 4 条 / `long-message-hardening.md` S2）。
  * ⚠️ 也别改用 `value.length`：那是 **UTF-16 码元**数（emoji 算 2），第三种口径。
  *
  * ⚠️★ `0` 有**两种**含义，必须分开说：**没连上**（上限不知道）与

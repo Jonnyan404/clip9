@@ -11,7 +11,7 @@
     "读它的三处（改形状要一起改）：",
     "  · 壳：`rust/crates/desktop/src/shell_text.rs` 的单元测试（`include_str!` 这份文件）；",
     "  · 页面：`tools/desktop-ui-smoke.mjs` 判据 18（跑真的 `I18N.say`）；",
-    "  · 文档：`docs/specs/desktop-client.md` §8.10。",
+    "  · 文档：`dev-docs/specs/desktop-client.md` §8.10。",
     "",
     "⚠️★ 这里那份字典是**故意手写的极小一份**，不是 `ui/i18n.js` 里那份真的：",
     "真的那份是用来查「有没有这一条」的（判据 14 / 17），而**渲染规则**要的是一份",
