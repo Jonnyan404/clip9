@@ -87,8 +87,50 @@ pub fn read_shell(dir: Option<&Path>) -> Option<String> {
     (!html.is_empty()).then_some(html)
 }
 
+/// ★ **这一份前端产物是哪一版** —— 外壳里那个 `data-build-id`（`vite.config.js` 每次构建
+/// 注入一个随机值，前端也拿它显示在设置里，好让人肉眼核对「跑的是哪次构建」）。
+///
+/// # 谁在用
+///
+/// `GET /server` 把它报出去（[`crate::handlers::server`]），桌面端在**端口被占、不能复用**
+/// 时拿它把那句话说得具体：「它在发 `9089fa78` 这一版前端」比「端口被占用」有用得多 ——
+/// 2026-09-30 那次光把「界面是旧的」定位到「端口上那个服务端是旧的」就花了大半天。
+///
+/// ⚠️★ 它**不参与**「要不要复用端口上那个」的判据。那条判据是「**这个进程是不是我自己生的**」
+/// （桌面端问内核，见 `clip9-desktop` 的 `server_process::start`）—— 拿版本号或构建标识去认亲，
+/// 等于让宿主手里多一份**会漂的**事实副本：只重编一半时，宿主会把自家服务端起出来的那个
+/// 判成「别人的」，于是本机服务端再也起不来。
+///
+/// ⚠️ 所以这个函数**每次都真的去读那份字节**，不缓存：缓存的就是「记的」，
+/// 而这条信息的意义正在于它说的是**端口上那个进程此刻在发什么**。
+/// 内嵌那一份不花 IO（内存里的），外部目录那一份只是一个小文件读。
+///
+/// ⚠️ 读不出值（外壳里没有这个属性 —— 手搓的 `-static` 目录就是这样）就返回 `None`，
+/// 调用方把 `None` 当成「**认不出**」而不是「无所谓」。编一个值比空着坏得多。
+#[must_use]
+pub fn build_id(dir: Option<&Path>) -> Option<String> {
+    let bytes = Source::of(dir)?.read(INDEX)?;
+    extract_build_id(&String::from_utf8_lossy(&bytes))
+}
+
+/// 从外壳 HTML 里抠出 `data-build-id="…"`。
+///
+/// ⚠️ 手写扫描而不是引 `regex` / `scraper`：这是**一次子串查找**，而那两个库会把
+/// 编译时间和依赖面都抬上去（这个 crate 的内嵌二进制是要随桌面端分发的）。
+/// 认不出就 `None` —— 这条路上没有「猜一个」这个选项。
+fn extract_build_id(html: &str) -> Option<String> {
+    let rest = html.split("data-build-id=\"").nth(1)?;
+    let id = rest.split('"').next()?;
+    (!id.is_empty()).then(|| id.to_owned())
+}
+
 /// 外壳的文件名。⚠️ 只有一处（`build.rs` 也拿它当「前端产物在不在」的判据）。
 const INDEX: &str = "index.html";
+
+/// `assets/**` 那一档的缓存头（文件名里带内容 hash）。
+const IMMUTABLE: &str = "public, max-age=31536000, immutable";
+/// 其余那一档的缓存头（名字跨版本不变 → 用之前先问服务器）。
+const NO_CACHE: &str = "no-cache";
 
 /// 静态资源的兜底处理器 —— 挂在 `Router::fallback` 上。
 ///
@@ -125,7 +167,7 @@ pub async fn serve(
         return if rel.is_empty() || rel == INDEX {
             shell_response(&bytes, &state.config.server.prefix, head_only)
         } else {
-            bytes_response(&content_type(&rel), bytes, head_only)
+            bytes_response(&content_type(&rel), bytes, head_only, Cache::of(&rel))
         };
     }
 
@@ -160,11 +202,21 @@ fn shell_response(bytes: &[u8], prefix: &str, head_only: bool) -> Response {
         &content_type(INDEX),
         Cow::Owned(page.into_bytes()),
         head_only,
+        // ⚠️★ 外壳**永远**是 `no-cache`，而且**不按路径判**（不走 [`Cache::of`]）：
+        // 它同时是 `/`、`/index.html` 与所有深链（`/board`）的响应，
+        // 而这三条路的路径形状完全不一样。让调用方去猜「这次算不算外壳」正是
+        // 2026-09-30 那个「换了二进制界面还是旧的」的成因之一。
+        Cache::NoCache,
     )
 }
 
-/// 一次产物响应：MIME + 长度（⚠️ HEAD 也要给长度，那是它的用处）。
-fn bytes_response(content_type: &str, bytes: Cow<'static, [u8]>, head_only: bool) -> Response {
+/// 一次产物响应：MIME + 长度 + 缓存策略（⚠️ HEAD 也要给长度，那是它的用处）。
+fn bytes_response(
+    content_type: &str,
+    bytes: Cow<'static, [u8]>,
+    head_only: bool,
+    cache: Cache,
+) -> Response {
     let len = bytes.len();
     let body = if head_only {
         Body::empty()
@@ -181,7 +233,63 @@ fn bytes_response(content_type: &str, bytes: Cow<'static, [u8]>, head_only: bool
     out.headers_mut().insert(header::CONTENT_TYPE, value);
     out.headers_mut()
         .insert(header::CONTENT_LENGTH, HeaderValue::from(len));
+    out.headers_mut().insert(
+        header::CACHE_CONTROL,
+        HeaderValue::from_static(cache.header()),
+    );
     out
+}
+
+/// 一份产物的缓存策略。
+///
+/// # 为什么必须发（2026-09-30）
+///
+/// 产物里**只有 `assets/**` 的文件名带内容 hash**（vite 的规矩），其余
+/// （`index.html`、`sw.js`、`favicon.ico`、`manifest.webmanifest`、`pwa-*.png`）
+/// 名字**跨版本不变**。名字不变又没有任何缓存头时，浏览器与 WebView 只能靠**启发式**猜
+/// 要不要复用 —— 猜错的表现是「换了二进制、界面还是上一版」，而且**不报错**。
+///
+/// ⚠️★ 这条对**内嵌**的那些宿主（桌面端 / Android）比对浏览器更要紧：它们的 profile
+/// 是持久的，而 `127.0.0.1:<port>` / 局域网地址这些 origin 会**跟着宿主一起升级** ——
+/// 宿主换了、它缓存的那份前端不换。
+///
+/// ⚠️★ 与 Go 的**刻意差异**：Go 的 `spaStaticHandler` 一个缓存头都不发（逐字对齐的是
+/// 语义，不是这一条）。这条差异是**有意加的**，理由就是上面那段；写在这里免得日后
+/// 有人拿 `compare-with-go` 当「漂移」修回去。
+#[derive(Clone, Copy)]
+enum Cache {
+    /// 文件名里带内容 hash：内容一变名字就变，所以**可以永远缓存**。
+    Immutable,
+    /// 名字跨版本不变：**用之前先问服务器**。
+    ///
+    /// ⚠️ `no-cache` 不是「不缓存」，是「每次都要校验」。这里**没有** `ETag` /
+    /// `Last-Modified`，所以校验实际退化成重新取一遍 —— 对几 KB 的外壳与
+    /// 本机 / 局域网这条链路是划算的（换来的是「永远不会拿到上一版界面」）。
+    NoCache,
+}
+
+impl Cache {
+    /// 按产物的**相对路径**判。
+    ///
+    /// ⚠️★ 只认 `assets/**` 这一条，**不去猜文件名里有没有 hash**：根层那些
+    /// （`favicon.ico`、`pwa-512x512.png`、`manifest.webmanifest`）名字都不变，
+    /// 而 `workbox-<hash>.js` 看着像带 hash —— 为它开特例就等于把「什么算带 hash」
+    /// 变成一条**会漂的**判据（前端一改构建配置，这里的猜测静默失效，且没有任何东西会红）。
+    /// 按目录一刀切是**一条**判据，代价只是那几个文件每次多取一遍。
+    fn of(rel: &str) -> Self {
+        if rel.starts_with("assets/") {
+            Self::Immutable
+        } else {
+            Self::NoCache
+        }
+    }
+
+    fn header(self) -> &'static str {
+        match self {
+            Self::Immutable => IMMUTABLE,
+            Self::NoCache => NO_CACHE,
+        }
+    }
 }
 
 /// 未知路径的 404。
@@ -321,6 +429,63 @@ mod tests {
         );
     }
 
+    /// ⚠️★ 内嵌那份外壳里**必须有** `data-build-id`（`GET /server` 报的就是它）。
+    ///
+    /// 少了它的后果**不是报错，而是「认亲永远失败」**：桌面端每次启动都会判「端口上那个
+    /// 不是我这一版」，于是不复用它（用户看到的是本机服务端起不来）。
+    /// ——判据要成对才有意义：这一条守「认得出」，`extract_build_id` 那条守「认不出时给 None」。
+    #[test]
+    fn the_embedded_copy_carries_a_build_id() {
+        let id = build_id(None).expect("内嵌那份外壳里必须有 data-build-id");
+        assert!(id.len() >= 8, "build id 看着不像一个构建标识：{id:?}");
+
+        // ⚠️★ 两个方向都要 —— 只验「有值」那一半的话，一个「永远返回内嵌那份」的实现
+        // （即 `-static` 被无视）照样能绿。
+        let dir = tempfile::tempdir().expect("建临时目录");
+        std::fs::write(
+            dir.path().join("index.html"),
+            "<html><body>手搓的目录</body></html>",
+        )
+        .expect("写");
+        assert_eq!(
+            build_id(Some(dir.path())),
+            None,
+            "外部目录里没有这个属性 → 必须是 None（`None` = 认不出），不能退回内嵌那一份"
+        );
+        std::fs::write(
+            dir.path().join("index.html"),
+            r#"<html data-build-id="dir00001"></html>"#,
+        )
+        .expect("写");
+        assert_eq!(
+            build_id(Some(dir.path())).as_deref(),
+            Some("dir00001"),
+            "有外部目录时报的必须是**它**的版本"
+        );
+    }
+
+    /// `data-build-id` 的抠法：正常 / 别的位置 / 没有 / 空值 / 空串，五种都要对。
+    #[test]
+    fn the_build_id_is_read_out_of_the_shell_html() {
+        assert_eq!(
+            extract_build_id(r#"<html lang="zh" data-build-id="fb121b72">"#).as_deref(),
+            Some("fb121b72")
+        );
+        // 位置不假设：`vite.config.js` 现在是打在 `<html>` 上，但这条判据不该依赖那个。
+        assert_eq!(
+            extract_build_id(r#"<div x="1" data-build-id="a1b2c3d4"><span></span></div>"#)
+                .as_deref(),
+            Some("a1b2c3d4")
+        );
+        // ⚠️ 没有 / 空值 / 空串一律 `None` —— `None` 是「**认不出**」，不是「无所谓」。
+        assert_eq!(
+            extract_build_id("<html><body>手搓的目录</body></html>"),
+            None
+        );
+        assert_eq!(extract_build_id(r#"data-build-id=""#), None);
+        assert_eq!(extract_build_id(""), None);
+    }
+
     /// ⚠️★ 「`%20` 解成空格」与「认不出的 `%` 原样留着」两条都要 —— 后者是**不报错**那一侧。
     #[test]
     fn percent_escapes_are_decoded_and_bad_ones_are_left_alone() {
@@ -397,6 +562,38 @@ mod tests {
         assert_eq!(content_type("pwa-192x192.png"), "image/png");
         // 认不出的扩展名给二进制，**不要**给 text/plain（那会让浏览器把它当文本显示）。
         assert_eq!(content_type("weird.zzz"), "application/octet-stream");
+    }
+
+    /// ⚠️★ 缓存策略**只认目录**：`assets/**` 可长存，其余一律每次校验。
+    ///
+    /// 这一条钉的是那个「换了二进制界面还是旧的」：`index.html` 与 `sw.js`
+    /// 的**名字跨版本不变**，一旦被长期缓存住，就再也没有东西会把它们换掉。
+    ///
+    /// ⚠️ 期望值**写死成那两个字符串**，不在测试里重算一遍规则 ——
+    /// 重算就是「两处实现同一件事」，改坏了会跟着一起变绿（本项目记过这一课）。
+    #[test]
+    fn only_the_hashed_assets_dir_is_cacheable_forever() {
+        for (rel, expected) in [
+            // 带内容 hash 的：可以长存。
+            ("assets/index-abc123.js", IMMUTABLE),
+            ("assets/vuetify-DFw_bfLT.css", IMMUTABLE),
+            ("assets/index-abc123.js.br", IMMUTABLE),
+            // ⚠️ 名字跨版本不变的这些**一个都不能**落进可长存那一档。
+            ("index.html", NO_CACHE),
+            ("sw.js", NO_CACHE),
+            ("favicon.ico", NO_CACHE),
+            ("manifest.webmanifest", NO_CACHE),
+            ("pwa-512x512.png", NO_CACHE),
+            // ⚠️ 看着像带 hash，但它在根层：不为它开特例（见 `Cache::of` 的文档）。
+            ("workbox-abeb32eb.js", NO_CACHE),
+            // ⚠️ 预压缩的那几份也是按名字取的，跟正文一个待遇。
+            ("index.html.br", NO_CACHE),
+            // ⚠️ 认不出的走 `no-cache`：**默认那条路必须是安全的那条**。
+            ("", NO_CACHE),
+            ("assetsX/a.js", NO_CACHE),
+        ] {
+            assert_eq!(Cache::of(rel).header(), expected, "{rel}");
+        }
     }
 
     /// 有外部目录就用外部目录（哪怕内嵌也在）—— 这是「调试时覆盖」的全部意义。

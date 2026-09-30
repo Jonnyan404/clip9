@@ -344,6 +344,21 @@ pub async fn server(
         "auth": auth_needed,
         "authorized": authorized,
         "roomProtected": room_protected,
+        // ★ **这一份前端产物是哪一版**（外壳里的 `data-build-id`）。
+        //
+        // 给「宿主」用：桌面端在端口被别人占着、**不能复用**时，拿它把那句报错说具体
+        //（「它在发 9089fa78 这一版前端」）。2026-09-30 的故障是桌面端复用了一个两天前
+        // 留下的孤儿服务端 —— 界面里跑的是两天前那一份前端，用户看到的是「这个功能怎么没了」，
+        // 而代码一行没丢。
+        //
+        // ⚠️★ 它**不参与**「要不要复用端口上那个」的判据 —— 那条判据是「这个进程是不是
+        // 我自己生的」（见 `clip9-desktop` 的 `server_process::start`）。拿版本号或构建标识
+        // 认亲，等于让宿主手里多一份会漂的事实副本：只重编一半时，宿主会把自家服务端判成
+        // 别人的，于是本机服务端再也起不来。
+        //
+        // ⚠️ 认不出时是 **`null`**，**不编**一个值：调用方必须把 `null` 当成「认不出」。
+        // ⚠️ 这是**给宿主看的**，界面不显示它（前端在设置里显示的是自己那份 buildId）。
+        "staticBuild": crate::static_files::build_id(state.static_dir.as_deref()),
         "config": {
             "server": {
                 "history": config.server.history,

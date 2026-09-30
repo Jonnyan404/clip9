@@ -258,6 +258,122 @@ async fn the_share_landing_page_gets_the_shell_from_the_embedded_copy() {
     assert!(body.contains("<base href=\"/\">"), "外壳要注入 <base>");
 }
 
+/// ⚠️★ `GET /server` 要报出**它实际在发的那份前端是哪一版** —— 桌面端拿它认亲。
+///
+/// 少了这个字段的后果不是报错，而是宿主**认不出**端口上那个服务端：
+/// 2026-09-30 的故障就是宿主复用了一个两天前留下的孤儿服务端，于是里头的界面是两天前那一份
+/// （用户看到的是「这个功能怎么没了」，而代码一行没丢）。
+///
+/// ⚠️ 期望值**从磁盘上的外壳现读**，不写死：前端一改 build id 就变，
+/// 写死的值会把「产物换了」误报成「服务端坏了」（`entry_bundle()` 就是同一个理由）。
+#[tokio::test]
+async fn the_server_reports_which_front_end_build_it_serves() {
+    let (app, _dir) = bundled_app("");
+    let (status, _content_type, body) = get(&app, "/server", Some("application/json")).await;
+    assert_eq!(status, StatusCode::OK);
+    let on_disk = std::fs::read_to_string(static_dir().join("index.html")).expect("读外壳");
+    let want = on_disk
+        .split("data-build-id=\"")
+        .nth(1)
+        .and_then(|rest| rest.split('"').next())
+        .expect("仓库里那份外壳该带 data-build-id")
+        .to_owned();
+    let json: serde_json::Value = serde_json::from_str(&body).expect("该是 JSON");
+    assert_eq!(
+        json["staticBuild"].as_str(),
+        Some(want.as_str()),
+        "报的必须就是它在发的那一版：{body:.200}"
+    );
+
+    // ⚠️★ 另外两个方向也要 —— 只验上面那一条的话，一个「永远回内嵌那份」的实现照样绿。
+    // 外部目录（`-static`）那一份报的必须是**它的**版本。
+    let (app, _dir) = app_with_dir("<html data-build-id=\"dir00001\"></html>");
+    let (_status, _content_type, body) = get(&app, "/server", Some("application/json")).await;
+    let json: serde_json::Value = serde_json::from_str(&body).expect("该是 JSON");
+    assert_eq!(
+        json["staticBuild"].as_str(),
+        Some("dir00001"),
+        "`-static` 那一份说了算：{body:.200}"
+    );
+    // 认不出（外壳里没这个属性）→ **`null`，不编**。调用方把 `null` 当「认不出」。
+    let (app, _dir) = app_with_dir("<html><body>手搓的目录</body></html>");
+    let (_status, _content_type, body) = get(&app, "/server", Some("application/json")).await;
+    let json: serde_json::Value = serde_json::from_str(&body).expect("该是 JSON");
+    assert_eq!(
+        json["staticBuild"],
+        serde_json::Value::Null,
+        "认不出就得是 null，不能编一个：{body:.200}"
+    );
+}
+
+/// ⚠️★ 缓存头：**名字跨版本不变的那些必须每次校验**，只有带内容 hash 的 `assets/**` 可以长存。
+///
+/// 这条钉的是「换了二进制、界面还是上一版」那一类：`index.html` 与 `sw.js` 的名字
+/// 跨版本不变，被缓存住之后**没有任何东西会把它换掉**，而症状是「功能没了」——
+/// 与「代码没写」长得一模一样（2026-09-30 就按这个方向查了半天）。
+///
+/// ⚠️ 期望值是**字面量**，不从被测代码里取（不给它自我印证的机会）。
+#[tokio::test]
+async fn the_shell_and_the_service_worker_are_never_cached_blindly() {
+    const FOREVER: &str = "public, max-age=31536000, immutable";
+    const REVALIDATE: &str = "no-cache";
+    let (app, _dir) = bundled_app("");
+
+    // 外壳的三条路（根、带名字、深链）——**三条都得是每次校验**。
+    for uri in ["/", "/index.html", "/board"] {
+        assert_eq!(
+            cache_control(&app, uri).await.as_deref(),
+            Some(REVALIDATE),
+            "{uri} 是外壳，名字跨版本不变，不许被盲目缓存"
+        );
+    }
+    // ⚠️ `sw.js` 是这里最要命的一个：它自己就是「要不要换新前端」的开关。
+    assert_eq!(
+        cache_control(&app, "/sw.js").await.as_deref(),
+        Some(REVALIDATE),
+        "sw.js 被缓存住 = SW 永远不更新"
+    );
+    // 名字跨版本不变的那批（图标 / manifest / 预压缩的那几份）。
+    for uri in ["/favicon.svg", "/manifest.webmanifest", "/index.html.br"] {
+        assert_eq!(
+            cache_control(&app, uri).await.as_deref(),
+            Some(REVALIDATE),
+            "{uri} 名字跨版本不变"
+        );
+    }
+    // 带内容 hash 的那一档才可以长存。
+    let entry = entry_bundle();
+    assert_eq!(
+        cache_control(&app, &format!("/{entry}")).await.as_deref(),
+        Some(FOREVER),
+        "{entry} 名字里带内容 hash，该可以长存"
+    );
+
+    // ⚠️ 外部目录（`-static`）那一份**同一条规则** —— 调试时更不该被缓存糊住。
+    let (app, _dir) = app_with_dir("<html><head></head><body>外部那一份</body></html>");
+    assert_eq!(
+        cache_control(&app, "/").await.as_deref(),
+        Some(REVALIDATE),
+        "外部目录那一份的外壳也要每次校验"
+    );
+}
+
+/// 发一条 GET，只要 `Cache-Control`（没有就给 `None`）。
+async fn cache_control(app: &Router, uri: &str) -> Option<String> {
+    let mut request = Request::builder()
+        .uri(uri)
+        .method("GET")
+        .body(Body::empty())
+        .expect("造请求");
+    request.extensions_mut().insert(ConnectInfo(peer()));
+    let response = app.clone().oneshot(request).await.expect("路由返回了错误");
+    response
+        .headers()
+        .get(header::CACHE_CONTROL)
+        .and_then(|value| value.to_str().ok())
+        .map(str::to_owned)
+}
+
 /// ⚠️★ `rust/crates/server/static/` 必须与**它自己的同步清单**一致。
 ///
 /// 为什么值得一条测试（照 Go 的 `TestEmbeddedSpaCarriesAutomationEntry` 写）：
