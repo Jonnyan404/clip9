@@ -36,7 +36,7 @@ fi
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 BASE_DIR="$(dirname "$SCRIPT_DIR")"
 BINARY="$BASE_DIR/build/clip9-server-v$VERSION-$ARCH"
-PKG_DIR="$BASE_DIR/build/pkg-$ARCH"
+PKG_DIR="$BASE_DIR/build/pkg-$PACKAGE_ARCH"
 CONTROL_DIR="$BASE_DIR/ipk/control"
 ROOTFS_DIR="$BASE_DIR/ipk/rootfs"
 # ⚠️ 产物名里**不带 `server`**（2026-09-29 改的，Jonny：「clip9-server-openwrt 去掉 server」）。
@@ -44,7 +44,12 @@ ROOTFS_DIR="$BASE_DIR/ipk/rootfs"
 # 发到 Release 上的那个文件名。⚠️ 这个字符串同时被
 # `.github/workflows/openwrt.yml`（`ls -l` 与 upload 的 path）和
 # `.github/workflows/release.yml`（`publish-openwrt` 里那句 `find … -name`）认着。
-IPK_NAME="clip9-openwrt-v$VERSION-$ARCH.ipk"
+# ⚠️★ 产物名用 `$PACKAGE_ARCH`（**设备**架构名）而不是 `$ARCH`：同一个 aarch64 二进制要出
+#    四个包（`aarch64_generic` / `aarch64_cortex-a53` / `-a72` / `-a76`，见 `openwrt.yml`
+#    的 ipk 矩阵），用二进制名的话这四个**会同名互相覆盖**。
+#    ⚠️ `package-openwrt-apk.sh` 一直就是这么做的 —— 两套包的产物名从此同一口径，
+#    也与「用户下哪个包就装哪个」这个事实一致。
+IPK_NAME="clip9-openwrt-v$VERSION-$PACKAGE_ARCH.ipk"
 
 echo "脚本目录: $SCRIPT_DIR"
 echo "根目录: $BASE_DIR"

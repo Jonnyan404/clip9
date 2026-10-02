@@ -865,9 +865,9 @@ jobs:
           n_apk=$(find extra -maxdepth 1 -name 'clip9-openwrt-apk-v*.apk' | wc -l)
           n_luci=$(find extra -maxdepth 1 \( -name 'clip9-luci-openwrt-v*.ipk' -o -name 'clip9-luci-openwrt-apk-v*.apk' \) | wc -l)
           n_all=$(find extra -type f | wc -l)
-          echo "ipk=${n_ipk}（期望 7） apk=${n_apk}（期望 8） luci=${n_luci}（期望 2） 合计=${n_all}"
+          echo "ipk=${n_ipk}（期望 10） apk=${n_apk}（期望 8） luci=${n_luci}（期望 2） 合计=${n_all}"
           bad=0
-          [ "$n_ipk" = 7 ] || { echo "::error::ipk 有 ${n_ipk} 个，openwrt.yml 的 ipk 矩阵是 7 格"; bad=1; }
+          [ "$n_ipk" = 10 ] || { echo "::error::ipk 有 ${n_ipk} 个，openwrt.yml 的 ipk 矩阵是 10 格"; bad=1; }
           [ "$n_apk" = 8 ] || { echo "::error::apk 有 ${n_apk} 个，openwrt.yml 的 apk 矩阵是 8 格"; bad=1; }
           [ "$n_luci" = 2 ] || { echo "::error::LuCI 包有 ${n_luci} 个，应该是 ipk + apk 两个"; bad=1; }
           [ "$bad" = 0 ] || exit 1

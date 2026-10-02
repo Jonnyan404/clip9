@@ -22,28 +22,36 @@ scp clip9-luci-openwrt-v0.1.0-all.ipk root@192.168.1.1:/tmp/
 ⚠️ Release 上**只有这些 ipk / apk**：裸二进制（`clip9-server-v<版本>-<架构>`）是构建的
 中间产物，不发。
 
-## 2. 架构：**7 个**
+## 2. 架构：ipk **10 个**、apk **8 个**（都是**设备**架构名）
 
 | 产物里的架构名 | 适用设备 | Rust target |
 |---|---|---|
 | `x86_64` | 64 位 x86（软路由） | `x86_64-unknown-linux-musl` |
-| `arm_cortex-a5` … `arm_cortex-a15_neon-vfpv4`（共 **5** 个名字） | 各种 32 位 ARM 路由 | `armv7-unknown-linux-musleabihf` |
-| `aarch64` | 64 位 ARM 路由 | `aarch64-unknown-linux-musl` |
+| `arm_cortex-a5` / `-a7` / `-a8` / `-a9` / `-a15_neon-vfpv4`（ipk 出 **5** 个） | 各种 32 位 ARM 路由 | `armv7-unknown-linux-musleabihf` |
+| `aarch64_generic` / `aarch64_cortex-a53` / `-a72` / `-a76` | 64 位 ARM 路由 | `aarch64-unknown-linux-musl` |
 
-⚠️ **那 5 个 arm 名字用的是同一份二进制** —— 它们是同一套 EABI 硬浮点 ABI，而**静态**
-链接的二进制不跨 userland 的软/硬浮点边界，所以一份就能装上去。
+⚠️ **同一行里那几个名字用的是同一份二进制** —— 32 位 ARM 那 5 个是同一套 EABI 硬浮点 ABI，
+而**静态**链接的二进制不跨 userland 的软/硬浮点边界；aarch64 那 4 个更是同一个二进制编 4 次包。
+
+⚠️★ **2026-10-02 修掉的一件事：产物名必须是「设备的」架构名，不能是「二进制的」。**
+以前 ipk 那格只给 `arch`（二进制名），于是包里的 `Architecture` 写成 `aarch64` —— 而
+**OpenWrt 没有叫 `aarch64` 的设备架构**（只有 `aarch64_generic` / `aarch64_cortex-a53` …），
+那个包**在任何真机上都装不上**（实测报
+`Packages for clip9 found, but incompatible with the architectures configured`）。
+⚠️ 7 个里只有 `x86_64` 与 `arm_cortex-a15_neon-vfpv4` **恰好两边同名**，其余 5 个都中招；
+apk 那一格**一直是对的**（它有 `pkg_arch`），现在 ipk 照它改成了 `arch` + `pkg_arch` 两个字段。
 
 ⚠️★ **没有 mips / mipsel**（Jonny 2026-09-28：「未来这种架构应该也不多」）。
 不是「懒得加」：`mips-unknown-linux-musl` 在 Rust 里是 **Tier 3**，`rustup` **装不上**，
 得自己编 `std`。`rust/rust-toolchain.toml` 的注释里早写着这件事。
 
-⚠️★ **「二进制架构」与「包架构」不是一回事**，两个脚本都留了可选的第三个参数：
+⚠️ **「二进制架构」与「包架构」仍然是两个东西**，两个打包脚本都留了可选的第三个参数
+（CI 现在会传；本机自己打时不给就用二进制名，那是「先打出来看结构」的口径）：
 
-- IPK 的 `Architecture` 字段 / APK 的 `arch` 字段是**设备**的名字，装的时候会拿它比对：
+- 包里的 `Architecture` / `arch` 字段是**设备**的名字，装的时候会拿它比对：
   - 查 IPK 的：`opkg print-architecture`
   - 查 APK 的：`cat /etc/apk/arch`（如 `aarch64_cortex-a53`、`arm_cortex-a7_neon-vfpv4`）
-- 只有 `x86_64` 与 `arm_cortex-a15_neon-vfpv4` 恰好两边同名，可以自动推断；
-  其余**必须显式给**，脚本不会去猜（猜错的后果不是报错，是装到架构不对的设备上）。
+- 举例：`./scripts/package-openwrt.sh 0.1.0 aarch64 aarch64_cortex-a53`
 
 ## 3. 配置
 
@@ -171,6 +179,32 @@ version `GLIBC_2.28' not found`（exit 101）。这是 **cross-rs/cross#724** �
 | 9 | 需要 `cross` 而不是 `go build` | musl 交叉编译要有能给 musl 编 C 的编译器 |
 
 ## 7. 还没验过的事（写在明处）
+
+### 7.1 2026-10-02：用容器补上的一轮
+
+在 `openwrt/rootfs` 容器里真装真跑过一轮（24.10 的 opkg 与 25.12 的 apk 各一个，
+再加一个 `--privileged /sbin/init` 的用来验 procd 与 LuCI）。**验过的**：
+
+| | 结果 |
+|---|---|
+| ipk（24.10）与 apk（25.12）装包 | ✓ 退出码 0、`postinst` 建自启链接、三个文件落位 |
+| **二进制执行 / 监听 / 端到端收发** | ✓ 发一条读回来一致（redb + HTTP 全通） |
+| **前端产物** | ✓ 日志「用编进二进制的那一份」 |
+| `init.d start` → procd → `status` | ✓ `running` |
+| **procd 的 respawn** | ✓ `kill -9` 之后被重新拉起（pid 变了） |
+| **开机自启** | ✓ `docker restart` 之后服务自己起来 |
+| **aarch64** | ✓ 装得上、跑得起来、收发通（**修了架构名之后**，见 §2） |
+| **LuCI 包（ipk 与 apk 两种）** | ✓ 装上、界面文件与 `menu.d`/`acl.d` 落位、`ubus` 的 ACL 里有 `luci-app-clip9` |
+| **LuCI 装完不覆盖 `/etc/config/clip9`** | ✓ 先改过的值还在（老坑没复发） |
+| **LuCI 模板能渲染** | ✓ 用 `luci.template.parser` 编译并渲染出 HTML（补上了「语法只能靠读」那一格） |
+
+⚠️ **仍然没验的**：
+- **真机**（容器共享宿主内核，没有真正的 flash 布局与 OpenWrt 内核）；
+- **其余架构**（本机 docker 只有 x86_64；aarch64 走 qemu，那 5 个 arm 没试）；
+- **LuCI 页面在浏览器里的最终观感**（ACL + 渲染只能证明「注册了、出得了 HTML」）；
+- ⚠️ 这一轮**没有覆盖**「`openwrt.yml` 在 CI 上是否绿」与「`apk mkpkg` 那条路」。
+
+### 7.2 更早记下的
 
 - ⚠️★ **`openwrt.yml` 已经跑过，但还没绿过。** 2026-09-28 首次上 CI，两次都是
   `binaries` 红在第三个 target 上（`GLIBC_2.28 not found`，cross#724 —— 见 §4 那段警告）。

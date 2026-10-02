@@ -615,7 +615,10 @@ const pkgApk = read('openwrt/scripts/package-openwrt-apk.sh');
     if (ipkBody === null || apkBody === null || luciBody === null || pw === null) {
       problems.push('openwrt.yml 的 ipk / apk / luci 或 release.yml 的 publish-openwrt 读不到');
     } else {
-      const ipkN = listLen(ipkBody, 'arch');
+      // ⚠️★ 两格现在**都是 `include:`**（2026-10-02）：ipk 那一格原来只有 `arch:`（二进制名），
+      //    改成了 `arch` + `pkg_arch` 两字段之后只能写成 `include:` —— 与 apk 那格同形。
+      //    ⚠️ 这条判据要跟着读**同一个写法**，否则会报「矩阵读不出来」（改动当天真报了）。
+      const ipkN = listLen(ipkBody, 'include');
       const apkN = listLen(apkBody, 'include');
       // ⚠️ LuCI 那两个包写在 upload 的 `path: |` **块标量**里（一行一个路径，**不带** `- `）——
       //    第一版按 `- ` 找，于是数出 0 条。

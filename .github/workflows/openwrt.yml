@@ -141,17 +141,47 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # ⚠️ **二进制**架构名（上面 ① 那套），不是设备名。ipk 的 `Architecture` 字段
-        #    不传第三个参数时就是它 —— 那是「先本地把包打出来看结构」的那个口径；
-        #    要装到真机上，用户得自己按 `opkg print-architecture` 重打（README §2）。
-        arch:
-          - x86_64
-          - arm_cortex-a5
-          - arm_cortex-a7
-          - arm_cortex-a8
-          - arm_cortex-a9
-          - arm_cortex-a15_neon-vfpv4
-          - aarch64
+        # ⚠️★ 两个字段是**两件事**（2026-10-02 修，照 `apk` 那一格）：
+        #   `arch`     = 我们给二进制起的名字（`build.sh` 摊平出来那 7 个），只用来找二进制；
+        #   `pkg_arch` = **设备的**架构名，写进 ipk 的 `Architecture` 字段 ——
+        #                装的时候 opkg 拿它跟 `opkg print-architecture` 逐条比。
+        #
+        # ⚠️★ 以前这一格**只给 `arch`**，注释还写着「那是打包看结构的口径，装真机要用户
+        #    自己重打」—— 但 release 页面上的 ipk 就是**拿来直接装**的，于是：
+        #    `aarch64` 这个包**在任何真机上都装不上**，因为 OpenWrt **没有叫 `aarch64` 的
+        #    设备架构**（只有 `aarch64_generic` / `aarch64_cortex-a53` / `-a72` / `-a76`）。
+        #    2026-10-02 在 aarch64 容器里实测：`opkg install` 报
+        #    「Packages for clip9 found, but incompatible with the architectures configured」，
+        #    而容器的架构门只有 `all` / `noarch` / `aarch64_generic`。
+        #
+        # ⚠️ 那 5 个 arm 名**不拆**：`arm_cortex-a5/a7/a8/a9` 本身就是合法的 OpenWrt 架构名
+        #    （真机上 `opkg print-architecture` 里真有它们），能装 —— 只是覆盖的设备窄
+        #    （装 `arm_cortex-a7` 那个包的机器，架构名得正好是 `arm_cortex-a7`）。
+        #    ⚠️ 要覆盖 `arm_cortex-a7_neon-vfpv4` 那些常见变体得再加条目，那是**另一次
+        #    覆盖面扩张**（`apk` 那边只出了 `a9` / `a9_neon` / `a15` 三个），没顺手做。
+        include:
+          - arch: x86_64
+            pkg_arch: x86_64
+          - arch: arm_cortex-a5
+            pkg_arch: arm_cortex-a5
+          - arch: arm_cortex-a7
+            pkg_arch: arm_cortex-a7
+          - arch: arm_cortex-a8
+            pkg_arch: arm_cortex-a8
+          - arch: arm_cortex-a9
+            pkg_arch: arm_cortex-a9
+          - arch: arm_cortex-a15_neon-vfpv4
+            pkg_arch: arm_cortex-a15_neon-vfpv4
+          # ⚠️ 这四条**共用同一个 aarch64 二进制**（`build.sh` 只编一次 aarch64）——
+          #    与 `apk` 那格的设备名一模一样，两套包从此覆盖同一批设备。
+          - arch: aarch64
+            pkg_arch: aarch64_generic
+          - arch: aarch64
+            pkg_arch: aarch64_cortex-a53
+          - arch: aarch64
+            pkg_arch: aarch64_cortex-a72
+          - arch: aarch64
+            pkg_arch: aarch64_cortex-a76
     steps:
       - uses: actions/checkout@v7
 
@@ -160,18 +190,19 @@ jobs:
           name: openwrt-binaries
           path: openwrt/build
 
-      - name: 打 IPK（${{ matrix.arch }}）
+      - name: 打 IPK（${{ matrix.pkg_arch }}）
         env:
           VERSION: ${{ needs.version.outputs.version }}
           ARCH: ${{ matrix.arch }}
+          PKG_ARCH: ${{ matrix.pkg_arch }}
         run: |
           set -euo pipefail
-          ./openwrt/scripts/package-openwrt.sh "$VERSION" "$ARCH"
-          ls -l "openwrt/build/clip9-openwrt-v${VERSION}-${ARCH}.ipk"
+          ./openwrt/scripts/package-openwrt.sh "$VERSION" "$ARCH" "$PKG_ARCH"
+          ls -l "openwrt/build/clip9-openwrt-v${VERSION}-${PKG_ARCH}.ipk"
 
       - uses: actions/upload-artifact@v7
         with:
-          name: openwrt-pkg-ipk-${{ matrix.arch }}
+          name: openwrt-pkg-ipk-${{ matrix.pkg_arch }}
           path: openwrt/build/clip9-openwrt-v*.ipk
           if-no-files-found: error
 
