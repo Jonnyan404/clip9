@@ -87,7 +87,11 @@
 </style>
 
 <h2 class="cc-title"><%:高级设置%></h2>
-<div class="cc-desc"><%:结构化编辑%> <code>/etc/clip9/config.json</code> <span id="ccPath" class="cc-pill">—</span> <%:改动在保存并应用后生效%>。</div>
+<!-- ⚠️ 路径**只出现一次**：原来这里还写死了一个 <code>/etc/clip9/config.json</code>，
+     而下面那个 `#ccPath` 是由服务端返回的 `path` 填进去的（`ccLoad` 里那行）——
+     于是页面上连着显示两个一样的地址。写死那份还会在「配置路径被改过」时**显示错的**，
+     所以只留运行时填的那一个。 -->
+<div class="cc-desc"><%:结构化编辑%> <span id="ccPath" class="cc-pill">—</span> <%:改动在保存并应用后生效%>。</div>
 
 <div class="cc-card">
   <div class="cc-card-head"><span class="ico">🏠</span><span class="ttl"><%:房间 / 历史%></span><span class="spacer"></span><span class="cc-pill">server</span></div>
@@ -117,14 +121,17 @@
       <div class="cc-sub-body">
         <div class="cc-conf-actions">
           <button class="cc-btn neutral sm" onclick="ccAddRoom()">＋ <%:添加房间%></button>
-          <span class="cc-hint"><%:留空密码 → 沿用全局密码；留空文件过期 → 沿用全局文件过期%></span>
+          <span class="cc-hint"><%:勾「开放」= 这个房间不要密码（全局设了密码也一样放行）；密码留空 = 沿用全局密码；过期留空 = 沿用全局过期%></span>
         </div>
         <table class="cc-room-table">
           <thead><tr>
-            <th style="width:30%"><%:房间名%></th>
-            <th style="width:26%"><%:密码%></th>
-            <th style="width:24%"><%:文件过期（秒）%></th>
-            <th style="width:20%"><%:行为%></th>
+            <!-- ⚠️ 加了「开放」那一列之后这五个百分比**要重新配平**（加起来必须正好一百）。
+                 原来四个是 30/26/24/20，从名字与密码各让一点出来给「开放」。 -->
+            <th style="width:26%"><%:房间名%></th>
+            <th style="width:24%"><%:密码%></th>
+            <th style="width:12%"><%:开放%></th>
+            <th style="width:20%"><%:文件过期（秒）%></th>
+            <th style="width:18%"><%:行为%></th>
           </tr></thead>
           <tbody id="ccRooms"></tbody>
         </table>
@@ -286,16 +293,28 @@
   }
 
   function ccRoomValues(entry) {
-    var pwd = '', fe = '';
-    if (entry === null || entry === undefined) return { pwd: pwd, fe: fe };
-    if (typeof entry === 'string') { pwd = entry; return { pwd: pwd, fe: fe }; }
-    if (typeof entry === 'number') { pwd = String(entry); return { pwd: pwd, fe: fe }; }
+    var pwd = '', fe = '', open = false;
+    if (entry === null || entry === undefined) return { pwd: pwd, fe: fe, open: open };
+    if (typeof entry === 'string') { pwd = entry; return { pwd: pwd, fe: fe, open: open }; }
+    if (typeof entry === 'number') { pwd = String(entry); return { pwd: pwd, fe: fe, open: open }; }
     if (typeof entry === 'object') {
       pwd = entry.password !== undefined && entry.password !== null ? String(entry.password) : '';
       fe = (entry.fileExpire !== undefined && entry.fileExpire !== null) ? String(entry.fileExpire) : '';
-      return { pwd: pwd, fe: fe };
+      // ⚠️★ 只认**严格 true**（与 Rust 侧 `open: bool` 的 serde 一致）：
+      //    写 `"true"` / `1` 这种形式服务端解析不出来，别在这里放宽。
+      open = entry.open === true;
+      return { pwd: pwd, fe: fe, open: open };
     }
-    return { pwd: pwd, fe: fe };
+    return { pwd: pwd, fe: fe, open: open };
+  }
+
+  /** 「开放」勾上时密码没有意义：把输入框禁用（**但不清空值** —— 用户可能只是点错了，
+      取消勾选要能拿回来）。保存那边也不会把 `open` 与 `password` 一起写下去。 */
+  function ccSyncRoomPwd(tr) {
+    var on = tr.querySelector('.cc-room-open').checked;
+    var pwd = tr.querySelector('.cc-room-pwd');
+    pwd.disabled = on;
+    pwd.placeholder = on ? '<%:开放房间不需要密码%>' : '<%=translate("空 = 沿用全局密码")%>';
   }
 
   function ccAddRowEl(name, vals, lockName) {
@@ -303,9 +322,13 @@
     tr.innerHTML =
       '<td><input type="text" class="cc-room-name" value="' + ccEsc(name) + '" ' + (lockName ? 'readonly' : '') + ' /></td>' +
       '<td><input type="password" class="cc-room-pwd" value="' + ccEsc(vals.pwd) + '" placeholder="<%=translate("空 = 沿用全局密码")%>" /></td>' +
+      '<td style="text-align:center"><input type="checkbox" class="cc-room-open" title="<%=translate("不要密码，即使全局设了密码这个房间也放行")%>"' + (vals.open ? ' checked' : '') + ' /></td>' +
       '<td><input type="number" class="cc-room-fe" value="' + ccEsc(vals.fe) + '" placeholder="<%=translate("空 = 沿用全局文件过期")%>" /></td>' +
       '<td class="a"><span onclick="ccSaveToast()"><%:保存%></span><span onclick="ccRemoveRoom(this)" ><%:删除%></span></td>';
     tb_insert(tr);
+    // ⚠️ 这两个必须在 `innerHTML` 之后接：元素是刚建出来的，`querySelector` 现在才拿得到。
+    ccSyncRoomPwd(tr);
+    tr.querySelector('.cc-room-open').addEventListener('change', function() { ccSyncRoomPwd(tr); });
     return tr;
   }
 
@@ -316,7 +339,7 @@
   }
 
   function ccAddRoom() {
-    ccAddRowEl('', { pwd: '', fe: '' }, false);
+    ccAddRowEl('', { pwd: '', fe: '', open: false }, false);
   }
 
   function ccRemoveRoom(el) {
@@ -335,12 +358,28 @@
     names.forEach(function(tr) {
       var name = tr.querySelector('.cc-room-name').value.trim();
       if (!name) return;
+      var open = tr.querySelector('.cc-room-open').checked;
       var pwd = tr.querySelector('.cc-room-pwd').value;
       var fe = tr.querySelector('.cc-room-fe').value.trim();
-      if (pwd === '' && fe === '') { roomAuth[name] = ''; return; }
-      var o = { password: pwd };
-      if (fe !== '') { var n = parseInt(fe, 10); if (!isNaN(n)) o.fileExpire = n; }
-      roomAuth[name] = o;
+      var feNum = null;
+      if (fe !== '') { var n = parseInt(fe, 10); if (!isNaN(n)) feNum = n; }
+
+      // ⚠️★ 开放房间写 `{"open": true}`，**不能**拿「空密码」当信号。两个原因（见
+      //    `rust/crates/core/src/config.rs` 里 `RoomAuthEntry` 的文档注释）：
+      //    ① 空串在这份配置里**已经有含义** —— 沿用全局密码；改掉它会让所有现有配置
+      //       换一个意思，某个房间会**悄悄敞开而且不报错**（安全设置不能这么反转）；
+      //    ② 「密码填了空」与「压根没配过这个房间」在 JSON 里长得一样，而意图正好相反。
+      if (open) {
+        var o = { open: true };
+        if (feNum !== null) { o.fileExpire = feNum; }
+        roomAuth[name] = o;
+        return;
+      }
+      // 密码与过期都留空 = 只沿用全局（写 `''`，与「没配过」同一个含义）。
+      if (pwd === '' && feNum === null) { roomAuth[name] = ''; return; }
+      var e = { password: pwd };
+      if (feNum !== null) { e.fileExpire = feNum; }
+      roomAuth[name] = e;
     });
     return roomAuth;
   }
