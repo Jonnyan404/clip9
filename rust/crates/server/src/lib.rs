@@ -26,6 +26,26 @@
 //! | [`user_agent`] | UA → 设备信息（⚠️ 近似实现，见模块注释） |
 //! | [`state`] | 共享状态 + 广播出口 |
 
+/// 这个二进制的版本号 —— **构建时注入优先，回落 `Cargo.toml`**。
+///
+/// ⚠️★ 为什么要注入：版本号的**真值在 git tag 里**（`CHANGELOG.md` 开头那条纪律），
+/// 而 `Cargo.toml` 的 `version` 只是本地兜底 —— 它在两次发布之间**根本不会变**。
+/// 只读 `CARGO_PKG_VERSION` 的后果是：**发出去的每一个包都自称同一个数**。
+///
+/// ⚠️★ 这不是洁癖。LuCI 的「检查更新」就是跑 `<二进制> -v` 拿当前版本
+/// （`openwrt/luci-app-clip9/luasrc/controller/clip9.lua` 的 `get_installed_version`），
+/// 再跟 GitHub 的 `/releases/latest` 比。当前版本**恒为 `0.1.0`** 的话：
+/// 用户升级到新正式版之后，**仍然会被永远提示「有新版本」，而且升级修不掉**。
+/// 桌面端早就为同一件事注入过版本（`release.yml` 里那段注释写得很清楚），
+/// 服务端这一份当时漏了 —— 这一条是 2026-10-02 在 OpenWrt 容器里真装上才发现的。
+///
+/// ⚠️ 注入的值**不带 `v`**（与包版本同形），否则 `-v` 与 `opkg list-installed` 又对不上。
+/// 注入点见 `openwrt/scripts/build.sh` 与 `release.yml` 的 `linux` job。
+pub const VERSION: &str = match option_env!("CLIP9_VERSION") {
+    Some(v) => v,
+    None => env!("CARGO_PKG_VERSION"),
+};
+
 pub mod auth_gate;
 pub mod auth_token;
 pub mod automation;

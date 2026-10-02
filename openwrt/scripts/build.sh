@@ -151,8 +151,18 @@ CROSS_TARGET_DIR_PREFIX="$RUST_DIR/target/cross-"
 
 for target in "${TARGETS[@]}"; do
     echo "--- cross build $target ---"
+    # ⚠️★ `CLIP9_VERSION` 是**必须**传的：不传的话二进制里那个版本号来自
+    # `rust/Cargo.toml` 的 `[workspace.package] version`（两次发布之间不会变），
+    # 于是**每一个 ipk 里的二进制都自称同一个数**。
+    # ⚠️★ 后果不是「显示不好看」：LuCI 的「检查更新」跑的是 `<二进制> -v`，
+    # 拿它跟 GitHub 的 `/releases/latest` 比 —— 当前版本恒定的话，
+    # 用户升级到新正式版之后会被**永远提示有新版本，而且升级修不掉**。
+    # 2026-10-02 在 OpenWrt 容器里真装上才发现（`/usr/bin/clip9-server -v` 报 0.1.0，
+    # 而 `opkg list-installed` 报 0.1.1-beta3）。
+    # ⚠️ `$VERSION` 本来就**不带 `v`**（与包名/包版本同形），别再动它。
     ( cd "$RUST_DIR" && CARGO_TARGET_DIR="$CROSS_TARGET_DIR_PREFIX$target" \
         RUSTFLAGS="-C strip=symbols" \
+        CLIP9_VERSION="$VERSION" \
         cross build --release -p clip9-server --target "$target" )
 done
 
@@ -179,6 +189,15 @@ for entry in "${ARCH_MAP[@]}"; do
     #    产物同一条规则（见 `.github/workflows/release.yml` 的文件头）。
     #    ⚠️ 这个文件**不是资产**，它只是给 ipk / apk 两个打包脚本当输入；
     #    但 `package-openwrt*.sh` 按名字找它，所以三处必须一起改。
+    # ⚠️★ 验一下版本号**真的注进去了**：`CLIP9_VERSION` 没生效时**不会报错**，
+    #    二进制只会安静地回落到 `Cargo.toml` 里那个常量 —— 而那正是要修的病
+    #    （LuCI 的「检查更新」跑 `<二进制> -v`，回落之后用户升级完仍被提示有新版本）。
+    #    ⚠️ `-a` 不能省：macOS 的 BSD `strings` 默认只扫 object 段，对 ELF 会捞不到。
+    if [ -n "$src" ] && ! strings -a "$src" | grep -qF "$VERSION"; then
+        echo "错误: $src 里找不到版本号 $VERSION —— CLIP9_VERSION 没生效" >&2
+        echo "  这个二进制会回落成 rust/Cargo.toml 里那个常量（见 clip9_server::VERSION 的注释）" >&2
+        exit 1
+    fi
     dst="$OUTPUT_DIR/clip9-server-v$VERSION-$arch"
     if [ -z "$src" ]; then
         echo "错误: cross 跑完了，但在 $CROSS_TARGET_DIR_PREFIX$target 下找不到 release 产物" >&2

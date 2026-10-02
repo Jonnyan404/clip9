@@ -31,6 +31,14 @@ fn main() {
 
     // ⚠️ 少了这一行，改了 `static/` 而 build script 不重跑 = 静默编出**上一次**那张表（旧界面）。
     println!("cargo:rerun-if-changed=static");
+    // ⚠️★ `CLIP9_VERSION` 变了要**重编**：它是 `option_env!` 读的，而 cargo 默认
+    // **不会**因为环境变量变化而重编（只认「源码/依赖有没有变」）。
+    // 不加这一行的话：本地先用 `CLIP9_VERSION=9.9.9-test` 编过一次，再不带变量编一次，
+    // 拿到的**还是 9.9.9**（我自己就撞上了）；CI 上 `rust-cache` 命中时同理 ——
+    // **换了 tag 也可能沿用上一次注入的版本**。
+    // ⚠️ `release.yml` 与 `openwrt/scripts/build.sh` 里那道 `strings | grep` 自检能发现它，
+    // 但那是事后；这一行才是「别让它发生」。
+    println!("cargo:rerun-if-env-changed=CLIP9_VERSION");
 
     let mut files: Vec<(String, PathBuf)> = Vec::new();
     walk(&dir, &dir, &mut files);

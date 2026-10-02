@@ -245,7 +245,7 @@ async fn handle_socket(
     let recent = state.store.recent_asc(&room, limit).unwrap_or_default();
     let latest_id = recent.iter().map(ReceiveHolder::id).max().unwrap_or(0);
     let config_payload = json!({
-        "version": env!("CARGO_PKG_VERSION"),
+        "version": crate::VERSION,
         "server": {
             "history": state.config.server.history,
             "prefix": state.config.server.prefix,
