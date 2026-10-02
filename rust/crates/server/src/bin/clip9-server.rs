@@ -141,7 +141,7 @@ async fn main() -> anyhow::Result<()> {
         std::process::exit(0);
     }
     if args.has("v") {
-        println!("clip9-server {}", env!("CARGO_PKG_VERSION"));
+        println!("clip9-server {}", clip9_server::VERSION);
         std::process::exit(0);
     }
 
@@ -518,7 +518,7 @@ impl Args {
 
 /// 用法说明。⚠️ 由 `FLAGS` 生成，别手写第二份。
 fn print_usage() {
-    println!("clip9-server {}\n", env!("CARGO_PKG_VERSION"));
+    println!("clip9-server {}\n", clip9_server::VERSION);
     println!("用法: clip9-server [选项]\n");
     println!("选项:");
     for (name, takes_value, desc) in FLAGS {

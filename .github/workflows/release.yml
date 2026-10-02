@@ -177,10 +177,24 @@ jobs:
         shell: bash
         run: |
           set -o pipefail
+          # ⚠️★ 把 tag 里的版本号**注进二进制**（读它的是 `clip9_server::VERSION`）：
+          #    不注的话 `-v` 报的是 `rust/Cargo.toml` 里那个常量（两次发布之间不变），
+          #    而 LuCI 的「检查更新」正是跑 `<二进制> -v` 跟 GitHub 的 latest 比 ——
+          #    用户升级到新正式版之后会被**永远提示有新版本，升级也修不掉**。
+          #    桌面端早就注过（见本文件后面 desktop job 那段注释），服务端这一份漏了。
+          # ⚠️ 去掉开头的 `v`：与包版本 / `opkg list-installed` 里那个值同形。
+          export CLIP9_VERSION="${{ needs.info.outputs.tag }}"
+          export CLIP9_VERSION="${CLIP9_VERSION#v}"
           cross build --release -p $BIN --target ${{ matrix.target }} 2>&1 | tee cross.log
           if grep -q 'Falling back to `cargo` on the host' cross.log; then
             echo "::error::cross 没有起容器（拿不到 workspace metadata，多半是 registry 连不上），\
           它改成在宿主机上编了 —— 宿主机上没有 musl 工具链，这一格的产物一定是错的"
+            exit 1
+          fi
+          # ⚠️★ 注不进去**不会报错**，只会安静地回落到 `Cargo.toml` 那个常量 ——
+          #    而那正是这次要修的病。所以在这里当场验一下（`strings` 在 runner 上有）。
+          if ! strings "target/${{ matrix.target }}/release/$BIN" | grep -qF "$CLIP9_VERSION"; then
+            echo "::error::版本号没注进二进制（CLIP9_VERSION=${CLIP9_VERSION}）—— 它回落到 Cargo.toml 那个常量了"
             exit 1
           fi
 
