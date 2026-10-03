@@ -386,6 +386,10 @@ fn main() {
             // 少注册一个的表现是「点展开/复制**没反应**」，而且不报错。
             commands::entry_text,
             commands::copy_entry,
+            // ⚠️ 卡片上那颗 🗑 与 ↗（2026-10-03）：删除走服务端 `/revoke`，
+            // 分享让服务端签发链接。少注册一个的表现同样是「点了没反应、不报错」。
+            commands::delete_entry,
+            commands::share_entry,
             commands::pick_files,
             commands::send_files,
             commands::refresh,

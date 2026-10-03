@@ -907,6 +907,31 @@ pub fn copy_entry(runtime: State<'_, Arc<Runtime>>, id: i32) {
     runtime.copy_entry(id);
 }
 
+/// 「删除这一条」（卡片上那颗 🗑）—— 走服务端 `POST /revoke/<id>`。
+///
+/// ⚠️★ 它是**真删**、不是本地抹掉：房间里那些内容是所有人共享的，本地抹掉只会在下一次
+/// 取历史时原样回来（假删除）。所以界面**必须先问一句**再调它 —— 那是界面的事，
+/// 见 `ui/app.js` 里那颗按钮旁边那段注释。
+///
+/// ⚠️ 失败的三种情形各有自己的话（不是一句「失败」）：这条已经不在了 / 房间密码不对 /
+/// 服务端回了别的码。分类在 [`Runtime::delete_entry`] 与 `http_status` 里。
+#[tauri::command]
+pub async fn delete_entry(runtime: State<'_, Arc<Runtime>>, id: i32) -> Result<(), Msg> {
+    runtime.delete_entry(id).await
+}
+
+/// 「分享这一条」（卡片上那颗 ↗）—— 让服务端签发一条分享链接，**并把它复制进剪贴板**。
+///
+/// 返回值就是那串地址：界面拿它做提示（「已复制 + 地址」，以及「没设密码，别贴公开地方」那句）。
+///
+/// ⚠️★ 复制**在壳里做**（[`Runtime::share_entry`] 里那次 `copy_to_clipboard`），不是因为方便：
+/// 页面碰不到系统剪贴板，而且走壳会**先 prime 去重指纹** —— 否则监控线程会把这一行当成
+/// 一次新的复制、又发回房间（用户只是想分享一条，结果房间里多出一条他自己发的链接）。
+#[tauri::command]
+pub async fn share_entry(runtime: State<'_, Arc<Runtime>>, id: i32) -> Result<String, Msg> {
+    runtime.share_entry(id).await
+}
+
 /// 弹一个**系统文件选择框**，把选中的路径还给页面。
 ///
 /// ⚠️★ 为什么这条命令在 Rust 侧而不在页面上：Tauri 2 的插件 JS API 是一个 npm 包

@@ -668,6 +668,90 @@ impl Runtime {
         }
     }
 
+    /// 让**服务端**把这一条从房间里删掉（`POST /revoke/<id>`）。
+    ///
+    /// ⚠️★ 为什么必须真的发出去、不能在本地抹掉：房间里的内容是**所有人共享**的 ——
+    /// 本地抹掉只会让这一台机器的界面与别人不一致，下一次取历史又回来。那是**假删除**。
+    ///
+    /// ⚠️ 走**选中房间**那条通道（[`Store::selected_channel`]）：条目的 id 是
+    /// **每个房间各自**单调的（见 [`Store::entry_text`] 那段注释），跨房间按 id 会删错条。
+    ///
+    /// ⚠️ 凭据走 `Authorization: Bearer`，**不进 URL**（[`clip9_client::endpoint`] 的模块文档
+    /// 第 3 条：进了 URL 就会进服务端访问日志、反代日志，以及用户随手分享的那串地址）。
+    pub async fn delete_entry(self: &Arc<Self>, id: i32) -> Result<(), Msg> {
+        let channel = self
+            .store
+            .selected_channel()
+            .ok_or_else(|| Msg::key("noRoomsConfigured"))?;
+        let (url, token) = room_endpoint(&channel, &format!("/revoke/{id}"))?;
+        let response = send(self.http.post(url), token.as_deref())
+            .send()
+            .await
+            .map_err(|err| Msg::key("deleteFailed").param("reason", err.to_string()))?;
+        let status = response.status();
+        if status.is_success() {
+            return Ok(());
+        }
+        // ⚠️ 404 单独说：那是「这一条已经不在了」（别人删过，或者本机是旧的）——
+        // 与「没删掉」是两件事，用户该知道的处理也不同。
+        if status == reqwest::StatusCode::NOT_FOUND {
+            return Err(Msg::key("entryGone"));
+        }
+        Err(Msg::key("deleteFailed").param_msg("reason", http_status(status)))
+    }
+
+    /// 让服务端签发一条分享链接，**并把它复制进剪贴板**（返回那串地址）。
+    ///
+    /// ⚠️★ 默认**不设密码**、不限次数、有效期交给服务端定（`ttl: 0` 会被
+    /// [`clip9_core::share::normalize_share_ttl`] 归一到它自己的默认值）——
+    /// 三条都是**照网页端那颗分享按钮的默认值**来的，这样两处的「默认分享」是同一件事。
+    /// ⚠️ 于是「服务端默认多久过期」这个数只有**一个**定义处（服务端），桌面端不抄一份。
+    ///
+    /// ⚠️★ **无密码 = 内容摘要会出现在别人聊天工具的预览里**，而那条摘要进了对方的缓存就删不掉。
+    /// 这里不拦，但**必须说一声**（见 `commands::share_entry` 那条提示语）——
+    /// 用户点一下「分享」时，心里的模型是「拿到链接的人能看」。
+    pub async fn share_entry(self: &Arc<Self>, id: i32) -> Result<String, Msg> {
+        let channel = self
+            .store
+            .selected_channel()
+            .ok_or_else(|| Msg::key("noRoomsConfigured"))?;
+        let (url, token) = room_endpoint(&channel, "/share")?;
+        let body = serde_json::json!({
+            "type": "content",
+            "id": id.to_string(),
+            "ttl": 0,
+            "maxUses": 0,
+            "password": "",
+        });
+        let response = send(self.http.post(url).json(&body), token.as_deref())
+            .send()
+            .await
+            .map_err(|err| Msg::key("shareFailed").param("reason", err.to_string()))?;
+        let status = response.status();
+        if !status.is_success() {
+            return Err(Msg::key("shareFailed").param_msg("reason", http_status(status)));
+        }
+        let value: serde_json::Value = response
+            .json()
+            .await
+            .map_err(|err| Msg::key("shareFailed").param("reason", err.to_string()))?;
+        let link = value
+            .get("url")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or_default()
+            .trim()
+            .to_owned();
+        // ⚠️ 服务端回了 200 但没给 url：**不许当成成功**。静默返回一个空串的话，
+        // 界面会「复制成功」然后把空白写进剪贴板 —— 用户粘出来才发现。
+        if link.is_empty() {
+            return Err(Msg::key("shareFailed").param_msg("reason", Msg::key("shareNoURL")));
+        }
+        // ⚠️★ 复制**走这一条**（不是页面里的 `navigator.clipboard`）：它会先 prime 去重指纹，
+        // 否则监控线程会把这一行当成一次**新的复制**、又发回房间。
+        self.copy_to_clipboard(&link);
+        Ok(link)
+    }
+
     /// 按需取回**选中房间**的历史（`GET /content`，不碰剪贴板）。
     ///
     /// ⚠️ 为什么要单独一条：下行的历史只覆盖**下载通道那一个房间**，
@@ -723,6 +807,47 @@ impl Runtime {
                 Msg::key("configNotSaved").param_msg("reason", reason),
             );
         }
+    }
+}
+
+/// 「要在**选中房间**上发一条请求」需要的那两样：地址 + 凭据。
+///
+/// ⚠️ 地址由 [`clip9_client::endpoint::api_url`] 拼（**全项目只有那一处拼 URL**：
+/// 它会保留服务端的子路径前缀、也不会把 `http://host` 里的 `//` 吃成一个 `/`）；
+/// 凭据一律走请求头，**不进 URL**。
+fn room_endpoint(
+    channel: &clip9_client::Channel,
+    path: &str,
+) -> Result<(reqwest::Url, Option<String>), Msg> {
+    let url = clip9_client::endpoint::api_url(&channel.server, path, &[("room", &channel.room)])?;
+    let token = channel
+        .auth_token
+        .as_deref()
+        .map(str::trim)
+        .filter(|token| !token.is_empty())
+        .map(str::to_owned);
+    Ok((url, token))
+}
+
+/// 给请求挂上凭据。⚠️ 没有凭据就是**没有** —— 不发一个空的 `Bearer`（那会被服务端当成
+/// 「给了一个错密码」，而真相是「这个房间不需要密码」）。
+fn send(request: reqwest::RequestBuilder, token: Option<&str>) -> reqwest::RequestBuilder {
+    match token {
+        Some(token) => request.header(reqwest::header::AUTHORIZATION, format!("Bearer {token}")),
+        None => request,
+    }
+}
+
+/// 把 HTTP 状态码变成一句**能说给人听**的理由。
+///
+/// ⚠️ 只回一句「HTTP 403」是没用的：这条路上最常见的失败是**房间密码不对 / 没给**，
+/// 而用户看到 403 不会联想到密码。那两个码各给一句自己的话。
+fn http_status(status: reqwest::StatusCode) -> Msg {
+    match status {
+        reqwest::StatusCode::UNAUTHORIZED | reqwest::StatusCode::FORBIDDEN => {
+            Msg::key("serverRejectedAuth")
+        }
+        _ => Msg::key("serverRejectedStatus").param("status", status.as_u16()),
     }
 }
 
@@ -1045,5 +1170,44 @@ mod tests {
             entry_preview(&file_entry("负数.bin", -1)),
             Msg::verbatim("负数.bin")
         );
+    }
+    /// 删除 / 分享这两条要用的那个「地址 + 凭据」。
+    ///
+    /// ⚠️★ 它守的两件事都是**出过代价**的，不是风格：
+    ///   ① **凭据不许进 URL** —— 进了就会进服务端访问日志、反代日志，以及用户随手分享的
+    ///      那串地址（`clip9-client/src/endpoint.rs` 的模块文档第 3 条）；
+    ///   ② **子路径前缀要保住**（`https://host/clip9` 这种部署）—— 丢了它，
+    ///      表现是「主页能开、接口全 404」。
+    #[test]
+    fn the_room_credential_never_lands_in_the_url() {
+        let mut channel = clip9_client::Channel::new("本机", "https://example.test/clip9");
+        channel.room = "work".to_owned();
+        channel.auth_token = Some("s3cr3t".to_owned());
+
+        let (url, token) = room_endpoint(&channel, "/revoke/7").expect("要拼得出来");
+
+        assert_eq!(
+            token.as_deref(),
+            Some("s3cr3t"),
+            "凭据要被抓出来（它走请求头）"
+        );
+        assert!(!url.as_str().contains("s3cr3t"), "凭据不许出现在地址里");
+        assert_eq!(url.path(), "/clip9/revoke/7", "服务端的子路径前缀要保住");
+        assert_eq!(url.query(), Some("room=work"));
+    }
+
+    /// ⚠️ 没有密码的房间 = **不发** `Authorization`。
+    /// 发一个空的 `Bearer` 会被服务端当成「给了个错密码」，而真相是「这个房间不要密码」——
+    /// 于是用户会看到一句让他去改密码的话，而他根本没设过密码。
+    #[test]
+    fn an_empty_credential_is_no_credential_at_all() {
+        let mut channel = clip9_client::Channel::new("本机", "https://example.test");
+        channel.room = "default".to_owned();
+
+        for empty in [None, Some(String::new()), Some("   ".to_owned())] {
+            channel.auth_token = empty.clone();
+            let (_, token) = room_endpoint(&channel, "/share").expect("要拼得出来");
+            assert_eq!(token, None, "空凭据（{empty:?}）不该变成一个 Bearer 头");
+        }
     }
 }
