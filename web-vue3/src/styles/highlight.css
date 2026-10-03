@@ -8,8 +8,14 @@
  * 而 v-html 注入的内容拿不到那个属性 —— 只能靠 `:deep()` 绕，那就绑死在那个组件里了。
  * 另一个组件要复用得整份抄一遍，正是这次在别处踩过的坑。
  *
- * ⚠️ 变量挂在 `code.hljs` 自己身上（不是 `:root`）：暗色主题的类 `.v-theme--dark` 挂在应用根上，
+ * ⚠️ 变量挂在 `code.hljs` 自己身上（不是 `:root`）：暗色主题的类挂在应用根上，
  * 祖先选择器能命中；而 `:root` 上取不到主题，浅/暗就没法切。
+ *
+ * ⚠️★ 暗色那个选择器**同时认两种写法**：网页版把 `.v-theme--dark` 挂在应用根上
+ *（Vuetify 的约定），桌面端把 `data-theme="dark"` 挂在 `<html>` 上。两边**共用这一个文件**
+ *（`tools/sync-action-catalog.mjs` 逐字节搬到 `rust/crates/desktop/ui/`），
+ * 所以**别**为桌面再抄一份配色 —— 抄的第二份一定会漂。`:where()` 是为了让这两条
+ * 选择器各自保持零特异性，不去压下面的令牌规则。
  */
 
 code.hljs {
@@ -26,7 +32,7 @@ code.hljs {
     --cb-insert: #22863a;
 }
 
-.v-theme--dark code.hljs {
+:where(.v-theme--dark, [data-theme='dark']) code.hljs {
     --cb-comment: #7f848e;
     --cb-keyword: #c678dd;
     --cb-string: #98c379;

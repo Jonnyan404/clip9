@@ -146,6 +146,42 @@ export async function detectLanguage(code) {
  * ⚠️ 返回值直接进 `v-html`。highlight.js **自己会转义输入**，所以这样是安全的；
  * 也正因为如此，**不要再往上拼任何没转义的内容**（那才是 XSS 的口子）。
  */
+/**
+ * 给一段**已经渲染成 DOM** 的 markdown 里的 ``` 代码块上色。
+ *
+ * ⚠️★ 为什么在**渲染之后**回头处理，而不是挂 marked 的 renderer：marked 的 renderer 是
+ * **同步**的，而高亮器是 `import()` 按需加载的 —— 在 renderer 里 await 不了。
+ * 所以先照常渲染（代码本来就是转义好的纯文本，看得见），再把这些块找出来上色。
+ *
+ * ⚠️★ 为什么收在这个文件里而不是留在组件里：桌面端也要这一步（它画的是同一段 HTML，
+ * 但没有 Vue 组件）。留在 `MarkdownBody.vue` 里，桌面就只能抄一份 —— 而抄的那份
+ * 一定会在「哪种块算代码块」这种地方慢慢漂走。这里是**唯一实现**，
+ * `MarkdownBody.vue` 与桌面端的动作库都调它。
+ */
+export async function highlightCodeBlocksIn(el) {
+    if (!el) {
+        return;
+    }
+    const blocks = el.querySelectorAll('pre > code[class*="language-"]');
+    for (const block of blocks) {
+        if (block.classList.contains('hljs')) {
+            continue;
+        }
+        const lang = (block.className.match(/language-([\w+#.-]+)/) || [])[1] || '';
+        const source = block.textContent || '';
+        if (!lang || !source) {
+            continue;
+        }
+        const html = await highlightCode(source, lang);
+        if (html) {
+            // ⚠️ 直接进 innerHTML：highlight.js 自己会转义输入，所以是安全的；
+            // 也正因为如此，**不要再往上拼任何没转义的内容**。
+            block.innerHTML = html;
+            block.classList.add('hljs');
+        }
+    }
+}
+
 export async function highlightCode(code, name) {
     const language = highlightLanguageFor(name);
     if (!language) {
