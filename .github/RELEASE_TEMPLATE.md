@@ -21,42 +21,61 @@
 2. **写这一版的说明**：照第二节的骨架写中文变动。⚠️ 直接写进 `CHANGELOG.md`（第 3 步），
    不用先打在别处 —— Release 正文就是从那里抽的。
 
-3. **往 `CHANGELOG.md` 顶上写这一版**（版本号 + 日期 + 中文变动）并 commit、push。
-   提交信息形如 `docs(changelog): v0.1.0`。
+3. **往 `CHANGELOG.md` 顶上写这一版**（版本号 + 日期 + 中文变动）。**不用 commit、不用 push**
+   —— 第 4 步那个脚本会替你提交这一处改动（提交信息 `docs(changelog): <tag>`）。
 
    ⚠️★ **内容要在这里一次写全** —— 这一步是「这一版说明」**唯一**的地方（Release 正文抽它）。
    以前是「先提交一条只有版本号与日期的空记录、发完再回填」，**2026-09-29 起不用了**：
    那个「回填」十有八九会被忘掉（`v0.1.0` 那次就没做），而现在正文是抽出来的 ——
    抽到那条空记录会**直接报错**（`tools/release-notes.mjs` 认「变动留空」/「待发布」这类占位）。
 
-   ⚠️★ 仍然是**先提交、再打 tag**：**tag 指向的那个提交必须能在 `CHANGELOG.md` 里查到自己**
-   —— 否则 checkout 到某个 tag 上，谁也说不清「这一版是什么」。（万一漏了：见第 5 步。）
+   ⚠️★ 规矩仍然是**先提交、再打 tag**（`tag` 指向的那个提交必须能在本文件里查到自己）——
+   但那件事现在**由第 4 步的脚本保证**，不用你记。
 
-4. **打 tag 并推**：
+4. **一条命令发版**：
 
    ```sh
-   git tag v0.2.0
-   git push origin v0.2.0
+   bash tools/release.sh v0.2.0              # 正式版
+   bash tools/release.sh v0.2.0-beta1        # 预发布（按 tag 后缀自动判，不用去网页上勾框）
+   bash tools/release.sh v0.2.0 --dry-run    # 只看它要做什么，一个字节都不改
    ```
 
-   ⚠️ 触发发布的是**`release: published`**（建好 Release 并点发布那一刻），**不是**
-   `push: tags` —— 只推 tag 什么也不会发生。
+   它按顺序做六件事，**任何一步不过就整整齐齐地停下、不留半成品**：
 
-5. **建 Release**（GitHub 的 New release → 选中刚推的 tag）：
+   | 步 | 做什么 | 不过会怎样 |
+   | --- | --- | --- |
+   | 1 | 前置检查：在 `main` 上、与 `origin/main` 一致、tag 不重名、工作区**只**脏了 `CHANGELOG.md`、tag 形状对 | 拒绝，没动任何东西 |
+   | 2 | **核对这一版的说明在不在**（`tools/release-notes.mjs` 抽一遍；占位也拒） | 拒绝，并把「上一个 tag 到现在的提交」列出来当写说明的原料 |
+   | 3 | 替你 `git commit` 那一处改动 | — |
+   | 4 | 静态自检 + 入库产物一致性 | 拒绝，先修它 |
+   | 5 | 推 `main` → 打 tag → 推 tag | — |
+   | 6 | `gh release create --verify-tag --notes-file …`（预发布自动带 `--prerelease`） | — |
 
-   - **正文留空** —— 会自动从 `CHANGELOG.md` 抽（发布后刷一下页面看）。
-     ⚠️ 页面刚出来那几秒可能显示一段英文：那是 GitHub 在正文为空时拿 tag 指向的**提交信息**
-     顶上去的（提交信息是英文的）。`release-notes` job 跑完就换成中文了；
-   - ⚠️★ 预发布（`-beta*` / `-rc*`）**必须勾** `Set as a pre-release`：`release.yml`
-     用它决定容器镜像**只推 tag、不推 `latest`**，也没法事后再补（`info` job 是按
-     release 对象问出来的）；
-   - ⚠️ **不要**点「Generate release notes」；
-   - 点发布 → `release.yml` 开跑：产物自动上传（`overwrite_files: true`，重跑不会
-     卡在「资产已存在」），`release-notes` job 把正文补上。
+   ⚠️★ **它存在的理由就是「顺序」**：`v0.1.1` 与 `v0.1.1-beta3` 两次都坏在「tag 打在了说明之前」
+   （资产全传完、页面空白、整次 run 红），而那条约束原先**没有任何东西强制它**。核对排在第 2 步、
+   **在任何改动之前** —— 错了不留提交、不碰远端。
 
-   ⚠️ 补正文那一步红了（比如忘了写第 3 步的说明）**不会**回滚已经传上去的资产，补法也
-   **不动 tag**：把这一版补进 `CHANGELOG.md`（照旧写在最上面）push 到 `main`，正文会
-   **退回 `main` 上抽** —— 单独重跑 `release-notes` 那个 job 就补齐了，不必重发一遍。
+   ⚠️ 正文是**建 Release 时**就带上去的，所以没有「页面先空几秒、显示一句英文提交信息」那个窗口。
+   CI 那个 `release-notes` job 从此只是一道安全网。
+
+   ⚠️★ **别手敲 `git tag` + 网页建 Release 走老路** —— 那样第 2 步的核对就被绕过去了，
+   而这正是两次事故的成因。要改发版流程，改脚本，别绕过它。
+
+   ⚠️ 它替你做的那两件事，手敲时容易记错、而且**事后补不回来**：
+   - 触发发布的是 **`release: published`**（Release 发布那一刻），**不是** `push: tags` ——
+     只推 tag 什么也不会发生；
+   - 预发布（`-beta*` / `-rc*`）**必须**标成 pre-release：`release.yml` 用它决定容器镜像
+     **只推 tag、不推 `latest`**，也没法事后再补（`info` job 是按 release 对象问出来的）。
+     脚本按 tag 后缀自动判，就是为了不押「人记得勾那个框」。
+
+   ⚠️ **不要**在网页上点「Generate release notes」：那份自动生成的英文分类会盖掉手写说明。
+
+5. **万一还是漏了说明**（例如发了 Release 才发现、或者你手敲的 tag）：
+
+   ⚠️ 补正文那一步红了**不会**回滚已经传上去的资产，补法也**不动 tag**：把这一版补进
+   `CHANGELOG.md`（照旧写在最上面）push 到 `main`，正文会**退回 `main` 上抽** ——
+   单独重跑 `release-notes` 那个 job 就补齐了（`gh run rerun <run-id> --job <job-id>`），
+   不必重发一遍。
    ⚠️★ 忘了写的话，发布后几秒内 `notes-precheck` 还会先给一条 warning（**不拦发布**）：
    那时构建还在跑，把说明补进 `main`，`release-notes` 直接抽到，一次绿、不用重跑。
    ⚠️ 别把这当常规路径：tag 的提交里查不到这一版，事后补不回来（`v0.1.1-beta2` 那次）。
@@ -65,6 +84,10 @@
    `chore(release): vX.Y.Z` 的**空**提交 —— 所以 `git log` 里数得出「发过哪几版、各自哪天」。
    它是**空**提交（一个文件都不改）：版本号仍然**只认 tag**，仓库里不会因此多出第二份真值。
    ⚠️ 同一个 tag 重跑发布会自动跳过（判重按**整行相等**），不会堆出第二条。
+
+   ⚠️ 改了发版链本身（`release.sh` / `release-notes.mjs` / `release.yml` 的 notes 那一段）时，
+   `tools/release-smoke.mjs` 是盯着它的那条判据：**夹具里真的跑一遍拒绝路径**，
+   8 组变异都精确报红。改完跑 `node tools/release-smoke.mjs`。
 
 6. （按需）OpenWrt 与 Android 各有自己的入口：`openwrt.yml` / `android.yml` 都带
    `workflow_dispatch`，填上 tag 就能**覆盖上传**那两个包 —— 它们**不在**主发布链路里，

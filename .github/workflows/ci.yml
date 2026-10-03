@@ -89,6 +89,13 @@ jobs:
       - name: 工作流跨文件约定静态自检
         run: node tools/workflows-smoke.mjs
 
+      # ⚠️★ 发版那条链有个**没有东西强制**的约束：「先提交说明、再打 tag」。2026-10-03 的
+      # `v0.1.1` 与 `v0.1.1-beta3` 就是漏在它上面（资产全传完、Release 页面空的）。
+      # `tools/release.sh` 把「打 tag + 建 Release」合成一个动作并先核对说明；
+      # 这条判据盯着**它那个核对还在、且真的会拦**。见 tools/release-smoke.mjs 抬头。
+      - name: 发版脚本静态自检
+        run: node tools/release-smoke.mjs
+
   # ── Rust：fmt / clippy / test ──────────────────────────────────────
   #
   # ubuntu 上要装 Tauri 的系统库：缺 webkit2gtk 时 `tauri-build` 会直接失败，报错与「代码写错了」很像。
