@@ -58,6 +58,16 @@ jobs:
       - name: 入库的前端产物与当前源码是否一致
         run: node tools/sync-web-assets.mjs --check
 
+      # ⚠️★ 动作库拆成了四份文件（目录 / 零依赖实现 / 带库实现 / 桌面那份逐字节拷贝），
+      # 它们之间靠**字符串名字**连着（`run: "runUpper"` 指的是另一份文件里的导出）。
+      # 没有编译器看着这条线：名字写错在网页版是**装载时抛错**，在桌面侧是
+      # 「动作菜单点了没反应」。判据 7 还会反过来盯「同步与本判据自己接进门禁没有」。
+      - name: 动作目录与桌面那份拷贝是否一致
+        run: node tools/sync-action-catalog.mjs --check
+
+      - name: 动作库静态自检
+        run: node tools/action-catalog-smoke.mjs
+
       # 桌面的手写界面没有测试运行器，全靠这个静态自检。它一直没接进任何门禁 —— 这里接上。
       - name: 桌面界面静态自检
         run: node tools/desktop-ui-smoke.mjs
