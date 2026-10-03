@@ -137,9 +137,22 @@ apk 那一格**一直是对的**（它有 `pkg_arch`），现在 ipk 照它改�
 | **LuCI 装完不覆盖 `/etc/config/clip9`** | ✓ 先改过的值还在（老坑没复发） |
 | **LuCI 模板能渲染** | ✓ 用 `luci.template.parser` 编译并渲染出 HTML（补上了「语法只能靠读」那一格） |
 
-⚠️ 怎么起这种容器、以及那三个都会伪装成「连不上」的坑（`network` 抓 `eth0` 进 `br-lan`、
-`firewall` 默认 REJECT、`uhttpd` 的 `rfc1918_filter`），见技能
-`verify-openwrt-package-in-container`。
+⚠️★ 怎么起这种容器（以及**三个都会伪装成「连不上」的坑**）—— 这三个互相掩盖，
+排查顺序错了会浪费很久：
+
+1. **`/etc/init.d/network` 会把 Docker 的 `eth0` 抓进它自己的 `br-lan` 网桥** →
+   容器变成 `192.168.1.1/24`、Docker 给的地址与默认路由一起没了 ⇒ 容器**不出网**，
+   而宿主发进来的包因为目的 IP 不匹配被 reset。
+   修法：`ip link set eth0 nomaster` + 配回地址与默认路由，并 `disable` 那个服务。
+   ⚠️ 我一开始误判成 `/etc/resolv.conf`（`init` 确实会改它），但那个地址本来是对的 —— 病是**没路由**。
+2. **`/etc/init.d/firewall`（fw4/nftables）默认 input REJECT** → **另一个** reset。
+   修法：`stop` + `disable` + `nft flush ruleset`，并确认 `/etc/rc.d/S19firewall` 真的没了。
+3. **`uhttpd.main.rfc1918_filter='1'`**（OpenWrt 默认）：容器看到的源 IP 是私有网段 → 被它挡。
+   ⚠️ 但它**不是**主因（我一开始猜它，改了没效果）。
+
+⚠️ 另外两条：`luci-compat` 的依赖链要一起装（容器网络不通时可以从宿主下 ipk 再传进去），
+以及**LuCI 的登录不能用 curl 模拟**（缺 CSRF token → 403，不是密码错）——
+验密码直接 `ubus call session login '{"username":"root","password":"…"}'`。
 
 ### 4.2 CI
 
