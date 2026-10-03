@@ -8,8 +8,11 @@ clip9 的版本历史。**按版本倒序**（最新的在最上面），内容�
 `[workspace.package] version` 只在「手动触发、没填 tag」时兜底
 （见 `tools/release-version.mjs`）。所以**发版时没有文件需要改版本号**，要动的只有这份日志：
 
-1. 往顶上加一条**写全的**版本记录（版本号 + 日期 + 中文变动），commit 它；
-2. 打 tag、发 Release —— 正文会自动从第 1 步那一段抽出来；
+1. 往顶上加一条**写全的**版本记录（版本号 + 日期 + 中文变动）—— **不用 commit**；
+2. 跑 `bash tools/release.sh vX.Y.Z` —— 它替你 commit、打 tag、建 Release（正文当场就是
+   从第 1 步那一段抽的）。⚠️★ 那一步**会先核对「这一版写了没有」**，没有就拒绝：
+   2026-10-03 的 `v0.1.1` 与 `v0.1.1-beta3` 就是坏在「tag 打在了说明之前」（资产全传完、
+   页面空白）。细节见 `.github/RELEASE_TEMPLATE.md` 第一节；
 3. 发布成功后**自动**往 `main` 上留一条 `chore(release): vX.Y.Z` 的**空提交**
    （`release.yml` 的 `record-version` job）—— 所以 `git log` 里数得出「发过哪几版、各自哪天」。
    ⚠️ 它是**空**提交（一个文件都不改）：版本号仍然只认 tag，仓库里不会因此多出第二份真值。
