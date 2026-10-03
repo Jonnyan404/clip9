@@ -262,6 +262,19 @@
 
     .card .ft .tag.auto { color: var(--accent); border-color: var(--sidebar-active-border); }
 
+    /* 卡片脚那三颗图标（复制 / 分享 / 删除，见 `app.js` 的 `entryActions`）。
+       ⚠️★ 用 `margin-left: auto`，**不是**再加一个 `.spacer`：这一行里 `.spacer`
+       可能已经有一两个（标签、展开各占一个），再加一个会把本来靠右的东西推到中间。
+       auto 边距只在它**自己前面**吃剩下的空间，两种情形都落在最右边。 */
+    .card .ft .acts { margin-left: auto; display: flex; align-items: center; gap: 2px; }
+
+    .card .ft button.lnk.ico {
+        font-size: 12px; line-height: 1; padding: 2px 4px; border-radius: 4px;
+    }
+
+    .card .ft button.lnk.ico:hover { background: var(--sidebar-hover); }
+    .card .ft button.lnk.ico:disabled { opacity: .45; }
+
     .thumb {
         width: 132px; height: 84px; border-radius: 6px; margin-bottom: 7px;
         background: linear-gradient(135deg, #94a3b8 0%, #64748b 45%, #475569 100%);

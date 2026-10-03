@@ -899,8 +899,90 @@ function renderEntry(entry) {
     toggle.addEventListener('click', () => toggleEntry(card, entry, toggle));
     foot.append(h('span', 'spacer'), toggle);
   }
+  foot.append(entryActions(entry));
   card.append(foot);
   return card;
+}
+
+/* ── 卡片脚那三颗图标（复制 / 分享 / 删除）─────────────────────────────────
+ *
+ * ⚠️★ 三颗都走**壳命令**，页面上不碰 `navigator.clipboard`，两个理由都不是风格：
+ *   ① 页面手里那份是**截断预览**（`EntryView::for_snapshot`）—— 复制/分享要的是**全文**，
+ *      拿预览去复制会把长文截断，而且**不报错**（用户粘出来才发现少了半截）；
+ *   ② 写剪贴板之前壳会先 `prime` 去重指纹 —— 不走壳的话，监控线程会把这一行当成
+ *      一次**新的复制**、又发回房间（用户只想分享一下，房间里却多出一条）。
+ *
+ * ⚠️★ 这里**曾经**是一份右键菜单（复制内容 / 复制链接），2026-09-29 Jonny 要求移除
+ *（「列表内容页移除右键菜单」），当时的理由是「网页视图里的卡片自己带复制按钮，
+ * 桌面这份紧凑列表不再需要」。**那条理由在 2026-10-01 之后不成立了** —— 那天起桌面端
+ * **默认落在列表**，一个从不切到「网页」的人就没有任何入口。所以入口放回列表，
+ * 形态改成一行图标（**不是**把右键菜单搬回来）。
+ *
+ * ⚠️ 三颗的行为**对齐网页版那三颗**：删除**不**二次确认（网页版也不确认，删完出一条提示）。
+ * 两套界面同一颗按钮有两种行为，比误删一次更麻烦 —— 要改就两边一起改。
+ */
+function entryActions(entry) {
+  const acts = h('div', 'acts');
+
+  /** 加一颗。⚠️ `stopPropagation`：这一下不能冒泡到条目/房间那层的点击处理上。 */
+  function add(glyph, label, run) {
+    const button = h('button', 'lnk ico', glyph);
+    button.title = label;
+    button.setAttribute('aria-label', label);
+    button.addEventListener('click', (event) => {
+      event.stopPropagation();
+      run(button);
+    });
+    acts.append(button);
+    return button;
+  }
+
+  /** 点一下 → 禁用 → 跑 → 恢复。⚠️ **只**管这四件事，成功/失败的话各自在调用点说 ——
+   *
+   * ⚠️★ 别把「失败的句子」当参数传进来（`once(button, '复制不了：{error}', …)`）：
+   * 那样中文就成了一处**裸字面量**，而判据 15 专门扫这个（它会红，而且红得对 ——
+   * 从字面量上看不出它将来会被 `t()` 翻掉）。句子留在调用点的 `t(…)` 里。
+   */
+  function once(button, run) {
+    button.disabled = true;
+    return Promise.resolve(run()).finally(() => {
+      button.disabled = false;
+    });
+  }
+
+  add('📋', t('复制这条'), (button) => {
+    once(button, () => invoke('copy_entry', { id: entry.id })).catch((error) => {
+      showNotice('error', t('复制不了：{error}', { error: errorText(error) }));
+    });
+  });
+
+  add('↗', t('生成分享链接并复制'), (button) => {
+    once(button, () => invoke('share_entry', { id: entry.id }))
+      .then(() => {
+        // ⚠️★ 说清两件事：链接**已经复制**了，以及**没设密码**意味着什么 ——
+        // 无密码的链接贴进聊天工具时，那条内容的首行会出现在对方的预览里，而那份预览
+        // 进了对方的缓存就删不掉。用户点「分享」时心里的模型是「拿到链接的人能看」。
+        showNotice('ok', t('分享链接已复制（没设密码）——贴进聊天工具会显示内容摘要，别贴到公开的地方。'));
+      })
+      .catch((error) => {
+        showNotice('error', t('分享不了：{error}', { error: errorText(error) }));
+      });
+  });
+
+  add('🗑', t('删除这条'), (button) => {
+    once(button, () => invoke('delete_entry', { id: entry.id }))
+      .then(() => {
+        showNotice('ok', t('已从房间里删掉。'));
+        // ⚠️ 删完**立刻取一次**：下一次轮询要等 700ms，而这一条已经不在服务端了 ——
+        // 等轮询的话，那 700ms 里界面上还挂着一条已经删掉的内容。
+        refreshNow();
+      })
+      .catch((error) => {
+        showNotice('error', t('删不掉：{error}', { error: errorText(error) }));
+      });
+  });
+
+  return acts;
 }
 
 /** 「展开」那颗按钮上的字（⚠️ 两处渲染点都要用它，别各写一份）。 */
