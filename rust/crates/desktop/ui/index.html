@@ -4,6 +4,10 @@
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>clip9</title>
+<!-- ⚠️★ 代码高亮的令牌配色 —— 与网页版**同一个文件**（`tools/sync-action-catalog.mjs`
+     逐字节搬过来，判据盯着它不许手改）。桌面的 markdown / 代码高亮那两条动作吐出的
+     `<pre><code class="hljs">` 靠它上色。 -->
+<link rel="stylesheet" href="./highlight.css" />
 <!-- ⚠️★ 同步加载、而且在 `<style>` **之前**：它要把上次选的主题在第一次绘制之前贴到
      `<html data-theme>` 上，否则深色用户每次启动都先闪一下白屏（见 boot.js 的模块注释）。
      它**不是** `defer` 的 —— 这一点是它存在的全部理由（`app.js` / `i18n.js` 都是 defer）。 -->
@@ -270,6 +274,24 @@
         padding-left: 8px; border-left: 2px solid var(--accent);
     }
 
+    /* ⚠️★ markdown / 代码高亮那两条吐的是 **HTML**（`<p>` / `<ul>` / `<pre><code>`），
+       而卡片正文从前只画纯文本 —— 没有这几条规则，浏览器默认样式会把整块挤成一团
+       （`p` 之间空一大截、`pre` 撑破卡片不换行）。
+       ⚠️ 只管**排版**，令牌配色在 `highlight.css`（两侧共用那一份）。 */
+    .card .txt.actout > :first-child { margin-top: 0; }
+    .card .txt.actout > :last-child { margin-bottom: 0; }
+    .card .txt.actout p { margin: 4px 0; }
+    .card .txt.actout ul,
+    .card .txt.actout ol { margin: 4px 0; padding-left: 18px; }
+    /* 任务列表的复选框：DOMPurify 留下来了（包里开了 interactiveTasks），
+       但它**点不动** —— 桌面的动作结果是「看一眼」，不是编辑器。 */
+    .card .txt.actout input[type='checkbox'] { margin-right: 4px; }
+    .card .txt.actout pre {
+        margin: 4px 0; padding: 6px 8px; overflow-x: auto;
+        background: var(--input-bg); border-radius: 4px;
+    }
+    .card .txt.actout code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+
     /* 「动作名 · 还原」那一行。⚠️ 单独一行，不挤进脚注（脚注里可能已经有一两个 spacer）。 */
     .card .actbar {
         margin-top: 6px; display: flex; align-items: center; gap: 8px;
@@ -322,6 +344,33 @@
     /* ⚠️ 置灰但**不隐藏**：隐藏会让人以为这个动作不存在（同 ActionPicker.vue 的约定）。
        `title` 上写着为什么（「这条要网页视图才能跑」）。 */
     .actmenu .act:disabled { opacity: .5; cursor: default; }
+
+    /* 「填参数」那张表（目前只有「查找替换」这一条动作用到）。
+       ⚠️★ 字段是**照目录画的**（`app.js` 的 `openActionForm`），所以这里也只给**通用的**
+       行/框样式 —— 不写「查找框该多宽」这种只适用于一条动作的规则。 */
+    .actform .field { display: block; margin: 0 0 8px; }
+
+    .actform .field-k {
+        display: block; margin-bottom: 3px; font-size: 10.5px; color: var(--text-2);
+    }
+
+    .actform .field-v {
+        width: 100%; box-sizing: border-box; font: inherit; font-size: 12px;
+        padding: 4px 7px; color: var(--text);
+        background: var(--input-bg); border: 1px solid var(--border); border-radius: 6px;
+    }
+
+    .actform .field-v:focus { outline: none; border-color: var(--sidebar-active-border); }
+
+    .actform-ft {
+        display: flex; justify-content: flex-end; align-items: center; gap: 8px;
+        padding: 8px 10px; border-top: 1px solid var(--border);
+    }
+
+    /* ⚠️ `.btn` 基类是 `cursor: default`（那一排本来是「点了要等结果」的按钮），
+       「跑」是要**点下去**的 —— 不给指针的话它看着不像能点。 */
+    .actform-ft .btn { cursor: pointer; }
+    .actform-ft .btn.primary:hover { filter: brightness(1.08); }
 
     /* 卡片脚那一排图标（复制 / 动作 / 分享 / 删除，见 `app.js` 的 `entryActions` + `icon`）。
        ⚠️★ 用 `margin-left: auto`，**不是**再加一个 `.spacer`：这一行里 `.spacer`
@@ -481,6 +530,8 @@
         --accent: #4f8cff; --bg: #f1f5f9; --card-bg: #fff; --text: #1e293b;
         --text-2: #64748b; --border: rgba(148,163,184,.28); --danger: #e11d48;
         --ok: #10b981; --warn: #f59e0b; --shadow: 0 18px 50px rgba(15,23,42,.18);
+        /* ⚠️ 输入框 / 代码块的底：比卡片再暗一点（卡片是纯白），否则框与卡片糊成一片。 */
+        --input-bg: #f8fafc;
     }
 
     :root[data-theme='dark'] {
@@ -492,6 +543,7 @@
         --accent: #4f8cff; --bg: #0f172a; --card-bg: #1e293b; --text: #e2e8f0;
         --text-2: #94a3b8; --border: rgba(71,85,105,.7); --danger: #fb7185;
         --ok: #34d399; --warn: #fbbf24; --shadow: 0 18px 50px rgba(0,0,0,.55);
+        --input-bg: #172033;
     }
 
     * { box-sizing: border-box; }

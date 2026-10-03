@@ -226,8 +226,9 @@
       'serverRejectedStatus': '服务端回了 HTTP {status}',
       '给这条跑个动作': '给这条跑个动作',
       '动作': '动作',
-      '这条要网页视图才能跑': '这条要网页视图才能跑（它要的渲染/库只在网页版里）',
-      '这条要先填参数': '这条要先填参数（桌面端还没做参数表单）',
+      // ⚠️ 现在只剩**简繁**那两条真的跑不了（opencc 词典 2.2MB，2026-10-03 定不进桌面），
+      // 所以这句要说清「剩下这几条为什么不行」，不是笼统的「要网页版」。
+      '这条要网页视图才能跑': '这条要网页视图才能跑（它要的库没打进桌面端）',
       '还原': '还原',
       '复制动作的结果': '复制动作的结果',
       '动作库没加载起来：{error}': '动作库没加载起来：{error}',
@@ -747,8 +748,13 @@
       'serverRejectedStatus': 'the server answered HTTP {status}',
       '给这条跑个动作': 'Run an action on this entry',
       '动作': 'Actions',
-      '这条要网页视图才能跑': 'Needs the web view (its renderer or library only exists there)',
-      '这条要先填参数': 'Needs parameters (this view has no parameter form yet)',
+      // ⚠️ 2026-10-03：markdown / 代码高亮 / 查找替换 / 拼音这 7 条已经能跑了
+      //（实现打进了 `actions-impl.js`），所以这句现在只对**简繁**那两条成立，措辞跟着改。
+      '这条要网页视图才能跑': 'Needs the web view (its library is not bundled with the desktop UI)',
+      // ⚠️★ 桌面端现在**有**参数表单了（`app.js` 的 `openActionForm`，照目录画的），
+      // 所以「要先填参数」不再是「跑不了」的理由 —— 这条跟着一起删。
+      '取消': 'Cancel',
+      '跑': 'Run',
       '还原': 'Revert',
       '复制动作的结果': 'Copy the action result',
       '动作库没加载起来：{error}': 'The action library did not load: {error}',

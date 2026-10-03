@@ -157,6 +157,10 @@ function jsFiles(dir) {
   for (const entry of readdirSync(dir, { withFileTypes: true })) {
     const p = join(dir, entry.name);
     if (entry.isDirectory()) out.push(...jsFiles(p));
+    // ⚠️ `actions-impl*.js` 是 esbuild 的**压缩产物**（tools/sync-action-catalog.mjs 打包的
+    //    桌面实现包）：标识符全被改名，拿「未声明标识符」这条判据去读它只会满屏假红。
+    //    它的正确性由构建那一刻保证（metafile 里的 exports 与输入清单），不归这里管。
+    else if (/^actions-impl/.test(entry.name)) continue;
     else if (entry.name.endsWith('.js') || entry.name.endsWith('.mjs')) out.push(p);
   }
   return out;
