@@ -5,6 +5,24 @@ import DOMPurify from 'dompurify';
 // 纯 Node 里直接 import 这个文件（没有 vite，也就没有 `@` 别名）—— 用别名那条路会让
 // 那个自检**当场 ERR_MODULE_NOT_FOUND 跑不起来**，而它跑不起来就等于没有牙。
 import { APP_BASE_URL } from './base.js';
+// ⚠️★ 下面这几个**纯函数**现在住在 `data/actions/pure.js` —— 因为**桌面端也要用它们**：
+// 那边的界面没有构建步骤，加载不了这个文件（它 import 了 axios / marked / DOMPurify）。
+// 实现只有那一份，这里只是把它们再导出一次，所以调用点（`import { looksLikeTable } from '@/util.js'`）
+// 一个字都不用改。
+//
+// ⚠️ 别把它们搬回来：一份实现放在**两侧都能加载**的地方，才不会漂。
+import { looksLikeTable, looksLikeTaskList } from './data/actions/pure.js';
+
+export {
+    decodeHtmlEntities,
+    formatJson,
+    looksLikeCode,
+    looksLikeMarkdown,
+    looksLikeTable,
+    looksLikeTaskList,
+    minifyJson,
+} from './data/actions/pure.js';
+
 
 export function prettyFileSize(size) {
     let units = ['TB', 'GB', 'MB', 'KB'];
@@ -368,154 +386,6 @@ export function errorMessage(error) {
 }
 
 /**
- * 内容像不像 markdown。
- *
- * 为什么要判断而不是无脑渲染：剪贴板里绝大多数是普通文本，而 markdown 的标记跟日常
- * 符号高度重合 —— `5 * 3 = 15` 会被渲染成斜体、`1. 打开设置` 会被当成有序列表。
- * 所以宁可漏判：漏判的代价是用户看到原文，误判的代价是内容被改形。
- */
-// 解析一段 JSON。**只认对象和数组** —— 裸的 `123` / `"abc"` / `true` 也是合法 JSON，
-// 但对它们做「美化」没有任何意义，却会让这类普通文本凭空多出一个图标。认不出来返回 undefined。
-function parseJsonObject(text) {
-    const s = String(text || '').trim();
-    if (!s) {
-        return undefined;
-    }
-    // 先按首字符挡一道：绝大多数普通文本到这就出去了，不用去试 JSON.parse。
-    if (s[0] !== '{' && s[0] !== '[') {
-        return undefined;
-    }
-    try {
-        const value = JSON.parse(s);
-        return value !== null && typeof value === 'object' ? value : undefined;
-    } catch {
-        return undefined;
-    }
-}
-
-/**
- * 把 JSON 美化（两空格缩进）。
- *
- * **不是 JSON、或本来就已美化过 → 返回空串**：调用方据此决定要不要给这个入口 ——
- * 已经美化过的内容上再放一个「美化」按钮，点了没反应，比没有更差。
- */
-export function formatJson(text) {
-    const raw = String(text || '');
-    const parsed = parseJsonObject(raw);
-    if (parsed === undefined) {
-        return '';
-    }
-    const pretty = JSON.stringify(parsed, null, 2);
-    return pretty === raw.trim() ? '' : pretty;
-}
-
-/**
- * 把 JSON 压成一行。**不是 JSON、或本来就是一行 → 返回空串**（同 formatJson 的约定：
- * 点了没反应的按钮比没有更差）。
- */
-export function minifyJson(text) {
-    const raw = String(text || '');
-    const parsed = parseJsonObject(raw);
-    if (parsed === undefined) {
-        return '';
-    }
-    const compact = JSON.stringify(parsed);
-    return compact === raw.trim() ? '' : compact;
-}
-
-// 一眼就是代码的行首关键字。**故意列得宽**（Jonny 要求「不必太保守」）：
-// 宁可把一段像代码的东西当代码 —— 那只是多一个图标，用户还能切回原文 / md；
-// 而漏判的代价是「只能点 md，然后看着 markdown 把代码重排」。
-//
-// ⚠️ `type` 一开始**被我故意排除了**（怕撞英文散文的「Type ...」），结果 Go 的
-// `type ID = int` 这种单行、又不带 `{` `}` 的定义就认不出来（Jonny 报的）。
-// 权衡之后收回来：多一个图标 vs 少一个视图 —— 宁可多。
-// 仍然不收 `from` / `use` / `new` 这几个：它们所在的语言另有更明确的信号
-// （Python 有 `import`/`def`、Rust 有 `impl`/`fn`、TS 有 `const`/`interface`）。
-const CODE_HINT_RE = /(^|\n)\s*(package|import|export|require|module|func|fn|def|class|struct|interface|enum|trait|impl|namespace|public|private|protected|static|final|void|return|const|let|var|val|type|defer|chan|async|await|throw|except|elif|lambda|#include|#!|SELECT|INSERT|UPDATE|DELETE|CREATE|ALTER|DROP|BEGIN|COMMIT|printf|println|console|echo|puts)\b/;
-
-// 代码的**形状**，不依赖关键字：`;` `{}` 收尾、`foo(...)` 调用、箭头 / 管道 / 泛型、
-// 标签、模板插值、`%s` 这类格式符。
-const CODE_SHAPE_RE = /([;{}]\s*$|\w\s*\([^)]*\)\s*[;{]|=>|->|::|<\/?[a-z][\w-]*>|\$\{[^}]*\}|%[sdvf]\b)/;
-
-/**
- * 内容像**一段源码**吗（决定要不要给「代码」视图那个图标）。
- *
- * 判定顺序（从便宜到贵）：
- *   1. 已经带 ``` 围栏的**不算** —— 那本来就是 markdown，围栏里的代码会被 MarkdownBody 高亮；
- *   2. 是合法 JSON 的**不算** —— JSON 有自己的「美化 / 压缩」两个视图，别抢；
- *   3. 行首命中关键字 → 是；
- *   4. **单行**也能是代码：看形状（`const a = 1;` / `foo(1, 2)`）；
- *   5. 多行：看「像代码的行」占比，门槛 1/4（一段代码里常夹空行和注释）。
- */
-export function looksLikeCode(text) {
-    const s = String(text || '');
-    if (!s.trim() || s.length > 20000) {
-        return false;
-    }
-    if (/^\s*```|[\r\n]\s*```/.test(s)) {
-        return false;
-    }
-    if (parseJsonObject(s) !== undefined) {
-        return false;
-    }
-    if (CODE_HINT_RE.test(s)) {
-        return true;
-    }
-    const lines = s.split('\n').filter((line) => line.trim());
-    if (lines.length < 2) {
-        const one = s.trim();
-        // 单行也常是代码：`foo(1, 2)` / `const a = 1;` / `x => x + 1`。
-        // 末一条**要求整行就是一个调用**（`标识符(...)`），否则散文里的「见附录 (a)」
-        // 也会被算进去 —— 中文不算 `\w`，所以那条天然挡得住。
-        return CODE_SHAPE_RE.test(one) || /^[A-Za-z_$][\w.$]*\s*\([^)]*\)\s*[;{]?$/.test(one);
-    }
-    const codeLines = lines.filter((line) => CODE_LINE_RE.test(line) || CODE_SHAPE_RE.test(line)).length;
-    return codeLines >= Math.max(2, Math.ceil(lines.length / 4));
-}
-
-// 没有关键字时看行首的代码结构：if/for/while 开头，或 `{` `}` `;` 收尾。
-const CODE_LINE_RE = /([{};]\s*$|^\s*(if|for|while|else|try|catch|switch|case|do)\b)/;
-
-export function looksLikeMarkdown(text) {
-    const s = String(text || '');
-    // 太长不渲染：一个几万字的条目渲染一次就够列表卡一下了
-    if (!s.trim() || s.length > 20000) return false;
-    return /(^|\n)\s{0,3}(#{1,6}\s|>\s|[-*+]\s|\d+\.\s|```)/.test(s)
-        || /\[[^\]]+\]\([^)\s]+\)/.test(s)                    // [文字](链接)
-        || /\*\*[^\s][^*]*\*\*|__[^\s][^_]*__/.test(s)         // 粗体
-        || /`[^`\n]+`/.test(s)                                  // 行内代码
-        || looksLikeTable(s);                                   // 表格：上面几条都认不出来
-}
-
-/**
- * 内容里有 GFM 任务列表（`- [ ] xxx` / `- [x] xxx`）。
- *
- * 有序变体（`1. [ ]`）也算 —— GFM 允许，渲染出来同样是复选框。
- * 只看行首标记，不看缩进层级：嵌套任务列表的每一行都以 `- [ ]` 开头，自然命中。
- */
-export function looksLikeTaskList(text) {
-    return /(^|\n)\s{0,3}([-*+]|\d+\.)\s+\[[ xX]\](\s|$)/.test(String(text || ''));
-}
-
-/**
- * 内容里有 GFM 表格。
- *
- * 判据是「表头行 + 紧跟一行分隔线」，不是「有竖线」：随手打的 `a | b` 到处都是
- * （shell 管道、位运算），拿竖线当判据会误判一大片。分隔线（`|---|---|`）才是表格的签名。
- */
-export function looksLikeTable(text) {
-    const lines = String(text || '').split('\n');
-    for (let i = 0; i + 1 < lines.length; i++) {
-        if (!lines[i].includes('|')) continue;
-        if (/^\s*\|?\s*:?-{2,}:?\s*(\|\s*:?-{2,}:?\s*)+\|?\s*$/.test(lines[i + 1])) {
-            return true;
-        }
-    }
-    return false;
-}
-
-/**
  * 这条内容**默认**该看渲染视图，还是原文。
  *
  * 这是「默认值」的**唯一**判断处，标准模式卡片、便签阅读器、聊天气泡三处都走它 ——
@@ -651,18 +521,6 @@ export async function updateEntryColumn(id, room, column) {
         { params: new URLSearchParams([['room', room ?? '']]) },
     );
     return response.data;
-}
-
-/**
- * 把 HTML 实体还原成文本。
- *
- * 服务端存的是实体编码过的正文（`<` 之类），卡片里要显示原文就得先解回来。
- * **全站唯一实现** —— 之前 Text.vue / File.vue / StickyNote 各写了一份（第 4 份正在路上）。
- */
-export function decodeHtmlEntities(text) {
-    const el = document.createElement('textarea');
-    el.innerHTML = String(text ?? '');
-    return el.value;
 }
 
 /**
