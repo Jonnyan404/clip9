@@ -68,6 +68,20 @@ jobs:
       - name: 动作库静态自检
         run: node tools/action-catalog-smoke.mjs
 
+      # ⚠️★ `web-vue3` 与 `rust/crates/desktop/ui` **都没有测试运行器**：标识符打错一个字母的
+      # 表现是「那一段功能静默失效」，走到那一行才抛 ReferenceError。
+      # 2026-10-03 真发生过：`SHARE_MAX_USES_LIMIT` 只被用、从没声明 → 分享面板里
+      # 填了次数点生成「什么都没发生」。判据 3 还盯着 `window.X` 的读取（属性名拼错，
+      # 自由标识符扫描看不见）—— 桌面那一侧跨文件全靠 `window.I18N` / `window.ActionLibrary`。
+      - name: 未声明标识符自检（两个没有测试运行器的界面）
+        run: node tools/no-undef-smoke.mjs
+
+      # ⚠️★ 分享的三个上限前后端各写一遍，不一致时服务端只是**安静地夹**一下 ——
+      # 症状是「用户填了 30 分钟、实际生效 15 分钟」。这个判据把前端那两个 normalize
+      # 抽出来真跑，用**服务端的数**断言行为（只比数字会漏掉「函数里没用那个常量」）。
+      - name: 分享上限前后端一致自检
+        run: node tools/share-limits-smoke.mjs
+
       # 桌面的手写界面没有测试运行器，全靠这个静态自检。它一直没接进任何门禁 —— 这里接上。
       - name: 桌面界面静态自检
         run: node tools/desktop-ui-smoke.mjs
