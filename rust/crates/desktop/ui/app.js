@@ -1833,6 +1833,9 @@ const composerHidden = () => document.documentElement.dataset.composer === 'hidd
 
 function setComposerHidden(hidden) {
   const root = document.documentElement;
+  // ⚠️ 藏输入区时把那排 `/` 胶囊一起收掉（见文件末尾那段注释）。
+  // `closeSlashMenu` 是**函数声明**，在这里调用没问题（提升到整个脚本作用域）。
+  if (hidden) closeSlashMenu();
   // ⚠️ `'shown'` 也显式写（跟 `data-sidebar` 写 `'wide'` 同一个理由：让「点了一下」在存储里看得见）。
   if (hidden) root.dataset.composer = 'hidden';
   else delete root.dataset.composer;
@@ -1934,6 +1937,179 @@ el('composer-resize').addEventListener('keydown', (event) => {
   event.preventDefault();
   applyComposerHeight(composerCurrentHeight() + step, true);
 });
+
+/* ── 输入框的 `/` 快捷菜单（2026-10-03）────────────────────────────────
+ *
+ * Jonny：「桌面端输入框要支持 `/` 快捷方式」。
+ *
+ * ⚠️★ 它**与网页版是同一条实现**：模板与那五个判定函数都在 `slash-template.js`
+ *（由 `tools/sync-action-catalog.mjs` 逐字节搬过来，与 `actions-pure.js` 受同一条
+ *「零 import」的检查）。这里只写**桌面这一侧**的三件事：什么时候开/关、
+ * 浮层长什么样、往 textarea 里插什么。
+ * ⇒ 别在这里另写一份「行首才算」之类的判定：两份一定会在某次改动里漂，而漂出来的
+ * 表现是「网页版弹得出来、桌面弹不出来」这种最难查的东西。
+ *
+ * ⚠️ 判定**只看文本**（`/` 落在行首、前面只有空白），不看按键事件 —— 理由见那个文件
+ *（手机上 keydown 报不出 `/`）。桌面有硬件键盘，所以两条路都接：
+ * keydown 是「快一帧」的那条，input 才是唯一可靠的那条。
+ */
+
+let slashModule = null;
+/** 现在挂着的那排胶囊（没有就是 null）。 */
+let slashMenu = null;
+/** 第几次开菜单。⚠️ 用来挡住**并发**的两次开启（理由见 `openSlashMenu`）。 */
+let slashSeq = 0;
+
+/** 按需加载那份共用实现。⚠️ 打第一个 `/` 时才加载 —— 不打就不付这一跳。 */
+function slashKit() {
+  if (!slashModule) slashModule = import('./slash-template.js');
+  return slashModule;
+}
+
+/** 把一个 input 事件的**决定性字段**冻结在这一刻。
+ *
+ * ⚠️★ 为什么必须快照：`slashKit()` 是**异步**的，而判定读的是 `event.target.value` ——
+ * 等它回来时那已经是**新值**了。于是同一 tick 里连发两个 input 事件（先发的那个看见
+ * 后一个的文本）会**两次**都判成「刚打了一个 `/`」，叠出**两个**菜单；
+ * 而 `closeSlashMenu` 只认 `slashMenu` 里最后那一个，先前的就成了**孤儿**，
+ * 表现是「按 Escape 收不掉一半」（实测到过，见 2026-10-03）。
+ * 判定只吃这四个字段，那就把这四个冻结下来，别让 `await` 之后再读活的 DOM。
+ */
+function slashSnapshot(event) {
+  const box = event.target;
+  return {
+    isComposing: event.isComposing,
+    inputType: event.inputType,
+    target: {
+      value: box.value,
+      selectionStart:
+        typeof box.selectionStart === 'number' ? box.selectionStart : box.value.length,
+    },
+  };
+}
+
+function closeSlashMenu() {
+  if (slashMenu) {
+    slashMenu.remove();
+    slashMenu = null;
+  }
+}
+
+/** 开那一排胶囊。⚠️ 里面那一次 `await` 之后要**回过头再判一次**：
+ *  等动作库的这段时间里用户完全可能又敲了几个字（那时这排就不该弹出来了），
+ *  而「弹了但已经不该弹」比「没弹」更烦人 —— 它挡在输入框上面。
+ *
+ * ⚠️★ `seq` 是**并发**用的：两次开启同时跑（同一 tick 里的两个 input 事件）时，
+ * 先开始的那次在 `await` 回来后就**作废** —— 不然它会把自己那个面板挂上去，
+ * 而后开始的那次的 `closeSlashMenu()` 早在它挂之前就跑完了，
+ * 于是两个面板一起留在 DOM 里（见 `slashSnapshot` 那条注释）。
+ */
+async function openSlashMenu(input) {
+  const seq = (slashSeq += 1);
+  closeSlashMenu();
+  let kit;
+  let library;
+  try {
+    [kit, library] = await Promise.all([slashKit(), window.ActionLibrary.ensure()]);
+  } catch (error) {
+    // ⚠️ 加载不了要**说出来**：一声不响的斜杠＝用户以为这个功能不存在。
+    showNotice('error', t('动作库没加载起来：{error}', { error: errorText(error) }));
+    return;
+  }
+  if (seq !== slashSeq) return;
+  // ⚠️ 这里**故意读活的** `input.value`（不是快照）：等动作库那段时间里用户又敲了字，
+  // 就不该再弹 —— 与 `slashSnapshot` 那条正好相反，两处要的不是同一个时刻。
+  if (!kit.slashMenuShouldStay({ target: input }, input.value)) return;
+
+  const panel = h('div', 'slashmenu');
+  for (const item of kit.SLASH_TEMPLATES) {
+    const chip = h('button', 'act', window.ActionLibrary.label(library, item.key));
+    chip.type = 'button';
+    // ⚠️★ 在 `mousedown` 上就拦掉：不拦的话点胶囊会让 textarea 先失焦
+    //（光标丢了 → 插入的位置就错了），网页版那颗胶囊同一条理由。
+    chip.addEventListener('mousedown', (event) => event.preventDefault());
+    chip.addEventListener('click', () => insertSlashTemplate(input, item));
+    panel.append(chip);
+  }
+  // ⚠️ 挂在 `#composer` 里（它是 `position: relative`），CSS 用 `bottom: 100%`
+  // 把它顶到输入框**上方** —— 不塞进 `.box` 里：那会把输入区撑高、把下面那排按钮
+  // 往下推（输入区高度是用户拖出来的，不该被一个浮层改掉）。
+  el('composer').append(panel);
+  slashMenu = panel;
+}
+
+/** 插一项：把光标前那个 `/` 换成它算出来的文本。
+ *
+ * ⚠️ 光标位置要在 `await` **之前**读：动作项（插入时间 / UUID）是算出来的，
+ * 等回来时光标未必还在原处（与网页版那两处同一条）。
+ */
+async function insertSlashTemplate(input, item) {
+  const kit = await slashKit();
+  const text = input.value;
+  const pos = typeof input.selectionStart === 'number' ? input.selectionStart : text.length;
+  const head = kit.stripTrailingSlash(text.slice(0, pos));
+  const tail = text.slice(pos);
+  closeSlashMenu();
+  let insert = '';
+  try {
+    insert = await kit.resolveSlashText(item, (id) => window.ActionLibrary.runById(id));
+  } catch (error) {
+    showNotice('error', t('这个动作没跑成：{error}', { error: errorText(error) }));
+    return;
+  }
+  input.value = head + insert + tail;
+  // ⚠️ 光标落在插入内容的**后面**（不是原地）：插模板就是为了接着往下写那几行。
+  const caret = head.length + insert.length;
+  input.focus();
+  input.setSelectionRange(caret, caret);
+  updateCounter();
+}
+
+el('input').addEventListener('keydown', (event) => {
+  if (event.key === 'Escape') {
+    if (slashMenu) {
+      closeSlashMenu();
+      event.stopPropagation();
+    }
+    return;
+  }
+  if (event.key !== '/') return;
+  // 硬件键盘：这里的 `/` **还没落进文本**，判定点在光标当前位置（快一帧的那条路）。
+  // 屏幕键盘不保证走到这里 —— 靠下面那个 `input` 监听兜住。
+  // ⚠️ 传**快照**（`slashSnapshot`）：等 `slashKit()` 回来时文本已经是新的了。
+  const snap = slashSnapshot(event);
+  slashKit()
+    .then((kit) => {
+      if (kit.slashPendingAt(snap.target, snap.target.value)) openSlashMenu(event.target);
+    })
+    .catch(() => {});
+});
+
+// `/` **只有** `input` 事件一定看得见（理由见 `slash-template.js`）：刚打完就弹，
+// 继续敲别的（终端里的 `/usr/bin`、以 `/` 开头的日期）就收。
+// ⚠️ 这两半都要有：只有「弹」没有「收」的话，模板那排会一直挂在输入框上面挡着。
+el('input').addEventListener('input', (event) => {
+  // ⚠️★ 判定用**快照**（`slashSnapshot`），不用 `event` 本身：见那个函数的注释 ——
+  // 用活的 `event.target.value` 会叠出两个菜单。
+  const snap = slashSnapshot(event);
+  slashKit()
+    .then((kit) => {
+      if (!slashMenu) {
+        if (kit.slashMenuShouldOpen(snap, snap.target.value)) openSlashMenu(event.target);
+        return;
+      }
+      if (!kit.slashMenuShouldStay(snap, snap.target.value)) closeSlashMenu();
+    })
+    .catch(() => {});
+});
+
+// ⚠️ 失焦就收：`mousedown` 已经被胶囊自己拦住了（点胶囊不会失焦），所以走到这里的
+// 一定是「点到别处去了」。缺这一条的话，点了侧栏还挂着一排胶囊挡在输入框上面。
+el('input').addEventListener('blur', closeSlashMenu);
+
+// ⚠️ 输入区被藏起来时也要收那排胶囊：它挂在 `#composer` 里，而那个容器会被整块
+// `display:none` —— 留着的话下次展开又冒出来（那时用户早就忘了当初打了什么）。
+// 收的那一句写在 `setComposerHidden` 里（那里是输入区隐藏的**唯一**入口）。
 
 // ⚠️ 窗口变小之后，存下来的高度可能已经超过上界 —— 那一拍收一次（**不记**）。
 // 不收的表现：输入区把时间线挤到 0 高，最下面那颗「发送」被顶出可视区（点不到了）。

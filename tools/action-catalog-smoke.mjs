@@ -59,9 +59,13 @@ const F = {
   ui: pick(4, DEFAULTS.ui),
   sync: existsSync(argv[5] ?? '') ? argv[5] : DEFAULTS.sync,
   // 「源」那一份永远在 web-vue3 下 —— 拷过去的那份要跟它逐字节比。
+  // ⚠️ `slash-template.js` 也在这条线上（2026-10-03 起桌面端那个输入框也用它），
+  // 所以它与 pure.js 受**同一条**「零 import + 逐字节一致」的约束。位置参数没给它留位置：
+  // 它与 `pure.js` 一样是「只有一份源」的东西，用默认值就够（要跑夹具就改 `ui`）。
   source: {
     catalog: DEFAULTS.catalog,
     pure: DEFAULTS.pure,
+    slash: join(ROOT, 'web-vue3/src/slash-template.js'),
   },
 };
 
@@ -129,21 +133,29 @@ if (problems.length) {
   ok(`判据 2：${actions.length} 条动作的 id / 分组 / direction / run / nameKey 都齐（${groups.size} 个分组）`);
 }
 
-// ── 判据 3：pure.js 零 import ──────────────────────────────────────────────
-const importLines = pureText.split('\n')
-  .map((line, i) => [i + 1, line])
-  .filter(([, line]) => /^\s*(import\s|export\s[^;]*\sfrom\s)/.test(line));
+// ── 判据 3：pure.js / slash-template.js 零 import ─────────────────────────
+// ⚠️ 两份一起管：`slash-template.js` 桌面端也要 `import()` 它，而那一侧**没有构建步骤**，
+//    一个 `@/…` 的路径在网页版里好好的、到了桌面端就是「菜单永远不弹」。
+const slashText = existsSync(F.source.slash) ? readFileSync(F.source.slash, 'utf8') : '';
+if (!slashText) {
+  bad(`判据 3：找不到 ${F.source.slash}（桌面端的「/」菜单靠它）`);
+}
+const importLines = [pureText, slashText].flatMap((text) =>
+  text.split('\n')
+    .map((line, i) => [i + 1, line])
+    .filter(([, line]) => /^\s*(import\s|export\s[^;]*\sfrom\s)/.test(line)));
 if (importLines.length) {
-  bad(`判据 3：pure.js 里有 ${importLines.length} 处 import/再导出（桌面端加载不了，会静默失效）：`);
+  bad(`判据 3：pure.js / slash-template.js 里有 ${importLines.length} 处 import/再导出（桌面端加载不了，会静默失效）：`);
   for (const [n, line] of importLines.slice(0, 5)) plain(`第 ${n} 行：${line.trim().slice(0, 90)}`);
 } else {
-  ok('判据 3：pure.js 零 import / 零再导出（桌面端能自足加载）');
+  ok('判据 3：pure.js 与 slash-template.js 都零 import / 零再导出（桌面端能自足加载）');
 }
 
 // ── 判据 4：桌面那份拷贝与源逐字节一致 ──────────────────────────────────────
 const copies = [
   [join(F.ui, 'actions-catalog.json'), F.source.catalog, '目录'],
   [join(F.ui, 'actions-pure.js'), F.source.pure, '实现'],
+  [join(F.ui, 'slash-template.js'), F.source.slash, '「/」模板'],
 ];
 const drifted = copies.filter(([to, from]) => {
   if (!existsSync(to)) return true;
@@ -155,7 +167,7 @@ if (drifted.length && resolve(F.ui) !== DEFAULTS.ui) {
 } else if (drifted.length) {
   bad(`判据 4：桌面那份拷贝与源不一致（${drifted.map(([to]) => to.split('/').pop()).join('、')}）—— 跑 node tools/sync-action-catalog.mjs`);
 } else {
-  ok('判据 4：桌面那份 catalog.json / pure.js 与源逐字节一致');
+  ok('判据 4：桌面那份 catalog.json / pure.js / slash-template.js 与源逐字节一致');
 }
 
 // ── 判据 5：文案键覆盖，且两种语种都有 ─────────────────────────────────────
@@ -170,6 +182,9 @@ for (const action of actions) {
 }
 // 动作的输出文案（`tr('inspectChars')`）也要译文 —— 少了的症状是标签位置显示键名
 for (const m of pureText.matchAll(/\b(?:tr|translator\(ctx\))\(['"]([\w.]+)['"]\)/g)) wanted.add(m[1]);
+// 「/」菜单那几颗胶囊的文案。⚠️ 抽法与 `sync-action-catalog.mjs` 里那一条**逐字相同**
+//（两处各写一份正则 = 抽出来的键会漂，漂出来的症状是「同步过去了但没译文」）。
+for (const m of slashText.matchAll(/^\s*\{\s*key:\s*['"]([\w.]+)['"]/gm)) wanted.add(m[1]);
 
 if (!existsSync(F.labels)) {
   bad(`判据 5：找不到 ${F.labels}（跑 node tools/sync-action-catalog.mjs）`);

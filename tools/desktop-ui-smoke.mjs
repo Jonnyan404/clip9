@@ -2024,6 +2024,120 @@ if (entryViewFiles.length !== 1) {
   }
 }
 
+// ── 判据 25：输入框那个「/」菜单（理由见下）──────────────────────────────────
+//
+// ⚠️★ 2026-10-03 加。Jonny：「桌面端输入框要支持 `/` 快捷方式」。
+//
+// ⚠️★ 它的**判定**与网页版是同一份文件（`ui/slash-template.js`，由同步工具逐字节搬过来）。
+//    这条判据钉的是**桌面这一侧**的接线 —— 而这里的每一个零件拆掉都**不报错**：
+//   ① 没有样式 → 那排胶囊是裸的一竖列，看不出是个浮层（用户只说「弹出来的东西怪怪的」）；
+//   ② 另写一份判定 → 与网页版漂开，症状是「这边弹、那边不弹」这种最难查的；
+//   ③ 判定用活的 `event` 而不是快照 → 同一 tick 两个 input 事件会**叠出两个**菜单，
+//      而 `closeSlashMenu` 只认最后一个，先前的成了孤儿（按 Escape 收不掉一半，实测到过）；
+//   ④ `openSlashMenu` 没有并发守卫 → 同上（第三次改才对的那一个）；
+//   ⑤ 藏输入区时不收 → 下次展开又冒出来一排胶囊（那时用户早忘了当初打了什么）；
+//   ⑥ 胶囊上不拦 `mousedown` → 点它先让输入框失焦，插入位置就错。
+//
+// ⚠️ 判「用了快照」用**惰性区间**而不是整行相等（改个换行就假红没意义）。
+{
+  const problems = [];
+  const bare = stripComments(js).split('\u0000').join("'");
+
+  // ① 样式：`.slashmenu` 得有规则（少不了的那一层是「它浮在输入区上方」）。
+  if (!/\.slashmenu\s*\{/.test(html)) {
+    problems.push('index.html 里没有 `.slashmenu` 的规则 —— 那排胶囊是裸的，看不出是个浮层');
+  }
+
+  // ② 判定**来自共用文件**，不许另写一份。
+  if (!/import\('\.\/slash-template\.js'\)/.test(js)) {
+    problems.push('app.js 不再从 ./slash-template.js 取判定 —— 桌面端那份判定要漂');
+  }
+  for (const fn of [
+    'slashMenuShouldOpen',
+    'slashMenuShouldStay',
+    'slashPendingAt',
+    'stripTrailingSlash',
+    'resolveSlashText',
+  ]) {
+    // ⚠️ 钉**定义**（`function X`），不是「出现过」—— 调用点当然要出现这些名字。
+    if (new RegExp(`function\\s+${fn}\\b`).test(js)) {
+      problems.push(`app.js 里自己定义了 \`${fn}\` —— 判定有了第二份，会与网页版漂开`);
+    }
+  }
+
+  // ③ 两条入口都得用快照。⚠️ `keydown` 那条与 `input` 那条**分别**判：
+  //    只改其中一条的症状是「硬件键盘弹得对、输入法上屏的那次叠两个」（反过来也一样），
+  //    而用户只会说「有时候会多出一排」。
+  // ⚠️★ 同一个事件上**不止一条**监听（`#input` 上本来就有 `keydown` / `input` 各一条干别的），
+  //    所以取**全部**再判「其中一条用了快照」—— 写成「第一条」的话，
+  //    这条判据盯的会是那一条无关的监听，永远绿（判据 8 就是这么栽的）。
+  const listenerBodies = (kind) => [
+    ...bare.matchAll(
+      new RegExp(`el\\('input'\\)\\.addEventListener\\('${kind}'[\\s\\S]*?\\n\\}\\);`, 'g'),
+    ),
+  ].map((m) => m[0]);
+  const keydowns = listenerBodies('keydown');
+  const inputs = listenerBodies('input');
+  // ⚠️★ 判的是「判定**吃的是快照**」，不是「文件里有 `slashSnapshot` 这几个字」：
+  //    那几个字出现在 `const snap = slashSnapshot(event)` 那一行就够了，而真正会坏事的是
+  //    `await` 之后那次调用又去读活的 `event.target.value` —— 变异验证里
+  //    「留着快照、只把调用换回 event」这一组**绿着**，就是这么漏掉的。
+  const usesSnap = (body, fn) => body.includes(`${fn}(snap`);
+  if (!keydowns.length) {
+    problems.push('找不到 #input 的 keydown 监听 —— 这条判据要跟着代码改');
+  } else if (!keydowns.some((body) => body.includes('slashSnapshot(') && usesSnap(body, 'slashPendingAt'))) {
+    problems.push('keydown 那条没把快照喂给 `slashPendingAt` —— await 之后读到的是新文本，会叠出两个菜单');
+  }
+  if (!inputs.length) {
+    problems.push('找不到 #input 的 input 监听 —— 这条判据要跟着代码改');
+  } else {
+    const good = inputs.some(
+      (body) =>
+        body.includes('slashSnapshot(') &&
+        usesSnap(body, 'slashMenuShouldOpen') &&
+        usesSnap(body, 'slashMenuShouldStay'),
+    );
+    if (!good) {
+      problems.push('input 那条没把快照喂给 `slashMenuShouldOpen` / `slashMenuShouldStay` —— 同上，「刚打了一个 /」会被算两次');
+    }
+  }
+
+  // ④ 并发守卫：开菜单那一刻领号，await 回来时号不对就作废。
+  const openBody = /function openSlashMenu\([\s\S]*?\n\}/.exec(bare)?.[0] ?? '';
+  if (!openBody) {
+    problems.push('找不到 `function openSlashMenu` —— 这条判据要跟着代码改');
+    // ⚠️★ 判的是「await 回来时**作废旧的**」那一行，不是「函数里出现过 slashSeq」——
+    //    领号那一行（`const seq = (slashSeq += 1)`）也带这个词，光看词是拦不住的
+    //    （变异验证里「只删掉作废那一行」这一组绿着，就是这么漏掉的）。
+  } else if (!/seq\s*!==\s*slashSeq/.test(openBody)) {
+    problems.push(
+      '`openSlashMenu` 没有「await 回来时号不对就作废」（`seq !== slashSeq`）——\n' +
+        '        两次同时开会各挂一个面板，先挂的那个成了孤儿（按 Escape 收不掉）',
+    );
+  }
+
+  // ⑤ 藏输入区那一处要收掉它（`setComposerHidden` 是隐藏的唯一入口）。
+  const hideBody = /function setComposerHidden\(hidden\)[\s\S]*?\n\}/.exec(bare)?.[0] ?? '';
+  if (!hideBody) problems.push('找不到 `function setComposerHidden` —— 这条判据要跟着代码改');
+  else if (!hideBody.includes('closeSlashMenu')) {
+    problems.push('`setComposerHidden` 没收那排胶囊 —— 藏掉再展开，它会又冒出来');
+  }
+
+  // ⑥ 胶囊上要拦 `mousedown`（点了不失焦 → 插入位置才对）。
+  if (!/addEventListener\('mousedown'[\s\S]{0,120}?preventDefault\(\)/.test(bare)) {
+    problems.push('那排胶囊没有拦 `mousedown` —— 点它会先让输入框失焦，插入的位置就错了');
+  }
+
+  if (problems.length) {
+    failed = true;
+    console.error(`✗ 判据 25：输入框的「/」菜单这条链断了（${problems.length} 处）：`);
+    for (const one of problems) console.error(`    · ${one}`);
+    console.error('  ⚠️ 症状全是「弹出来了但不对」，而且不报错。');
+  } else {
+    console.log('· 判据 25：「/」菜单用共用判定、两条入口都读快照、有并发守卫、藏输入区会收（7 个零件都在）。');
+  }
+}
+
 if (cssOnly.length) {
   console.log(`· ${cssOnly.length} 个 id 只被选择器用（形如 #id { … }），正常：${cssOnly.join('、')}`);
 }

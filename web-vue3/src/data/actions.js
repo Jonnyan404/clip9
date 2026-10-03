@@ -69,6 +69,18 @@ export function findAction(id) {
     return ACTIONS.find((action) => action.id === id);
 }
 
+/** 按 id 跑一条动作，返回它的输出（找不到那条动作 → 空串）。
+ *
+ * ⚠️★ 存在的理由只有一个：`/` 菜单里那几项「插入当前时间 / UUID」需要一个
+ * **能当参数传出去**的运行器 —— `slash-template.js` 要零 import（桌面端也用它，
+ * 见那个文件的抬头），所以「怎么跑一个动作」只能由调用方注入。
+ * ⚠️ 别把它当成 `ACTIONS` 的通用入口：要拿动作对象就用 `findAction`。
+ */
+export async function runActionById(id) {
+    const action = findAction(id);
+    return action ? String((await action.run('')) ?? '') : '';
+}
+
 export function actionsInGroup(groupKey, direction = 'view') {
     return ACTIONS.filter((action) => action.group === groupKey && action.direction === direction);
 }
