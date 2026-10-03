@@ -98,10 +98,24 @@ export function readLocationParam(key) {
     return new URLSearchParams(window.location.search).get(name) || '';
 }
 
-/** 分享链接默认/约束（秒） */
+/** 分享链接默认/约束（秒）—— ⚠️★ 与 Rust 侧那几个**必须一一对应**
+ *（`rust/crates/core/src/share.rs` 的 `DEFAULT_SHARE_TTL_SECONDS` / `MIN_` / `MAX_SHARE_TTL_SECONDS`）。
+ * 服务端也会夹一次，所以两边不一致**不报错** —— 症状是「用户填了 A、实际生效的是 B」。
+ * 由 `tools/share-limits-smoke.mjs` 逐个数盯着。
+ */
 export const SHARE_DEFAULT_TTL = 15 * 60; // 15 分钟
 export const SHARE_MIN_TTL = 60; // 1 分钟
 export const SHARE_MAX_TTL = 24 * 60 * 60; // 24 小时
+
+/** `maxUses` 上限（0 = 不限次数）。对应 `share.rs` 的 `MAX_SHARE_MAX_USES`。
+ *
+ * ⚠️★ 这个常量在 2026-10-03 之前**根本不存在** —— 下面 `normalizeShareMaxUses` 里用了它、
+ * 却从来没声明过。于是「分享面板里填了次数、点生成」会抛 `ReferenceError`，
+ * 而表现是**点了没反应**（不填时 `Number('') === 0` 会在前面就返回，所以平时看不出来）。
+ * ⇒ `tools/no-undef-smoke.mjs` 现在盯着这一整类：**用了、但从没声明过的标识符**。
+ */
+export const SHARE_MAX_USES_LIMIT = 1000;
+
 /** 分钟 <-> 秒，供 UI 滑块使用 */
 export const SHARE_DEFAULT_TTL_MINUTES = Math.floor(SHARE_DEFAULT_TTL / 60);
 export const SHARE_MIN_TTL_MINUTES = Math.floor(SHARE_MIN_TTL / 60);

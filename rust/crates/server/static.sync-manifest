@@ -1,9 +1,9 @@
 # clip9 前端产物的同步清单 —— 由 tools/sync-web-assets.mjs 生成，别手改。
-source ef2aed5e0d82dfb3572db34ada07ea9201abc9256ee01f54c8ccc9dcae33a8a9
+source 927417865b99ccd094c51633969db51ce54231740a5e36e78597b52cfeded26a
 apple-touch-icon.png
-assets/ShareView-DAzs8pPi.js
-assets/ShareView-DAzs8pPi.js.br
-assets/ShareView-DAzs8pPi.js.gz
+assets/ShareView-2rHPcIGf.js
+assets/ShareView-2rHPcIGf.js.br
+assets/ShareView-2rHPcIGf.js.gz
 assets/ShareView-DjLm0d4-.css
 assets/ShareView-DjLm0d4-.css.br
 assets/ShareView-DjLm0d4-.css.gz
@@ -13,12 +13,12 @@ assets/highlight-langs-Dt8YXhtn.js.gz
 assets/i18n-B2E8evwD.js
 assets/i18n-B2E8evwD.js.br
 assets/i18n-B2E8evwD.js.gz
-assets/index-C-xc4Urt.js
-assets/index-C-xc4Urt.js.br
-assets/index-C-xc4Urt.js.gz
-assets/index-ifumBe6s.css
-assets/index-ifumBe6s.css.br
-assets/index-ifumBe6s.css.gz
+assets/index-B_knTG2D.css
+assets/index-B_knTG2D.css.br
+assets/index-B_knTG2D.css.gz
+assets/index-Bnb79r-q.js
+assets/index-Bnb79r-q.js.br
+assets/index-Bnb79r-q.js.gz
 assets/materialdesignicons-webfont-B7mPwVP_.ttf
 assets/materialdesignicons-webfont-CSr8KVlo.eot
 assets/materialdesignicons-webfont-Dp5v-WZN.woff2

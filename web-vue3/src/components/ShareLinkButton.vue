@@ -30,6 +30,7 @@ import QrcodeVue from 'qrcode.vue';
 import {
     SHARE_DEFAULT_TTL_MINUTES,
     SHARE_MAX_TTL_MINUTES,
+    SHARE_MAX_USES_LIMIT,
     SHARE_MIN_TTL_MINUTES,
     buildCleanAbsoluteRouteUrl,
     copyTextToClipboard,
@@ -268,7 +269,7 @@ async function copyToClipboard(textToCopy, successMessageKey = 'copySuccess', er
                     v-model.number="shareForm.maxUses"
                     type="number"
                     min="0"
-                    max="1000"
+                    :max="SHARE_MAX_USES_LIMIT"
                     :label="t('shareMaxUses')"
                     :hint="t('shareMaxUsesHint')"
                     persistent-hint
