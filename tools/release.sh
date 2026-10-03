@@ -49,7 +49,7 @@ SKIP_GATES=0
 # ⚠️ 静态自检那一批与 CI 的 frontend job 同源（`node tools/<n>.mjs`）。
 #    `release-smoke` 也在里面：它验的是**本脚本自己**（夹具里跑拒绝路径）——
 #    它的夹具一律带 `--skip-gates`，所以不会套娃。
-GATES='desktop-ui-smoke share-bridge-smoke shell-smoke android-contract-smoke workflows-smoke release-smoke'
+GATES='desktop-ui-smoke share-bridge-smoke shell-smoke android-contract-smoke workflows-smoke docs-links-smoke release-smoke'
 
 die() {
   printf '\n✗ %s\n' "$*" >&2
