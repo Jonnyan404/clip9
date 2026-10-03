@@ -33,7 +33,7 @@ name: Android APK
 #    那时本文件是顶层工作流、直接读得到仓库 secret，所以症状像「只有 release 坏」。
 #
 # ⚠️★ **这一格从没在 CI 上跑过**（2026-09-28 写下来的时候）。本机跑过两次、两次都红，
-# 根因都在 Kotlin 而不是这里（注释写坏，见 `android/README.md` §三）。
+# 根因都在 Kotlin 而不是这里（注释写坏，见 `android/DEVELOPING.md` §三）。
 # 所以第一次 CI 红了**先看下面的「看清楚 SDK / NDK 在哪」那一步**，别先怀疑代码。
 
 on:

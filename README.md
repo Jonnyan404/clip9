@@ -203,17 +203,21 @@ cd clip9-cli-v0.1.1-beta1-linux-x86_64
 把包先传到设备再装（LuCI 界面是**单独的包**，要一起装才有网页可点）：
 
 ```sh
-scp clip9-openwrt-v0.1.0-aarch64.ipk      root@192.168.1.1:/tmp/
-scp clip9-luci-openwrt-v0.1.0-all.ipk     root@192.168.1.1:/tmp/
+scp clip9-openwrt-v0.1.1-x86_64.ipk       root@192.168.1.1:/tmp/
+scp clip9-luci-openwrt-v0.1.1-all.ipk     root@192.168.1.1:/tmp/
 ```
+
+> ⚠️ `<架构>` 要与你设备的架构对得上（`opkg print-architecture` / `cat /etc/apk/arch` 查），
+> 否则会报 `incompatible with the architectures configured` —— 完整对照表与常见问题见
+> [`openwrt/README.md`](./openwrt/README.md)。
 
 - 配置：UCI `/etc/config/clip9`；数据（库 + 上传）在 `/etc/clip9/data`；高级项在 `/etc/clip9/config.json`。
 - 改完配置：`/etc/init.d/clip9 restart`。
 - 装完两个包后 `/etc/init.d/uhttpd restart`，在 LuCI「服务」菜单里就是 Clip9。
-- 支持 **7 个架构**（x86_64、aarch64、5 个 armv7 变体）；**没有 mips/mipsel**（Rust 里它们是 Tier 3）。
+- 服务端包有 **10 个 `.ipk` / 8 个 `.apk`**（按**设备**架构名分）；**没有 mips/mipsel**（Rust 里它们是 Tier 3）。
 
 ⚠️ 数据目录在 `/etc/clip9/data` 而不是 `/var/lib` —— OpenWrt 的 `/var` 通常是指向 `/tmp` 的软链
-（tmpfs），放那儿每次重启历史就没了。详见 [`openwrt/README.md`](./openwrt/README.md)。
+（tmpfs），放那儿每次重启历史就没了。
 
 ### 方式四：Android 手机
 
@@ -229,7 +233,8 @@ App 里跑的是**服务端**（Rust 编成 `.so`，由前台服务托管），�
    点进去直接用内嵌界面打开那台服务器，登录密码会自动换取会话令牌。
 
 > ⚠️ 为保证后台不被系统杀掉，请把 App 加进**电池优化白名单**；服务端运行时会有一条常驻通知
-> （这是 Android 的要求，它表示「别的设备能连过来」）。构建细节见 [`android/README.md`](./android/README.md)。
+> （这是 Android 的要求，它表示「别的设备能连过来」）。要自己构建 / 改这个目录见
+> [`android/DEVELOPING.md`](./android/DEVELOPING.md)。
 
 ### 方式五：Cloudflare Workers
 
