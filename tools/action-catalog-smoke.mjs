@@ -1,0 +1,245 @@
+#!/usr/bin/env node
+// 动作库的跨文件静态自检。
+//
+// 用法：
+//   node tools/action-catalog-smoke.mjs                 # 在 clip9/ 下跑
+//   node tools/action-catalog-smoke.mjs <catalog.json> <pure.js> <impl.js> <actions-labels.json> <ui 目录>
+//                                                       # 用别的夹具跑（变异验证 / 临时排查）
+//   ⚠️ 位置参数写 `-` 就是「这一项用默认值」。
+//
+// # ⚠️ 为什么要有它
+//
+// 动作库拆成了四份文件（`web-vue3/src/data/actions/{catalog.json,pure.js,impl.js}` + 桌面侧那份
+// 逐字节拷贝），它们之间靠**字符串名字**连着：目录里的 `run: "runUpper"` 指的是另一份文件里的
+// 一个导出。没有任何编译器看着这条线 ——
+//
+//   · 名字写错 / 忘了写实现 → **网页版装载时当场抛错**（`actions.js` 的 registry 查表）；
+//   · 桌面侧更是**运行时**才去 `fetch`/`import` 那两份文件，错了就是「动作菜单点了没反应」。
+//
+// ⚠️ 这一条不是假想：拆分过程中真的写错过一次 —— `encode.url` 的 run 被写成内建的
+// `encodeURIComponent`（不是任何一份文件里的导出），是**拿老实现当 oracle 逐条对跑**才炸出来的。
+// 那个台子是一次性的；这条判据是它的常驻版本。
+//
+// # 判据（前 7 条算失败，第 8 条只提示）
+//
+// 1. 目录里**每个 `match` / `run` 的名字都有实现**（在 pure.js 或 impl.js 的导出里）；
+// 2. `id` 不重复、`group` 都在 `groups` 里、`direction` 合法、`run` 必填、`nameKey` 必填；
+// 3. **`pure.js` 零 import**（铁律：桌面端只能加载自足的模块）；
+// 4. 桌面那份拷贝与源**逐字节一致**（`sync-action-catalog.mjs --check` 的核心，这里再兜一次）；
+// 5. 桌面那份 `actions-labels.json` 覆盖了**目录与 pure.js 引用到的全部键**，且 zh / en 都有；
+// 6. 桌面**真的用上了**它：`ui/index.html` 加载了 `action-library.js`，`ui/app.js` 调了
+//    `window.ActionLibrary`；
+// 7. **两件事都接进了门禁**：CI 的 frontend job 里有 `sync-action-catalog.mjs --check`，
+//    `tools/release.sh` 的 `GATES` 里有本判据 —— 没接进门禁的自检等于没有；
+// 8. （只提示）`ui/app.js` 里出现了 `pure.js` 里的实现名 —— 那可能是有人把实现**又抄了一份**。
+
+import { existsSync, readFileSync } from 'node:fs';
+import { dirname, join, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+const HERE = dirname(fileURLToPath(import.meta.url));
+const ROOT = resolve(HERE, '..');
+
+const DEFAULTS = {
+  catalog: join(ROOT, 'web-vue3/src/data/actions/catalog.json'),
+  pure: join(ROOT, 'web-vue3/src/data/actions/pure.js'),
+  impl: join(ROOT, 'web-vue3/src/data/actions/impl.js'),
+  labels: join(ROOT, 'rust/crates/desktop/ui/actions-labels.json'),
+  ui: join(ROOT, 'rust/crates/desktop/ui'),
+  sync: join(ROOT, 'rust/crates/desktop/ui/actions.sync.json'),
+};
+
+const argv = process.argv.slice(2);
+const pick = (i, fallback) => (argv[i] && argv[i] !== '-' ? argv[i] : fallback);
+const F = {
+  catalog: pick(0, DEFAULTS.catalog),
+  pure: pick(1, DEFAULTS.pure),
+  impl: pick(2, DEFAULTS.impl),
+  labels: pick(3, DEFAULTS.labels),
+  ui: pick(4, DEFAULTS.ui),
+  sync: existsSync(argv[5] ?? '') ? argv[5] : DEFAULTS.sync,
+  // 「源」那一份永远在 web-vue3 下 —— 拷过去的那份要跟它逐字节比。
+  source: {
+    catalog: DEFAULTS.catalog,
+    pure: DEFAULTS.pure,
+  },
+};
+
+let failed = 0;
+const bad = (msg) => { failed += 1; console.log(`✗ ${msg}`); };
+const ok = (msg) => console.log(`✓ ${msg}`);
+const warn = (msg) => console.log(`⚠ ${msg}`);
+const plain = (msg) => console.log(`  ${msg}`);
+
+/** 一个模块里 `export function X` / `export const X` 的名字。 */
+function exportNames(text) {
+  const names = new Set();
+  for (const m of text.matchAll(/^export\s+(?:async\s+)?(?:function|const|let|class)\s+([A-Za-z_]\w*)/gm)) {
+    names.add(m[1]);
+  }
+  for (const m of text.matchAll(/^export\s*\{([^}]*)\}/gm)) {
+    for (const one of m[1].split(',')) {
+      const name = one.trim().split(/\s+as\s+/).pop().trim();
+      if (name) names.add(name);
+    }
+  }
+  return names;
+}
+
+const catalogText = readFileSync(F.catalog, 'utf8');
+const pureText = readFileSync(F.pure, 'utf8');
+const implText = existsSync(F.impl) ? readFileSync(F.impl, 'utf8') : '';
+const catalog = JSON.parse(catalogText);
+const actions = catalog.actions ?? [];
+const groups = new Set((catalog.groups ?? []).map((g) => g.key));
+
+// ── 判据 1：每个名字都有实现 ────────────────────────────────────────────────
+const provided = new Set([...exportNames(pureText), ...exportNames(implText)]);
+const missing = [];
+for (const action of actions) {
+  for (const field of ['match', 'run']) {
+    const name = action[field];
+    if (!name) continue;
+    if (!provided.has(name)) missing.push(`${action.id}.${field} → ${name}`);
+  }
+}
+if (missing.length) {
+  bad(`判据 1：有 ${missing.length} 个名字找不到实现（网页版装载时会当场抛错）：`);
+  for (const one of missing) plain(one);
+} else {
+  ok(`判据 1：${actions.length} 条动作的 match/run 共 ${actions.length + actions.filter((a) => a.match).length} 个名字，全部有实现`);
+}
+
+// ── 判据 2：目录自身的形状 ─────────────────────────────────────────────────
+const problems = [];
+const seen = new Set();
+for (const action of actions) {
+  if (!action.id) problems.push('有一条没有 id');
+  if (seen.has(action.id)) problems.push(`id 重复：${action.id}`);
+  seen.add(action.id);
+  if (!groups.has(action.group)) problems.push(`${action.id} 的分组 ${action.group} 不在 groups 里`);
+  if (!['view', 'insert'].includes(action.direction)) problems.push(`${action.id} 的 direction=${action.direction}`);
+  if (!action.run) problems.push(`${action.id} 没有 run`);
+  if (!action.nameKey) problems.push(`${action.id} 没有 nameKey`);
+}
+if (problems.length) {
+  bad(`判据 2：目录形状有 ${problems.length} 处问题：`);
+  for (const one of problems) plain(one);
+} else {
+  ok(`判据 2：${actions.length} 条动作的 id / 分组 / direction / run / nameKey 都齐（${groups.size} 个分组）`);
+}
+
+// ── 判据 3：pure.js 零 import ──────────────────────────────────────────────
+const importLines = pureText.split('\n')
+  .map((line, i) => [i + 1, line])
+  .filter(([, line]) => /^\s*(import\s|export\s[^;]*\sfrom\s)/.test(line));
+if (importLines.length) {
+  bad(`判据 3：pure.js 里有 ${importLines.length} 处 import/再导出（桌面端加载不了，会静默失效）：`);
+  for (const [n, line] of importLines.slice(0, 5)) plain(`第 ${n} 行：${line.trim().slice(0, 90)}`);
+} else {
+  ok('判据 3：pure.js 零 import / 零再导出（桌面端能自足加载）');
+}
+
+// ── 判据 4：桌面那份拷贝与源逐字节一致 ──────────────────────────────────────
+const copies = [
+  [join(F.ui, 'actions-catalog.json'), F.source.catalog, '目录'],
+  [join(F.ui, 'actions-pure.js'), F.source.pure, '实现'],
+];
+const drifted = copies.filter(([to, from]) => {
+  if (!existsSync(to)) return true;
+  return readFileSync(to, 'utf8') !== readFileSync(from, 'utf8');
+});
+// ⚠️ 夹具模式下（`ui` 指到别处）源与拷贝可能本来就是同一份，这时只比「有没有」
+if (drifted.length && resolve(F.ui) !== DEFAULTS.ui) {
+  warn(`判据 4：跳过（跑的是夹具，ui 目录不是仓库里那份）`);
+} else if (drifted.length) {
+  bad(`判据 4：桌面那份拷贝与源不一致（${drifted.map(([to]) => to.split('/').pop()).join('、')}）—— 跑 node tools/sync-action-catalog.mjs`);
+} else {
+  ok('判据 4：桌面那份 catalog.json / pure.js 与源逐字节一致');
+}
+
+// ── 判据 5：文案键覆盖，且两种语种都有 ─────────────────────────────────────
+const wanted = new Set();
+for (const g of catalog.groups ?? []) if (g.labelKey) wanted.add(g.labelKey);
+for (const action of actions) {
+  if (action.nameKey) wanted.add(action.nameKey);
+  for (const param of action.params ?? []) {
+    if (param.labelKey) wanted.add(param.labelKey);
+    for (const option of param.options ?? []) if (option.labelKey) wanted.add(option.labelKey);
+  }
+}
+// 动作的输出文案（`tr('inspectChars')`）也要译文 —— 少了的症状是标签位置显示键名
+for (const m of pureText.matchAll(/\b(?:tr|translator\(ctx\))\(['"]([\w.]+)['"]\)/g)) wanted.add(m[1]);
+
+if (!existsSync(F.labels)) {
+  bad(`判据 5：找不到 ${F.labels}（跑 node tools/sync-action-catalog.mjs）`);
+} else {
+  const labels = JSON.parse(readFileSync(F.labels, 'utf8'));
+  const gaps = [];
+  for (const key of wanted) {
+    for (const lang of ['zh', 'en']) {
+      if (!labels[lang]?.[key]) gaps.push(`${lang}:${key}`);
+    }
+  }
+  const extra = Object.keys(labels.zh ?? {}).filter((k) => !wanted.has(k));
+  if (gaps.length) {
+    bad(`判据 5：${gaps.length} 个键缺译文（界面会显示键名本身）：`);
+    for (const one of gaps.slice(0, 8)) plain(one);
+  } else {
+    ok(`判据 5：${wanted.size} 个文案键在 zh / en 都有译文${extra.length ? `（另有 ${extra.length} 个没被引用，无害）` : ''}`);
+  }
+}
+
+// ── 判据 6：桌面真的用上了它 ───────────────────────────────────────────────
+const html = readFileSync(join(F.ui, 'index.html'), 'utf8');
+const app = readFileSync(join(F.ui, 'app.js'), 'utf8');
+const wiring = [];
+if (!/src="\.\/action-library\.js"/.test(html)) wiring.push('index.html 没有加载 action-library.js');
+if (!app.includes('ActionLibrary')) wiring.push('app.js 里没有出现 ActionLibrary');
+if (!app.includes('actions-catalog')) wiring.push('app.js 里没有提过 actions-catalog（那它从哪知道有哪些动作？）');
+// ⚠️ 动作菜单那段：改成「不再打开菜单」很容易，而症状只是「⚡ 点了没反应」。钉住两个函数名。
+for (const fn of ['openActionMenu', 'runAction']) {
+  if (!new RegExp(`function ${fn}\\b`).test(app)) wiring.push(`app.js 里没有 ${fn}`);
+}
+if (resolve(F.ui) !== DEFAULTS.ui) {
+  warn('判据 6：跳过（跑的是夹具）');
+} else if (wiring.length) {
+  bad(`判据 6：桌面侧没接上（${wiring.length} 处）：`);
+  for (const one of wiring) plain(one);
+} else {
+  ok('判据 6：桌面侧加载并用上了 actions-catalog（action-library.js + openActionMenu/runAction）');
+}
+
+// ── 判据 7：两件事都接进了门禁 ─────────────────────────────────────────────
+if (resolve(F.ui) !== DEFAULTS.ui) {
+  warn('判据 7：跳过（跑的是夹具）');
+} else {
+  const ci = readFileSync(join(ROOT, '.github/workflows/ci.yml'), 'utf8');
+  const release = readFileSync(join(ROOT, 'tools/release.sh'), 'utf8');
+  const gaps = [];
+  if (!ci.includes('sync-action-catalog.mjs --check')) gaps.push('CI 的 frontend job 里没有 sync-action-catalog.mjs --check');
+  if (!ci.includes('action-catalog-smoke.mjs')) gaps.push('CI 里没有跑本判据');
+  if (!release.includes('action-catalog-smoke')) gaps.push("release.sh 的 GATES 里没有本判据");
+  if (gaps.length) {
+    bad(`判据 7：没接进门禁（${gaps.length} 处）—— 没接进门禁的自检等于没有：`);
+    for (const one of gaps) plain(one);
+  } else {
+    ok('判据 7：同步与判据都接进了 CI 与 release.sh 的 GATES');
+  }
+}
+
+// ── 判据 8（只提示）：实现有没有被抄第二份 ─────────────────────────────────
+const implNames = [...exportNames(pureText)].filter((n) => n.length > 6);
+const copied = implNames.filter((n) => new RegExp(`\\b${n}\\s*\\(`).test(app));
+if (copied.length) {
+  warn(`判据 8（只提示）：ui/app.js 里出现了 ${copied.length} 个纯实现的名字（${copied.slice(0, 4).join(', ')}…）—— 如果那是抄了一份实现，请删掉它、改用 ActionLibrary`);
+} else {
+  ok('判据 8：ui/app.js 里没有出现纯实现的名字（没有第二份实现）');
+}
+
+console.log();
+if (failed) {
+  console.log(`✗ 动作库自检失败：${failed} 条`);
+  process.exit(1);
+}
+console.log('✓ 动作库自检通过');
