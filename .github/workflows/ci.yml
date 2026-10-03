@@ -96,6 +96,12 @@ jobs:
       - name: 发版脚本静态自检
         run: node tools/release-smoke.mjs
 
+      # ⚠️ 文档改一半**不会让任何东西红** —— 直到有人照着它点到一个 404。
+      # 这条判据只认 markdown 链接（相对路径按文件自己所在目录解析：2026-10-03 全仓 3 个
+      # 死链全在 cloudflare/README.md，就是「住在子目录里却写根相对路径」这一点）。
+      - name: 文档链接静态自检
+        run: node tools/docs-links-smoke.mjs
+
   # ── Rust：fmt / clippy / test ──────────────────────────────────────
   #
   # ubuntu 上要装 Tauri 的系统库：缺 webkit2gtk 时 `tauri-build` 会直接失败，报错与「代码写错了」很像。
