@@ -1,0 +1,21 @@
+{
+  "_comment": [
+    "桌面端「动作实现包」的导出名 —— 由 tools/sync-action-catalog.mjs 从构建产物的",
+    "metafile 抽出（源头是 web-vue3/src/data/actions/desktop.js 的再导出清单）。",
+    "桌面端按它决定哪条动作的实现要**点了才加载**（actions-impl.js）；",
+    "不在这个名单里的（简繁那两条）在动作菜单里照旧置灰。"
+  ],
+  "exports": [
+    "REPLACE_MODES",
+    "REPLACE_MODE_KEYS",
+    "highlightCodeBlocksIn",
+    "renderFenced",
+    "replaceLiteral",
+    "runCode",
+    "runMarkdown",
+    "runPinyin",
+    "runPinyinTable",
+    "runPinyinWord",
+    "runReplace"
+  ]
+}

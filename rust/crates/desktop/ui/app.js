@@ -908,7 +908,22 @@ function renderEntry(entry) {
     // ⚠️★ 跑过动作的那条，画的是**动作的结果**（而且那份结果是用全文跑出来的）。
     const viewed = actionViews.get(entry.id);
     if (viewed) {
-      card.append(h('div', 'txt actout', viewed.output));
+      // ⚠️★ `render: 'html'` 那两条（markdown / 代码高亮）返回的是 **HTML**，只能走
+      // `innerHTML` —— 走 `textContent` 的话用户看到的是一整屏 `<p>…</p>` 标签。
+      // ⚠️★ 但它是**已经消过毒**的 HTML：消毒在动作实现包里（`util.js` 的
+      // `renderMarkdownHtml` 过 DOMPurify），这一侧**不自己也来一遍**（第二份消毒 =
+      // 第二套规则，两套规则早晚漂移）。「包里一定有 DOMPurify」由同步工具在构建时断言。
+      const box = h('div', 'txt actout');
+      if (viewed.html) {
+        box.innerHTML = viewed.output;
+        // ⚠️★ 颜色是**回头补**的（marked 的 renderer 同步、高亮器只能按需加载）：
+        // 先按没颜色画出来（代码本来就是转义好的纯文本，看得见），chunk 回来了再上色。
+        // 与网页版 `MarkdownBody.vue` 走的是 `highlight.js` 里同一个函数。
+        window.ActionLibrary.highlightIn(box);
+      } else {
+        box.textContent = viewed.output;
+      }
+      card.append(box);
     } else {
       const open = openedIds.has(entry.id);
       card.append(h('div', open ? 'txt open' : 'txt', openedBodies.get(entry.id) ?? entry.text));
@@ -1118,6 +1133,8 @@ function entryActions(entry) {
  */
 
 let actionMenu = null;
+/** 「填参数」那个面板（同一时刻只会开一个；没有就是 null）。 */
+let actionForm = null;
 
 /** 关掉动作菜单。点了外面、按了 Esc、或选中一条之后都会走这里。 */
 function closeActionMenu() {
@@ -1169,8 +1186,18 @@ async function openActionMenu(anchor, entry) {
         button.title = t(available.reasonKey);
       }
       button.addEventListener('click', () => {
+        // ⚠️★ 位置要**先量再关**：菜单一关按钮就没了，量出来是全零。
+        const at = button.getBoundingClientRect();
         closeActionMenu();
-        runAction(entry, one, library);
+        // 带参数的那几条（目前只有「查找替换」）先填表；表是**照目录画的**，
+        // 不是这里手写字段（见 `openActionForm` 的注释）。
+        if (!actionNeedsParams(one)) {
+          runAction(entry, one, library, {});
+          return;
+        }
+        openActionForm(one, library, at).then((params) => {
+          if (params) runAction(entry, one, library, params);
+        });
       });
       grid.append(button);
     }
@@ -1197,15 +1224,132 @@ async function openActionMenu(anchor, entry) {
   actionMenu = { panel, onOutside, onKey };
 }
 
+/** 一条动作要不要**先填参数**（目录里 `params` 非空）。
+ *
+ * ⚠️★ 判据用的是**目录里的声明**，不是「哪些 id 我记得要参数」—— 后者一加动作就漏。 */
+function actionNeedsParams(action) {
+  return Array.isArray(action.params) && action.params.length > 0;
+}
+
+/** 关掉「填参数」面板。`resolve` 只被调用一次（关窗与提交都走 `close`，后者先传值）。 */
+function closeActionForm(value) {
+  if (!actionForm) return;
+  const { panel, onOutside, onKey, settle } = actionForm;
+  actionForm = null;
+  panel.remove();
+  document.removeEventListener('mousedown', onOutside, true);
+  document.removeEventListener('keydown', onKey, true);
+  settle(value ?? null);
+}
+
+/** 让「填参数」那张表**跟着目录画** —— 不手写字段。
+ *
+ * ⚠️★ 这里**不**写死「查找替换有哪些框」：字段的形状在 `actions-catalog.json` 里
+ *（`type` / `options` / `visibleWhen`），网页版读的是同一份声明。抄一份在这里，
+ * 加一个参数就是两边各改一次（而漏改的那边**不报错**，只是少一个框）。
+ *
+ * 返回 Promise：填完并点「跑」→ 参数对象；取消 / Esc / 点外面 → `null`。
+ *
+ * ⚠️ `visibleWhen`（「查找」只在「文本」模式下出现）是**声明里的规则**，
+ * 所以这里也只有一份实现：每次任一字段变了就重算一遍谁该露脸。
+ */
+function openActionForm(action, library, at) {
+  closeActionForm(null);
+  return new Promise((settle) => {
+    const panel = h('div', 'actmenu actform');
+    const header = h('div', 'actmenu-hd');
+    header.append(h('span', null, window.ActionLibrary.label(library, action.nameKey)));
+    const close = h('button', 'lnk', '×');
+    close.addEventListener('click', () => closeActionForm(null));
+    header.append(close);
+    panel.append(header);
+
+    const body = h('div', 'actmenu-bd');
+    const fields = new Map(); // param.key → 那个 <select> / <input>
+    const rows = new Map();   // param.key → 那一整行（藏起来要用）
+    for (const spec of action.params) {
+      const row = h('label', 'field');
+      row.append(h('span', 'field-k', window.ActionLibrary.label(library, spec.labelKey)));
+      let input;
+      if (spec.type === 'select') {
+        input = document.createElement('select');
+        for (const option of spec.options ?? []) {
+          const node = document.createElement('option');
+          node.value = option.value;
+          node.textContent = window.ActionLibrary.label(library, option.labelKey);
+          input.append(node);
+        }
+      } else {
+        // ⚠️★ 走 `inputEl`（不是自己 `createElement`）：「文本输入框要关掉自动大写」
+        // 这条规矩**只有那一份定义**，自己造一个就漏（而漏了**不报错** ——
+        // 只是 macOS 上把 `https://` 打成 `Https://`，静态判据为此存在）。
+        // ⚠️ 留空的语义在**实现里**（`actionReplaceWith` 那句「留空即删除」就写在标签上），
+        // 这里不做任何「必填」判断 —— 判断一做，就与网页版那份规则分叉了。
+        input = inputEl('', () => {});
+      }
+      input.className = 'field-v';
+      row.append(input);
+      fields.set(spec.key, input);
+      rows.set(spec.key, row);
+      body.append(row);
+    }
+
+    /** 谁该露脸：把每条 `visibleWhen` 重算一遍（只有一个字段时也不特判）。 */
+    function syncVisibility() {
+      for (const spec of action.params) {
+        if (!spec.visibleWhen) continue;
+        const watch = fields.get(spec.visibleWhen.key);
+        rows.get(spec.key).hidden = watch ? watch.value !== spec.visibleWhen.equals : false;
+      }
+    }
+    for (const input of fields.values()) input.addEventListener('change', syncVisibility);
+    syncVisibility();
+    panel.append(body);
+
+    const foot = h('div', 'actform-ft');
+    const cancel = h('button', 'lnk', t('取消'));
+    cancel.addEventListener('click', () => closeActionForm(null));
+    const go = h('button', 'btn primary', t('跑'));
+    foot.append(cancel, go);
+    panel.append(foot);
+
+    /** 关面板的方式有四种（×/取消/Esc/点外面）→ 全是 `null`；只有「跑」给值。 */
+    go.addEventListener('click', () => {
+      const params = {};
+      for (const [key, input] of fields) params[key] = input.value;
+      closeActionForm(params);
+    });
+
+    document.body.append(panel);
+    // ⚠️ `at` 是**关菜单之前**量好的那条按钮的位置：菜单一关按钮就没了，
+    // 那时再 `getBoundingClientRect()` 拿到的是全零（面板会飞到左上角）。
+    panel.style.top = `${Math.min(at.bottom + 6, Math.max(8, window.innerHeight - panel.offsetHeight - 8))}px`;
+    panel.style.left = `${Math.min(at.left, Math.max(8, window.innerWidth - panel.offsetWidth - 8))}px`;
+    // ⚠️ 面板刚挂上就让它拿到焦点 —— 否则用户还得再点一下框才能打字。
+    const first = fields.values().next().value;
+    if (first) first.focus();
+
+    const onOutside = (event) => {
+      if (!panel.contains(event.target)) closeActionForm(null);
+    };
+    const onKey = (event) => {
+      if (event.key === 'Escape') closeActionForm(null);
+    };
+    document.addEventListener('mousedown', onOutside, true);
+    document.addEventListener('keydown', onKey, true);
+    actionForm = { panel, onOutside, onKey, settle };
+  });
+}
+
 /** 跑一条动作：取**全文** → 用那一份跑 → 把结果挂到卡片上。
  *
  * ⚠️★ 必须取全文：列表里的 `entry.text` 是**截断预览**，拿它跑出来的结果与用户看到的那条
  * 对不上 —— 而且这件事**不报错**（同「复制」和「分享」两条命令的坑）。
  */
-async function runAction(entry, action, library) {
+async function runAction(entry, action, library, params) {
   try {
     const text = await invoke('entry_text', { id: entry.id });
-    const output = String(await window.ActionLibrary.run(action, text));
+    const output = String(await window.ActionLibrary.run(action, text, params));
     if (!output) {
       // 空结果不是错误（`formatJson` 这类动作对「本来就是那样」的内容就返回空串）——
       // 但也不能什么都不说：点了没反应是这个项目最忌讳的。
@@ -1216,6 +1360,9 @@ async function runAction(entry, action, library) {
       actionId: action.id,
       label: window.ActionLibrary.label(library, action.nameKey),
       output,
+      // ⚠️ `render: 'html'` 是**目录里声明的**（同步过来的 `actions-catalog.json`），
+      // 不是这里猜的 —— 「这条的输出是 HTML」只有声明那一处知道。
+      html: action.render === 'html',
     });
     repaint();
   } catch (error) {

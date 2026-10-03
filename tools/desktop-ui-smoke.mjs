@@ -305,7 +305,7 @@
 // · **`boot.js` 不参与第 1 条**（id 引用）：它跑在 `<body>` 解析之前，本来就碰不到任何
 //   元素 —— 里面出现一个 `getElementById('x')` 才是错的。它只被第 10 条读（比对常量）。
 
-import { readFileSync, readdirSync, statSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -2138,10 +2138,154 @@ if (entryViewFiles.length !== 1) {
   }
 }
 
+// ── 判据 26：CSS 变量不许用没定义的（理由见下）────────────────────────────────
+//
+// ⚠️★ 2026-10-03 加。当天写动作结果那块样式时用了 `var(--input-bg)`，而它**没在
+//    任何变量块里定义过** —— `background: var(--input-bg)` 整条失效（回退成透明），
+//    **不报错**，要靠眼睛看出来。这类错的成本极低（写的时候顺手）、排查成本极高
+//    （「为什么这段没有底色」），所以让机器数。
+//
+// ⚠️ 定义要**两处一起数**：`index.html` 的 `<style>` 与 `highlight.css`
+//（两侧共用那份令牌配色，`code.hljs` 的 `--cb-*` 定义在那里）。
+// 用途要**两处一起数**：样式表之外，`app.js` 也可能拼 `style="--x: …"`。
+{
+  const highlightPath = join(dirname(jsPath), 'highlight.css');
+  const highlightCss = existsSync(highlightPath) ? readFileSync(highlightPath, 'utf8') : '';
+  const allCss = `${html}\n${highlightCss}`;
+  // 「定义」有三种，都要数：
+  //   · CSS 里的声明（`--x: …`）；
+  //   · `app.js` 运行时 `setProperty('--x', …)`（`--composer-h` 就是这样，拖拽调输入区高度）；
+  //   · 用的时候带了回落（`var(--x, auto)`）—— 那是**设计好的**缺省，不是漏。
+  const defined = new Set([...allCss.matchAll(/(--[\w-]+)\s*:/g)].map((m) => m[1]));
+  for (const m of js.matchAll(/setProperty\(\s*'(--[\w-]+)'/g)) defined.add(m[1]);
+  const used = new Map(); // 名字 → 有没有带回落
+  for (const source of [html, js, highlightCss]) {
+    for (const m of source.matchAll(/var\((--[\w-]+)(\s*,[^)]*)?\)/g)) {
+      used.set(m[1], (used.get(m[1]) ?? false) || Boolean(m[2]));
+    }
+  }
+  const missing = [...used].filter(([name, hasFallback]) => !defined.has(name) && !hasFallback);
+  if (missing.length) {
+    failed = true;
+    console.error(`✗ 判据 26：${missing.length} 个 CSS 变量**用了但没定义、也没回落**（整条声明失效，回退成透明，不报错）：`);
+    for (const [name] of missing) console.error(`    ${name}`);
+    console.error('  ⚠️ 定义在 `:root` / `[data-theme]` 的变量块里；`--cb-*` 那组在 highlight.css；');
+    console.error('     运行时给的那种（setProperty）也行，但必须真的有人 set。');
+  } else {
+    console.log(`· 判据 26：用到的 ${used.size} 个 CSS 变量全都有定义（声明 / setProperty / 回落，三样算一样）。`);
+  }
+}
+
+// ── 判据 27：桌面端跑「原本只有网页能跑」的那几条（理由见下）─────────────────
+//
+// ⚠️★ 2026-10-03 加。markdown / 代码高亮 / 查找替换 / 拼音从「置灰」变成能跑：
+//    实现打进了 `actions-impl.js`（esbuild 产物），参数照目录画一张表。
+//    这条钉的是**桌面这一侧的接线**，每个零件拆掉都不报错：
+//   ① 参数写死某条动作的 id → 目录里再加带参数的动作，桌面就又回到「置灰」；
+//   ② `visibleWhen` 不跟着目录走 → 「查找」在 digits 模式下还杵在那（填了也没用）；
+//   ③ html 结果走 `textContent` → 用户看到一整屏 `<p>` 标签；
+//   ④ html 不消毒就上 innerHTML → 别人剪贴板里的一条 `<script>` 就能在桌面上跑；
+//   ⑤ 不补上色 → 「代码高亮」这条动作名存实亡（只有类名没有颜色）；
+//   ⑥ `availability` 又把「带参数」当成「跑不了」→ 那张表永远开不出来。
+{
+  const libPath = join(dirname(jsPath), 'action-library.js');
+  const lib = existsSync(libPath) ? readFileSync(libPath, 'utf8') : '';
+  // ⚠️★ 一律在**剥掉注释**的源上判：渲染段 / 表单段的注释里就写着 `innerHTML` /
+  // `textContent` 这些词 —— 拿原文判，「把 innerHTML 改成 textContent」这种变异照样绿
+  //（变异验证里④、④b两组就是这么漏掉的）。
+  const bareJs = stripComments(js).split('\u0000').join("'");
+  const bareLib = stripComments(lib).split('\u0000').join("'");
+  const problems = [];
+
+  // ① 参数表**照目录画**：字段循环与可见性循环都要从 `action.params` 走（两处，缺一不可）。
+  const formBody = /function openActionForm\([\s\S]*?\n\}/.exec(bareJs)?.[0] ?? '';
+  const paramLoops = (formBody.match(/for \(const spec of action\.params\) \{/g) || []).length;
+  if (!formBody) {
+    problems.push('找不到 `function openActionForm` —— 参数表没了，带参数的动作点了没反应');
+  } else {
+    if (paramLoops < 2) {
+      problems.push(`参数表没有照 \`action.params\` 画（两处循环只找到 ${paramLoops} 处）`
+        + ' —— 建字段 / 算可见性都得来自目录，目录里加一条带参数的动作桌面才跟得上');
+    }
+    if (!formBody.includes('if (!spec.visibleWhen) continue;')) {
+      problems.push('参数表没有按 `visibleWhen` 跳过 —— 「查找」在非文本模式下还杵在那（填了也没用）');
+    }
+    if (!formBody.includes('visibleWhen.equals')) {
+      problems.push('参数表没有用 `visibleWhen.equals` 比较 —— 条件形同虚设');
+    }
+    if (/text\.replace/.test(formBody)) {
+      problems.push('参数表里写死了 `text.replace` —— 字段的形状只有目录一处知道，这里别再抄一遍');
+    }
+    if (!formBody.includes('settle')) {
+      problems.push('参数表没有把结果交给 `settle` —— 表填完了也没法把参数递给动作');
+    }
+  }
+
+  // ② 带参数**不算跑不了**：`availability` 里不许再拿 params 挡（旧规则的回归点）。
+  const availBody = /function availability\(action\)\s*\{[\s\S]*?\n  \}/.exec(bareLib)?.[0] ?? '';
+  if (!availBody) {
+    problems.push('action-library.js 里找不到 `function availability` —— 可用性判定没了');
+  } else if (/params/.test(availBody)) {
+    problems.push('`availability` 还在拿 params 挡 —— 桌面端现在有参数表了，带参数的动作不该置灰');
+  }
+
+  // ③④ html 结果：`viewed.html` 为真才走 `innerHTML`，且旁边得有 `textContent` 兜底；
+  //     上色那一步必须在（没有它「代码高亮」只剩类名）。
+  const renderBody = /const viewed = actionViews\.get\(entry\.id\);[\s\S]*?card\.append\(box\);/.exec(bareJs)?.[0] ?? '';
+  if (!renderBody) {
+    problems.push('找不到动作结果的渲染段 —— 这条判据要跟着代码改');
+  } else {
+    if (!renderBody.includes('viewed.html')) {
+      problems.push('渲染段没认 `viewed.html` —— markdown / 代码高亮的结果会被画成一整屏 `<p>` 标签');
+    }
+    if (!renderBody.includes('box.innerHTML')) {
+      problems.push('html 结果没有走 `box.innerHTML` —— 那用户看到的就是标签本身');
+    }
+    if (!renderBody.includes('box.textContent')) {
+      problems.push('渲染段没有 `box.textContent` 兜底 —— 纯文本动作的结果也会被当成 HTML 解析');
+    }
+    if (!renderBody.includes('highlightIn')) {
+      problems.push('html 画完没有调 `highlightIn` —— 代码块只有 `language-x` 类名、没有颜色');
+    }
+  }
+
+  // ⑤ `highlightIn` 必须到实现包里取（两侧共用同一个 `highlightCodeBlocksIn`）。
+  if (!/highlightCodeBlocksIn/.test(bareLib)) {
+    problems.push('action-library.js 没有调实现包的 `highlightCodeBlocksIn` —— 桌面上色就是抄了第二份');
+  }
+
+  // ⑥ 动作跑的时候要把 params 递到第三位（`run(action, text, params)`）。
+  const runBody = /async function run\(action, text, params\)\s*\{[\s\S]*?\n  \}/.exec(bareLib)?.[0] ?? '';
+  if (!runBody) {
+    problems.push('action-library.js 的 `run` 不再收 `params` —— 替换那条跑起来全是默认值');
+  } else if (!/, params\)/.test(runBody)) {
+    problems.push('`run` 收了 `params` 却没递给实现 —— 表填了个寂寞');
+  }
+
+  // ⑦ 样式：那张表浮着，字段行 / 按钮排都得有规则。
+  //    ⚠️ 判**规则本身**（`.field {`），不判前缀：`.field-k` / `.field-v` 的规则还在
+  //    也会让 `includes('.actform .field')` 绿着 —— 那是判了个寂寞。
+  for (const rule of [/\.actform \.field\s*\{/, /\.actform-ft\s*\{/]) {
+    if (!rule.test(html)) problems.push(`index.html 里没有 \`${rule}\` 的规则 —— 参数表是裸的`);
+  }
+  // ⑧ 「要先填参数」那句文案不许回来（它说的「还没做参数表单」已经不成立了）。
+  if (i18nSource.includes('这条要先填参数')) {
+    problems.push('i18n.js 里还有「这条要先填参数」—— 参数表已经做了，这句是旧的');
+  }
+
+  if (problems.length) {
+    failed = true;
+    console.error(`✗ 判据 27：桌面端跑「原本网页专属」那几条的接线断了（${problems.length} 处）：`);
+    for (const one of problems) console.error(`    · ${one}`);
+    console.error('  ⚠️ 症状全是「能点但跑出来不对」，而且不报错。');
+  } else {
+    console.log('· 判据 27：参数表照目录画（visibleWhen 在内）、html 结果走 innerHTML + 补上色、带参数不再置灰（8 个零件都在）。');
+  }
+}
+
 if (cssOnly.length) {
   console.log(`· ${cssOnly.length} 个 id 只被选择器用（形如 #id { … }），正常：${cssOnly.join('、')}`);
-}
-if (dynamicPrefixes.size) {
+}if (dynamicPrefixes.size) {
   console.log(`· 动态前缀（拼接出来的 id，脚本看不见）：${[...dynamicPrefixes].join('、')}`);
 }
 if (suspicious.length) {

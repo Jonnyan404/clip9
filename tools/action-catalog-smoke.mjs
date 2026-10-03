@@ -252,6 +252,84 @@ if (copied.length) {
   ok('判据 8：ui/app.js 里没有出现纯实现的名字（没有第二份实现）');
 }
 
+// ── 判据 9：实现包（actions-impl）与桌面端的约定 ─────────────────────────────
+//
+// ⚠️★ 2026-10-03 加。markdown / 代码高亮 / 查找替换 / 拼音从「置灰」变成能跑：
+//    实现由 esbuild 打进 `ui/actions-impl.js`，导出名清单写在 `ui/actions-impl.json`，
+//    桌面端**按清单**决定哪条动作「点了才加载」。
+//    这条判据在**不打包**的前提下（CI 没有 node_modules 也要能跑）核对三件事：
+//   ① 清单与 `desktop.js` 的再导出逐个对上 —— 桌面按错的清单放行，症状是
+//      「点了报『实现包里没有 X』」或「永远置灰」，都不报错；
+//   ② 声明 `render: 'html'` 的动作，实现必须过 `renderMarkdownHtml`（DOMPurify）——
+//      桌面按 innerHTML 画，消毒**只此一道**（构建时同步工具也断言 dompurify 在包里，
+//      这里断言的是「每个 html 动作走的都是那条路」）；
+//   ③ `highlight.css` 与源逐字节一致，且暗色选择器**同时认**两种主题挂法
+//      （网页 `.v-theme--dark` / 桌面 `[data-theme='dark']`）—— 一份文件两处用的前提。
+{
+  const listPath = join(F.ui, 'actions-impl.json');
+  const entryPath = join(F.ui, 'actions-impl.js');
+  const desktopEntry = join(ROOT, 'web-vue3/src/data/actions/desktop.js');
+
+  if (!existsSync(listPath) || !existsSync(entryPath)) {
+    bad('判据 9：ui/ 里没有实现包（actions-impl.json / actions-impl.js）—— 跑 node tools/sync-action-catalog.mjs');
+  } else if (!existsSync(desktopEntry)) {
+    bad(`判据 9：找不到实现包入口 ${desktopEntry}`);
+  } else {
+    const listed = JSON.parse(readFileSync(listPath, 'utf8')).exports ?? [];
+    const declared = [...exportNames(readFileSync(desktopEntry, 'utf8'))].sort();
+    const missing = declared.filter((n) => !listed.includes(n));
+    const extra = listed.filter((n) => !declared.includes(n));
+    if (missing.length || extra.length) {
+      bad(`判据 9：导出清单与 desktop.js 对不上（缺 ${missing.join(', ') || '—'}；多 ${extra.join(', ') || '—'}）`);
+      plain('  ⚠️ 桌面端按清单决定「点了才加载」：清单里没有的永远置灰，清单里多的是放行一个跑不了的。');
+      plain('  ⚠️ 清单是从构建产物的 metafile 抽的 —— 改了 desktop.js 就要重新同步。');
+    } else {
+      ok(`判据 9a：实现包清单与 desktop.js 一致（${listed.length} 个导出）`);
+    }
+
+    // ② html 动作必须走消毒那一条路。
+    const implSource = readFileSync(join(ROOT, 'web-vue3/src/data/actions/impl.js'), 'utf8');
+    const htmlActions = actions.filter((a) => a.render === 'html');
+    const offRoad = htmlActions.filter((a) => {
+      const body = new RegExp(`export (?:async )?function ${a.run}\\([\\s\\S]*?\\n\\}`).exec(implSource)?.[0] ?? '';
+      return !body || !/renderMarkdownHtml|renderFenced/.test(body);
+    });
+    if (!htmlActions.length) {
+      warn('判据 9b：目录里没有 render: html 的动作（这条自检暂时没东西可盯）');
+    } else if (offRoad.length) {
+      bad(`判据 9b：${offRoad.map((a) => a.id).join('、')} 声明了 render: html，但实现没走 renderMarkdownHtml（DOMPurify）`);
+      plain('  ⚠️ 桌面端按 innerHTML 画 html 动作的结果，消毒只在实现包里那一条路上。');
+    } else {
+      ok(`判据 9b：${htmlActions.length} 条 html 动作的实现都走 renderMarkdownHtml（DOMPurify）`);
+    }
+
+    // ③ highlight.css：逐字节一致 + 暗色选择器认两种挂法。
+    //    ⚠️ 夹具模式下**照比**：源永远是真的，拷贝与源不一致就该红 ——
+    //    写成「夹具跳过」的话，变异验证里「手改 highlight.css」的三组会假绿
+    //    （2026-10-03 实测：三组全红，红的却全是这一条误报）。
+    const cssTo = join(F.ui, 'highlight.css');
+    const cssFrom = join(ROOT, 'web-vue3/src/styles/highlight.css');
+    if (!existsSync(cssTo)) {
+      bad('判据 9c：ui/ 里没有 highlight.css —— 代码块的令牌配色全丢');
+    } else if (readFileSync(cssTo, 'utf8') !== readFileSync(cssFrom, 'utf8')) {
+      bad('判据 9c：highlight.css 与源不一致（手改过？）—— 跑 node tools/sync-action-catalog.mjs');
+    } else if (!/\[data-theme='dark'\]/.test(readFileSync(cssTo, 'utf8'))) {
+      bad("判据 9c：highlight.css 的暗色选择器不认 `[data-theme='dark']` —— 桌面深色下代码块还是浅色配色");
+    } else {
+      ok('判据 9c：highlight.css 与源逐字节一致，且暗色选择器两种主题挂法都认');
+    }
+
+    // ④ 桌面端真的按清单放行（`resolveFn` 里查的是清单）。
+    const libSource = existsSync(join(F.ui, 'action-library.js'))
+      ? readFileSync(join(F.ui, 'action-library.js'), 'utf8') : '';
+    if (!libSource.includes('implNames')) {
+      bad('判据 9d：action-library.js 没有按清单（implNames）放行 —— 它要么全置灰、要么全放行');
+    } else {
+      ok('判据 9d：桌面端按实现包清单放行动作');
+    }
+  }
+}
+
 console.log();
 if (failed) {
   console.log(`✗ 动作库自检失败：${failed} 条`);
