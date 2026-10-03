@@ -951,17 +951,32 @@ table.ra td input[type='checkbox'] { margin: 0; }
 /* ⚠️ 竖排（两个 20px 的按钮在 56px 里并排放不下）。 */
 :root[data-sidebar='narrow'] .sidebar-head .tools { flex-direction: column; gap: 4px; }
 
-/* 房间行：只剩 emoji 与 ↑/↓。名字 / 条数 / 延迟都不画 ——
-   ⚠️ 它们没有被丢掉：`renderRooms` 把三样**一起**挂到那一行的 `title` 上
-   （「默认 · 12 条 · 延迟 34ms」），悬停就看得见。 */
+/* 房间行：只剩 emoji，下面一行是延迟（Jonny 2026-10-03：「侧栏收紧后，上传下载图标也隐藏，
+   最多在 emoji 图标上显示 ping 值」）。
+   ⚠️ 名字 / 条数不画了 —— 它们没有被丢掉：`renderRooms` 把三样**一起**挂到那一行的
+   `title` 上（「默认 · 12 条 · 延迟 34ms」），悬停就看得见。 */
 :root[data-sidebar='narrow'] .rooms { padding: 2px 4px 8px; }
-:root[data-sidebar='narrow'] .room { justify-content: center; padding: 6px 3px; }
+:root[data-sidebar='narrow'] .room {
+    flex-direction: column; justify-content: center; gap: 1px; padding: 6px 0;
+}
 :root[data-sidebar='narrow'] .room .ico { font-size: 15px; }
 :root[data-sidebar='narrow'] .room .nm,
-:root[data-sidebar='narrow'] .room .ct,
-:root[data-sidebar='narrow'] .room .ms { display: none; }
+:root[data-sidebar='narrow'] .room .ct { display: none; }
+/* ⚠️★ ↑/↓ 收起来之后**也藏掉**：56px 里两个 17px 的方框并排放不下，而且那一行在
+   收窄之后每一颗都只有十几个像素宽 —— 点不准的两个开关比没有更糟（点错就成了
+   「这个房间的方向被改了」而用户完全不知道）。
+   ⚠️ 这不是「功能没了」：每个房间的 ↑/↓ 在**设置 → ↑↓ 方向与内容**里逐个都点得到，
+   而那个页面的入口（⚙）收起之后仍然在（`.sidebar-foot button .lbl` 只藏文字、不藏按钮）。 */
+:root[data-sidebar='narrow'] .room .dir { display: none; }
+/* 延迟挪到**图标下面**：一行「emoji + 一个数」是 56px 里唯一读得出来的排法 ——
+   横着放会把 emoji 挤掉，而 emoji 恰恰是收起状态下**唯一能认出房间的东西**。 */
 :root[data-sidebar='narrow'] .room .dirs {
-    width: auto; gap: 3px; justify-content: center; margin-top: 4px;
+    width: auto; gap: 0; justify-content: center; margin-top: 1px;
+}
+/* ⚠️ 胶囊的描边去掉：10px 的数字套一层边框，在 56px 里像两行字粘在一起。
+   只剩数字本身（`.ms.warn` 那条「超时」仍旧是警示色，那条不能弱化）。 */
+:root[data-sidebar='narrow'] .room .dirs .ms {
+    margin-left: 0; border: 0; padding: 0; font-size: 9.5px;
 }
 
 /* 底部两个按钮：只留符号（＋ / ⚙），文字收起来。
