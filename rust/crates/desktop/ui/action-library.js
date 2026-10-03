@@ -110,5 +110,19 @@ window.ActionLibrary = (() => {
     return Promise.resolve(action.run(text, { t: translate }));
   }
 
-  return { ensure, label, translate, availability, run };
+  /** 按 id 跑一条动作（`/` 菜单里「插入时间 / UUID」那几项用）。
+   *
+   * ⚠️★ 存在的理由：假共用实现 `slash-template.js` 是**零 import** 的（桌面端也加载它），
+   * 所以「怎么跑一个动作」必须由调用方**当参数递进去** —— 这里是桌面这一侧的递法。
+   * ⚠️ 目录里没有、或者这一侧没有实现 → 返回**空串**（`resolveSlashText` 就是这么约定的）：
+   * 插入一个空串只是「这一次没东西进来」，比抛一句用户看不懂的错好。
+   */
+  async function runById(id) {
+    const state = loaded ?? (await ensure());
+    const action = state.actions.find((one) => one.id === id);
+    if (!action || !action.run) return '';
+    return run(action, '');
+  }
+
+  return { ensure, label, translate, availability, run, runById };
 })();

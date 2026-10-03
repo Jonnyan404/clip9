@@ -8,6 +8,9 @@ import { errorMessage, getClientId, prettyFileSize } from '@/util.js';
 import { postText } from '@/send.js';
 import ComposerSlashMenu from '@/components/ComposerSlashMenu.vue';
 import { SLASH_TEMPLATES, resolveSlashText, slashMenuShouldOpen, slashMenuShouldStay, slashPendingAt, stripTrailingSlash } from '@/slash-template.js';
+// ⚠️ `/` 菜单里那几项动作（插入时间 / UUID）需要一个**能当参数传出去**的运行器 ——
+// `slash-template.js` 零 import（桌面端也用它），所以由这一侧注入。
+import { runActionById } from '@/data/actions.js';
 
 const props = defineProps({
     variant: { type: String, default: 'sticky' },
@@ -173,7 +176,8 @@ async function insertSlashTemplate(tpl) {
     const head = stripTrailingSlash(text.slice(0, pos));
     const tail = text.slice(pos);
     // 模板项直接给文本；动作项（插入时间 / UUID）在**这一刻**才算 —— 时间是「现在」的
-    const insert = await resolveSlashText(tpl);
+    // ⚠️ 运行器是**注入**进去的：`slash-template.js` 零 import（桌面端也用它）
+    const insert = await resolveSlashText(tpl, runActionById);
     app.send.text = head + insert + tail;
     slashMenu.value = false;
     nextTick(() => {

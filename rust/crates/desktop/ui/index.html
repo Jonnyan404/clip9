@@ -408,6 +408,33 @@
 
     .composer .lim { color: var(--text-2); font-size: 10.5px; }
 
+    /* 「/」模板那排胶囊（见 `app.js` 的 `openSlashMenu`）。
+       ⚠️★ 用 `bottom: 100%` 顶到输入区**上方**：它挂在 `.composer`（`position: relative`）
+       里，而不是塞进 `.box` 内 —— 塞进去会把输入区撑高、把下面那排按钮往下推，而输入区
+       高度是用户**拖出来的**，不该被一个浮层改掉。
+       ⚠️ 是 `absolute` 不是 `fixed`：`fixed` 不跟着窗口重排（拖高输入区 / 改侧栏宽度时
+       它会留在原地），而它本来就挂在输入框所在的那个容器里，跟着走才对。 */
+    .composer .slashmenu {
+        position: absolute; left: 12px; right: 12px; bottom: calc(100% - 2px); z-index: 30;
+        display: flex; flex-wrap: wrap; gap: 4px;
+        padding: 6px 8px; margin-bottom: 4px;
+        background: var(--card-bg); border: 1px solid var(--border);
+        border-radius: 9px; box-shadow: var(--shadow);
+    }
+
+    /* 胶囊本身与动作库那排（`.actmenu .act`）是**同一套**：同一个圆角/字号/悬停色。
+       两条理由：① 看着就是同一家的东西；② 以后改配色只改一处 —— 这里不再抄一份。
+       ⚠️ 只有外层选择器不同（那排是 fixed 的大面板，这排是贴着输入框的一条），
+       所以共用的是 `.act` 这条**规则**，不是把两份 CSS 合并成一份。 */
+    .composer .slashmenu .act {
+        border: 1px solid var(--border); background: var(--bg); color: var(--text);
+        border-radius: 6px; padding: 3px 8px; font: inherit; font-size: 11.5px;
+        cursor: pointer; max-width: 100%; overflow: hidden; text-overflow: ellipsis;
+        white-space: nowrap;
+    }
+
+    .composer .slashmenu .act:hover { border-color: var(--sidebar-active-border); color: var(--accent); }
+
     .btn {
         border: 1px solid var(--border); background: var(--card-bg); color: var(--text);
         border-radius: 7px; font: inherit; font-size: 12px; padding: 5px 11px; cursor: default;
