@@ -1,0 +1,9 @@
+{
+  "_comment": "由 tools/sync-action-catalog.mjs 生成。--check 用 source 指纹比对。",
+  "source": "55ad6d9f60dcb567",
+  "files": {
+    "actions-catalog.json": "2b00bc916cbea4d6",
+    "actions-pure.js": "a233ba14abd51881",
+    "actions-labels.json": "32c89884c2c4b951"
+  }
+}
