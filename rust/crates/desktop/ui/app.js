@@ -176,6 +176,16 @@ let lastLimits = { textLimit: 0, fileLimit: 0 };
 const openedIds = new Set(); // 现在摊开的那几条
 const openedBodies = new Map(); // id -> 取回来的**全文**（取过一次就留着，收起也不丢）
 
+/** id -> 这条上「跑过什么动作、结果是什么」。
+ *
+ * ⚠️★ 结果画在卡片上、**按 id 存**（不是画在 DOM 里就地改）：时间线每 700ms 会被整个重画，
+ * 就地改的那份下一次轮询就没了（表现是「跑出来的结果闪一下又变回原文」）。
+ *
+ * ⚠️ 结果是用**全文**跑出来的（`runAction` 里现取 `entry_text`），不是列表里那份截断预览 ——
+ * 拿预览跑，用户看到的和跑出来的对不上，而这件事**不会报错**。
+ */
+const actionViews = new Map();
+
 /** 超过多少字节才画「展开」。
  *
  * ⚠️ 这个数是**估的**：卡片宽约 590px、13px 字体 ≈ 一行 80 字符，
@@ -835,8 +845,15 @@ function renderEntry(entry) {
     // ⚠️★ 这里的 `entry.text` 是**截断预览**（壳只给这么多，见 `EntryView::for_snapshot`）。
     // 展开过的那些改用取回来的全文来画（`openedBodies`），所以**下一次重绘不会把它收回去**。
     // ⚠️ 两处规则要一致（这里与 `toggleEntry`），不一致的表现是「展开之后过一会儿自己收起来」。
-    const open = openedIds.has(entry.id);
-    card.append(h('div', open ? 'txt open' : 'txt', openedBodies.get(entry.id) ?? entry.text));
+    //
+    // ⚠️★ 跑过动作的那条，画的是**动作的结果**（而且那份结果是用全文跑出来的）。
+    const viewed = actionViews.get(entry.id);
+    if (viewed) {
+      card.append(h('div', 'txt actout', viewed.output));
+    } else {
+      const open = openedIds.has(entry.id);
+      card.append(h('div', open ? 'txt open' : 'txt', openedBodies.get(entry.id) ?? entry.text));
+    }
   }
 
   const foot = h('div', 'ft');
@@ -894,14 +911,41 @@ function renderEntry(entry) {
   //（200 张 = 200 次），而算术不碰 DOM。
   // 代价是**偶尔**点开之后看不到变化（那条恰好没被 clamp 住）—— 但按钮会变成「收起」，
   // 所以那是「点了有反应但没必要」，不是「点了没反应」（后者才是这个项目最忌讳的）。
-  if (entry.kind === 'text' && (entry.truncated || entry.textBytes > EXPANDABLE_BYTES)) {
+  //
+  // ⚠️ 跑过动作的那条**不给这个按钮**：那时卡片上画的已经是结果，展开原文只会让人更糊涂
+  //（展开的是「结果」，而这个按钮的文案说的是「展开全文」）。还原之后它自己回来。
+  if (entry.kind === 'text' && !actionViews.has(entry.id)
+      && (entry.truncated || entry.textBytes > EXPANDABLE_BYTES)) {
     const toggle = h('button', 'lnk', expandLabel(entry));
     toggle.addEventListener('click', () => toggleEntry(card, entry, toggle));
     foot.append(h('span', 'spacer'), toggle);
   }
+  const viewed = actionViews.get(entry.id);
+  if (viewed) {
+    // 单独一行，**不再塞一个 `.spacer`** 进脚注：那一行里可能已经有一两个 spacer，
+    // 再加会把本来靠右的图标推到中间（同 `.acts` 用 `margin-left: auto` 的理由）。
+    const bar = h('div', 'actbar');
+    bar.append(h('span', 'tag', viewed.label));
+    const back = h('button', 'lnk', t('还原'));
+    back.addEventListener('click', () => {
+      actionViews.delete(entry.id);
+      repaint();
+    });
+    bar.append(back);
+    card.append(bar);
+  }
   foot.append(entryActions(entry));
   card.append(foot);
   return card;
+}
+
+/** 重画时间线（动作结果变了 / 还原时用）。
+ *
+ * ⚠️ 走 `render(lastState)` 这条**正路**，不就地改 DOM：就地改的那份活不过下一次轮询
+ * （700ms 后整个时间线会被重画），于是「跑出来的结果自己变回原文」。
+ */
+function repaint() {
+  if (lastState) render(lastState);
 }
 
 /* ── 卡片脚那三颗图标（复制 / 分享 / 删除）─────────────────────────────────
@@ -950,11 +994,25 @@ function entryActions(entry) {
     });
   }
 
-  add('📋', t('复制这条'), (button) => {
-    once(button, () => invoke('copy_entry', { id: entry.id })).catch((error) => {
+  const viewed = actionViews.get(entry.id);
+
+  // ⚠️★ 跑过动作时，📋 复制的是**卡片上那份结果**（`copy_to_clipboard` 直接收文本）。
+  // 反过来（还去复制原文）的症状是「屏幕上明明是天梯图/大写的，粘出来是原来的」——
+  // 而复制这条命令在文档里写的就是「复制这一条」，不复制「你看的那一份」是说不通的。
+  add('📋', viewed ? t('复制动作的结果') : t('复制这条'), (button) => {
+    const copy = viewed
+      ? () => invoke('copy_to_clipboard', { text: viewed.output })
+      : () => invoke('copy_entry', { id: entry.id });
+    once(button, copy).catch((error) => {
       showNotice('error', t('复制不了：{error}', { error: errorText(error) }));
     });
   });
+
+  // 动作库：只有文本条目才有（文件条目的正文是一串文件名，跑「转大写」没有意义）。
+  if (entry.kind === 'text') {
+    const actionButton = add('⚡', t('给这条跑个动作'), () => openActionMenu(actionButton, entry));
+    if (viewed) actionButton.classList.add('on');
+  }
 
   add('↗', t('生成分享链接并复制'), (button) => {
     once(button, () => invoke('share_entry', { id: entry.id }))
@@ -983,6 +1041,122 @@ function entryActions(entry) {
   });
 
   return acts;
+}
+
+/* ── 动作库：菜单与执行 ─────────────────────────────────────────────────
+ *
+ * ⚠️★ 「一份实现、两侧共用」在**这一侧**的落点：动作的**实现**在 `actions-pure.js`
+ * （由 `tools/sync-action-catalog.mjs` 从 `web-vue3/src/data/actions/pure.js` 逐字节搬来），
+ * 声明在 `actions-catalog.json`，文案在 `actions-labels.json`。这个文件里**没有任何动作实现**。
+ *
+ * ⚠️★ 加载不了的（要 marked / highlight.js / opencc / pinyin 的那几条）**置灰 + 说明**，
+ * 不隐藏 —— 隐藏会让人以为功能不存在（同 `ActionPicker.vue` 的既有约定）。
+ */
+
+let actionMenu = null;
+
+/** 关掉动作菜单。点了外面、按了 Esc、或选中一条之后都会走这里。 */
+function closeActionMenu() {
+  if (!actionMenu) return;
+  actionMenu.panel.remove();
+  document.removeEventListener('mousedown', actionMenu.onOutside, true);
+  document.removeEventListener('keydown', actionMenu.onKey, true);
+  actionMenu = null;
+}
+
+/** 开动作菜单。
+ *
+ * ⚠️★ 用 `position: fixed` 挂在 `body` 上，坐标由**按钮的矩形**算出来 ——
+ * 不用「卡片里的绝对定位」：卡片住在一个 `overflow: auto` 的滚动容器里，绝对定位的子元素
+ * 会被那个容器裁掉（表现是「菜单下半截看不见，还得先滚一下」）。
+ */
+async function openActionMenu(anchor, entry) {
+  closeActionMenu();
+
+  let library;
+  try {
+    library = await window.ActionLibrary.ensure();
+  } catch (error) {
+    // ⚠️ 加载失败要**说出来**：一声不响的按钮＝用户以为这个功能不存在。
+    showNotice('error', t('动作库没加载起来：{error}', { error: errorText(error) }));
+    return;
+  }
+
+  const panel = h('div', 'actmenu');
+  const header = h('div', 'actmenu-hd');
+  header.append(h('span', null, t('动作')));
+  const close = h('button', 'lnk', '×');
+  close.addEventListener('click', closeActionMenu);
+  header.append(close);
+  panel.append(header);
+
+  const body = h('div', 'actmenu-bd');
+  for (const group of library.groups) {
+    const items = library.actions.filter((one) => one.group === group.key && one.direction === 'view');
+    if (!items.length) continue;
+    body.append(h('div', 'actgroup', window.ActionLibrary.label(library, group.labelKey)));
+    const grid = h('div', 'actgrid');
+    for (const one of items) {
+      const available = window.ActionLibrary.availability(one);
+      const button = h('button', 'act', window.ActionLibrary.label(library, one.nameKey));
+      if (!available.ok) {
+        button.disabled = true;
+        // ⚠️ 这里给的是**原因键**，不是那句中文本身 —— 让它在两种语种下都成立。
+        button.title = t(available.reasonKey);
+      }
+      button.addEventListener('click', () => {
+        closeActionMenu();
+        runAction(entry, one, library);
+      });
+      grid.append(button);
+    }
+    body.append(grid);
+  }
+  panel.append(body);
+
+  document.body.append(panel);
+  // 贴按钮的下沿；超出窗口就往回收（窄窗口下菜单比窗口高，靠 `max-height` + 滚动兜住）。
+  const box = anchor.getBoundingClientRect();
+  const top = Math.min(box.bottom + 6, Math.max(8, window.innerHeight - panel.offsetHeight - 8));
+  const left = Math.min(box.left, Math.max(8, window.innerWidth - panel.offsetWidth - 8));
+  panel.style.top = `${Math.max(8, top)}px`;
+  panel.style.left = `${Math.max(8, left)}px`;
+
+  const onOutside = (event) => {
+    if (!panel.contains(event.target)) closeActionMenu();
+  };
+  const onKey = (event) => {
+    if (event.key === 'Escape') closeActionMenu();
+  };
+  document.addEventListener('mousedown', onOutside, true);
+  document.addEventListener('keydown', onKey, true);
+  actionMenu = { panel, onOutside, onKey };
+}
+
+/** 跑一条动作：取**全文** → 用那一份跑 → 把结果挂到卡片上。
+ *
+ * ⚠️★ 必须取全文：列表里的 `entry.text` 是**截断预览**，拿它跑出来的结果与用户看到的那条
+ * 对不上 —— 而且这件事**不报错**（同「复制」和「分享」两条命令的坑）。
+ */
+async function runAction(entry, action, library) {
+  try {
+    const text = await invoke('entry_text', { id: entry.id });
+    const output = String(await window.ActionLibrary.run(action, text));
+    if (!output) {
+      // 空结果不是错误（`formatJson` 这类动作对「本来就是那样」的内容就返回空串）——
+      // 但也不能什么都不说：点了没反应是这个项目最忌讳的。
+      showNotice('warn', t('这个动作跑出来是空的 —— 这条本来就是这个样子。'));
+      return;
+    }
+    actionViews.set(entry.id, {
+      actionId: action.id,
+      label: window.ActionLibrary.label(library, action.nameKey),
+      output,
+    });
+    repaint();
+  } catch (error) {
+    showNotice('error', t('这个动作没跑成：{error}', { error: errorText(error) }));
+  }
 }
 
 /** 「展开」那颗按钮上的字（⚠️ 两处渲染点都要用它，别各写一份）。 */

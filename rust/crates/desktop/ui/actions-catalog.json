@@ -1,0 +1,505 @@
+{
+  "_comment": [
+    "动作目录 —— **唯一的声明**。两份渲染器（内嵌网页版 / 桌面手写界面）都读它。",
+    "",
+    "⚠️ 这里只放**数据**：每条动作的 match 与 run 写的是**实现的名字**，不是函数体。",
+    "实现住在同目录的 pure.js（零 import，两侧共用）与 impl.js（只有网页版能跑）。",
+    "这么分的理由：JSON 装不下函数；而「名字 + 查表」既能让别的语言读，也不会出现第二份定义。",
+    "",
+    "⚠️ 加一条动作 = 往 actions 里加一条 + 在 pure.js 里加实现。漏了实现：",
+    "   · 网页版会在装载时**当场报错**（registry 查不到就 throw）；",
+    "   · 桌面侧**置灰并说明原因**（见 ui/app.js 的 availability）。",
+    "",
+    "⚠️ 顺序就是面板里的顺序，别随手排序。"
+  ],
+  "groups": [
+    {
+      "key": "format",
+      "labelKey": "actionGroupFormat"
+    },
+    {
+      "key": "encode",
+      "labelKey": "actionGroupEncode"
+    },
+    {
+      "key": "text",
+      "labelKey": "actionGroupText"
+    },
+    {
+      "key": "zh",
+      "labelKey": "actionGroupZh"
+    },
+    {
+      "key": "inspect",
+      "labelKey": "actionGroupInspect"
+    },
+    {
+      "key": "date",
+      "labelKey": "actionGroupDate"
+    },
+    {
+      "key": "generate",
+      "labelKey": "actionGroupGenerate"
+    }
+  ],
+  "actions": [
+    {
+      "id": "format.markdown",
+      "group": "format",
+      "nameKey": "actionMarkdown",
+      "icon": "mdi-language-markdown",
+      "direction": "view",
+      "render": "html",
+      "match": "matchMarkdown",
+      "run": "runMarkdown"
+    },
+    {
+      "id": "format.code",
+      "group": "format",
+      "nameKey": "actionCode",
+      "icon": "mdi-code-braces",
+      "direction": "view",
+      "render": "html",
+      "match": "looksLikeCode",
+      "run": "runCode"
+    },
+    {
+      "id": "format.json.pretty",
+      "group": "format",
+      "nameKey": "actionJsonPretty",
+      "icon": "mdi-format-indent-increase",
+      "direction": "view",
+      "fenceLanguage": "json",
+      "match": "isJsonLike",
+      "run": "runJsonPretty"
+    },
+    {
+      "id": "format.json.min",
+      "group": "format",
+      "nameKey": "actionJsonMin",
+      "icon": "mdi-format-indent-decrease",
+      "direction": "view",
+      "fenceLanguage": "json",
+      "match": "isJsonLike",
+      "run": "runJsonMin"
+    },
+    {
+      "id": "encode.base64",
+      "group": "encode",
+      "nameKey": "actionBase64Encode",
+      "icon": "mdi-lock-outline",
+      "direction": "view",
+      "run": "utf8ToBase64"
+    },
+    {
+      "id": "encode.base64.decode",
+      "group": "encode",
+      "nameKey": "actionBase64Decode",
+      "icon": "mdi-lock-open-outline",
+      "direction": "view",
+      "match": "isBase64Like",
+      "run": "base64ToUtf8"
+    },
+    {
+      "id": "encode.url",
+      "group": "encode",
+      "nameKey": "actionUrlEncode",
+      "icon": "mdi-link-variant",
+      "direction": "view",
+      "run": "runUrl"
+    },
+    {
+      "id": "encode.url.decode",
+      "group": "encode",
+      "nameKey": "actionUrlDecode",
+      "icon": "mdi-link-variant-off",
+      "direction": "view",
+      "match": "isUrlEncodedLike",
+      "run": "runUrlDecode"
+    },
+    {
+      "id": "encode.html",
+      "group": "encode",
+      "nameKey": "actionHtmlEncode",
+      "icon": "mdi-code-tags",
+      "direction": "view",
+      "run": "encodeHtmlEntities"
+    },
+    {
+      "id": "encode.html.decode",
+      "group": "encode",
+      "nameKey": "actionHtmlDecode",
+      "icon": "mdi-code-tags-check",
+      "direction": "view",
+      "match": "isHtmlEntityLike",
+      "run": "decodeHtmlEntities"
+    },
+    {
+      "id": "encode.unicode",
+      "group": "encode",
+      "nameKey": "actionUnicodeEncode",
+      "icon": "mdi-format-letter-case",
+      "direction": "view",
+      "run": "toUnicodeEscapes"
+    },
+    {
+      "id": "encode.unicode.decode",
+      "group": "encode",
+      "nameKey": "actionUnicodeDecode",
+      "icon": "mdi-format-letter-case-lower",
+      "direction": "view",
+      "match": "isUnicodeEscapedLike",
+      "run": "fromUnicodeEscapes"
+    },
+    {
+      "id": "encode.hex",
+      "group": "encode",
+      "nameKey": "actionHexEncode",
+      "icon": "mdi-numeric",
+      "direction": "view",
+      "run": "utf8ToHex"
+    },
+    {
+      "id": "encode.hex.decode",
+      "group": "encode",
+      "nameKey": "actionHexDecode",
+      "icon": "mdi-numeric-off",
+      "direction": "view",
+      "match": "matchHexDecode",
+      "run": "hexToUtf8"
+    },
+    {
+      "id": "text.upper",
+      "group": "text",
+      "nameKey": "actionUpperCase",
+      "icon": "mdi-format-letter-case-upper",
+      "direction": "view",
+      "run": "runUpper"
+    },
+    {
+      "id": "text.lower",
+      "group": "text",
+      "nameKey": "actionLowerCase",
+      "icon": "mdi-format-letter-case-lower",
+      "direction": "view",
+      "run": "runLower"
+    },
+    {
+      "id": "text.replace",
+      "group": "text",
+      "nameKey": "actionReplace",
+      "icon": "mdi-find-replace",
+      "direction": "view",
+      "params": [
+        {
+          "key": "mode",
+          "labelKey": "actionReplaceMode",
+          "type": "select",
+          "options": [
+            {
+              "value": "text",
+              "labelKey": "actionReplaceModeText"
+            },
+            {
+              "value": "digits",
+              "labelKey": "actionReplaceModeDigits"
+            },
+            {
+              "value": "latin",
+              "labelKey": "actionReplaceModeLatin"
+            },
+            {
+              "value": "spaces",
+              "labelKey": "actionReplaceModeSpaces"
+            },
+            {
+              "value": "email",
+              "labelKey": "actionReplaceModeEmail"
+            },
+            {
+              "value": "url",
+              "labelKey": "actionReplaceModeUrl"
+            },
+            {
+              "value": "phone",
+              "labelKey": "actionReplaceModePhone"
+            },
+            {
+              "value": "ip",
+              "labelKey": "actionReplaceModeIp"
+            }
+          ]
+        },
+        {
+          "key": "find",
+          "labelKey": "actionReplaceFind",
+          "visibleWhen": {
+            "key": "mode",
+            "equals": "text"
+          }
+        },
+        {
+          "key": "with",
+          "labelKey": "actionReplaceWith"
+        }
+      ],
+      "match": "matchReplace",
+      "run": "runReplace"
+    },
+    {
+      "id": "text.dedupe",
+      "group": "text",
+      "nameKey": "actionDedupeLines",
+      "icon": "mdi-filter-remove-outline",
+      "direction": "view",
+      "match": "hasMultipleLines",
+      "run": "dedupeLines"
+    },
+    {
+      "id": "text.sort",
+      "group": "text",
+      "nameKey": "actionSortLines",
+      "icon": "mdi-sort-alphabetical-ascending",
+      "direction": "view",
+      "match": "hasMultipleLines",
+      "run": "sortLines"
+    },
+    {
+      "id": "text.dropBlank",
+      "group": "text",
+      "nameKey": "actionDropBlankLines",
+      "icon": "mdi-format-line-spacing",
+      "direction": "view",
+      "match": "hasMultipleLines",
+      "run": "dropBlankLines"
+    },
+    {
+      "id": "text.trimLines",
+      "group": "text",
+      "nameKey": "actionTrimLines",
+      "icon": "mdi-format-horizontal-align-left",
+      "direction": "view",
+      "match": "hasMultipleLines",
+      "run": "trimEachLine"
+    },
+    {
+      "id": "text.reverse",
+      "group": "text",
+      "nameKey": "actionReverse",
+      "icon": "mdi-swap-horizontal",
+      "direction": "view",
+      "match": "matchReverse",
+      "run": "reverseText"
+    },
+    {
+      "id": "text.extractUrl",
+      "group": "text",
+      "nameKey": "actionExtractUrl",
+      "icon": "mdi-link",
+      "direction": "view",
+      "match": "matchExtractUrl",
+      "run": "extractUrls"
+    },
+    {
+      "id": "text.extractEmail",
+      "group": "text",
+      "nameKey": "actionExtractEmail",
+      "icon": "mdi-email-outline",
+      "direction": "view",
+      "match": "matchExtractEmail",
+      "run": "extractEmails"
+    },
+    {
+      "id": "text.extractPhone",
+      "group": "text",
+      "nameKey": "actionExtractPhone",
+      "icon": "mdi-cellphone",
+      "direction": "view",
+      "match": "matchExtractPhone",
+      "run": "extractPhones"
+    },
+    {
+      "id": "text.extractIp",
+      "group": "text",
+      "nameKey": "actionExtractIp",
+      "icon": "mdi-ip-network-outline",
+      "direction": "view",
+      "match": "matchExtractIp",
+      "run": "extractIps"
+    },
+    {
+      "id": "text.extractNumber",
+      "group": "text",
+      "nameKey": "actionExtractNumber",
+      "icon": "mdi-numeric",
+      "direction": "view",
+      "match": "matchExtractNumber",
+      "run": "extractNumbers"
+    },
+    {
+      "id": "zh.fullwidth",
+      "group": "zh",
+      "nameKey": "actionFullWidth",
+      "icon": "mdi-format-vertical-align-center",
+      "direction": "view",
+      "match": "matchFullwidth",
+      "run": "toFullWidth"
+    },
+    {
+      "id": "zh.halfwidth",
+      "group": "zh",
+      "nameKey": "actionHalfWidth",
+      "icon": "mdi-format-horizontal-align-center",
+      "direction": "view",
+      "match": "matchHalfwidth",
+      "run": "toHalfWidth"
+    },
+    {
+      "id": "zh.punctuation",
+      "group": "zh",
+      "nameKey": "actionCnPunctuation",
+      "icon": "mdi-comma",
+      "direction": "view",
+      "match": "matchPunctuation",
+      "run": "cnPunctuationToEn"
+    },
+    {
+      "id": "zh.number",
+      "group": "zh",
+      "nameKey": "actionNumberToChinese",
+      "icon": "mdi-numeric-1-box-outline",
+      "direction": "view",
+      "match": "matchNumber",
+      "run": "numberToChinese"
+    },
+    {
+      "id": "zh.pinyin",
+      "group": "zh",
+      "nameKey": "actionPinyin",
+      "icon": "mdi-ideogram-cjk",
+      "direction": "view",
+      "match": "matchPinyin",
+      "run": "runPinyin"
+    },
+    {
+      "id": "zh.pinyin.table",
+      "group": "zh",
+      "nameKey": "actionPinyinTable",
+      "icon": "mdi-table",
+      "direction": "view",
+      "match": "matchPinyinTable",
+      "run": "runPinyinTable"
+    },
+    {
+      "id": "zh.pinyin.word",
+      "group": "zh",
+      "nameKey": "actionPinyinWord",
+      "icon": "mdi-format-letter-matches",
+      "direction": "view",
+      "match": "matchPinyinWord",
+      "run": "runPinyinWord"
+    },
+    {
+      "id": "zh.simplified",
+      "group": "zh",
+      "nameKey": "actionToSimplified",
+      "icon": "mdi-swap-horizontal-bold",
+      "direction": "view",
+      "match": "matchSimplified",
+      "run": "runSimplified"
+    },
+    {
+      "id": "zh.traditional",
+      "group": "zh",
+      "nameKey": "actionToTraditional",
+      "icon": "mdi-swap-horizontal",
+      "direction": "view",
+      "match": "matchTraditional",
+      "run": "runTraditional"
+    },
+    {
+      "id": "inspect.stats",
+      "group": "inspect",
+      "nameKey": "actionTextStats",
+      "icon": "mdi-counter",
+      "direction": "view",
+      "run": "textStats"
+    },
+    {
+      "id": "inspect.detect",
+      "group": "inspect",
+      "nameKey": "actionDetectFormat",
+      "icon": "mdi-magnify-scan",
+      "direction": "view",
+      "run": "detectFormat"
+    },
+    {
+      "id": "inspect.timestamp",
+      "group": "inspect",
+      "nameKey": "actionTimestampToDate",
+      "icon": "mdi-clock-check-outline",
+      "direction": "view",
+      "match": "matchTimestamp",
+      "run": "timestampToDate"
+    },
+    {
+      "id": "inspect.dateToTimestamp",
+      "group": "inspect",
+      "nameKey": "actionDateToTimestamp",
+      "icon": "mdi-clock-plus-outline",
+      "direction": "view",
+      "match": "matchDateToTimestamp",
+      "run": "dateToTimestamp"
+    },
+    {
+      "id": "inspect.sha256",
+      "group": "inspect",
+      "nameKey": "actionSha256",
+      "icon": "mdi-fingerprint",
+      "direction": "view",
+      "run": "sha256"
+    },
+    {
+      "id": "date.add",
+      "group": "date",
+      "nameKey": "actionDateAdd",
+      "icon": "mdi-calendar-plus",
+      "direction": "view",
+      "match": "looksLikeDateAdd",
+      "run": "dateAdd"
+    },
+    {
+      "id": "date.diff",
+      "group": "date",
+      "nameKey": "actionDateDiff",
+      "icon": "mdi-calendar-range",
+      "direction": "view",
+      "match": "looksLikeDateDiff",
+      "run": "dateDiff"
+    },
+    {
+      "id": "generate.time",
+      "group": "generate",
+      "nameKey": "actionInsertTime",
+      "icon": "mdi-clock-outline",
+      "direction": "insert",
+      "run": "runTime"
+    },
+    {
+      "id": "generate.datetime",
+      "group": "generate",
+      "nameKey": "actionInsertDateTime",
+      "icon": "mdi-calendar-clock",
+      "direction": "insert",
+      "run": "runDatetime"
+    },
+    {
+      "id": "generate.uuid",
+      "group": "generate",
+      "nameKey": "actionInsertUuid",
+      "icon": "mdi-identifier",
+      "direction": "insert",
+      "run": "runUuid"
+    }
+  ]
+}
