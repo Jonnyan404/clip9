@@ -7,7 +7,8 @@
 //
 // ⚠️★ 为什么需要它：这条缝的**两侧都没有测试运行器** ——
 //   · `web-vue3` 是手写前端，没有 runner（见项目笔记）；
-//   · `android/` 那半边连编译器都没在本机跑过（见 `android/README.md` §三）。
+//   · `android/` 那半边**没有测试运行器**：Kotlin 只在 CI 里编过，
+//     「跑起来对不对」要真机才算数（见 `android/DEVELOPING.md` §三）。
 // 而它们之间的连接是**按字面量**做的：Kotlin 把 `window.clip9Share.sendText(...)` 当字符串
 // 注入 WebView，SPA 回的是 reason **键**。对不上的症状是**什么都没发生**
 // （`undefined is not a function` 会被 WebView 吞掉，reason 键对不上就只显示一句兜底话）。

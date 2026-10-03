@@ -13,7 +13,7 @@ name: OpenWrt Packages
 # 下面那条 `if: github.event_name == 'workflow_dispatch'` 不是装饰 —— 被 release.yml
 # 调用时 `inputs.tag` 同样是填了的，少了这个条件两个 job 会同时往同一个 Release 传资产。
 #
-# 产物名（`release.yml` 的 `assets` job 会逐条核这几个名字；`openwrt/README.md` §1 也有）：
+# 产物名（`release.yml` 的 `assets` job 会逐条核这几个名字；`openwrt/README.md` 第一节也有）：
 # ⚠️★ `v<版本>` **紧跟在 `clip9-<东西>` 之后** —— 全仓库一条规则（见 `release.yml` 的文件头）。
 #   clip9-openwrt-v<版本>-<架构>.ipk               7 个架构
 #   clip9-openwrt-apk-v<版本>-<设备架构>.apk        8 个设备架构
@@ -30,7 +30,8 @@ name: OpenWrt Packages
 #     ② ipk 的 `Architecture` 字段 = **设备**的架构名（`opkg print-architecture`）
 #     ③ apk 的 `arch` 字段 = **设备**的架构名（`cat /etc/apk/arch`），带 `_neon` / `_cortex-a53` 后缀
 #   ② ③ 只有 `x86_64` 与 `arm_cortex-a15_neon-vfpv4` 恰好与 ① 同名。理由与后果在
-#   `openwrt/README.md` §2 —— 猜错的后果**不是报错**，是装到一个架构不对的设备上。
+#   `openwrt/README.md` 第二节（「`<架构>` 填什么」）与 `openwrt/DEVELOPING.md` §2 ——
+#   猜错的后果**不是报错**，是装到一个架构不对的设备上。
 #
 # ⚠️★ **别给 `openwrt/luci-app-clip9/` 下任何文件加执行位**：`root/etc/uci-defaults/luci-clip9`
 # 在包里**必须是 644**（OpenWrt 官方文档的原话是 "Scripts should not be executable"，

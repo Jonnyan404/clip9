@@ -2,7 +2,7 @@
 //
 // ⚠️★ 这个工程**不参与** `rust/` 的 cargo 构建，两边的产物通过
 // `tools/sync-android-jni-libs.mjs` 接起来（把 `rust/target/<target>/release/libclip9_android.so`
-// 搬进 `app/src/main/jniLibs/<abi>/`）。见 `android/README.md`。
+// 搬进 `app/src/main/jniLibs/<abi>/`）。见 `android/DEVELOPING.md`。
 
 pluginManagement {
     repositories {

@@ -4,7 +4,7 @@
 // 逐字写死了 `Java_com_clip9_app_ServerBridge_native*`。
 // 改包名 = 改 `System.loadLibrary` + 改 `ServerBridge.kt` 的包 + **改 Rust 那边的符号名**
 // （以及本文件、`AndroidManifest.xml`、`proguard-rules.pro`），漏一处的症状是
-// `UnsatisfiedLinkError` —— 而它**不会告诉你**是哪一处不对。见 `android/README.md`。
+// `UnsatisfiedLinkError` —— 而它**不会告诉你**是哪一处不对。见 `android/DEVELOPING.md`。
 
 plugins {
     id("com.android.application")

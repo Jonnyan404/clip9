@@ -51,7 +51,7 @@
   ```
 
 #### 2. 自定义配置（可选）
-如需修改默认密码或限制，部署前编辑 [cloudflare/workers/wrangler.toml.template](cloudflare/workers/wrangler.toml.template)。
+如需修改默认密码或限制，部署前编辑 [cloudflare/workers/wrangler.toml.template](workers/wrangler.toml.template)。
 
 #### 3. 执行部署
 ```bash
@@ -104,7 +104,7 @@ ROOM_AUTH_JSON = "{\"finance\":{\"password\":\"finance-pass\",\"fileExpire\":0},
 
 ## 🗄️ 数据库迁移与运维
 
-- 数据库表结构位于 [cloudflare/d1/schema.sql](cloudflare/d1/schema.sql)。
+- 数据库表结构位于 [cloudflare/d1/schema.sql](d1/schema.sql)。
 - 部署脚本/CI 会自动执行远程迁移。如需单独手动执行迁移：
   ```bash
   cd cloudflare/workers
@@ -118,7 +118,7 @@ ROOM_AUTH_JSON = "{\"finance\":{\"password\":\"finance-pass\",\"fileExpire\":0},
 | 问题现象 | 排查与解决办法 |
 | :--- | :--- |
 | **部署提示 `wrangler whoami` 未登录** | 本地运行 `wrangler login`；CI 部署请检查 `CF_API_TOKEN` 和 `CF_ACCOUNT_ID` 是否正确填写。 |
-| **修改了 `wrangler.toml` 后自动丢失** | `wrangler.toml` 是由脚本自动生成的临时文件。请修改模板文件 [wrangler.toml.template](cloudflare/workers/wrangler.toml.template)。 |
+| **修改了 `wrangler.toml` 后自动丢失** | `wrangler.toml` 是由脚本自动生成的临时文件。请修改模板文件 [wrangler.toml.template](workers/wrangler.toml.template)。 |
 | **每次部署都把 `*.workers.dev` 域名重新打开** | 那个开关的主人是你**在控制台的位置**（Worker → Settings → Domains & Routes），但 `wrangler` **没有**「别管这个键」这一说：配置里不写 = 用**默认值 `true`**，于是每次部署都会照配置重设一遍。→ 部署流程已改成**部署前读一次当前状态、照原样写回**（[sync-workers-dev.mjs](sync-workers-dev.mjs)）：之后你关它就一直是关的，**部署不再对这个键表态**；首次部署（那时还没有这个 Worker）仍然是开的，否则新部署拿不到任何地址。⚠️ 本地 `deploy.sh` 那条路要设了 `CLOUDFLARE_API_TOKEN` 才会这么做，否则以模板里 `workers_dev = …` 那一行为准。 |
 | **页面打开正常，但发消息或上传报错** | 1. 检查 D1 schema 是否已执行迁移；<br>2. 检查 `ROOM_AUTH_JSON` 是否为合法 JSON（避免多余反斜杠或格式错误）；<br>3. 检查 Cloudflare 控制台 Worker 是否成功绑定 D1(`DB`)、R2(`R2_BUCKET`)、Durable Object(`WEBSOCKET_ROOM`)。 |
 | **macOS 提示本地 workerd 无法运行** | macOS 13.5 以下系统 workerd 无法本地运行，可直接运行 `SKIP_LOCAL_D1=1 bash deploy.sh` 跳过本地迁移，不影响远程部署。 |
