@@ -796,6 +796,65 @@ function h(tag, className, text) {
   return node;
 }
 
+/* ── 图标：内联 SVG ────────────────────────────────────────────────────────
+ *
+ * ⚠️★ 卡片脚那一排**不混用 emoji 与文字符号**（2026-10-03 Jonny：「统一…图标样式，
+ * 现在的不好看」）。原来那一排是 `📋`（彩色 emoji）、`⚡`（彩色 emoji）、`↗`（**文字**箭头）、
+ * `🗑`（彩色 emoji）—— 四颗三种来源：
+ *   · emoji 的字面是**系统彩色字形**，粗细/基线/留白由字体决定，**不跟主题走**
+ *     （深色主题下依然是一片饱和色块，而那排本该是弱化的次要操作）；
+ *   · `↗` 是一个**文本字符**，字重与 emoji 完全不同，混在一起像「凑出来的」。
+ * ⇒ 一套同一 `viewBox`(24)、同一线宽(2)、`stroke="currentColor"` 的图标：
+ *   颜色自动跟着 `.lnk.ico` 的 `color` 走（悬停/置灰/选中都不用再写死颜色）。
+ *
+ * ⚠️ 别退回 emoji：要加图标就在这里加一条 path，**不要**在调用点直接写一个 emoji ——
+ * 那一处立刻就会再次和别的图标不一致，而且没有任何判据看得见。
+ * ⚠️ 这里的形状取自 Feather 那一套（MIT），只抄了 path 数据。 */
+const ICON_PATHS = {
+  // 复制：两张叠在一起的纸
+  copy: '<rect x="9" y="9" width="13" height="13" rx="2" ry="2"/>'
+    + '<path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>',
+  // 动作库：闪电
+  bolt: '<polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/>',
+  // 分享：一个向上的箭头从盒子里出去
+  share: '<path d="M4 12v8a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-8"/>'
+    + '<polyline points="16 6 12 2 8 6"/><line x1="12" y1="2" x2="12" y2="15"/>',
+  // 删除：垃圾桶
+  trash: '<polyline points="3 6 5 6 21 6"/>'
+    + '<path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/>'
+    + '<path d="M10 11v6M14 11v6"/>'
+    + '<path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/>',
+};
+
+const SVG_NS = 'http://www.w3.org/2000/svg';
+
+/** 造一颗图标。⚠️ 认不出的名字**当场抛**（画一个空白按钮＝用户以为那个功能没了）。
+ *
+ * ⚠️ 抛出来那句是**英文**：它是**给自己人看的**（调用点写错了名字），不是给用户的文案 ——
+ * 而判据 15 要求 `app.js` 里的中文一律走 `t(…)`（同一个理由下 `'no tauri bridge'` 也是英文）。
+ */
+function icon(name) {
+  const paths = ICON_PATHS[name];
+  if (!paths) throw new Error(`unknown icon: ${name}`);
+  const svg = document.createElementNS(SVG_NS, 'svg');
+  svg.setAttribute('viewBox', '0 0 24 24');
+  svg.setAttribute('fill', 'none');
+  svg.setAttribute('stroke', 'currentColor');
+  svg.setAttribute('stroke-width', '2');
+  svg.setAttribute('stroke-linecap', 'round');
+  svg.setAttribute('stroke-linejoin', 'round');
+  // ⚠️ 图标是**装饰**：按钮自己已经有 `title` / `aria-label`（读屏读那个），
+  // 这里再让读屏念一遍「图形」只是噪音。
+  svg.setAttribute('aria-hidden', 'true');
+  svg.setAttribute('focusable', 'false');
+  const parsed = new DOMParser().parseFromString(
+    `<svg xmlns="${SVG_NS}">${paths}</svg>`, 'image/svg+xml');
+  for (const child of [...parsed.documentElement.childNodes]) {
+    svg.append(document.importNode(child, true));
+  }
+  return svg;
+}
+
 /** Unix 秒 → 本机时间。
  *
  * ⚠️ 服务端给的是**秒**（不是毫秒）—— 忘了乘 1000 会显示成 1970 年。
@@ -968,9 +1027,14 @@ function repaint() {
 function entryActions(entry) {
   const acts = h('div', 'acts');
 
-  /** 加一颗。⚠️ `stopPropagation`：这一下不能冒泡到条目/房间那层的点击处理上。 */
-  function add(glyph, label, run) {
-    const button = h('button', 'lnk ico', glyph);
+  /** 加一颗。⚠️ `stopPropagation`：这一下不能冒泡到条目/房间那层的点击处理上。
+   *
+   * ⚠️ `name` 是 `ICON_PATHS` 里的名字（**不是**一个字形字符串）：那一排必须同源同规格，
+   * 颜色交给 CSS（`.lnk.ico` 的 `color`），所以这里不设任何颜色/字号。
+   */
+  function add(name, label, run) {
+    const button = h('button', 'lnk ico');
+    button.append(icon(name));
     button.title = label;
     button.setAttribute('aria-label', label);
     button.addEventListener('click', (event) => {
@@ -999,7 +1063,7 @@ function entryActions(entry) {
   // ⚠️★ 跑过动作时，📋 复制的是**卡片上那份结果**（`copy_to_clipboard` 直接收文本）。
   // 反过来（还去复制原文）的症状是「屏幕上明明是天梯图/大写的，粘出来是原来的」——
   // 而复制这条命令在文档里写的就是「复制这一条」，不复制「你看的那一份」是说不通的。
-  add('📋', viewed ? t('复制动作的结果') : t('复制这条'), (button) => {
+  add('copy', viewed ? t('复制动作的结果') : t('复制这条'), (button) => {
     const copy = viewed
       ? () => invoke('copy_to_clipboard', { text: viewed.output })
       : () => invoke('copy_entry', { id: entry.id });
@@ -1010,11 +1074,11 @@ function entryActions(entry) {
 
   // 动作库：只有文本条目才有（文件条目的正文是一串文件名，跑「转大写」没有意义）。
   if (entry.kind === 'text') {
-    const actionButton = add('⚡', t('给这条跑个动作'), () => openActionMenu(actionButton, entry));
+    const actionButton = add('bolt', t('给这条跑个动作'), () => openActionMenu(actionButton, entry));
     if (viewed) actionButton.classList.add('on');
   }
 
-  add('↗', t('生成分享链接并复制'), (button) => {
+  add('share', t('生成分享链接并复制'), (button) => {
     once(button, () => invoke('share_entry', { id: entry.id }))
       .then(() => {
         // ⚠️★ 说清两件事：链接**已经复制**了，以及**没设密码**意味着什么 ——
@@ -1027,7 +1091,7 @@ function entryActions(entry) {
       });
   });
 
-  add('🗑', t('删除这条'), (button) => {
+  add('trash', t('删除这条'), (button) => {
     once(button, () => invoke('delete_entry', { id: entry.id }))
       .then(() => {
         showNotice('ok', t('已从房间里删掉。'));

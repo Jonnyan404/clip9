@@ -323,18 +323,28 @@
        `title` 上写着为什么（「这条要网页视图才能跑」）。 */
     .actmenu .act:disabled { opacity: .5; cursor: default; }
 
-    /* 卡片脚那三颗图标（复制 / 分享 / 删除，见 `app.js` 的 `entryActions`）。
+    /* 卡片脚那一排图标（复制 / 动作 / 分享 / 删除，见 `app.js` 的 `entryActions` + `icon`）。
        ⚠️★ 用 `margin-left: auto`，**不是**再加一个 `.spacer`：这一行里 `.spacer`
        可能已经有一两个（标签、展开各占一个），再加一个会把本来靠右的东西推到中间。
-       auto 边距只在它**自己前面**吃剩下的空间，两种情形都落在最右边。 */
+       auto 边距只在它**自己前面**吃剩下的空间，两种情形都落在最右边。
+       ⚠️★ 四颗是**同一套内联 SVG**（同一 viewBox / 同一线宽 / `currentColor`）——
+       不混 emoji：emoji 是系统彩色字形，粗细与留白不受控、也不跟主题走。
+       所以这里只需要给一个**统一的盒子**（同宽同高同圆角）+ 一层 hover 底色。 */
     .card .ft .acts { margin-left: auto; display: flex; align-items: center; gap: 2px; }
 
     .card .ft button.lnk.ico {
-        font-size: 12px; line-height: 1; padding: 2px 4px; border-radius: 4px;
+        display: inline-flex; align-items: center; justify-content: center;
+        width: 22px; height: 20px; padding: 0; border-radius: 5px;
+        color: var(--text-2);
     }
 
-    .card .ft button.lnk.ico:hover { background: var(--sidebar-hover); }
+    .card .ft button.lnk.ico svg { width: 13px; height: 13px; display: block; }
+
+    .card .ft button.lnk.ico:hover { background: var(--sidebar-hover); color: var(--text); }
     .card .ft button.lnk.ico:disabled { opacity: .45; }
+    /* 跑过动作的那颗「动作」按钮：与 `.card .ft button.lnk.on` 同一个意思（那一颗在跑过
+       之后要保持亮着，否则用户看不出「这张卡片现在显示的是动作结果」）。 */
+    .card .ft button.lnk.ico.on { color: var(--accent); background: var(--sidebar-active); }
 
     .thumb {
         width: 132px; height: 84px; border-radius: 6px; margin-bottom: 7px;
