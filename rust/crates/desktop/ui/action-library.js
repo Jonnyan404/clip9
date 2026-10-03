@@ -18,6 +18,8 @@ window.ActionLibrary = (() => {
   const LABELS = './actions-labels.json';
 
   let loading = null;
+  /** 最近一次**成功**加载的结果。⚠️ `run` 要用它（见下面 `translate`），所以必须留一份。 */
+  let loaded = null;
 
   async function load() {
     // ⚠️ `import()` 而不是再抄一份实现 —— 这一句就是「一份实现、两侧共用」的落点。
@@ -43,7 +45,8 @@ window.ActionLibrary = (() => {
       match: spec.match && typeof pure[spec.match] === 'function' ? pure[spec.match] : null,
     }));
 
-    return { groups: catalog.groups || [], actions, labels };
+    loaded = { groups: catalog.groups || [], actions, labels };
+    return loaded;
   }
 
   /** 只加载一次；失败**不缓存**，下一次点还能重试（否则一次网络抖动就永久残废）。 */
@@ -68,6 +71,22 @@ window.ActionLibrary = (() => {
     return synced ?? window.I18N.t(key);
   }
 
+  /** **动作自己**要的那句话（`ctx.t`）。
+   *
+   * ⚠️★ 它**不能**直接用 `window.I18N.t` —— 那本字典里只有界面自己那 300 多句，
+   * 动作的**输出文案**（`inspectChars` / `actionNothingToConvert` …）在 SPA 的 locale 里，
+   * 由同步工具抽进 `actions-labels.json`。用错那一个的后果是「文本统计」显示成
+   * **一串键名**（英文界面下更像英文），而**查不到是不报错的** ——
+   * `t()` 静悄悄回落到键名本身，所以这个 bug 只能靠眼睛看出来。
+   * ⚠️ 参数替换复用 `I18N.fill`（**不在这里再写一份**）：`{count} 条` 这种模板的
+   * 替换规则只有那一处定义。
+   */
+  function translate(key, params) {
+    if (!key) return '';
+    const raw = label(loaded, key);
+    return window.I18N?.fill ? window.I18N.fill(raw, params) : raw;
+  }
+
   /** 这条动作在**这一侧**能不能跑。不能跑时给一个说得清的**原因键**（不是布尔）。 */
   function availability(action) {
     if (!action.run) {
@@ -84,12 +103,12 @@ window.ActionLibrary = (() => {
    * ⚠️ 输入必须是**全文**（调用方去 `entry_text` 取）—— 列表里的 `entry.text` 是截断预览，
    * 拿它跑出来的结果对不上用户看到的那条（与「复制」那条命令同一个坑）。
    *
-   * ⚠️ `ctx.t` 是给**动作自己的输出文案**用的（统计报告那几个，见 `pure.js` 的 `translator`）——
-   * 不传的话那些标签会**原样显示键名**。
+   * ⚠️ `ctx.t` 给的是**上面那个 `translate`**，不是 `window.I18N.t` ——
+   * 理由见它的注释（动作自己的输出文案在同步过来的那一份里）。
    */
   async function run(action, text) {
-    return Promise.resolve(action.run(text, { t: window.I18N.t }));
+    return Promise.resolve(action.run(text, { t: translate }));
   }
 
-  return { ensure, label, availability, run };
+  return { ensure, label, translate, availability, run };
 })();

@@ -941,6 +941,7 @@
     locale,
     setLocale,
     t,
+    fill,
     say,
     html,
     apply,
