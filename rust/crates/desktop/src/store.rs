@@ -1095,6 +1095,29 @@ impl Store {
             .map(|entry| entry.text.clone())
     }
 
+    /// 一条**文件条目**的预览地址（点开预览时用），与 [`Self::entry_text`] 同一套规矩。
+    ///
+    /// ⚠️★ 为什么由壳去查而不是「页面把它自己收到的那个地址递回来」：那份地址是**这个房间
+    /// 自己的服务端**拼出来的（[`EntryView::from_holder`]），让它绕一圈回到 IPC 里，
+    /// 就等于给页面一个「让系统 opener 打开任意地址」的能力（`open_entry_file` 那条命令
+    /// 因此只收 id）。同一个理由在 `open_project_page` 那里已经写过一次。
+    ///
+    /// `None` 的两种含义在这里**不分开**（都没有预览）：这条不是文件，或它没有预览地址
+    ///（没有服务端 / 文件名被清洗成空）。界面那边照「没有预览」画 —— 与 `entry_text`
+    /// 不同，这里**没有**「拿到了但是空的」这种歧义。
+    #[must_use]
+    pub fn entry_preview_url(&self, id: i32) -> Option<String> {
+        let inner = self.lock();
+        inner
+            .rooms
+            .get(inner.selected)?
+            .entries
+            .iter()
+            .find(|entry| entry.id == id)?
+            .preview_url
+            .clone()
+    }
+
     /// 握手里拿到的限额（上行要用）。
     ///
     /// ⚠️ `ServerLimits::default()`（两个 0）= **不知道**，不是「限额是 0」——

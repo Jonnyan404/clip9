@@ -876,6 +876,62 @@ function sizeLabel(bytes) {
 }
 
 const IMAGE_SUFFIX = /\.(png|jpe?g|gif|webp|bmp|heic|svg)$/i;
+// ⚠️ 视频只列**浏览器自己就能放**的那几种（`mkv` / `avi` 里的编码五花八门，
+// 容器后缀认得出来不代表里面的流能播 —— 真放不出来时会走下面那个 `error` 回退）。
+const VIDEO_SUFFIX = /\.(mp4|m4v|mov|webm)$/i;
+
+/** 文件条目那一行（📄 + 名字 + 大小）。⚠️ 预览**加载不出来**时退回的也是它 ——
+ *  两种情形画成同一个样子是对的：对用户来说都是「看不到内容，只知道有这么个文件」。
+ */
+function fileRow(entry) {
+  const row = h('div', 'filerow');
+  row.append(h('div', 'fi', '📄'));
+  const meta = h('div');
+  meta.append(h('div', 'fn', entry.fileName || t('(没有文件名)')));
+  const size = sizeLabel(entry.fileSize);
+  if (size) meta.append(h('div', 'fs', size));
+  row.append(meta);
+  return row;
+}
+
+/** 图片 / 视频的预览。
+ *
+ * ⚠️★ 三件事都是「**不出声的坏**」，所以每一条都得写：
+ *   · 图片不 `loading='lazy'`：一次进来 200 条时浏览器会把**所有**图都拉一遍
+ *     （流量与卡顿都算在用户头上，而他只看得见最下面那几张）；
+ *   · **载入失败不处理**：屏幕上留一个破图图标 —— 用户分不清「这个文件坏了」
+ *     还是「界面画错了」，而这两件事该去的地方完全不同；
+ *   · 视频不写 `preload='metadata'`：要么什么都不拉（点开才拉，第一帧是黑的），
+ *     要么整段都拉（同上面那条流量问题）。
+ * ⚠️ 不自动播放、不静音自动播：这条内容是要**看**的，不该自己动起来、更不该出声。
+ * ⚠️ 点开走壳命令 `open_entry_file`（**只给它条目 id**，地址由壳自己查）。
+ */
+function mediaPreview(entry, url) {
+  const isVideo = VIDEO_SUFFIX.test(entry.fileName || '');
+  const media = isVideo ? h('video', 'preview') : h('img', 'preview');
+  media.title = t('点开用系统默认程序看（原始大小）');
+  if (isVideo) {
+    // ⚠️ `playsinline`：iOS 上不给它就是「一点播放就全屏」，而这里要的是**在卡片里**看。
+    media.controls = true;
+    media.preload = 'metadata';
+    media.playsInline = true;
+  } else {
+    media.loading = 'lazy';
+    media.decoding = 'async';
+    media.alt = entry.fileName || '';
+  }
+  media.addEventListener('error', () => {
+    // ⚠️★ 换成文件行，而不是留一个破图在那儿 —— 见上面那条注释。
+    media.replaceWith(fileRow(entry));
+  });
+  media.addEventListener('click', () => {
+    invoke('open_entry_file', { id: entry.id }).catch((error) => {
+      showNotice('error', t('打不开：{error}', { error: errorText(error) }));
+    });
+  });
+  media.src = url;
+  return media;
+}
 
 /** 一张卡片。 */
 function renderEntry(entry) {
@@ -885,23 +941,15 @@ function renderEntry(entry) {
   card.dataset.id = String(entry.id);
 
   if (entry.kind === 'file') {
-    // ⚠️ 预览只认**壳本地拼出来的**地址，而且只认图片；别的按文件条目显示。
+    // ⚠️ 预览只认**壳拼出来的**地址（`EntryView::from_holder` 用这个房间自己的服务端），
+    // 而且只认图片 / 视频；别的按文件条目显示。
     // 一个非 http 的地址（配置被人手改坏）不许进 `src`。
     const url = entry.previewUrl || '';
-    if (url.startsWith('http') && IMAGE_SUFFIX.test(entry.fileName)) {
-      const img = h('img', 'preview');
-      img.src = url;
-      img.alt = entry.fileName;
-      card.append(img);
+    const name = entry.fileName || '';
+    if (url.startsWith('http') && (IMAGE_SUFFIX.test(name) || VIDEO_SUFFIX.test(name))) {
+      card.append(mediaPreview(entry, url));
     } else {
-      const row = h('div', 'filerow');
-      row.append(h('div', 'fi', '📄'));
-      const meta = h('div');
-      meta.append(h('div', 'fn', entry.fileName || t('(没有文件名)')));
-      const size = sizeLabel(entry.fileSize);
-      if (size) meta.append(h('div', 'fs', size));
-      row.append(meta);
-      card.append(row);
+      card.append(fileRow(entry));
     }
   } else {
     // ⚠️★ 这里的 `entry.text` 是**截断预览**（壳只给这么多，见 `EntryView::for_snapshot`）。

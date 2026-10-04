@@ -896,7 +896,17 @@ body {
 /* 「空列表」占位 —— 稿子里没画空态，但 app 必须有（不能画成一片白） */
 .empty { color: var(--text-2); font-size: 12px; padding: 10px 4px; white-space: pre-wrap; line-height: 1.6; }
 /* 图片条目的预览（稿 1 用 .thumb 画的是占位色块，真实图片得有个尺寸约束） */
-.card img.preview { max-width: 100%; max-height: 220px; border-radius: 6px; display: block; }
+/* 图片 / 视频预览（`ui/app.js` 的 `mediaPreview`）。
+   ⚠️ `object-fit: contain`：**不**拉伸也不裁切 —— 缩略图的比例就是内容的比例，
+   裁掉一角可能正好裁掉要看的那块（截图里的报错行、视频里的人脸）。
+   ⚠️ `cursor: pointer`：点开走壳命令 `open_entry_file`（只递条目 id）。
+   ⚠️ 给一条 `background`：透明 PNG 与「还没拉到的那几帧」在深色下会是一块黑，
+   看着像「卡片画坏了」。 */
+.card img.preview,
+.card video.preview {
+    max-width: 100%; max-height: 220px; border-radius: 6px; display: block;
+    object-fit: contain; cursor: pointer; background: var(--bg);
+}
 /* 方向开关在**设置表格**里也要能画（稿 1 只定义了 .room .dir，表格里不在 .room 下） */
 .dir {
     width: 17px; height: 17px; border-radius: 5px; flex: none;

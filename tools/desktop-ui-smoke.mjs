@@ -1510,8 +1510,36 @@ if (entryViewFiles.length !== 1) {
   const entryFields = structFields(readFileSync(entryViewFiles[0], 'utf8'), 'EntryView');
   /** ⚠️★ 判的是 **`renderEntry` 的函数体**（而且**去掉注释**之后的那一份，见 `stripComments`），
    * 不是全文 grep —— 判据 8 在这上面栽过：注释里写一句 `entry.text` 就能满足全文 grep
-   *（这个文件里**真的有**那样一句注释），而「读法只有一种」（`entry.X`）本来就是想要的。 */
+   *（这个文件里**真的有**那样一句注释），而「读法只有一种」（`entry.X`）本来就是想要的。
+   *
+   * ⚠️★ 但它判的是**整条调用链**，不只是 `renderEntry` 自己那一段：2026-10-04 把
+   * 「文件条目那一行」抽成 `fileRow(entry)` 之后，只判主函数会**假红**（`fileSize`
+   * 明明在用、只是搬进了辅助函数）—— 而假红会把人往「加白名单」或者「把辅助函数摊回去」
+   * 那条错路上推。所以这里把**本文件里定义**、且被这条链调到的函数体一起算进来
+   *（`const` 箭头函数不算：它们在本文件里没有 `function 名(` 那一行 —— 那条形状变了
+   * 这条检查会漏，判据 19 自己的「找不到就报错」那一段会先叫）。 */
   const renderEntryBody = js.match(/function renderEntry\(entry\)\s*\{[\s\S]*?\n\}/);
+  const bodyOf = (name) => js.match(
+    new RegExp(`function ${name}\\s*\\([^)]*\\)\\s*\\{[\\s\\S]*?\\n\\}`)
+  )?.[0] ?? '';
+  const renderChain = (() => {
+    const seen = new Set(['renderEntry']);
+    let body = renderEntryBody?.[0] ?? '';
+    for (let round = 0; round < 8; round += 1) {
+      let grew = false;
+      for (const call of body.matchAll(/\b([A-Za-z_$][\w$]*)\s*\(/g)) {
+        const name = call[1];
+        if (seen.has(name)) continue;
+        const callee = bodyOf(name);
+        if (!callee) continue;          // 不是本文件里的具名函数（`h(` / `t(` 那些）
+        seen.add(name);
+        body += `\n${callee}`;
+        grew = true;
+      }
+      if (!grew) break;
+    }
+    return body;
+  })();
   if (!entryFields || !renderEntryBody) {
     failed = true;
     console.error('✗ 判据 19 找不到要比对的东西 —— 这条自检要跟着代码改：');
@@ -1519,7 +1547,7 @@ if (entryViewFiles.length !== 1) {
     if (!renderEntryBody) console.error('    · `app.js` 里找不到 `function renderEntry(entry)`');
   } else {
     const notRead = entryFields.filter((name) =>
-      !stripComments(renderEntryBody[0]).includes(`entry.${name}`)
+      !stripComments(renderChain).includes(`entry.${name}`)
     );
     if (notRead.length) {
       failed = true;
@@ -2541,6 +2569,96 @@ if (entryViewFiles.length !== 1) {
     console.error('  ⚠️ 症状：按了「还原」，屏幕上换了一段别的内容 —— 不报错，只是找不着。');
   } else {
     console.log('· 判据 32：还原与跑动作都按**条目 id** 过 `holdCardPosition`（重画后重新找卡片）。');
+  }
+}
+
+// ── 判据 33：图片 / 视频预览（理由见下）───────────────────────────────────
+//
+// ⚠️★ 2026-10-04 加。三件事都是「**不出声的坏**」，所以每一条都得钉：
+//   · 图片不懒加载 → 一次进来 200 条时浏览器把**所有**图都拉一遍；
+//   · 载入失败不处理 → 屏幕上留一个破图图标，用户分不清「文件坏了」还是「界面画错了」；
+//   · 视频不给 `preload='metadata'` → 要么什么都不拉（第一帧是黑的），要么整段都拉。
+// ⚠️ 点开必须走**壳那条窄命令**（只递条目 id）—— 让页面自己拿 URL 去开，等于给它
+// 「用系统 opener 打开任意地址」的能力。
+{
+  const problems = [];
+  const bare = stripComments(js);
+  if (!/const VIDEO_SUFFIX = /.test(bare)) {
+    problems.push('没有 `VIDEO_SUFFIX` —— 视频条目还是按「一个文件」画，得点开才看得到');
+  }
+  const media = /function mediaPreview\([\s\S]*?\n\}/.exec(bare)?.[0] ?? '';
+  if (!media) {
+    problems.push('找不到 `mediaPreview` —— 预览那三条规矩没有一处落实');
+  } else {
+    // ⚠️ 同判据 31：字符串字面量的引号被换成了 `\u0000`，所以写成 `\u0000?lazy`。
+    if (!/loading = \u0000?lazy/.test(media)) {
+      problems.push('图片没有 `loading = lazy` —— 一屏 200 条会把所有图都拉一遍（流量算在用户头上）');
+    }
+    if (!/decoding = \u0000?async/.test(media)) {
+      problems.push('图片没有 `decoding = async` —— 解码卡在主线程上（大图那一下会顿）');
+    }
+    if (!/preload = \u0000?metadata/.test(media)) {
+      problems.push('视频没有 `preload = metadata` —— 要么什么都不拉（点开才拉，第一帧是黑的），要么整段都拉');
+    }
+    if (!/controls = true/.test(media)) {
+      problems.push('视频没有 `controls` —— 没法播、也没法暂停');
+    }
+    if (!/replaceWith\(fileRow\(/.test(media)) {
+      problems.push('载入失败没有退回文件行 —— 屏幕上留一个破图图标，'
+        + '用户分不清「这个文件坏了」还是「界面画错了」（而这两件事该去的地方完全不同）');
+    }
+    if (!/open_entry_file/.test(media)) {
+      problems.push('点开预览没有走壳命令 —— 要么点了没反应，要么页面自己去取（第二份上行）');
+    }
+  }
+  if (!/\.card video\.preview/.test(styleText)) {
+    problems.push('`index.html` 里没有 `.card video.preview` 那条规则 —— 视频会按原始尺寸把卡片撑破');
+  } else if (!/object-fit:\s*contain/.test(styleText)) {
+    problems.push('预览没有 `object-fit: contain` —— 缩略图会被拉伸或裁掉一角');
+  }
+  const read1 = (name) => {
+    try {
+      return scanRust(readFileSync(join(dirname(rustPath), name), 'utf8')).blanked;
+    } catch {
+      return null;
+    }
+  };
+  const commandsSrc = read1('commands.rs');
+  const mainSrc = read1('main.rs');
+  const storeSrc = read1('store.rs');
+  if (!commandsSrc || !mainSrc || !storeSrc) {
+    problems.push('读不到 `commands.rs` / `main.rs` / `store.rs` —— 判据要跟着仓库结构改');
+  } else {
+    const cmd = /pub fn open_entry_file\([\s\S]*?\n\}/.exec(commandsSrc)?.[0] ?? '';
+    if (!cmd) {
+      problems.push('`commands.rs` 里没有 `open_entry_file` —— 点预览没有命令可调');
+    } else {
+      if (/\burl: String\b/.test(cmd)) {
+        problems.push('`open_entry_file` 从页面收 URL 了 —— 那就给了页面「让系统 opener'
+          + ' 打开任意地址」的能力（见 `open_project_page` 那条注释）');
+      }
+      if (!/openable_url/.test(cmd)) {
+        problems.push('`open_entry_file` 没有过 `openable_url` —— 那是交给系统 opener 之前的最后一道闸');
+      }
+      if (!/entry_preview_url/.test(cmd)) {
+        problems.push('`open_entry_file` 没有从壳自己那份列表里查地址 —— 页面递什么就开什么');
+      }
+    }
+    if (!/pub fn entry_preview_url\(/.test(storeSrc)) {
+      problems.push('`store.rs` 里没有 `entry_preview_url` —— 壳查不到这一条的地址（点了没反应）');
+    }
+    if (!/commands::open_entry_file\b/.test(mainSrc)) {
+      problems.push('`main.rs` 的 `generate_handler!` 里没有 `commands::open_entry_file`'
+        + ' —— 点了没反应，而且连报错都没有');
+    }
+  }
+
+  if (problems.length) {
+    failed = true;
+    console.error(`✗ 判据 33：图片 / 视频预览那几条规矩没落实（${problems.length} 处）：`);
+    for (const one of problems) console.error(`    · ${one}`);
+  } else {
+    console.log('· 判据 33：预览懒加载 + 元数据 + 失败退回文件行，点开走只收 id 的壳命令。');
   }
 }
 

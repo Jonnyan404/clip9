@@ -246,6 +246,9 @@
       'openWebTaskFailed': '打开网页版失败：{reason}',
       'openBrowserFailed': '用系统浏览器打开 {url} 失败：{reason}',
       'noBundledServer': '这个客户端没有自带服务端（找不到 clip9-server）',
+      // ⚠️ 点卡片上的图片 / 视频预览时（2026-10-04）。「没有预览地址」有两种：这条不是文件，
+      // 或它那条没有服务端可问（见 `Store::entry_preview_url` 的注释）—— 对用户是同一件事。
+      'entryPreviewUnavailable': '这条没有可以打开的原文件（它已经不在列表里，或者没有服务端地址）',
       // ── 桌面行为：全局快捷键（`rust/crates/desktop/src/hotkeys.rs`）──
       //    ⚠️★ 这三条只在**注册 / 撤销那一下**发出来，落到提示区（`Store::notice`）。
       //    用户看到的症状是「按了没反应」，而原因在这里 —— 所以文案要说**为什么**，
@@ -809,6 +812,8 @@
       '删除这条': 'Delete this entry',
       '复制不了：{error}': 'Could not copy: {error}',
       '分享不了：{error}': 'Could not share: {error}',
+      '打不开：{error}': 'Could not open it: {error}',
+      '点开用系统默认程序看（原始大小）': 'Click to open it at full size in the system viewer',
       '删不掉：{error}': 'Could not delete: {error}',
       '已从房间里删掉。': 'Deleted from the room.',
       '分享链接已复制（没设密码）——贴进聊天工具会显示内容摘要，别贴到公开的地方。': 'Share link copied (no password) — pasting it into a chat app puts a summary of the content in the preview, so do not paste it anywhere public.',
@@ -824,6 +829,7 @@
       'openWebTaskFailed': 'Could not open the web UI: {reason}',
       'openBrowserFailed': 'Could not open {url} in the system browser: {reason}',
       'noBundledServer': 'This client has no bundled server (clip9-server not found)',
+      'entryPreviewUnavailable': 'There is no original file to open for this one (it left the list, or there is no server address)',
       'hotkeyRegisterFailed': 'Could not grab {shortcut} (another program probably holds it): {reason}',
       'hotkeyUnregisterFailed': 'Could not release the global shortcut: {reason}',
       'hotkeyUnparsable': 'The shortcut {shortcut} cannot be parsed: {reason}',

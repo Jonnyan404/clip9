@@ -899,6 +899,21 @@ pub fn entry_text(store: State<'_, Arc<Store>>, id: i32) -> Result<String, Msg> 
     store.entry_text(id).ok_or_else(|| Msg::key("entryGone"))
 }
 
+/// 把一个条目的预览（图片 / 视频）交给**系统默认程序**打开。
+///
+/// ⚠️★ 与 `open_project_page` 同一个规矩：**不从页面收地址**。页面只给条目 id，地址由壳
+/// 从自己的列表里查（`Store::entry_preview_url`）—— 收了地址，就等于给页面一个
+/// 「让系统 opener 打开任意 URL」的能力，而这里要的只有「这一条自己的那份」。
+/// ⚠️ 查到的地址**仍然过一遍** `openable_url`：那是「交给系统 opener 之前的最后一道闸」，
+/// 因为「这次是壳自己查的」而破例，破掉的就是下次漏掉的那次。
+#[tauri::command]
+pub fn open_entry_file(store: State<'_, Arc<Store>>, id: i32) -> Result<(), Msg> {
+    let url = store
+        .entry_preview_url(id)
+        .ok_or_else(|| Msg::key("entryPreviewUnavailable"))?;
+    open_in_system_browser(&openable_url(&url)?)
+}
+
 /// 「复制内容」（时间线右键菜单）—— ⚠️ 走壳，**不让页面把自己那份传回来**。
 ///
 /// ⚠️ 页面手里那份是**预览**：传回来会把长文复制成截断的，而且不报错。
