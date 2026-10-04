@@ -6,9 +6,9 @@
 //   node tools/sync-action-catalog.mjs --check    # 只比对不写；不一致退出 1
 //
 // ⚠️★ 为什么要有它：桌面那个手写界面是一个**没有构建步骤**的普通页面，而
-// `web-vue3/src/data/actions.js` 是按模块拆的、还带着 `@/` 别名与第三方库
+// `web/src/lib/actions/index.js` 是按模块拆的、还带着 `@/` 别名与第三方库
 //（marked / highlight.js / opencc / pinyin）。所以「一份实现、两侧共用」在这个仓库里的
-// **现实形式**只能是：源在 `web-vue3/` 下，由这个脚本把**能自足加载的那两个文件**
+// **现实形式**只能是：源在 `web/` 下，由这个脚本把**能自足加载的那两个文件**
 // 原样搬过去，再用 `--check` 保证搬运没漏。
 //
 // 搬的四样：
@@ -37,8 +37,8 @@ import { execFileSync } from 'node:child_process';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const ROOT = resolve(HERE, '..');
-const SRC = join(ROOT, 'web-vue3/src/data/actions');
-const LOCALES = join(ROOT, 'web-vue3/src/locales');
+const SRC = join(ROOT, 'web/src/lib/actions');
+const LOCALES = join(ROOT, 'web/src/i18n/locales');
 const DEST = join(ROOT, 'rust/crates/desktop/ui');
 const MANIFEST = join(DEST, 'actions.sync.json');
 
@@ -47,7 +47,7 @@ const LANGS = ['zh', 'en'];
 
 // ⚠️ `slash-template.js` 住在 `src/` 下（不在 `data/actions/` 里）—— 它是「输入框的
 // `/` 菜单」，不是动作库的一部分，只是**恰好**也被两侧共用。
-const SLASH_SOURCE = join(ROOT, 'web-vue3/src/slash-template.js');
+const SLASH_SOURCE = join(ROOT, 'web/src/lib/slash-template.js');
 
 // 「动作实现包」：`actions/desktop.js` 是**入口**，esbuild 把它连同 marked / highlight.js /
 // pinyin-pro 打成自足的 ESM 交给桌面端（那一侧没有构建步骤，装不下这几样）。
@@ -56,9 +56,9 @@ const SLASH_SOURCE = join(ROOT, 'web-vue3/src/slash-template.js');
 //    排完还要核对（见 buildImplBundle 里的断言），不然哪天一改 import 写法它就悄悄回来了。
 const DESKTOP_ENTRY = join(SRC, 'desktop.js');
 const IMPL_OUT = { entry: 'actions-impl.js', list: 'actions-impl.json' };
-const ESBUILD = join(ROOT, 'web-vue3/node_modules/.bin/esbuild');
-const SHARE_SOURCE = join(ROOT, 'web-vue3/src/share-config.js');
-const HIGHLIGHT_CSS = join(ROOT, 'web-vue3/src/styles/highlight.css');
+const ESBUILD = join(ROOT, 'web/node_modules/.bin/esbuild');
+const SHARE_SOURCE = join(ROOT, 'web/src/lib/share-config.js');
+const HIGHLIGHT_CSS = join(ROOT, 'web/src/styles/highlight.css');
 
 const COPY = [
   { from: join(SRC, 'catalog.json'), to: join(DEST, 'actions-catalog.json') },
@@ -171,7 +171,7 @@ function buildImplBundle() {
   execFileSync(ESBUILD, [
     DESKTOP_ENTRY,
     '--bundle', '--minify', '--format=esm', '--splitting', '--target=es2020',
-    `--alias:@=${join(ROOT, 'web-vue3/src')}`,
+    `--alias:@=${join(ROOT, 'web/src')}`,
     '--external:./opencc.js',
     `--outdir=${outdir}`,
     `--entry-names=${IMPL_OUT.entry.replace('.js', '')}`,

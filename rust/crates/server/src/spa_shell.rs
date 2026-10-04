@@ -21,7 +21,7 @@ const SHELL_HEAD_END: &str = "</head>";
 /// 外壳的基准目录：`<prefix>/`（没有 prefix 就是 `/`）。
 ///
 /// ⚠️ 前端也依赖这个值：它把 `document.baseURI` 同时当作 axios 的 baseURL 和路由 base
-/// （见 `web-vue3/src/main.js`、`src/router/index.js`）。改这里的形状要一并改那边。
+/// （见 `web/src/main.tsx`、`web/src/router/index.tsx`）。改这里的形状要一并改那边。
 #[must_use]
 pub fn base_href(prefix: &str) -> String {
     format!("{}/", prefix.trim_end_matches('/'))

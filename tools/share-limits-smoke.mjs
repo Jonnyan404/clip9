@@ -9,7 +9,7 @@
 //
 // 「默认有效期 / 最小 / 最大 / 次数上限」这四个数**各写了两遍**：
 // 服务端在 `rust/crates/core/src/share.rs`（那是真值，签发时按它归一化），
-// 前端在 `web-vue3/src/share-config.js`（滑块范围、档位按钮、提交前的兜底都要它）。
+// 前端在 `web/src/lib/share-config.js`（滑块范围、档位按钮、提交前的兜底都要它）。
 //
 // ⚠️★ 那一份之所以单独一个文件：桌面端的界面（**没有构建步骤**）也有自己的分享弹窗，
 // 它加载的是同一份 —— 由 `tools/sync-action-catalog.mjs` 逐字节拷过去。
@@ -41,12 +41,12 @@ import { fileURLToPath } from 'node:url';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const ROOT = resolve(HERE, '..');
-const require = createRequire(join(ROOT, 'web-vue3/package.json'));
+const require = createRequire(join(ROOT, 'web/package.json'));
 const acorn = require('acorn');
 
 const sharePath = process.argv[2] && process.argv[2] !== '-'
   ? process.argv[2]
-  : join(ROOT, 'web-vue3/src/share-config.js');
+  : join(ROOT, 'web/src/lib/share-config.js');
 const rustPath = process.argv[3] && process.argv[3] !== '-' ? process.argv[3] : join(ROOT, 'rust/crates/core/src/share.rs');
 
 let failed = 0;
@@ -178,25 +178,18 @@ for (const [judge, list] of byJudge) {
   // ⚠️ `rust/crates/desktop/ui/share-config.js` **故意不查**：它本来就是这一份的逐字节拷贝
   //（`tools/sync-action-catalog.mjs` 搬的），equality 由 `action-catalog-smoke` 那条判据盯。
   // 把它算进来只会让每条 Build -flag 的价值都变成零。
-  const others = ['web-vue3/src/util.js'];
+  const others = ['web/src/lib/util.ts'];
   for (const rel of others) {
     if (resolve(sharePath) === resolve(join(ROOT, rel))) continue; // 夹具模式：比的就是它自己
     const path = join(ROOT, rel);
     if (!existsSync(path)) continue;
     const code = readFileSync(path, 'utf8');
-    for (const node of acorn.parse(code, { ecmaVersion: 'latest', sourceType: 'module' }).body) {
-      const decl = node.type === 'ExportNamedDeclaration' && node.declaration ? node.declaration : node;
-      if (decl.type !== 'VariableDeclaration' && decl.type !== 'FunctionDeclaration') continue;
-      const names = decl.type === 'FunctionDeclaration'
-        ? [decl.id?.name]
-        : decl.declarations.map((d) => d.id?.name);
-      for (const name of names) {
-        // ⚠️ `export { X } from '…'` 是**再导出**，Node 里它是 `ExportNamedDeclaration`
-        // 且没有 `declaration` —— 上面那句 `node.declaration ? … : node` 会把它原样留下，
-        // 而它的 type 是 `ExportNamedDeclaration`，进不了上面那个 continue 之后的分支。
-        if (WANTED_CONSTS.includes(name) || WANTED_FUNCS.includes(name)) {
-          reDeclared.push(`${rel} 里的 ${name}`);
-        }
+    // ⚠️★ 用正则而不是 acorn：这一份是 **TypeScript**（`.ts`），acorn 解不了 TS 语法
+    //（会抛 SyntaxError 把整条门禁带崩）。这里只需要「有没有再声明一遍」这一个事实，正则够了。
+    for (const name of [...WANTED_CONSTS, ...WANTED_FUNCS]) {
+      const re = new RegExp(`(?:^|\\n)\\s*(?:export\\s+)?(?:const|let|var|function)\\s+${name}\\b`);
+      if (re.test(code)) {
+        reDeclared.push(`${rel} 里的 ${name}`);
       }
     }
   }

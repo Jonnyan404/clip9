@@ -22,7 +22,7 @@
 #      rustup **装不上**（`rust/rust-toolchain.toml` 的注释里写的就是这件事）——
 #      想支持得自己编 std，不是「在列表里加一行」的事。
 #
-#   4. **前端不在这里变成一份单独的资源**。Go 那边要把 `web-vue3/dist` 拷到
+#   4. **前端不在这里变成一份单独的资源**。Go 那边要把 `web/dist` 拷到
 #      `cloud-clip/lib/static` 再 `-tags embed`；这边前端产物是**编进 `clip9-server`
 #      二进制**的（`rust/crates/server/build.rs` + `rust/crates/server/static/`），
 #      所以这里只负责「先把前端产物同步好」，剩下的交给 cargo。
@@ -40,7 +40,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 OPENWRT_DIR="$(dirname "$SCRIPT_DIR")"
 REPO_DIR="$(dirname "$OPENWRT_DIR")"
 RUST_DIR="$REPO_DIR/rust"
-WEB_DIR="$REPO_DIR/web-vue3"
+WEB_DIR="$REPO_DIR/web"
 
 VERSION=""
 SKIP_WEB=0
@@ -87,13 +87,13 @@ fi
 # ── 1. 前端产物 ────────────────────────────────────────────────────────────
 if [ "$SKIP_WEB" -eq 0 ]; then
     if [ -d "$WEB_DIR" ] && command -v node >/dev/null 2>&1 && command -v npm >/dev/null 2>&1; then
-        echo "--- 构建前端（web-vue3）---"
+        echo "--- 构建前端（web）---"
         # ⚠️ `CODEBUDDY_SAFE_DELETE_ENABLED=0`：构建要清 `dist/`，不给这个变量会被
         # 删除守卫拦下来。
         ( cd "$WEB_DIR" && CODEBUDDY_SAFE_DELETE_ENABLED=0 npm run build )
         ( cd "$REPO_DIR" && node tools/sync-web-assets.mjs )
     else
-        echo "! 跳过前端构建（没有 web-vue3 或没有 node/npm），改用已经同步好的那一份"
+        echo "! 跳过前端构建（没有 web 或没有 node/npm），改用已经同步好的那一份"
     fi
 fi
 

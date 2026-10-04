@@ -23,6 +23,10 @@ rust/target
 rust/dist
 rust/crates/desktop/binaries
 rust/crates/desktop/gen
+web/dist
+web/public/shortcuts
+web/.vite
+# ⚠️ web-vue3 已不是生产前端（只留作比对），但它的产物/依赖同样不该进构建上下文。
 web-vue3/dist
 web-vue3/public/shortcuts
 web-vue3/.vite

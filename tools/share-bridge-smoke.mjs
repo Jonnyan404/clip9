@@ -6,7 +6,7 @@
 //   node tools/share-bridge-smoke.mjs --spa /tmp/mut/src --kt /tmp/mut/WebAppActivity.kt
 //
 // ⚠️★ 为什么需要它：这条缝的**两侧都没有测试运行器** ——
-//   · `web-vue3` 是手写前端，没有 runner（见项目笔记）；
+//   · `web` 是手写前端，没有 runner（见项目笔记）；
 //   · `android/` 那半边**没有测试运行器**：Kotlin 只在 CI 里编过，
 //     「跑起来对不对」要真机才算数（见 `android/DEVELOPING.md` §三）。
 // 而它们之间的连接是**按字面量**做的：Kotlin 把 `window.clip9Share.sendText(...)` 当字符串
@@ -34,13 +34,14 @@ function argValue(flag, fallback) {
   return index >= 0 && args[index + 1] ? args[index + 1] : fallback;
 }
 
-const SPA = resolve(argValue('--spa', join(ROOT, 'web-vue3/src')));
+const SPA = resolve(argValue('--spa', join(ROOT, 'web/src')));
 const KT = resolve(
   argValue('--kt', join(ROOT, 'android/app/src/main/java/com/clip9/app/WebAppActivity.kt')),
 );
-const SHARE = join(SPA, 'share.js');
-const SEND = join(SPA, 'send.js');
-const MAIN = join(SPA, 'main.js');
+// ⚠️ React 版里这三个各住一处（Vue 版是 src/ 下的扁平文件）。
+const SHARE = join(SPA, 'services/shareBridge.ts');
+const SEND = join(SPA, 'services/send.ts');
+const MAIN = join(SPA, 'main.tsx');
 
 /** 契约里的三个方法名。⚠️ 少一个 = 外壳那边那一句永远 undefined。 */
 const METHODS = ['isReady', 'sendText', 'sendFiles'];
@@ -85,7 +86,7 @@ const mainSrc = read(MAIN);
 const ktSrc = read(KT);
 
 // ── 1. 契约里的三个方法都在 ────────────────────────────────────────────────
-const bridgeBody = slice(shareSrc, 'const bridge = {', '\n    };');
+const bridgeBody = slice(shareSrc, 'const bridge', '\n    };');
 let methods = [];
 if (bridgeBody === null) {
   fail('share.js 里找得到 `const bridge = { … };`', '切不出对象字面量（格式改过了？）');
@@ -161,31 +162,40 @@ if (ktReasonBody === null) {
 // 都不一样（标准模式漏了它 → 「我发的」永远标不出来）。现在只许 `send.js` 有一份。
 const TEXT_POST = "axios.post('text'";
 {
+  // ⚠️★ 剥掉行注释再找：注释里提一句 `axios.post('text')` 不该被当成「又一份实现」
+  //（React 版的 services/http.ts 抬头正好有这么一句说明）。判据要盯的是**代码**。
+  const codeOnly = (text) => text
+    .split('\n')
+    .filter((line) => {
+      const t = line.trim();
+      return !t.startsWith('//') && !t.startsWith('*') && !t.startsWith('/*');
+    })
+    .join('\n');
   const hitFiles = walk(SPA)
-    .filter((file) => /\.(js|vue)$/.test(file))
-    .filter((file) => read(file).includes(TEXT_POST))
+    .filter((file) => /\.(js|ts|tsx|vue)$/.test(file))
+    .filter((file) => codeOnly(read(file)).includes(TEXT_POST))
     .map((file) => relative(SPA, file).split(/[\\/]/).join('/'));
-  const allowed = ['send.js', 'util.js'];
+  const allowed = ['services/send.ts', 'services/share.ts'];
   const unexpected = hitFiles.filter((file) => !allowed.includes(file));
   if (unexpected.length) {
     fail(
-      `\`axios.post('text'\` 只出现在 send.js / util.js`,
-      `${unexpected.join('、')} 里又写了一份 —— 请改用 send.js 的 postText()`,
+      `\`axios.post('text'\` 只出现在 services/send.ts / services/share.ts`,
+      `${unexpected.join('、')} 里又写了一份 —— 请改用 services/send.ts 的 postText()`,
     );
-  } else if (!hitFiles.includes('send.js') || !hitFiles.includes('util.js')) {
+  } else if (!hitFiles.includes('services/send.ts') || !hitFiles.includes('services/share.ts')) {
     fail(
-      `\`axios.post('text'\` 只出现在 send.js / util.js`,
+      `\`axios.post('text'\` 只出现在 services/send.ts / services/share.ts`,
       `实际是 ${hitFiles.join('、') || '一处都没有'} —— 有人把其中一处删了或挪了`,
     );
   } else {
-    ok(`\`axios.post('text'\` 只在 send.js（新建）与 util.js（按 id 更新）各一份`);
+    ok(`\`axios.post('text'\` 只在 services/send.ts（新建）与 services/share.ts（按 id 更新）各一份`);
   }
-  // ⚠️ util.js 那一处必须是**按 id 更新**（`?id=`），不是又一份新建。
-  const utilSrc = read(join(SPA, 'util.js'));
-  const utilHit = utilSrc.indexOf(TEXT_POST);
-  const utilTail = utilSrc.slice(utilHit, utilHit + 240);
-  if (utilHit < 0 || !utilTail.includes("'id'")) {
-    fail('util.js 那一处带 `?id=`', '它看起来是又一次「新建」而不是「更新已有条目」');
+  // ⚠️ services/share.ts 那一处必须是**按 id 更新**（`?id=`），不是又一份新建。
+  const updateSrc = codeOnly(read(join(SPA, 'services/share.ts')));
+  const updateHit = updateSrc.indexOf(TEXT_POST);
+  const updateTail = updateSrc.slice(updateHit, updateHit + 240);
+  if (updateHit < 0 || !updateTail.includes("'id'")) {
+    fail('services/share.ts 那一处带 `?id=`', '它看起来是又一次「新建」而不是「更新已有条目」');
   }
 }
 

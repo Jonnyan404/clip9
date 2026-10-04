@@ -13,12 +13,12 @@
 // # ⚠️ 为什么要有它
 //
 // `rust/crates/desktop/ui/app.js` 里到处是 `el('cfg-textlimit')` 这种**字符串 id**，
-// 而这一侧**没有任何测试运行器**（`web-vue3` 与 `ui/*.js` 都没有，见 MEMORY.md）。
+// 而这一侧**没有任何测试运行器**（`web` 与 `ui/*.js` 都没有，见 MEMORY.md）。
 // 于是「id 打错一个字」的表现是**那个功能静默失效**：不报错、不 panic，
 // 控制台里可能只有一行 `null.classList` —— 而这一版连控制台都不给用户看。
 //
 // 这类错**不需要跑起来才能发现**：两侧都是静态文本，比一下就知道。
-// 对照：SPA 有 `web-vue3/scripts/check-display-semantics.mjs`、服务端渲染页有
+// 对照：SPA 有 `web/scripts/check-contracts.mjs`、服务端渲染页有
 // `cloud-clip/tools/page-smoke.mjs`，**只有手写 UI 这一侧是裸奔的**
 //（见 `dev-docs/specs/desktop-client.md` §1.1 缺口 C）。
 //

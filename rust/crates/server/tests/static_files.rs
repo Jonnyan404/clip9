@@ -377,13 +377,13 @@ async fn cache_control(app: &Router, uri: &str) -> Option<String> {
 /// ⚠️★ `rust/crates/server/static/` 必须与**它自己的同步清单**一致。
 ///
 /// 为什么值得一条测试（照 Go 的 `TestEmbeddedSpaCarriesAutomationEntry` 写）：
-/// 正式构建用的是**编进二进制的这一份**，而前端改完只落在 `web-vue3/dist` 里 ——
+/// 正式构建用的是**编进二进制的这一份**，而前端改完只落在 `web/dist` 里 ——
 /// 要显式跑一次同步才会过去。这个「忘了同步」是**无症状**的：
 /// 编译完全成功、跑起来也正常，只是界面永远停在上一版。用户看到的现象是
 /// 「界面里根本没有这个功能」，而代码明明写好了。
 ///
-/// ⚠️★ 但**逐字节比 `web-vue3/dist` 是做不到的**（这条测试原来就是那样，等于永远红）：
-/// `web-vue3/vite.config.js` 每次构建都注入一个**随机** build id（那是故意的 —— 让 PWA 缓存
+/// ⚠️★ 但**逐字节比 `web/dist` 是做不到的**（这条测试原来就是那样，等于永远红）：
+/// `web/vite.config.ts` 每次构建都注入一个**随机** build id（那是故意的 —— 让 PWA 缓存
 /// 失效、并能核对线上跑的是哪次构建），而且入口 chunk 与 ShareView chunk 互相引用对方带 hash
 /// 的文件名 —— **每次构建的文件名都不一样**。所以「前端改了却没同步」由
 /// `tools/sync-web-assets.mjs --check` 用**源码指纹**来判（那才是 CI 上跑的一道）。

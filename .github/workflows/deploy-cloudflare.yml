@@ -51,7 +51,7 @@ jobs:
           node-version: 22
           cache: npm
           cache-dependency-path: |
-            web-vue3/package-lock.json
+            web/package-lock.json
             cloudflare/package-lock.json
             cloudflare/workers/package-lock.json
 
@@ -79,8 +79,8 @@ jobs:
         working-directory: cloudflare/workers
         run: bash test/run.sh
 
-      - name: 构建前端（sync-shortcuts + vite build + after-build）
-        working-directory: web-vue3
+      - name: 构建前端（sync-shortcuts + 契约守卫 + tsc + vite build + after-build）
+        working-directory: web
         run: |
           npm ci
           npm run build
@@ -92,7 +92,7 @@ jobs:
           set -euo pipefail
           rm -rf cloudflare/workers/assets
           mkdir -p cloudflare/workers/assets
-          for item in web-vue3/dist/*; do
+          for item in web/dist/*; do
             case "$(basename "$item")" in
               *.gz|*.br) continue ;;
             esac

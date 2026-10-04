@@ -5,7 +5,7 @@
 // 这台机器的沙箱有一条**批量删除守卫**：递归删除会弹权限确认框，而
 // **rename 不算删除** —— 挪到垃圾桶目录之后就再也没人看它，效果一样，但不打扰人。
 // 撞得最狠的是 Chrome 的临时 profile（几百个文件），其次是一轮比对的两个数据目录。
-// 同一个理由在前端重建的场景里也成立（`cloud-clip/lib/static` / `web-vue3/dist`，
+// 同一个理由在前端重建的场景里也成立（`cloud-clip/lib/static` / `web/dist`，
 // 都在 Go 仓库里）—— 那里的做法是 `mv lib/static /tmp/x` 之后再构建，
 // 因为 vite 的 `emptyOutDir` 与 `after-build.js` 的 `rmSync` 都会撞上这条守卫。
 //

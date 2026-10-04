@@ -254,7 +254,7 @@ App 里跑的是**服务端**（Rust 编成 `.so`，由前台服务托管），�
 
 ```bash
 # 1. 前端产物（⚠️ 仓库里已带一份入库的产物，不改前端可跳过）
-cd web-vue3
+cd web
 npm ci
 npm run build
 
@@ -379,7 +379,8 @@ clip9/
 │       ├── client/     # 剪贴板监控 + 上下行（被桌面端复用）
 │       ├── desktop/    # Tauri 壳（含手写界面 ui/）
 │       └── android/    # Android 外壳的 JNI 桥（cdylib）
-├── web-vue3/        # 前端 SPA 源码（构建产物编进服务端二进制）
+├── web/             # ★ 生产前端源码（React；构建产物编进服务端二进制）
+├── web-vue3/        # 旧的 Vue 版前端（只留作比对，不再构建 / 不再入库）
 ├── cloudflare/      # Worker + D1 + R2
 ├── shortcuts/       # 快捷指令的唯一源
 ├── cases/           # 语言无关的契约用例 JSON（契约测试的输入）

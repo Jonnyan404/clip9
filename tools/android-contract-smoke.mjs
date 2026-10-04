@@ -703,7 +703,7 @@ function kotlinComments() {
 //        不剥的话，注释里写一个资源名就会被判成「引用了一个不存在的资源」，
 //        而人会因此把注释写残来迁就判据。2026-09-29 一连咬了三次。
 //     ⚠️ 但**反向**（定义了没人读）只记提示不失败 —— 那确实只是噪音，不是坏事。
-//   契约 E：跨端桥名（Android ↔ 两份 `web-vue3`）
+//   契约 E：跨端桥名（Android ↔ 两份 SPA）
 //     · `clip9Auth` / `roomAuth` / `__default__` 三处对不上 →
 //       「免打开界面认证」**什么都不发生**（不报错、不提示，只是又被问了一次密码）。
 //   契约 F：布局里不许有「wrap_content 容器里撑满父向的裸 `<View>`」
@@ -1146,8 +1146,8 @@ const pageSwitches = configPageSwitches();
   // 所以第二份**在则查、不在则只记一条提示**（让它失败的话，独立克隆的门禁会红）。
   // ⚠️ 但也**不能**整条都靠「在不在」决定：本仓库这一份是硬的，永远要查到。
   const COPIES = [
-    { rel: 'web-vue3/src/store/websocket.js', required: true },
-    { rel: '../web-vue3/src/store/websocket.js', required: false },
+    { rel: 'web/src/stores/wsStore.ts', required: true },
+    { rel: '../web/src/stores/wsStore.ts', required: false },
   ];
   if (kotlin === null) {
     fail(label, '读不到 WebAppActivity.kt 里的 AUTH_BRIDGE / roomAuth / DEFAULT_ROOM_KEY');
@@ -1174,7 +1174,7 @@ const pageSwitches = configPageSwitches();
     }
     // ⚠️★ 两份 SPA 是**同源副本** —— 只改一份的话，Go 版那边就静默少了一半行为。
     if (seen.length === 2 && (seen[0].bridge !== seen[1].bridge || seen[0].roomKey !== seen[1].roomKey)) {
-      problems.push('两份 web-vue3 的 store/websocket.js 不一致（它们必须同源）');
+      problems.push('两份 web 的 stores/wsStore.ts 不一致（它们必须同源）');
     }
     if (!problems.length) {
       ok(`${label} —— ${kotlin.bridge}.${kotlin.method}() · ${kotlin.roomKey}（查了 ${seen.length} 份）`);

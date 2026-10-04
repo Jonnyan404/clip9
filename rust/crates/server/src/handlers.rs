@@ -1059,7 +1059,7 @@ pub async fn latest_content(
             // 而且信封里的 `event` 是 `text`/`file`，WS 推送用的却是 `receive` ——
             // 同一个接口两种形状、同一个概念两个名字，客户端得写两套解析。
             //
-            // 已确认 SPA（`web-vue3/src/App.vue:380`）只用这个接口生成二维码链接、
+            // 已确认 SPA（`web/src/components/AppShell/PageQrDialog.tsx`）只用这个接口生成二维码链接、
             // **不解析响应体**，所以这次统一是安全的。
             if wants_json(&explicit_format, &headers) {
                 return json_response(&json!({
