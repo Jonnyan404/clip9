@@ -34,6 +34,7 @@ use clip9_client::{
 };
 use clip9_protocol::ReceiveHolder;
 
+use crate::model::ShareLinkView;
 use crate::notify::Notifier;
 use crate::store::{NoticeLevel, Store};
 
@@ -702,27 +703,47 @@ impl Runtime {
 
     /// 让服务端签发一条分享链接，**并把它复制进剪贴板**（返回那串地址）。
     ///
-    /// ⚠️★ 默认**不设密码**、不限次数、有效期交给服务端定（`ttl: 0` 会被
-    /// [`clip9_core::share::normalize_share_ttl`] 归一到它自己的默认值）——
-    /// 三条都是**照网页端那颗分享按钮的默认值**来的，这样两处的「默认分享」是同一件事。
-    /// ⚠️ 于是「服务端默认多久过期」这个数只有**一个**定义处（服务端），桌面端不抄一份。
+    /// ⚠️★ 默认**不设密码**、不限次数、有效期交给服务端定 —— 三个参数都没给时，
+    /// 服务端会落在它自己的默认值上（`ttl: 0` 会被
+    /// [`clip9_core::share::normalize_share_ttl`] 归一到默认那一档）。
+    /// ⚠️ 于是「服务端默认多久过期」这个数只有**一个**定义处（服务端），这一侧不抄一份。
     ///
     /// ⚠️★ **无密码 = 内容摘要会出现在别人聊天工具的预览里**，而那条摘要进了对方的缓存就删不掉。
     /// 这里不拦，但**必须说一声**（见 `commands::share_entry` 那条提示语）——
     /// 用户点一下「分享」时，心里的模型是「拿到链接的人能看」。
-    pub async fn share_entry(self: &Arc<Self>, id: i32) -> Result<String, Msg> {
+    ///
+    /// ⚠️★ 返回的 `ttl` / `max_uses` / `expires_at` 是**服务端回的那一份**，不是这里传进去的：
+    /// 服务端会按自己的区间夹一遍，而界面（两边的分享面板都是）承诺给用户的是「多久过期」，
+    /// 那就必须是实际生效的那个数。
+    #[allow(clippy::too_many_arguments)]
+    pub async fn share_entry(
+        self: &Arc<Self>,
+        id: i32,
+        ttl_seconds: Option<i64>,
+        max_uses: Option<i64>,
+        password: Option<String>,
+    ) -> Result<ShareLinkView, Msg> {
         let channel = self
             .store
             .selected_channel()
             .ok_or_else(|| Msg::key("noRoomsConfigured"))?;
         let (url, token) = room_endpoint(&channel, "/share")?;
-        let body = serde_json::json!({
+        let mut body = serde_json::json!({
             "type": "content",
             "id": id.to_string(),
-            "ttl": 0,
-            "maxUses": 0,
-            "password": "",
         });
+        // ⚠️ 不给（或给 0）就等于「要服务端的默认」：那一侧是自己归一化的，
+        // 这一侧没有第二份区间可以夹。
+        if let Some(ttl) = ttl_seconds.filter(|one| *one > 0) {
+            body["ttl"] = serde_json::json!(ttl);
+        }
+        if let Some(uses) = max_uses.filter(|one| *one > 0) {
+            body["maxUses"] = serde_json::json!(uses);
+        }
+        let password = password.unwrap_or_default().trim().to_owned();
+        if !password.is_empty() {
+            body["password"] = serde_json::json!(password);
+        }
         let response = send(self.http.post(url).json(&body), token.as_deref())
             .send()
             .await
@@ -749,7 +770,15 @@ impl Runtime {
         // ⚠️★ 复制**走这一条**（不是页面里的 `navigator.clipboard`）：它会先 prime 去重指纹，
         // 否则监控线程会把这一行当成一次**新的复制**、又发回房间。
         self.copy_to_clipboard(&link);
-        Ok(link)
+        Ok(ShareLinkView {
+            url: link,
+            // ⚠️ 都回落成「没有」而不是报错：老服务端不一定每个字段都给，
+            // 少一个数只是结果面板上少一行，不该让已经建出来的链接失败。
+            ttl: num_field(&value, "ttl"),
+            max_uses: num_field(&value, "maxUses"),
+            expires_at: num_field(&value, "expiresAt"),
+            visits: num_field(&value, "visits"),
+        })
     }
 
     /// 按需取回**选中房间**的历史（`GET /content`，不碰剪贴板）。
@@ -849,6 +878,15 @@ fn http_status(status: reqwest::StatusCode) -> Msg {
         }
         _ => Msg::key("serverRejectedStatus").param("status", status.as_u16()),
     }
+}
+
+/// 从服务端那份 JSON 里取一个整数。
+///
+/// ⚠️ 没有 / 不是整数 → `0`（「没有」），**不报错**：`/share` 的响应里这几个字段是
+/// 后来才加的，老服务端不一定给。少一个数只是结果面板上少一行，
+/// 不该让一条**已经签发出来**的链接失败。
+fn num_field(value: &serde_json::Value, key: &str) -> i64 {
+    value.get(key).and_then(serde_json::Value::as_i64).unwrap_or(0)
 }
 
 #[cfg(test)]

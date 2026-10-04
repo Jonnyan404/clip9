@@ -808,6 +808,55 @@ body {
 /* ⚠️ 稿 2 的 .cfg .bd 写死 max-height:470px；窗口变矮（小屏）时它会顶出去。
    改成「跟着窗口伸缩」，并让它在窗口内滚动。 */
 .overlay .win.cfg .bd { flex: 1; min-height: 0; max-height: 470px; overflow-y: auto; }
+
+/* ── 分享面板：有效期滑块 + 地址 ───────────────────────────────────────────
+   ⚠️ 原生 `<input type=range>` 保留着（键盘、读屏、触屏都自带），只是把轨道画成自己的：
+   把 range 压成透明叠在上面，底下才是可见的那条。
+   ⚠️ 三条少一条就是「看得见但拖不动」：range 必须 `appearance:none`（否则 macOS 自己
+   再画一条轨道）、必须有自己的 `z-index`（否则被下面的条盖住就拖不了）、轨道本身要
+   `pointer-events:none`（否则它把 range 的点击吃掉）。 */
+.overlay .win.share-win { width: 420px; }
+.share-win .ttl-k { display: flex; justify-content: flex-end; margin-bottom: 2px; }
+.share-win .ttl-k .v { font-size: 12px; color: var(--accent); font-weight: 600; }
+.share-ttl { position: relative; height: 26px; display: flex; align-items: center; }
+.share-ttl .share-ttl-track,
+.share-ttl .share-ttl-fill {
+    position: absolute; left: 0; height: 6px; border-radius: 999px; pointer-events: none;
+}
+.share-ttl .share-ttl-track { right: 0; background: color-mix(in srgb, var(--text-2) 32%, transparent); }
+.share-ttl .share-ttl-fill { background: var(--accent); max-width: 100%; }
+.share-ttl input[type='range'] {
+    position: relative; z-index: 1; width: 100%; height: 26px; margin: 0;
+    appearance: none; -webkit-appearance: none; background: transparent; cursor: pointer;
+}
+.share-ttl input[type='range']:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.share-ttl input[type='range']::-webkit-slider-runnable-track { height: 6px; background: transparent; }
+.share-ttl input[type='range']::-webkit-slider-thumb {
+    -webkit-appearance: none; width: 16px; height: 16px; margin-top: -5px;
+    border-radius: 50%; background: var(--accent); border: 2px solid var(--card-bg);
+    box-shadow: 0 1px 4px var(--shadow);
+}
+.share-ttl input[type='range']::-moz-range-track { height: 6px; background: transparent; }
+.share-ttl input[type='range']::-moz-range-thumb {
+    width: 16px; height: 16px; border-radius: 50%;
+    background: var(--accent); border: 2px solid var(--card-bg);
+}
+.share-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 4px; }
+.share-chips button {
+    border: 1px solid var(--border); background: transparent; color: var(--text-2);
+    font: inherit; font-size: 11px; padding: 2px 9px; border-radius: 999px; cursor: pointer;
+}
+.share-chips button:hover { color: var(--text); border-color: var(--accent); }
+.share-chips button.on { border-color: var(--accent); background: var(--accent); color: #fff; }
+.share-minmax {
+    display: flex; justify-content: space-between; margin-top: 4px;
+    font-size: 10.5px; color: var(--text-2);
+}
+.share-url {
+    font-size: 11.5px; line-height: 1.55; word-break: break-all;
+    padding: 9px 10px; border: 1px solid var(--border); border-radius: 8px; background: var(--bg);
+}
+.share-meta { margin-top: 8px; font-size: 11px; color: var(--text-2); line-height: 1.6; }
 /* 设置页里的本地服务端卡片。
    ⚠️ 稿 2 给它 470px 宽，而那一页只有 ~450px 可用 → 会溢出，所以宽度跟着容器走。
    ⚠️ 稿子里那张卡是 `class="win srv"`（`.win` 负责边框），app 里只挂 `.srv` ——
@@ -1637,6 +1686,68 @@ table.ra td input[type='checkbox'] { margin: 0; }
             <button class="btn" id="cfg-close" data-i18n="关闭">关闭</button>
             <button class="btn" id="cfg-save" data-i18n="保存">保存</button>
             <button class="btn primary" id="cfg-save-restart" data-i18n="保存并重启">保存并重启</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- ══ 分享链接（与网页版那颗分享按钮同一组长相：先填这一屏，再给地址）══
+         ⚠️★ 有效期那根滑块的范围写在 `share-config.js` 里 —— **不是**这里的 `min` / `max`：
+         这里是「形状」（一个 range），那一档到那一档的答案只有一处（与服务端对齐的那一份）。
+         `min` / `max` / `step` 由 `app.js` 打开时按那份常量贴上。 -->
+    <div class="overlay" id="share-overlay" hidden>
+      <div class="win cfg share-win" id="share-form-win">
+        <div class="titlebar"><span class="t" data-i18n="分享链接设置">分享链接设置</span></div>
+        <div class="bd">
+          <div class="sec">
+            <p class="sub" data-i18n="这条内容会被做成一个网页链接，拿到的人打开就能看。有效期、次数、密码在这一屏定。">这条内容会被做成一个网页链接，拿到的人打开就能看。有效期、次数、密码在这一屏定。</p>
+
+            <div class="field">
+              <label data-i18n="有效期">有效期</label>
+              <div class="ttl-k"><span class="v" id="share-ttl-label">—</span></div>
+              <div class="share-ttl">
+                <div class="share-ttl-track"></div>
+                <div class="share-ttl-fill" id="share-ttl-fill"></div>
+                <input type="range" id="share-ttl" autocapitalize="off" />
+              </div>
+              <div class="share-chips" id="share-ttl-presets"></div>
+              <div class="share-minmax"><span id="share-ttl-min">—</span><span id="share-ttl-max">—</span></div>
+            </div>
+
+            <div class="field">
+              <label data-i18n="最多能被打开几次（0 = 不限）">最多能被打开几次（0 = 不限）</label>
+              <input class="inp" id="share-uses" type="number" min="0" step="1" value="0" />
+              <p class="sub" data-i18n="用完之后链接就打不开了，已经看过的那些人不受影响。">用完之后链接就打不开了，已经看过的那些人不受影响。</p>
+            </div>
+
+            <div class="field">
+              <label data-i18n="密码（可留空）">密码（可留空）</label>
+              <input class="inp" id="share-password" type="password" autocomplete="new-password" autocapitalize="off" />
+              <p class="sub" data-i18n="留空的话，链接被贴进聊天工具时会显示内容摘要，而那份摘要进了别人的缓存就删不掉。">留空的话，链接被贴进聊天工具时会显示内容摘要，而那份摘要进了别人的缓存就删不掉。</p>
+            </div>
+          </div>
+        </div>
+        <div class="foot">
+          <span id="share-msg" style="font-size:11.5px;color:var(--text-2)"></span>
+          <div class="spacer"></div>
+          <button class="btn" id="share-cancel" data-i18n="取消">取消</button>
+          <button class="btn primary" id="share-go" data-i18n="生成并复制">生成并复制</button>
+        </div>
+      </div>
+
+      <div class="win cfg share-win" id="share-result-win" hidden>
+        <div class="titlebar"><span class="t" data-i18n="分享链接">分享链接</span></div>
+        <div class="bd">
+          <div class="sec">
+            <!-- ⚠️ 地址**整份**显示：它是这屏幕上唯一的东西，截断它比占两行更糟
+                 （用户粘不完，或者干脆不敢粘）。 -->
+            <div class="share-url" id="share-url">—</div>
+            <div class="share-meta" id="share-meta">—</div>
+          </div>
+        </div>
+        <div class="foot">
+          <div class="spacer"></div>
+          <button class="btn" id="share-copy" data-i18n="再复制一次">再复制一次</button>
+          <button class="btn primary" id="share-close" data-i18n="关闭">关闭</button>
         </div>
       </div>
     </div>

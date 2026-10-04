@@ -2376,6 +2376,86 @@ if (entryViewFiles.length !== 1) {
   }
 }
 
+// ── 判据 29：卡片脚那颗 ↗ 要有与网页版同一套配置（理由见下）───────────────────
+//
+// ⚠️★ 2026-10-03 加。以前点 ↗ 是**直接**让服务端签一条「默认」链接（无密码 / 不限次数）；
+// 而网页那颗分享按钮有一整屏可以填有效期、次数、密码 —— 于是同一份内容在手机上能加密码、
+// 在桌面上加不了。现在两边走同一组范围：区间与归一化在 `share-config.js`（共享的那份），
+// 服务端再夹一次，桌面这一侧**不夹**。
+//
+// 每个零件拆掉都不报错，症状全是「能点但结果不是你要的」：
+//   ① 区间写死在 index.html / app.js → 与服务端那份漂开，填了 A 生效的是 B；
+//   ② `share-config.js` 不是零 import 或没同步 → 桌面加载失败 = 点了没反应；
+//   ③ 不把服务端**回的**那一份显示出来 → 界面承诺的过期时间不是实际生效的那个；
+//   ④ 结果面板没有「再复制一次」→ 链接被别的东西盖掉之后只能重新签一条。
+{
+  const bareJs = stripComments(js).split('\u0000').join("'");
+  const problems = [];
+
+  // ① 不许出现写死的区间（15 / 1440 / 1000 那几个数只有一处定义）。
+  for (const [pattern, what] of [
+    [/\bSHARE_MIN_TTL_MINUTES\b|\bSHARE_MAX_TTL_MINUTES\b|\bSHARE_MAX_USES_LIMIT\b/,
+      'share-config.js 的名字'],
+    [/\bSHARE_DEFAULT_TTL_MINUTES\b/, '默认档位'],
+  ]) {
+    if (!pattern.test(bareJs)) problems.push(`app.js 里没有用 ${what} —— 那根滑块的区间写死过？`);
+  }
+  // ⚠️★ 反过来也要判：滑块的**边界与档位**必须从 `share-config.js` 来，不许写死。
+  //    `share-limits-smoke` 盯的是「前端那份 ↔ 服务端」，盯不到桌面这一处 ——
+  //    而桌面写死一份的症状与它一模一样：填了 A、生效的是 B，且不报错。
+  for (const [pattern, what] of [
+    [/share-ttl'\)\.min = String\(shareCfg\.\w+/, '滑块下限'],
+    [/share-ttl'\)\.max = String\(shareCfg\.\w+/, '滑块上限'],
+    [/share-uses'\)\.max = String\(shareCfg\.SHARE_MAX_USES_LIMIT\)/, '次数上限'],
+    [/SHARE_TTL_PRESET_MINUTES/, '那几个档位'],
+  ]) {
+    if (!pattern.test(bareJs)) {
+      problems.push(`分享那一段没有用 \`share-config.js\` 的${what} —— 写死就是第二份定义`
+        + '（与服务端那份早晚会漂，症状是「填了 6 小时、实际生效 24 小时」）');
+    }
+  }
+
+  // ② 那一屏的标记与接线都在（少一个就是「点了没反应」或「填了不生效」）。
+  for (const id of ['share-overlay', 'share-form-win', 'share-result-win', 'share-ttl',
+    'share-uses', 'share-password', 'share-go', 'share-url', 'share-meta', 'share-copy']) {
+    if (!html.includes(`id="${id}"`)) problems.push(`index.html 里没有 #${id} —— 分享那一屏缺一块`);
+  }
+  // ③ 面板里显示的是**服务端回的**那一份。
+  const submitBody = /async function submitShare\(\)\s*\{[\s\S]*?\n\}/.exec(bareJs)?.[0] ?? '';
+  if (!submitBody) {
+    problems.push('找不到 `submitShare` —— 分享那一屏没有提交路径');
+  } else {
+    if (!/link\.ttl \|\| ttl/.test(submitBody)) {
+      problems.push('结果里显示的是**自己传的** ttl，不是服务端回的那份 —— 服务端会夹一遍，'
+        + '界面承诺的过期时间于是不是实际生效的那个');
+    }
+    if (!/link\.maxUses \?\? maxUses/.test(submitBody)) {
+      problems.push('结果里显示的是自己传的次数，不是服务端回的那份 —— 同上');
+    }
+    if (!/share_entry/.test(submitBody)) problems.push('`submitShare` 没有调 `share_entry`');
+  }
+  // ④ 「再复制一次」必须走**壳的那条**剪贴板命令（页面自己写会绕过 prime 去重指纹，
+  //    监控线程会把这一行当成一次新的复制、又发回房间）。
+  const copyBody = bareJs.slice(bareJs.indexOf("'share-copy'"), bareJs.indexOf("'share-copy'") + 320);
+  if (!/copy_to_clipboard/.test(copyBody)) {
+    problems.push('「再复制一次」没有走 `copy_to_clipboard` —— 用页面自己的剪贴板 API 会'
+      + '绕过去重指纹，房间里会多出一条');
+  }
+  // ⑤ 那一屏的样式（滑块轨道 / 档位胶囊 / 地址框）要有规则，不然是裸的。
+  for (const rule of [/\.share-ttl input\[type='range'\]\s*\{/, /\.share-chips button\s*\{/, /\.share-url\s*\{/]) {
+    if (!rule.test(html)) problems.push(`index.html 里没有 \`${rule}\` 的规则 —— 分享那一屏是裸的`);
+  }
+
+  if (problems.length) {
+    failed = true;
+    console.error(`✗ 判据 29：分享那一屏的接线断了（${problems.length} 处）：`);
+    for (const one of problems) console.error(`    · ${one}`);
+    console.error('  ⚠️ 症状是「点 ↗ 出来一个链接，但不是你要的那一条」。');
+  } else {
+    console.log('· 判据 29：↗ 走配置屏（区间取自 share-config.js）、结果显示服务端的那份、再复制走壳（11 个零件都在）。');
+  }
+}
+
 // ── 判据 30：发送框那一行要把**两个**上限都说出来，而且用同一句话（理由见下）─────
 //
 // ⚠️★ 2026-10-03 加。字节的那个数一直都在（`0 / 4096`），文件的只在「设置 → 下载」

@@ -26,6 +26,7 @@ use clip9_client::Msg;
 // ⚠️ `Manager` 是为了 `app.state::<…>()`（`pick_files` 从 `app` 上取字典，见那条注释）。
 use tauri::{Manager, State};
 
+use crate::model::ShareLinkView;
 use crate::runtime::{Ask, Runtime};
 use crate::server_config::ServerConfigFile;
 use crate::server_process::ServerProcess;
@@ -927,9 +928,22 @@ pub async fn delete_entry(runtime: State<'_, Arc<Runtime>>, id: i32) -> Result<(
 /// ⚠️★ 复制**在壳里做**（[`Runtime::share_entry`] 里那次 `copy_to_clipboard`），不是因为方便：
 /// 页面碰不到系统剪贴板，而且走壳会**先 prime 去重指纹** —— 否则监控线程会把这一行当成
 /// 一次新的复制、又发回房间（用户只是想分享一条，结果房间里多出一条他自己发的链接）。
+///
+/// ⚠️★ `ttl` / `maxUses` / `password` 是**页面那个配置面板**给的三个开关（与网页版那颗
+/// 分享按钮同一组范围）。⚠️ 这一侧**不夹一遍**，直接交给服务端归一化：区间的那几个数
+///（`share.rs` 的 `MIN_` / `MAX_SHARE_TTL_SECONDS` / `MAX_SHARE_MAX_USES`）是**服务端自己的
+/// 常量**，壳里再夹一次就是第四份定义 —— 前三份（服务端、SPA、桌面共用那份）由
+/// `tools/share-limits-smoke.mjs` 盯着，这第四份没人盯。
+/// 不传 = 不给服务端对应字段，等于要它的默认（默认有效期 / 不限次数 / 无密码）。
 #[tauri::command]
-pub async fn share_entry(runtime: State<'_, Arc<Runtime>>, id: i32) -> Result<String, Msg> {
-    runtime.share_entry(id).await
+pub async fn share_entry(
+    runtime: State<'_, Arc<Runtime>>,
+    id: i32,
+    ttl: Option<i64>,
+    max_uses: Option<i64>,
+    password: Option<String>,
+) -> Result<ShareLinkView, Msg> {
+    runtime.share_entry(id, ttl, max_uses, password).await
 }
 
 /// 弹一个**系统文件选择框**，把选中的路径还给页面。

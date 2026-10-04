@@ -260,6 +260,13 @@
       'serverConfigBroken': '服务端配置不是合法 JSON（{path}）：{reason}。这个文件没被动过 —— 改好它再打开这一页',
       'serverConfigInvalid': '这份配置服务端读不了，没有保存：{reason}',
       'textLimitUnreachable': '文本上限 {limit} 字节服务端收不到，没有保存。能生效的最大值是 {max} 字节（{mib} MiB）；填 0 = 不限。要支持更大的内容请走文件（分片上传），别把消息上限调大。',
+      // ⚠️★ 这三个是 `share-config.js` 里 `formatShareDuration` 要的键：
+      // 「多少分钟 / 多少小时该怎么说」的判断在那份共用的文件里，
+      // 这里只负责**说**。键里没有中文，所以 `zh` / `en` **两边都必须有**
+      //（判据 14 就是这么分的）；少一边屏幕上会直接印出 `shareDurationHoursMinutes`。
+      'shareDurationHoursMinutes': '{hours} 小时 {minutes} 分钟',
+      'shareDurationHours': '{hours} 小时',
+      'shareDurationMinutes': '{minutes} 分钟',
       'serverStartTimeout': '本地服务端 {seconds} 秒内没有答话（端口 {port}）。日志最后一行：{reason}\n完整日志：{log}',
       'serverStartTimeoutNoLog': '本地服务端 {seconds} 秒内没有答话（端口 {port}），而且它一行日志都没写。日志：{log}',
       'foreignServerNotStopped': '端口 {port} 上有一个服务端在跑，但不是这个客户端起的，所以不替你停它',
@@ -562,6 +569,36 @@
       '文件不限大小': 'file size unlimited',
       '文件大小上限还不知道（还没连上）': 'file size limit unknown yet (not connected)',
       '超过这个大小的文件发不出去': 'Files bigger than this never leave this machine',
+      // ⚠️ 这三个是 `share-config.js` 里 `formatShareDuration` 要的键。键里**没有中文**，
+      // 所以 `zh` 也必须各有一条（在那边）—— 这里是 `en` 那一份。
+      // ⚠️「什么时候用小时、什么时候用分钟」的判断在 `share-config.js`，字典只管怎么说。
+      'shareDurationHoursMinutes': '{hours} h {minutes} min',
+      'shareDurationHours': '{hours} h',
+      'shareDurationMinutes': '{minutes} min',
+      '分享链接设置': 'Share link settings',
+      '这条内容会被做成一个网页链接，拿到的人打开就能看。有效期、次数、密码在这一屏定。':
+        'This becomes a web page link anyone can open. Set its expiry, visit limit and password here.',
+      '有效期': 'Expires in',
+      '最多能被打开几次（0 = 不限）': 'Opens allowed (0 = unlimited)',
+      '用完之后链接就打不开了，已经看过的那些人不受影响。':
+        'After that the link stops opening. People who already read it are unaffected.',
+      '密码（可留空）': 'Password (may be empty)',
+      '留空的话，链接被贴进聊天工具时会显示内容摘要，而那份摘要进了别人的缓存就删不掉。':
+        'Leave it empty and the link shows a preview of the content in whatever chat you paste it into -- that preview lands in other people\'s caches for good.',
+      '生成并复制': 'Create and copy',
+      '分享链接': 'Share link',
+      '再复制一次': 'Copy again',
+      '分享用不上：{error}': 'Cannot share: {error}',
+      '那一屏的常量没加载起来': 'its shared constants did not load',
+      '正在找服务端签发…': 'Asking the server to issue it…',
+      '还能打开 {count} 次': '{count} opens left',
+      '次数不限': 'unlimited opens',
+      '已经打开过 {count} 次': 'opened {count} times',
+      '有效期 {duration}': 'expires in {duration}',
+      '链接已复制。': 'Link copied.',
+      '链接已复制（没设密码）——贴进聊天工具会显示内容摘要，别贴到公开的地方。':
+        'Link copied (no password) -- pasting it into a chat will show a preview of the content, so keep it off public channels.',
+
       '还没连上': 'not connected yet',
       '没有房间': 'no room',
       '{name}（本机）': '{name} (this machine)',

@@ -241,6 +241,30 @@ pub struct StatusView {
     /// 「正在连哪台」—— 只有 `wait` 那一拍有值（给那句「连接 work …」用）。
     pub room: Option<String>,
 }
+
+/// 「分享这一条」签出来的结果。
+///
+/// ⚠️★ 为什么不再像以前那样**只返回一个地址**：桌面那一侧现在也有一个与网页版对齐的
+/// 配置面板，它要把「实际生效的有效期 / 次数 / 过期时刻 / 已被打开几次」回给用户 ——
+/// 那几个数只有服务端知道（它会按自己的区间把入参夹一遍），界面自己算就是撒谎。
+///
+/// ⚠️ 缺字段一律按「没有」处理，而不是报错：老服务端不一定每个字段都给。
+/// 少一个数只是结果面板上少一行，不该让已经建出来的链接失败。
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ShareLinkView {
+    /// 分享页地址。⚠️ **空串不被允许**（见 `crate::runtime::Runtime::share_entry`）：
+    /// 「复制成功」但粘出来是空，是这个功能里最能骗人的一种失败。
+    pub url: String,
+    /// 实际生效的有效期（秒）。服务端归一化过的那个值。
+    pub ttl: i64,
+    /// 实际生效的次数上限（`0` = 不限次数）。
+    pub max_uses: i64,
+    /// 过期时刻（unix 秒）。
+    pub expires_at: i64,
+    /// 已经被打开过几次。
+    pub visits: i64,
+}
 #[cfg(test)]
 mod tests {
     use super::*;

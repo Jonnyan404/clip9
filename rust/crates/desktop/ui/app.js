@@ -1096,18 +1096,11 @@ function entryActions(entry) {
     if (viewed) actionButton.classList.add('on');
   }
 
-  add('share', t('生成分享链接并复制'), (button) => {
-    once(button, () => invoke('share_entry', { id: entry.id }))
-      .then(() => {
-        // ⚠️★ 说清两件事：链接**已经复制**了，以及**没设密码**意味着什么 ——
-        // 无密码的链接贴进聊天工具时，那条内容的首行会出现在对方的预览里，而那份预览
-        // 进了对方的缓存就删不掉。用户点「分享」时心里的模型是「拿到链接的人能看」。
-        showNotice('ok', t('分享链接已复制（没设密码）——贴进聊天工具会显示内容摘要，别贴到公开的地方。'));
-      })
-      .catch((error) => {
-        showNotice('error', t('分享不了：{error}', { error: errorText(error) }));
-      });
-  });
+  // ⚠️★ 以前这里是「点一下直接建一个默认链接」—— 网页那颗分享按钮有完整的配置画面
+  //（有效期 / 次数 / 密码），两处不一致的结果是「同一份内容，手机上能设密码、桌面不能」。
+  // 现在走同一条路：先填，再生成。默认值就是**旧的**那三个（默认有效期 / 不限 / 无密码），
+  // 所以「点一下就分享」这条路并没有断 —— 只是中间多了一屏可以改的东西。
+  add('share', t('生成分享链接并复制'), () => openShareForm(entry));
 
   add('trash', t('删除这条'), (button) => {
     once(button, () => invoke('delete_entry', { id: entry.id }))
@@ -1342,6 +1335,155 @@ function openActionForm(action, library, at) {
     document.addEventListener('keydown', onKey, true);
     actionForm = { panel, onOutside, onKey, settle };
   });
+}
+
+/* ── 分享那一屏 ──────────────────────────────────────────────────────────
+ *
+ * ⚠️★ 有效期区间、次数上限、「多少分钟算小时」这些答案在 `share-config.js` ——
+ * 与网页版那颗分享按钮、与服务端的 `share.rs` 是同一份（靠 `tools/share-limits-smoke.mjs` 盯）。
+ * 这里**不许**出现写死的 15 / 1440 / 1000：写死的那一刻起，桌面与网页就是两个功能了，
+ * 而两边不一致**不报错**，症状只是「填了 6 小时、实际生效 24 小时」。
+ */
+
+/** 那一份共用实现。**点第一下**才加载（不打开发享就不用付这一跳）。 */
+let shareKit = null;
+/** 加载回来的模块。⚠️ 与 `shareKit`（那个 Promise）分开存：滑块要用它的是**模块**，
+ *  每次 `await` 一遍也不是不行，但 `syncShareTtl` 是**同步**的（拖滑块时每帧都来一次）。 */
+let shareCfg = null;
+function shareConfig() {
+  if (!shareKit) shareKit = import('./share-config.js');
+  return shareKit;
+}
+
+/** 当前正在配的那一条（结果回来之后要用它的 id 之外的东西，见 `shareRecent`）。 */
+let shareTarget = null;
+/** 刚刚签出来的那一条（给「再复制一次」用）。 */
+let shareRecent = null;
+
+function syncShareTtl() {
+  const minutes = Number(el('share-ttl').value);
+  const seconds = shareCfg.minutesToShareTTL(minutes);
+  el('share-ttl-label').textContent = shareCfg.formatShareDuration(seconds, shareTranslate);
+  el('share-ttl-fill').style.width = `${shareCfg.shareTtlProgress(minutes)}%`;
+  for (const chip of el('share-ttl-presets').children) {
+    chip.classList.toggle('on', Number(chip.dataset.minutes) === minutes);
+  }
+}
+
+/** `formatShareDuration` 要一个 `t`，这里递的是**这一侧**的字典。
+ *
+ * ⚠️★ 那三个键（是多少分钟 / 多少小时）必须两边都在：网页在自己的 locale 文件里，桌面在
+ * `ui/i18n.js`。少了的表现是屏幕上印出 `shareDurationMinutes` 这个键本身。 */
+const shareTranslate = (key, params) => t(key, params);
+
+function paintShareTtlScale() {
+  el('share-ttl').min = String(shareCfg.SHARE_MIN_TTL_MINUTES);
+  el('share-ttl').max = String(shareCfg.SHARE_MAX_TTL_MINUTES);
+  el('share-ttl').step = '1';
+  el('share-ttl-min').textContent = shareCfg.formatShareDuration(shareCfg.SHARE_MIN_TTL, shareTranslate);
+  el('share-ttl-max').textContent = shareCfg.formatShareDuration(shareCfg.SHARE_MAX_TTL, shareTranslate);
+  el('share-uses').max = String(shareCfg.SHARE_MAX_USES_LIMIT);
+  const presets = el('share-ttl-presets');
+  presets.textContent = '';
+  for (const minutes of shareCfg.SHARE_TTL_PRESET_MINUTES) {
+    const chip = h('button', '', shareCfg.formatShareDuration(shareCfg.minutesToShareTTL(minutes), shareTranslate));
+    chip.dataset.minutes = String(minutes);
+    chip.type = 'button';
+    chip.addEventListener('click', () => {
+      el('share-ttl').value = String(minutes);
+      syncShareTtl();
+    });
+    presets.append(chip);
+  }
+}
+
+function closeShare() {
+  el('share-overlay').hidden = true;
+  shareTarget = null;
+}
+
+/** 打开配置那一屏（卡片脚那颗 ↗）。 */
+async function openShareForm(entry) {
+  shareTarget = entry;
+  let kit;
+  try {
+    kit = await shareConfig();
+  } catch {
+    showNotice('error', t('分享用不上：{error}', { error: t('那一屏的常量没加载起来') }));
+    return;
+  }
+  shareCfg = kit;
+  paintShareTtlScale();
+  // ⚠️ 每开一次都从默认值起 —— 上一次的密码留在框里是最糟的那一种「体贴」
+  //（用户以为这次也没设密码，或者以为这次也设了）。
+  el('share-ttl').value = String(kit.SHARE_DEFAULT_TTL_MINUTES);
+  el('share-uses').value = '0';
+  el('share-password').value = '';
+  el('share-msg').textContent = '';
+  if (!el('share-go').dataset.bound) {
+    el('share-go').dataset.bound = '1';
+    el('share-ttl').addEventListener('input', syncShareTtl);
+    el('share-cancel').addEventListener('click', closeShare);
+    el('share-close').addEventListener('click', closeShare);
+    el('share-copy').addEventListener('click', () => {
+      if (!shareRecent) return;
+      invoke('copy_to_clipboard', { text: shareRecent }).catch((error) => {
+        showNotice('error', t('复制不了：{error}', { error: errorText(error) }));
+      });
+    });
+    el('share-go').addEventListener('click', submitShare);
+    // ⚠️ 点浮层自己的**空白**（不是里面的面板）算「算了」—— 和设置窗那一套一致。
+    el('share-overlay').addEventListener('mousedown', (event) => {
+      if (event.target === el('share-overlay')) closeShare();
+    });
+    document.addEventListener('keydown', (event) => {
+      if (event.key === 'Escape' && !el('share-overlay').hidden) closeShare();
+    }, true);
+  }
+  syncShareTtl();
+  el('share-result-win').hidden = true;
+  el('share-form-win').hidden = false;
+  el('share-overlay').hidden = false;
+  el('share-ttl').focus();
+}
+
+async function submitShare() {
+  if (!shareTarget) return;
+  const ttl = shareCfg.minutesToShareTTL(el('share-ttl').value);
+  const maxUses = shareCfg.normalizeShareMaxUses(el('share-uses').value);
+  const password = String(el('share-password').value || '').trim();
+  const entry = shareTarget;
+  el('share-go').disabled = true;
+  el('share-msg').textContent = t('正在找服务端签发…');
+  try {
+    const link = await invoke('share_entry', { id: entry.id, ttl, maxUses, password });
+    shareRecent = link.url;
+    el('share-url').textContent = link.url;
+    const uses = (link.maxUses ?? maxUses) > 0
+      ? t('还能打开 {count} 次', { count: link.maxUses ?? maxUses })
+      : t('次数不限');
+    el('share-meta').textContent = [
+      t('有效期 {duration}', { duration: shareCfg.formatShareDuration(link.ttl || ttl, shareTranslate) }),
+      uses,
+      t('已经打开过 {count} 次', { count: link.visits ?? 0 }),
+    ].join(' · ');
+    el('share-form-win').hidden = true;
+    el('share-result-win').hidden = false;
+    el('share-go').disabled = false;
+    el('share-msg').textContent = '';
+    // ⚠️★ 地址已经进剪贴板了（壳在做签发时一并复制），但**没设密码这件事要说清**：
+    // 无密码的链接贴进聊天工具时，内容首行会出现在对方的预览里，而那份预览进了对方的
+    // 缓存就删不掉。用户点「分享」时心里的模型是「拿到链接的人能看」。
+    if (!password) {
+      showNotice('ok', t('链接已复制（没设密码）——贴进聊天工具会显示内容摘要，别贴到公开的地方。'));
+    } else {
+      showNotice('ok', t('链接已复制。'));
+    }
+  } catch (error) {
+    el('share-go').disabled = false;
+    el('share-msg').textContent = '';
+    showNotice('error', t('分享不了：{error}', { error: errorText(error) }));
+  }
 }
 
 /** 跑一条动作：取**全文** → 用那一份跑 → 把结果挂到卡片上。

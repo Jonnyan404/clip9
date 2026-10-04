@@ -15,6 +15,7 @@
 //   `actions/catalog.json` → `ui/actions-catalog.json`（**逐字节**）
 //   `actions/pure.js`      → `ui/actions-pure.js`（**逐字节**；它的铁律是零 import）
 //   `slash-template.js`    → `ui/slash-template.js`（**逐字节**；同样是零 import —— 见下）
+//   `share-config.js`      → `ui/share-config.js`（**逐字节**；同上）
 //   `locales/{zh,en}.json` → `ui/actions-labels.json`（**只抽目录与实现真正用到的键**）
 //
 // ⚠️ 第三样是抽出来的、不是全量拷：桌面只有两种语种（SPA 有四种），而且动作的显示名
@@ -56,6 +57,7 @@ const SLASH_SOURCE = join(ROOT, 'web-vue3/src/slash-template.js');
 const DESKTOP_ENTRY = join(SRC, 'desktop.js');
 const IMPL_OUT = { entry: 'actions-impl.js', list: 'actions-impl.json' };
 const ESBUILD = join(ROOT, 'web-vue3/node_modules/.bin/esbuild');
+const SHARE_SOURCE = join(ROOT, 'web-vue3/src/share-config.js');
 const HIGHLIGHT_CSS = join(ROOT, 'web-vue3/src/styles/highlight.css');
 
 const COPY = [
@@ -64,6 +66,8 @@ const COPY = [
   { from: SLASH_SOURCE, to: join(DEST, 'slash-template.js') },
   // 代码高亮的令牌配色（桌面端 markdown / 代码高亮那两条动作要用）。⚠️ 与网页同一份。
   { from: HIGHLIGHT_CSS, to: join(DEST, 'highlight.css') },
+  // 分享链接的限额与形状（有效期区间 / 次数上限 / 那根滑块怎么摆）。⚠️ 同样是零 import。
+  { from: SHARE_SOURCE, to: join(DEST, 'share-config.js') },
 ];
 
 const sha = (text) => createHash('sha256').update(text).digest('hex').slice(0, 16);
@@ -95,14 +99,16 @@ function build() {
   const pureText = read(COPY[1].from);
   const slashText = read(COPY[2].from);
   const cssText = read(COPY[3].from);
+  const shareText = read(COPY[4].from);
   // ⚠️ `impl.js` 只用来**抽键**（它 import 第三方库，搬不过去）—— 但那几个报错文案
   // （`actionReplaceBadMode` / `actionNothingToConvert` …）桌面端跑起来时要用到。
   const implText = read(join(SRC, 'impl.js'));
   const catalog = JSON.parse(catalogText);
 
-  // ⚠️ 零 import 是**两份文件**的铁律（`pure.js` 与 `slash-template.js`）：
+  // ⚠️ 零 import 是**三份文件**的铁律：`pure.js` / `slash-template.js` / `share-config.js`。
   // 桌面那个页面加载不了带 `@/` 别名或 JSON import 的模块。
-  for (const [name, text] of [['pure.js', pureText], ['slash-template.js', slashText]]) {
+  for (const [name, text] of [['pure.js', pureText], ['slash-template.js', slashText],
+    ['share-config.js', shareText]]) {
     if (/^\s*(import|export\s+\{[^}]*\}\s+from)\s/m.test(text.replace(/^\/\/.*$/gm, ''))) {
       const bad = text.split('\n').findIndex((l) => /^\s*import\s/.test(l)) + 1;
       throw new Error(
@@ -141,10 +147,11 @@ function build() {
 
   // 指纹只记**源**：产物随源变，比源就够了（同 sync-web-assets 的理由）
   // ⚠️ 实现包的入口也是「源」：它变了而包没重打，就是桌面端跑着旧实现。
-  const fingerprint = sha([catalogText, pureText, slashText, implText, cssText, read(DESKTOP_ENTRY),
+  const fingerprint = sha([catalogText, pureText, slashText, implText, cssText, shareText,
+    read(DESKTOP_ENTRY),
     ...LANGS.map((l) => read(join(LOCALES, `${l}.json`)))].join('\0'));
 
-  return { fingerprint, labelsText, keys, catalogText, pureText, slashText, cssText };
+  return { fingerprint, labelsText, keys, catalogText, pureText, slashText, cssText, shareText };
 }
 
 /** 打「动作实现包」：esbuild 产出 `actions-impl.js` + 若干按内容哈希命名的 chunk。
@@ -211,6 +218,7 @@ const staged = [
   { to: COPY[1].to, text: built.pureText },
   { to: COPY[2].to, text: built.slashText },
   { to: COPY[3].to, text: built.cssText },
+  { to: COPY[4].to, text: built.shareText },
   { to: join(DEST, 'actions-labels.json'), text: built.labelsText },
 ];
 

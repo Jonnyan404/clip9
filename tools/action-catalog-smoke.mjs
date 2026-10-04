@@ -66,6 +66,9 @@ const F = {
     catalog: DEFAULTS.catalog,
     pure: DEFAULTS.pure,
     slash: join(ROOT, 'web-vue3/src/slash-template.js'),
+    // ⚠️ `share-config.js` 不是动作库的一部分，但走的**是同一条搬运线**
+    //（2026-10-03 起桌面端的分享面板也加载它），所以受同一条「零 import + 逐字节一致」约束。
+    share: join(ROOT, 'web-vue3/src/share-config.js'),
   },
 };
 
@@ -133,22 +136,26 @@ if (problems.length) {
   ok(`判据 2：${actions.length} 条动作的 id / 分组 / direction / run / nameKey 都齐（${groups.size} 个分组）`);
 }
 
-// ── 判据 3：pure.js / slash-template.js 零 import ─────────────────────────
-// ⚠️ 两份一起管：`slash-template.js` 桌面端也要 `import()` 它，而那一侧**没有构建步骤**，
-//    一个 `@/…` 的路径在网页版里好好的、到了桌面端就是「菜单永远不弹」。
+// ── 判据 3：pure.js / slash-template.js / share-config.js 零 import ─────────
+// ⚠️ 三份一起管：后两份桌面端也要 `import()` 它们，而那一侧**没有构建步骤**，
+//    一个 `@/…` 的路径在网页版里好好的、到了桌面端就是「菜单永远不弹 / 点了没反应」。
 const slashText = existsSync(F.source.slash) ? readFileSync(F.source.slash, 'utf8') : '';
+const shareText = existsSync(F.source.share) ? readFileSync(F.source.share, 'utf8') : '';
 if (!slashText) {
   bad(`判据 3：找不到 ${F.source.slash}（桌面端的「/」菜单靠它）`);
 }
-const importLines = [pureText, slashText].flatMap((text) =>
+if (!shareText) {
+  bad(`判据 3：找不到 ${F.source.share}（桌面端的分享面板靠它 —— 那份区间只有一处定义）`);
+}
+const importLines = [pureText, slashText, shareText].flatMap((text) =>
   text.split('\n')
     .map((line, i) => [i + 1, line])
     .filter(([, line]) => /^\s*(import\s|export\s[^;]*\sfrom\s)/.test(line)));
 if (importLines.length) {
-  bad(`判据 3：pure.js / slash-template.js 里有 ${importLines.length} 处 import/再导出（桌面端加载不了，会静默失效）：`);
+  bad(`判据 3：pure.js / slash-template.js / share-config.js 里有 ${importLines.length} 处 import/再导出（桌面端加载不了，会静默失效）：`);
   for (const [n, line] of importLines.slice(0, 5)) plain(`第 ${n} 行：${line.trim().slice(0, 90)}`);
 } else {
-  ok('判据 3：pure.js 与 slash-template.js 都零 import / 零再导出（桌面端能自足加载）');
+  ok('判据 3：pure.js / slash-template.js / share-config.js 都零 import / 零再导出（桌面端能自足加载）');
 }
 
 // ── 判据 4：桌面那份拷贝与源逐字节一致 ──────────────────────────────────────
@@ -156,6 +163,7 @@ const copies = [
   [join(F.ui, 'actions-catalog.json'), F.source.catalog, '目录'],
   [join(F.ui, 'actions-pure.js'), F.source.pure, '实现'],
   [join(F.ui, 'slash-template.js'), F.source.slash, '「/」模板'],
+  [join(F.ui, 'share-config.js'), F.source.share, '分享限额'],
 ];
 const drifted = copies.filter(([to, from]) => {
   if (!existsSync(to)) return true;
@@ -167,7 +175,7 @@ if (drifted.length && resolve(F.ui) !== DEFAULTS.ui) {
 } else if (drifted.length) {
   bad(`判据 4：桌面那份拷贝与源不一致（${drifted.map(([to]) => to.split('/').pop()).join('、')}）—— 跑 node tools/sync-action-catalog.mjs`);
 } else {
-  ok('判据 4：桌面那份 catalog.json / pure.js / slash-template.js 与源逐字节一致');
+  ok('判据 4：桌面那份 catalog.json / pure.js / slash-template.js / share-config.js 与源逐字节一致');
 }
 
 // ── 判据 5：文案键覆盖，且两种语种都有 ─────────────────────────────────────
