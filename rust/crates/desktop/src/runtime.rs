@@ -886,7 +886,10 @@ fn http_status(status: reqwest::StatusCode) -> Msg {
 /// 后来才加的，老服务端不一定给。少一个数只是结果面板上少一行，
 /// 不该让一条**已经签发出来**的链接失败。
 fn num_field(value: &serde_json::Value, key: &str) -> i64 {
-    value.get(key).and_then(serde_json::Value::as_i64).unwrap_or(0)
+    value
+        .get(key)
+        .and_then(serde_json::Value::as_i64)
+        .unwrap_or(0)
 }
 
 #[cfg(test)]
