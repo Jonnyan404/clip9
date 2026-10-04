@@ -556,6 +556,12 @@
         "Could not load this room's history (the server is probably unreachable) -- click the room again to retry.",
       '{bytes} / 不限': '{bytes} / unlimited',
       '上限还不知道（还没连上）': 'limit unknown yet (not connected)',
+      // 文件的那条界（发送框与设置页共用一句 —— 见 `app.js` 的 `fileLimitText`）。
+      // ⚠️ "≤" 是 U+2264，不是 "<="：那排本身就很窄，两个字符写成三个会把它挤到换行。
+      '文件 ≤ {size}': 'file ≤ {size}',
+      '文件不限大小': 'file size unlimited',
+      '文件大小上限还不知道（还没连上）': 'file size limit unknown yet (not connected)',
+      '超过这个大小的文件发不出去': 'Files bigger than this never leave this machine',
       '还没连上': 'not connected yet',
       '没有房间': 'no room',
       '{name}（本机）': '{name} (this machine)',
@@ -628,7 +634,8 @@
       '没开：哪个房间的内容都收不到': 'off: content from no room is received',
       '（还没有日志 —— 服务端起来之后才会有）': '(no log yet — there will be one once the server is up)',
       '读日志失败：{error}': 'Could not read the log: {error}',
-      '上限 {size}': 'Limit {size}',
+      // ⚠️ `'上限 {size}'` 从这里删掉了：那一句现在由 `app.js` 的 `fileLimitText` 算，
+      // 发送框右边与设置页下行那一段用的是同一句 —— 这里再留一条就是第三份定义。
       '读不到设置：{error}': 'Could not read the settings: {error}',
       '已保存': 'Saved',
       '没有逐房间的凭据 —— 所有房间都用上面的全局密码（或都不需要密码）。':

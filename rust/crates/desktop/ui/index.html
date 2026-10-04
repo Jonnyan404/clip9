@@ -1287,6 +1287,11 @@ table.ra td input[type='checkbox'] { margin: 0; }
                         <button class="btn icon" id="btn-image" data-i18n-title="选图片发到房间">🖼</button>
                         <span class="lim" id="composer-hint"></span>
                         <div class="spacer"></div>
+                        <!-- ⚠️★ 两个上限**同时**显示：字节那条是「你现在打了多少 / 这条消息最多多少」，
+                             文件那条是**另一条**界（拖进来的单个文件多大能发出去）。
+                             以前文件上限只在「设置 → 下载那条路上手写一句」里出现 ——
+                             而真正要发文件的时刻就在这一屏，用的人要疼那一刻才知道有个数。 -->
+                        <span class="lim" id="limits-file" data-i18n-title="超过这个大小的文件发不出去"></span>
                         <span class="lim" id="limits"></span>
                         <button class="btn primary" id="btn-send" data-i18n="发送">发送</button>
                     </div>

@@ -1573,6 +1573,24 @@ function renderTimeline(state) {
  * **服务端设了 0 = 不限**（`handlers.rs` 那条 `text.limit > 0` 的判断）。
  * 只判 `limit` 真值的话，后一种会被画成「还没连上」—— 明明连着却说不清。
  */
+/** 单文件上限那一句话 —— ⚠️★ 发送框与设置页**这一处**算。
+ * 两处各写一份的表现是「同一份上限，这一屏说 256 MB、那一屏说还不知道」。
+ *
+ * ⚠️★ `0` 有两种含义，与字节那条同一个坑：**服务端说 0 = 不限**（`ClientConfig` 的
+ * `max_file_size_mb` 默认就是 0）与**还没连上**（初值也是 0）。只判 `fileLimit` 真假，
+ * 后一种会被说成「不限」—— 发出去被拒了才知道那条界其实没问到。
+ * 分开它们看的是**房间的连接状态**（它既能回答「连上没有」，
+ * 也是这一屏上唯一知道「问到过没有」的地方）。
+ */
+function fileLimitText() {
+  if (lastLimits.fileLimit > 0) {
+    return t('文件 ≤ {size}', { size: sizeLabel(lastLimits.fileLimit) });
+  }
+  const kind = lastRooms[lastSelected]?.connection?.kind;
+  if (kind === 'on' || kind === 'warn') return t('文件不限大小');
+  return t('文件大小上限还不知道（还没连上）');
+}
+
 function updateCounter() {
   const bytes = new TextEncoder().encode(el('input').value).length;
   const kind = lastRooms[lastSelected]?.connection?.kind;
@@ -1583,6 +1601,7 @@ function updateCounter() {
   } else {
     el('limits').textContent = t('上限还不知道（还没连上）');
   }
+  el('limits-file').textContent = fileLimitText();
 }
 
 /** 主区那一行**右边**的设备行（稿 1 有：几个圆圈 + 「N 台在线」）。
@@ -2944,9 +2963,8 @@ async function openSettings() {
     // ⚠️★ 文件上限**来自握手**（`ClientConfig::max_file_size_mb` 的默认是 **0 = 不限制**），
     // 所以这里照实显示服务端给的那个数 —— 界面稿里写死的「大于 50 MB 跳过」
     // 在代码里**根本不成立**，抄它就是抄一句假话。
-    el('sc-file-hint').textContent = lastLimits.fileLimit
-      ? t('上限 {size}', { size: sizeLabel(lastLimits.fileLimit) })
-      : t('上限还不知道（还没连上）');
+    // ⚠️ 那一句由 `fileLimitText` 算，发送框用的是同一句（见那里的注释）。
+    el('sc-file-hint').textContent = fileLimitText();
     el('sc-poll').value = view.pollIntervalMs;
     el('sc-dir').value = view.downloadDir;
     // ⚠️ 自启那个勾画的是**系统里的真相**（壳去问的系统），不是配置里的意图。

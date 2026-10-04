@@ -2315,6 +2315,55 @@ if (entryViewFiles.length !== 1) {
   }
 }
 
+// ── 判据 30：发送框那一行要把**两个**上限都说出来，而且用同一句话（理由见下）─────
+//
+// ⚠️★ 2026-10-03 加。字节的那个数一直都在（`0 / 4096`），文件的只在「设置 → 下载」
+// 那一段出现过 —— 而真正要发文件的时刻就在这一屏。要拖一个 300MB 的文件进来，
+// 得先猜服务端收不收，猜错了才在别处看到那个数。
+//
+// 另一件事是**一句话**：发送框与设置页各写一份的话，「这一屏说 256 MB、那一屏说还不知道」
+// 就是迟早的事（`0` 有两种含义 —— 服务端说 0 = 不限、还没连上也是 0 —— 这个坑只能填一次）。
+{
+  const bareJs = stripComments(js).split('\u0000').join("'");
+  const problems = [];
+
+  if (!html.includes('id="limits-file"')) {
+    problems.push('index.html 里没有 #limits-file —— 发送框只有字节数，文件上限还是得去别处找');
+  }
+  const fn = /function fileLimitText\(\)\s*\{[\s\S]*?\n\}/.exec(bareJs)?.[0] ?? '';
+  if (!fn) {
+    problems.push('找不到 `fileLimitText` —— 那句话要么没了、要么又写回了两个调用点里');
+  } else {
+    // ⚠️★ `0` 的两种含义必须在**这一处**分开：只判 `fileLimit` 真假的话，
+    // 「服务端说 0 = 不限」会被说成「还没连上」（发出去被拒了才知道那条界没问到）。
+    if (!/kind === 'on' \|\| kind === 'warn'/.test(fn)) {
+      problems.push('`fileLimitText` 没有用房间的连接状态分「不限」与「还不知道」'
+        + ' —— 服务端设 0（不限）会被说成「还没连上」，明明连着却说不清');
+    }
+    if (!/lastLimits\.fileLimit > 0/.test(fn)) {
+      problems.push('`fileLimitText` 没有判 `fileLimit > 0` —— 上限值画不出来');
+    }
+  }
+  // 两个调用点都要在（少一个就是「各写一份」或者「有一屏不显示」）。
+  for (const [where, what] of [
+    [/function updateCounter\(\)\s*\{[\s\S]*?\n\}/, '发送框那一行'],
+    [/el\('sc-file-hint'\)\.textContent = fileLimitText\(\)/, '设置页下载那段'],
+  ]) {
+    const body = typeof where === 'string' ? (bareJs.includes(where) ? where : '') : (where.exec(bareJs)?.[0] ?? '');
+    if (!body || !(body.includes ? body.includes('fileLimitText()') : true)) {
+      problems.push(`${what}没有用 \`fileLimitText()\` —— 那句话就有了第二份定义`);
+    }
+  }
+
+  if (problems.length) {
+    failed = true;
+    console.error(`✗ 判据 30：发送框的文件上限接线断了（${problems.length} 处）：`);
+    for (const one of problems) console.error(`    · ${one}`);
+  } else {
+    console.log('· 判据 30：发送框与设置页共用一句 `fileLimitText`（0 = 不限 与 还没连上 分得开）。');
+  }
+}
+
 if (cssOnly.length) {
   console.log(`· ${cssOnly.length} 个 id 只被选择器用（形如 #id { … }），正常：${cssOnly.join('、')}`);
 }if (dynamicPrefixes.size) {
