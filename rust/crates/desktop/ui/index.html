@@ -420,6 +420,16 @@
 
     .filerow .fs { color: var(--text-2); font-size: 10.5px; }
 
+    /* ── 过期文件那一行（2026-10-04）────────────────────────────────
+       ⚠️★ 过期是**状态**，不是「出错了」—— 但它必须一眼看得出来：不说的话，
+       用户只会看到「点一下存不下来」，然后以为是网络坏了。
+       ⚠️ 光标那条要写成 `.card .filerow.expired`（三个类）：下面 `.card .filerow`
+       那条 `cursor: pointer` 与两类的写法**权重相同**，靠位置分胜负 ——
+       而它在这个文件里更靠后，两类写法会被它顶掉。 */
+    .filerow .fs.bad { color: var(--danger); font-weight: 600; }
+    .filerow.expired .fn { text-decoration: line-through; }
+    .card .filerow.expired { cursor: default; opacity: .72; }
+
 
     /* ── 输入区 ─────────────────────────────────────────────── */
     /* ⚠️★ 输入区的高度可拖（2026-09-29，Jonny：「允许自由调整桌面端发送窗口的高度」）。

@@ -49,6 +49,19 @@ pub struct EntryView {
     pub file_name: String,
     /// 文件字节数（`kind == "file"` 时有值；`0` = 服务端没给）。
     pub file_size: i64,
+    /// 文件**过期时刻**（Unix 秒，绝对时刻、与时区无关）。`0` = 永不过期。
+    ///
+    /// ⚠️★ 2026-10-04 才补进投影（Jonny：「桌面端也一样，显示文件的过期时间和状态，
+    /// 并且过期文件的下载按钮置灰」）。协议里它一直有（`FileReceive::expire`），
+    /// 只是投影时被丢掉了 —— 于是桌面端**看不出**一份文件会不会过期、过没过期，
+    /// 而点一下已经过期的那条只会拿到服务端 404 的正文（`handlers.rs` 的 `file_expired`），
+    /// 表现成「存不下来」，用户没法知道是**过期**而不是网络坏了。
+    ///
+    /// ⚠️ 界面自己拿 `Date.now()` 比（别在这里预先算好 `expired` 布尔）：
+    /// 快照是**会缓存**的，一份预先算好的布尔会随着时间推移变成假话。
+    /// ⚠️ 判据 19 盯着「`EntryView` 的每个字段都要在卡片渲染那条调用链里读一次」——
+    /// 加了字段不读，`tools/desktop-ui-smoke.mjs` 会红。
+    pub expire: i64,
     /// 文件预览地址（`kind == "file"` 时有值）。
     ///
     /// ⚠️★ **本地拼的**（`endpoint::download_url`），**不信条目里那个 `url`** ——
@@ -155,11 +168,13 @@ impl EntryView {
         needs_token: bool,
     ) -> Self {
         let base = holder.base();
-        let (kind, text, file_name, file_size, preview_url, file_cache) = match holder {
+        let (kind, text, file_name, file_size, expire, preview_url, file_cache) = match holder {
             ReceiveHolder::Text(t) => (
                 "text",
                 t.content.clone(),
                 String::new(),
+                0,
+                // 文本条目**不会过期**（`expire` 是文件专有的字段）。
                 0,
                 None,
                 String::new(),
@@ -182,6 +197,7 @@ impl EntryView {
                     String::new(),
                     f.name.clone(),
                     f.size,
+                    f.expire,
                     url,
                     f.cache.clone(),
                 )
@@ -197,6 +213,7 @@ impl EntryView {
             truncated: false,
             file_name,
             file_size,
+            expire,
             preview_url,
             preview_needs_token: needs_token,
             file_cache,

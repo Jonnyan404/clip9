@@ -931,6 +931,33 @@ function sizeLabel(bytes) {
   return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
 }
 
+/** 带**日期**的时刻 —— 过期时间用它。
+ *
+ *  ⚠️★ `timeLabel` 只给到分钟、而且**不带日期**，那是给「今天收到的这条」用的。
+ *  而一份文件可能**后天**才过期，只显示 `20:11` 是看不出哪一天的 —— 那正是
+ *  「说过期了却看不出什么时候」的那类含糊。
+ */
+function dateTimeLabel(unixSeconds) {
+  if (!unixSeconds) return '—';
+  const date = new Date(unixSeconds * 1000);
+  return Number.isNaN(date.getTime())
+    ? '—'
+    : date.toLocaleString([], { year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' });
+}
+
+/** 这条文件条目**过期了吗**。
+ *
+ *  ⚠️★ 判据与服务端 `file_expired`（`handlers.rs`）**同一条**：`expire` 是**绝对时刻**
+ *  （Unix 秒），`0` = 永不过期。`> 0` 那一半不能省 —— 省了的话「永不过期」会被算成过期
+ *  （`0 < now` 恒真），于是**每一份文件都显示成过期**。
+ *
+ *  ⚠️★ 用**当前时间**现算，别让壳预先算好一个布尔发下来：快照是**会缓存**的，
+ *  预先算好的那个值过一会儿就变成假话（而它看起来一模一样）。
+ */
+function entryExpired(entry) {
+  return entry.expire > 0 && Date.now() / 1000 > entry.expire;
+}
+
 const IMAGE_SUFFIX = /\.(png|jpe?g|gif|webp|bmp|heic|svg)$/i;
 // ⚠️ 视频只列**浏览器自己就能放**的那几种（`mkv` / `avi` 里的编码五花八门，
 // 容器后缀认得出来不代表里面的流能播 —— 真放不出来时会走下面那个 `error` 回退）。
@@ -958,14 +985,26 @@ function saveEntryFile(entry) {
 
 function fileRow(entry) {
   const row = h('div', 'filerow');
+  // ⚠️★ 过期状态**必须看得见**（2026-10-04 Jonny：「桌面端也一样，显示文件的过期时间和状态，
+  // 并且过期文件的下载按钮置灰」）。不标出来的话，点一下只会弹一句「存不下来」，
+  // 而用户分不清是**过期了**还是网络坏了 —— 这两件事该做的事完全不同。
+  const expired = entryExpired(entry);
+  if (expired) row.classList.add('expired');
   row.append(h('div', 'fi', '📄'));
   const meta = h('div');
   meta.append(h('div', 'fn', entry.fileName || t('(没有文件名)')));
   const size = sizeLabel(entry.fileSize);
   if (size) meta.append(h('div', 'fs', size));
+  // ⚠️ `0` = 永不过期 → **不显示这一行**（写「永久有效」等于给每一份文件都加一行废话）。
+  if (entry.expire > 0) {
+    meta.append(h('div', expired ? 'fs bad' : 'fs',
+      expired ? t('已过期') : t('{time} 过期', { time: dateTimeLabel(entry.expire) })));
+  }
   row.append(meta);
-  row.title = t('点开存到下载目录，并在文件管理器里选中它');
-  row.addEventListener('click', () => saveEntryFile(entry));
+  row.title = expired ? t('已过期，存不下来了') : t('点开存到下载目录，并在文件管理器里选中它');
+  // ⚠️★ 过期就**不给点**：点下去壳只会拿到服务端 404 的正文（`file_expired`），
+  // 而那时弹出的是一句「存不下来」—— 一颗**看起来能点**的按钮才是真正的问题。
+  if (!expired) row.addEventListener('click', () => saveEntryFile(entry));
   return row;
 }
 
@@ -1588,9 +1627,17 @@ function entryActions(entry) {
   // ⚠️ 用 `once` 禁用它：存一个大文件要一会儿，禁掉才不会点出第二份
   //（`unique_path` 会老老实实存成 `报告 (1).pdf`）。
   if (entry.kind === 'file') {
-    add('download', t('存到下载目录，并在文件管理器里选中它'), (button) => {
+    // ⚠️★ 过期的**置灰**（2026-10-04 Jonny：「过期文件的下载按钮置灰」）——
+    // 与网页版标准模式（`received-item/File.tsx` 的 `disabled={expired || downloading}`）同一套。
+    // ⚠️ 灰掉**不是**为了好看：过期文件的字节在服务端已经没了，点下去只会拿到 404 的正文
+    // 并被报成「存不下来」—— 那等于把「过期」说成了「出错了」。
+    // ⚠️ 这里**不能**用 `once`（它会在 finally 里把 `disabled` 恢复成 false）——
+    // 所以下面那颗按钮不用 `once` 包，禁用它靠 `entryExpired` 现算。
+    const expired = entryExpired(entry);
+    const download = add('download', expired ? t('已过期') : t('存到下载目录，并在文件管理器里选中它'), (button) => {
       once(button, () => saveEntryFile(entry));
     });
+    if (expired) download.disabled = true;
     // ⚠️★ 视频的「放大」**不在这里**（2026-10-04 Jonny：「视频的放大预览图标浮动在
     // 视频的右上角」）—— 它在画面右上角那颗浮着的按钮上，见 `mediaPreview` / `mediaExpand`。
     // 那一排按钮与画面隔着 meta 一行，而「放大这块画面」挨着画面才说得通。
