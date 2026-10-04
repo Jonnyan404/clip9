@@ -3490,6 +3490,162 @@ if (entryViewFiles.length !== 1) {
   }
 }
 
+// ── 判据 40：大图预览要能缩放（滚轮 / ＋ − / 键盘）（理由见下）──────────────────
+//
+// ⚠️★ 2026-10-04 Jonny：「大图预览窗口，现在需要支持鼠标滚轮放大缩小，和 + - 号图标放大缩小」。
+// 这一条钉的是**缩放这条路**上的五个环节，每一个单拎出来都「看着对、其实不动」：
+//   ① 滚轮必须能**拦下**（`passive: false`）—— 默认被动监听里 `preventDefault()` 是空操作，
+//      于是滚轮**同时**缩放和滚动背后那条时间线；
+//   ② 放大要围着**指针**（标准手感），而围着正中放大会让「看清右上角」变成反复拖；
+//   ③ 尺寸是**按固有尺寸**算出来的（不是按屏幕上那个已经被上限缩过一次的尺寸），
+//      而且要**内联掉** CSS 那两条上限，否则放大时被 `max-width: 100%` 顶回来；
+//   ④ 容器要能滚（`overflow: auto`）而且居中得用 `margin: auto` —— 在滚动容器里用
+//      `place-items: center`，超出部分会被裁在左上角**且滚不过去**；
+//   ⑤ 开下一条 / 关掉都要把倍数复位（不清的话下一条按上一条的倍率画）。
+{
+  const problems = [];
+  const bareJs = stripJs(js);
+  for (const id of ['lightbox-zoom-out', 'lightbox-zoom-in', 'lightbox-zoom-reset']) {
+    if (!new RegExp(`id="${id}"`).test(html)) {
+      problems.push(`\`index.html\` 里没有 \`#${id}\` —— 缩放少一个入口`);
+    }
+    // ⚠️★ 按**这一条语句**判，不用有界通配：`[\s\S]{0,80}lbApplyZoom\(` 会跨到**下一行**
+    // 那颗按钮的监听上去 —— 于是「把这颗的回调清空」照样全绿（实测过，与判据 38 那条同一类）。
+    // ⚠️ 两种写法都要认：回调是**块**（`() => { … }`）时取配平的那一块，
+    // 是**表达式**（`() => lbApplyZoom(…)`）时没有花括号可配平，就取它自己那一行。
+    const head = `el(\u0000${id}\u0000).addEventListener(\u0000click\u0000`;
+    const line = bareJs.split('\n').find((one) => one.includes(head)) ?? '';
+    const handler = line.trimEnd().endsWith('{') ? bracedBlock(bareJs, head) : line;
+    if (!handler) {
+      problems.push(`找不到 \`#${id}\` 的点击监听 —— 缩放少一个入口`);
+    } else if (!/lbApplyZoom\(/.test(handler)) {
+      problems.push(`\`#${id}\` 没有接上 \`lbApplyZoom\` —— 那是一颗点了没反应的按钮`);
+    }
+  }
+  // ① 滚轮：拦得住、围着指针、而且**量不到尺寸之前不拦**（那时还没有可缩的画面）。
+  const wheelBody = bracedBlock(bareJs, 'el(\u0000lightbox\u0000).addEventListener(\u0000wheel\u0000');
+  if (!wheelBody) {
+    problems.push('找不到滚轮那条监听 —— 缩放只剩两颗按钮了');
+  } else {
+    if (!/preventDefault\(\)/.test(wheelBody)) {
+      problems.push('滚轮没有 `preventDefault()` —— 它会**同时**缩放和滚动背后那条时间线');
+    }
+    if (!/lbFit\) return/.test(wheelBody)) {
+      problems.push('滚轮没有「还没量出固有尺寸就别动」那道闸 —— 那一刻缩放没有基准');
+    }
+    if (!/clientX[\s\S]{0,80}clientY/.test(wheelBody)) {
+      problems.push('滚轮缩放没有拿**指针**当锚点（`clientX` / `clientY`）—— 放大之后还得自己找位置');
+    }
+    if (!/deltaMode/.test(wheelBody)) {
+      problems.push('滚轮没有归一化 `deltaMode` —— 按行上报的环境（Firefox 等）里滚一格就是十倍');
+    }
+  }
+  // ⚠️★ `{ passive: false }` 是**第三个参数**、写在回调之后，所以它落在 `bracedBlock`
+  // 取到的那块**外面** —— 这一条只能在整份源码上按「紧跟在那条监听后面」来找
+  //（第一版把它写进了块里，于是判据自己报了一条假红）。
+  if (!/el\(\u0000lightbox\u0000\)\.addEventListener\(\u0000wheel\u0000[\s\S]{0,900}\{ passive: false \}/
+    .test(bareJs)) {
+    problems.push('滚轮监听上没有 `{ passive: false }`（它必须紧跟在回调后面）——'
+      + '被动监听里 `preventDefault()` 是空操作，滚轮会**同时**缩放和滚动背后那条时间线');
+  }
+  // ②③ 缩放本身：围着锚点、按固有尺寸、把 CSS 上限内联掉。
+  const applyFn = bracedBlock(bareJs, 'function lbApplyZoom(next, anchor)');
+  if (!applyFn) {
+    problems.push('找不到 `lbApplyZoom` —— 缩放没有落点');
+  } else {
+    // ⚠️★ 要判的是「**写回**滚动位置」，不是「读一下」：`scrollLeft` 在锚点那段计算里也出现
+    //（`keep.x` 用的是它的旧值），于是只看「有没有这个词」的话，**把那两句赋值删掉**
+    // 照样全绿 —— 而症状正是「缩放围着正中走」。
+    if (!/stage\.scrollLeft\s*=/.test(applyFn) || !/stage\.scrollTop\s*=/.test(applyFn)) {
+      problems.push('`lbApplyZoom` 没有把滚动位置**摆回**锚点那一点（`stage.scrollLeft =` /'
+        + ' `stage.scrollTop =`）—— 缩放会围着正中走，指针底下那块细节每放一次就跑一次');
+    }
+    if (!/lbOffset\(/.test(applyFn)) {
+      problems.push('`lbApplyZoom` 没算「画面在滚动内容里的起点」（`lbOffset`）——'
+        + '居中的画面缩起来会偏');
+    }
+    if (!/style\.width/.test(applyFn) || !/style\.height/.test(applyFn)) {
+      problems.push('`lbApplyZoom` 没有改画面的**尺寸**（只写 `transform` 的话滚不动：'
+        + '变换不产生可滚动的溢出）');
+    }
+    if (!/maxWidth = \u0000?none\u0000?/.test(applyFn) || !/maxHeight = \u0000?none\u0000?/.test(applyFn)) {
+      problems.push('`lbApplyZoom` 没有把 CSS 那两条上限内联成 `none` —— 放大时会被'
+        + '`max-width: 100%` 顶回来（症状：滚轮转了、读数也变了，画面纹丝不动）');
+    }
+    if (!/LB_ZOOM_MIN/.test(applyFn) || !/LB_ZOOM_MAX/.test(applyFn)) {
+      problems.push('`lbApplyZoom` 没有夹上下限 —— 滚轮多转几下图会变成一块纯色，而且回不来');
+    }
+  }
+  const measureFn = bracedBlock(bareJs, 'function lbMeasure(media)');
+  if (!measureFn) {
+    problems.push('找不到 `lbMeasure` —— 没有「恰好放得下」那个基准');
+  } else {
+    if (!/naturalWidth/.test(measureFn) || !/videoWidth/.test(measureFn)) {
+      problems.push('`lbMeasure` 没有量**固有尺寸**（`naturalWidth` / `videoWidth`）——'
+        + '拿屏幕上那个已经被上限缩过一次的尺寸当基准，倍率与用户以为的对不上');
+    }
+    if (!/clientWidth/.test(measureFn) || !/clientHeight/.test(measureFn)) {
+      problems.push('`lbMeasure` 没有拿容器的大小当基准（`clientWidth` / `clientHeight`）');
+    }
+  }
+  // ⑤ 开 / 关都要复位。
+  const openFn = bracedBlock(bareJs, 'function openLightbox(entry)');
+  const closeFn = bracedBlock(bareJs, 'function closeLightbox()');
+  if (!/lbResetZoom\(\)/.test(openFn)) {
+    problems.push('`openLightbox` 没有复位倍数 —— 下一条会按上一条的倍率画出来');
+  }
+  if (!/lbResetZoom\(\)/.test(closeFn)) {
+    problems.push('`closeLightbox` 没有复位倍数');
+  }
+  // ④ 容器：能滚 + 用 `margin: auto` 居中（那条「居中 + 滚动」的经典冲突）。
+  const stageCss = /\.lightbox \.lb-stage \{[\s\S]{0,200}?\}/.exec(html)?.[0] ?? '';
+  if (!/overflow: auto/.test(stageCss)) {
+    problems.push('`.lb-stage` 不是滚动容器（`overflow: auto`）—— 放大之后移不到别处');
+  }
+  if (/place-items: center/.test(stageCss)) {
+    problems.push('`.lb-stage` 用 `place-items: center` 居中 —— 在滚动容器里它会把超出部分'
+      + '裁在**左上角**且滚不过去（要用子元素上的 `margin: auto`）');
+  }
+  if (!/\.lightbox \.lb-stage > \* \{ margin: auto; \}/.test(html)) {
+    problems.push('`.lb-stage` 的子元素没有 `margin: auto` —— 画面不会居中，或者居中之后滚不动');
+  }
+  // 放大之后要能拖着看（macOS 的滚动条是悬浮的，而滚轮被缩放占用了）。
+  if (!/draggable = false/.test(openFn)) {
+    problems.push('灯箱里的图片没有 `draggable = false` —— 按住一拖触发的是浏览器原生拖图'
+      + '（跟着指针走的是那张半透明的缩略图，平移一行都没执行）');
+  }
+  if (!/function lbBindPan\(/.test(bareJs) || !/setPointerCapture/.test(bareJs)) {
+    problems.push('没有拖动平移（或没抓指针）—— 放大到超出窗口就只剩左上角那一块看得见');
+  }
+  // ⚠️★ 那四颗的图标是**挂上去的**（标记里不写字形）——
+  // 字形在 22px 的方块里不居中：位置按字体自己的基线走，全角 `＋` 与数学减号 `−`
+  // 的偏移还各不一样，于是四颗里有两颗看着是歪的（Jonny 2026-10-04 一眼看出来）。
+  // 图标是几何图形，`place-items: center` 一下就正中——所以「挂没挂」要钉住。
+  const iconBlock = /const ICON_PATHS = \{[\s\S]*?\n\};/.exec(bareJs)?.[0] ?? '';
+  for (const [id, name] of [['lightbox-zoom-out', 'minus'], ['lightbox-zoom-in', 'plus'],
+    ['lightbox-close', 'close']]) {
+    if (!new RegExp(`el\\(\\u0000${id}\\u0000\\)\\.append\\(icon\\(\\u0000${name}\\u0000\\)\\)`)
+      .test(bareJs)) {
+      problems.push(`\`#${id}\` 没有挂上图标（\`icon('${name}')\`）—— 那颗按钮会是个空方块`);
+    }
+    if (!new RegExp(`^\\s*${name}\\s*:`, 'm').test(iconBlock)) {
+      problems.push(`\`ICON_PATHS\` 里没有 \`${name}\` —— \`icon()\` 认不出名字会**当场抛**`);
+    }
+    const glyph = new RegExp(`id="${id}"[^>]*>([^<]*)</button>`).exec(html)?.[1]?.trim() ?? '';
+    if (glyph !== '') {
+      problems.push(`\`#${id}\` 的标记里又写上了字形（\`${glyph}\`）—— 字形在那个方块里不居中，`
+        + '图标要由 `icon()` 挂');
+    }
+  }
+  if (problems.length) {
+    failed = true;
+    console.error(`✗ 判据 40：大图预览的缩放没落实（${problems.length} 处）：`);
+    for (const one of problems) console.error(`    · ${one}`);
+  } else {
+    console.log('· 判据 40：灯箱能缩放（滚轮围着指针 / ＋ − / 键盘），开下一条自动复位。');
+  }
+}
+
 if (cssOnly.length) {
   console.log(`· ${cssOnly.length} 个 id 只被选择器用（形如 #id { … }），正常：${cssOnly.join('、')}`);
 }if (dynamicPrefixes.size) {

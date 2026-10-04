@@ -863,6 +863,15 @@ const ICON_PATHS = {
   // 放大：四角向外（Feather 的 `maximize-2`）
   expand: '<polyline points="15 3 21 3 21 9"/><polyline points="9 21 3 21 3 15"/>'
     + '<line x1="21" y1="3" x2="14" y2="10"/><line x1="3" y1="21" x2="10" y2="14"/>',
+  // 灯箱那两颗缩放按钮（Feather 的 `plus` / `minus`）。
+  // ⚠️★ 它们**不用文字字形**（`+` / `−`）：字形在 22px 的方块里不居中 —— 位置按字体
+  // 自己的基线走，全角 `＋` 与数学减号 `−` 的偏移还各不一样，于是两颗一上一下、
+  // 看着像没对齐（Jonny 2026-10-04 一眼看出来了）。图标是**几何图形**，
+  // `place-items: center` 一下就正中。
+  plus: '<line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>',
+  minus: '<line x1="5" y1="12" x2="19" y2="12"/>',
+  // 关闭（Feather 的 `x`）：与上面两颗同一个道理 —— 这一排四颗要长得像一套。
+  close: '<line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>',
   // 分享：一个向上的箭头从盒子里出去
   share: '<path d="M4 12v8a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-8"/>'
     + '<polyline points="16 6 12 2 8 6"/><line x1="12" y1="2" x2="12" y2="15"/>',
@@ -1113,6 +1122,30 @@ function whenVisible(node, run) {
   observer.observe(node);
 }
 
+/** 灯箱现在放大到几倍（`1` = 恰好放得下）。
+ *
+ * ⚠️★ 这是**灯箱自己的**状态，与条目无关：开下一条 / 关掉都归 1（`lbResetZoom`）——
+ * 留着上一条的倍数，下一条打开时就是「莫名其妙放得很大」。
+ */
+let lbZoom = 1;
+
+/** 这一条在 `zoom === 1` 时该画多大（按它**自己的**固有尺寸缩到灯箱里）。
+ *
+ * ⚠️ `null` = 还没量出来（图没加载完 / 视频还没有元数据）—— **那时不许缩放**：
+ * 拿「屏幕上现在这个尺寸」当基准是最常见的写法，但那个尺寸已经被上限缩过一次，
+ * 于是滚一格就得到一个完全对不上的倍率。
+ */
+let lbFit = null;
+
+/** 点一次 ＋ / − 走几倍（滚轮走的是连续值，见那条 `wheel` 监听）。 */
+const LB_ZOOM_STEP = 1.25;
+
+/** 缩放的上下限（`0.1` = 缩到十分之一，`8` = 放大到八倍）。
+ * ⚠️ 要有上限：没有它，滚轮多转几下就是几百倍 —— 那张图会变成一块纯色，
+ * 而用户**没有任何办法**回到看得见的状态（只能关掉重开）。 */
+const LB_ZOOM_MIN = 0.1;
+const LB_ZOOM_MAX = 8;
+
 /** 壳内灯箱：点开一条图片 / 视频，在**壳里**看原始大小。
  *
  * ⚠️★ 为什么**不再**交给系统默认程序（2026-10-04 之前的行为）：那一下把用户**踢出应用**
@@ -1137,6 +1170,9 @@ function openLightbox(entry) {
   el('lightbox-name').textContent = entry.fileName || '';
 
   stage.replaceChildren();
+  // ⚠️★ 每开一条都从「恰好放得下」开始：上一条转过的倍数**不带过来**
+  //（否则下一条一打开就是「莫名其妙放得很大」，而且那时还没有可滚动的余量）。
+  lbResetZoom();
   const loading = h('div', 'lb-load', t('正在载入…'));
   stage.append(loading);
 
@@ -1147,12 +1183,20 @@ function openLightbox(entry) {
     media.playsInline = true;
   } else {
     media.alt = entry.fileName || '';
+    // ⚠️ 关掉原生的「拖图」：不给它，按住一拖跟着指针走的是浏览器那个半透明的缩略图，
+    // 而我们的平移一行都没执行（见 `.lb-stage img` 那条 CSS）。
+    media.draggable = false;
+    lbBindPan(stage, media);
   }
-  // ⚠️ 加载完（图 `load` / 视频 `loadedmetadata`）就把「正在载入」摘掉 ——
-  // 但**出错也要摘**：否则用户盯着一行「正在载入…」永远等下去（那条内容其实取不回来）。
-  const done = () => loading.remove();
-  media.addEventListener('load', done);
-  media.addEventListener('loadedmetadata', done);
+  // ⚠️★ 加载完（图 `load` / 视频 `loadedmetadata`）做两件事：摘掉那行「正在载入」，
+  // 以及**量一次固有尺寸** —— 量到之前滚轮什么也不做（见 `lbFit`）。
+  // ⚠️ 出错也要摘：否则用户盯着一行「正在载入…」永远等下去（那条内容其实取不回来）。
+  const settle = () => {
+    loading.remove();
+    if (lbMeasure(media)) lbApplyZoom(1);
+  };
+  media.addEventListener('load', settle);
+  media.addEventListener('loadedmetadata', settle);
   media.addEventListener('error', () => {
     loading.remove();
     stage.append(h('div', 'lb-load', t('这一条取不回来（可能已经被删了）')));
@@ -1179,6 +1223,119 @@ function openLightbox(entry) {
   box.hidden = false;
 }
 
+/** 回到「恰好放得下」，并把那颗百分比复位（开一条新的 / 关掉时都走它）。 */
+function lbResetZoom() {
+  lbZoom = 1;
+  lbFit = null;
+  const pct = el('lightbox-zoom-reset');
+  if (pct) pct.textContent = '100%';
+}
+
+/** 量一次「恰好放得下」的尺寸（`lbFit`）。
+ *
+ * ⚠️★ 量的是**固有尺寸**（`naturalWidth` / `videoWidth`），基准框是 `.lb-stage` 的
+ * `clientWidth` / `clientHeight` —— 那一层的大小是**定死的**（`flex: 1` + `overflow: auto`，
+ * 内容撑不大它），所以这两个数就是「放得下」的定义，不依赖此刻画成了多大。
+ * ⚠️ 拿屏幕上那个尺寸当基准是另一条常见的写法，但它已经被上限缩过一次：滚一格得到的
+ * 倍率与用户以为的对不上（而且越滚越小）。
+ * ⚠️ 量不到（字节还没到 / 视频没有元数据）→ `false`，调用方据此**先不许缩放**。
+ */
+function lbMeasure(media) {
+  const stage = el('lightbox-stage');
+  if (!stage || !media) return false;
+  const natural = media.tagName === 'VIDEO'
+    ? { w: media.videoWidth, h: media.videoHeight }
+    : { w: media.naturalWidth, h: media.naturalHeight };
+  if (!natural.w || !natural.h) return false;
+  const scale = Math.min(1, stage.clientWidth / natural.w, stage.clientHeight / natural.h);
+  if (!(scale > 0)) return false;
+  lbFit = { w: natural.w * scale, h: natural.h * scale };
+  return true;
+}
+
+/** 画面比容器小的时候它离**滚动起点**多远（居中）；比容器大时是 0（贴左上）。
+ *
+ * ⚠️★ 这两个偏移量是「指针底下那一点不动」那套算式的必需品：居中状态下 `scrollLeft`
+ * 是 0，而画面并不是从容器左边开始的 —— 少减这一项，指针不在正中间时缩放就会偏。
+ * ⚠️ 与 CSS 那边 `margin: auto` 是同一条规矩（那边把画面居中，这边把它算回来）。
+ */
+const lbOffset = (size, box) => (size >= box ? 0 : (box - size) / 2);
+
+/** 缩到 `next` 倍。`anchor` 是**指针在容器里的坐标**（不给就用容器正中）。
+ *
+ * ⚠️★ 为什么缩放要围着指针转：看图工具的标准手感 —— 指针停住的那块细节，放大之后**还在
+ * 指针底下**。不这么做（围着正中缩放）的话，想看清右上角就得「放大 → 拖 → 放大 → 拖」，
+ * 每放一次都要重新找位置。
+ * ⚠️ 做法是把「指针底下那一点在画面里的相对位置」先记下来，换完尺寸再把滚动位置摆回去
+ *（`scrollLeft` 是整数像素，所以是「基本不动」而不是「一个像素都不差」）。
+ */
+function lbApplyZoom(next, anchor) {
+  const stage = el('lightbox-stage');
+  const media = stage ? stage.querySelector('img, video') : null;
+  if (!media || !lbFit) return;
+  const box = { w: stage.clientWidth, h: stage.clientHeight };
+  const zoom = Math.min(LB_ZOOM_MAX, Math.max(LB_ZOOM_MIN, next));
+  const before = { w: lbFit.w * lbZoom, h: lbFit.h * lbZoom };
+  const after = { w: lbFit.w * zoom, h: lbFit.h * zoom };
+  const at = anchor || { x: box.w / 2, y: box.h / 2 };
+  const keep = {
+    x: (stage.scrollLeft + at.x - lbOffset(before.w, box.w)) / before.w,
+    y: (stage.scrollTop + at.y - lbOffset(before.h, box.h)) / before.h,
+  };
+  lbZoom = zoom;
+  media.style.width = `${Math.round(after.w)}px`;
+  media.style.height = `${Math.round(after.h)}px`;
+  // ⚠️★ 把 CSS 那两条上限内联掉：留着它们，**放大**时会被 `max-width: 100%` 顶回来
+  //（症状：滚轮转了、读数也变了，画面纹丝不动 —— 最难查的一类）。
+  media.style.maxWidth = 'none';
+  media.style.maxHeight = 'none';
+  stage.scrollLeft = keep.x * after.w + lbOffset(after.w, box.w) - at.x;
+  stage.scrollTop = keep.y * after.h + lbOffset(after.h, box.h) - at.y;
+  const pct = el('lightbox-zoom-reset');
+  if (pct) pct.textContent = `${Math.round(zoom * 100)}%`;
+}
+
+/** 放大之后可以用指针**拖着看**（为什么非有不可，见 `.lb-stage img` 那条 CSS）。 */
+function lbBindPan(stage, media) {
+  media.addEventListener('pointerdown', (event) => {
+    // ⚠️ 只有左键、而且**确实有东西可移**时才接管：没放大时按下去不该有任何反应。
+    if (event.button !== 0 || !lbOverflows()) return;
+    const from = {
+      x: event.clientX,
+      y: event.clientY,
+      left: stage.scrollLeft,
+      top: stage.scrollTop,
+    };
+    let moved = false;
+    const move = (one) => {
+      // ⚠️ 4px 门槛：小于它不许动 —— 于是「点一下」还是点一下（缩放过的图也点得中），
+      // 而拖动一定是真的在拖（不然手一抖就把画面蹭走半个像素）。
+      if (!moved && Math.abs(one.clientX - from.x) + Math.abs(one.clientY - from.y) < 4) return;
+      moved = true;
+      stage.scrollLeft = from.left - (one.clientX - from.x);
+      stage.scrollTop = from.top - (one.clientY - from.y);
+    };
+    const up = () => {
+      media.removeEventListener('pointermove', move);
+      media.removeEventListener('pointerup', up);
+      media.removeEventListener('pointercancel', up);
+    };
+    // ⚠️ 抓住指针：滑出画面之后事件仍然归它（不抓的话，往窗外一拖就断了，
+    // 而用户以为「拖不动」）。
+    if (media.setPointerCapture) media.setPointerCapture(event.pointerId);
+    media.addEventListener('pointermove', move);
+    media.addEventListener('pointerup', up);
+    media.addEventListener('pointercancel', up);
+  });
+}
+
+/** 画面比容器大吗（也就是「有没有东西可以移」）。 */
+function lbOverflows() {
+  const stage = el('lightbox-stage');
+  if (!stage) return false;
+  return stage.scrollWidth > stage.clientWidth || stage.scrollHeight > stage.clientHeight;
+}
+
 function closeLightbox() {
   const box = el('lightbox');
   if (!box) return;
@@ -1186,6 +1343,9 @@ function closeLightbox() {
   // ⚠️★ 关掉就**清空**：留着 `<video>` 在隐藏的层里，它会继续占着那条连接
   // （`preload='metadata'` 已经拉过一次了），下次开是另一条内容时还会先闪一下旧的。
   el('lightbox-stage').replaceChildren();
+  // ⚠️ 倍数一起忘掉：它跟的是**上一条**画面的大小，留着没有任何意义
+  //（下一条一打开就会按那个倍率画，而它的固有尺寸完全是另一回事）。
+  lbResetZoom();
 }
 
 /** 一张卡片。 */
@@ -4071,10 +4231,56 @@ el('log-refresh').addEventListener('click', refreshLog);
 el('lightbox-close').addEventListener('click', closeLightbox);
 el('lightbox-bg').addEventListener('click', closeLightbox);
 document.addEventListener('keydown', (event) => {
-  // ⚠️ 只在**灯箱开着**时吃掉 ESC：它盖着整个窗口，那时 ESC 没有别的含义；
-  // 而关着的时候 ESC 归动作菜单 / 动作表单（它们各自的 `onKey` 已经先注册了）。
-  if (event.key === 'Escape' && !el('lightbox').hidden) closeLightbox();
+  // ⚠️ 只在**灯箱开着**时管键盘：它盖着整个窗口，那时这些键没有别的含义；
+  // 而关着的时候 ESC 归动作菜单 / 动作表单（它们各自的 `onKey` 已经先注册了），
+  // `+` / `-` / `0` 归输入框（用户在一行字里打减号是很正常的事）。
+  if (el('lightbox').hidden) return;
+  if (event.key === 'Escape') {
+    closeLightbox();
+    return;
+  }
+  // ⚠️ `+` 在多数键盘上要按着 Shift（而 `key` 仍然报 `+`），`=` 是同一个键不按 Shift ——
+  // 两个都收，免得分不清用户按的是哪个。
+  if (event.key === '+' || event.key === '=') lbApplyZoom(lbZoom * LB_ZOOM_STEP);
+  else if (event.key === '-' || event.key === '_') lbApplyZoom(lbZoom / LB_ZOOM_STEP);
+  else if (event.key === '0') lbApplyZoom(1);
 }, true);
+
+// ── 灯箱的缩放（滚轮 / 三颗按钮 / 上面那套键盘）────────────────────────────────
+//
+// ⚠️★ 滚轮是**主**入口（2026-10-04 Jonny：「大图预览窗口需要支持鼠标滚轮放大缩小，
+// 和 + - 号图标放大缩小」），而且**指针在哪就往哪放大**（见 `lbApplyZoom` 的锚点那一段）。
+// ⚠️★ `{ passive: false }` 是**必须**的：默认（passive）下 `preventDefault()` 是个空操作，
+// 于是滚轮会**同时**缩放和滚动背后那条时间线 —— 用户看到的是「底下的列表也跟着动」。
+// ⚠️ 滚不动的时候（`lbFit` 还是 `null`）**什么也不做**，而且**不拦**：那一刻还没有可缩的
+// 画面，让事件照常走比吃掉它更对。
+el('lightbox').addEventListener('wheel', (event) => {
+  const stage = el('lightbox-stage');
+  if (!stage || !lbFit) return;
+  event.preventDefault();
+  // ⚠️ `deltaMode === 1` 是「按行」（Firefox、以及一部分鼠标驱动），一行按 16px 算 ——
+  // 不归一化的话，那些环境里滚一格就是十倍上下。
+  const delta = event.deltaMode === 1 ? event.deltaY * 16 : event.deltaY;
+  const box = stage.getBoundingClientRect();
+  lbApplyZoom(lbZoom * Math.exp(-delta * 0.0015), {
+    x: event.clientX - box.left,
+    y: event.clientY - box.top,
+  });
+}, { passive: false });
+
+// ⚠️ 三颗按钮围着**容器正中**缩放（`lbApplyZoom` 的默认锚点）：键盘 / 按钮都没有「指针在哪」
+// 这个信息，而正中是唯一一个说得清的基准。
+// ⚠️★ 四颗按钮的图标（`−` / `＋` / `✕`）由这里挂上，标记里**不写字形**：
+// 字形在 22px 的方块里不居中（全角 `＋` 与数学减号 `−` 的基线偏移各不一样），
+// 而图标是几何图形，`place-items: center` 一下就正中（Jonny 2026-10-04 指出的那条）。
+// ⚠️ `#lightbox-zoom-reset` 那颗**不挂图标**：它身上是「100%」这个读数（由 `lbApplyZoom` 写）。
+el('lightbox-zoom-out').append(icon('minus'));
+el('lightbox-zoom-in').append(icon('plus'));
+el('lightbox-close').append(icon('close'));
+el('lightbox-zoom-out').addEventListener('click', () => lbApplyZoom(lbZoom / LB_ZOOM_STEP));
+el('lightbox-zoom-in').addEventListener('click', () => lbApplyZoom(lbZoom * LB_ZOOM_STEP));
+// ⚠️ 那颗百分比既是**读数**又是**复位键**（见标记里那段注释）：回到「恰好放得下」。
+el('lightbox-zoom-reset').addEventListener('click', () => lbApplyZoom(1));
 
 // ── 「N 条新消息」那颗胶囊（见文件里 `unseenCount` 那段状态注释）──────────────────
 //

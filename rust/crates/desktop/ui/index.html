@@ -950,37 +950,59 @@ body {
    去看一张图。图片 / 视频在壳里本来就看得全，犯不着为了少写一层浮层付这个代价。
    ⚠️ `inset: 0` + `position: fixed`：它盖的是**整个窗口**，不是卡片那一块 ——
    点开看的是原始大小，卡片那 220px 的上限在这里不作数。
-   ⚠️ 媒体自己**不设**宽高上限以外的尺寸：`object-fit: contain` 保证不裁切，
-   而「多大」由 92vw / 80vh 这两个上限兜住（再大的图也缩得进窗口）。 */
-.lightbox { position: fixed; inset: 0; z-index: 60; display: grid; place-items: center; }
+   ⚠️★ 缩放（2026-10-04）：滚轮 / ＋ − / 百分比那三颗见 `app.js` 的 `lbApplyZoom`。
+   为此把这一层改成了「一条**横跨窗口**的标题栏 + 一块**定死的**滚动区」。 */
+.lightbox { position: fixed; inset: 0; z-index: 60; display: flex; flex-direction: column; }
 .lightbox .lb-bg {
     position: absolute; inset: 0; background: rgba(0, 0, 0, .62);
 }
+/* ⚠️★ 标题栏是**一条横跨窗口的栏**，不是「跟着画面宽度走的一行」：画面放大到超出窗口之后
+   它会忽宽忽窄，而缩小 / 百分比 / 放大 / 关闭那四颗待在**原地**才点得着 ——
+   跟着画面走的话，点一次放大就得重新找那颗按钮在哪。 */
 .lightbox .lb-box {
-    position: relative; max-width: 92vw; max-height: 92vh;
+    position: relative; flex: 1; min-height: 0; width: 92vw; margin: 0 auto; padding: 10px 0;
     display: flex; flex-direction: column; gap: 6px;
 }
 .lightbox .lb-head {
-    display: flex; align-items: center; gap: 8px;
+    flex: none; display: flex; align-items: center; gap: 8px;
     color: #fff; font-size: 11.5px;
 }
 .lightbox .lb-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.lightbox .lb-x {
-    flex: none; width: 22px; height: 22px; border-radius: 6px; cursor: pointer;
+.lightbox .lb-z, .lightbox .lb-x {
+    flex: none; height: 22px; min-width: 22px; padding: 0 5px; border-radius: 6px; cursor: pointer;
     border: 1px solid rgba(255, 255, 255, .35); background: rgba(255, 255, 255, .12);
     color: #fff; font: inherit; font-size: 11px; line-height: 1; display: grid; place-items: center;
 }
-.lightbox .lb-x:hover { background: rgba(255, 255, 255, .24); }
+/* 百分比那几位数字：等宽，不然 100% → 88% 会让它左右的按钮**跟着挪**。 */
+.lightbox .lb-z.wide { font-variant-numeric: tabular-nums; }
+.lightbox .lb-z:hover, .lightbox .lb-x:hover { background: rgba(255, 255, 255, .24); }
+/* ⚠️ 图标是 `icon()` 造的 `<svg>`：不给它尺寸的话按 24×24 的 viewBox 撑满按钮，
+   而这里要的是 12px 的细线条（与卡片上那几颗同一个视觉重量）。 */
+.lightbox .lb-z svg, .lightbox .lb-x svg { width: 12px; height: 12px; display: block; }
+/* ⚠️★ 这一层是**滚动容器**（放大之后要能移开去看别处），而它的大小必须是**定死的** ——
+   内容撑不大它，`clientWidth` / `clientHeight` 才是「恰好放得下」那个基准（`lbMeasure`）。
+   靠 `flex: 1` + `min-height: 0` 从 `.lb-box` 拿到高度（那一层的高度是确定的）。 */
 .lightbox .lb-stage {
-    position: relative; min-height: 40px; display: grid; place-items: center;
+    position: relative; flex: 1; min-height: 0; overflow: auto; display: flex;
 }
-/* ⚠️ `max-height: 80vh`（不是 92vh）：上面那一行标题要占掉一点，
-   留出来才不会让「关闭」那颗按钮被挤到窗口外。 */
+/* ⚠️★ 居中靠 `margin: auto`，**不是** `place-items: center`：在滚动容器里用 center 对齐，
+   超出容器的部分会被裁在**左上角**、而且**滚不过去**（那个著名的「居中 + 滚动」冲突）；
+   `margin: auto` 在空间不够时退化成 0，于是四个角都滚得到。 */
+.lightbox .lb-stage > * { margin: auto; }
+/* ⚠️ `max-*: 100%`（不是 `92vw` / `80vh`）：这就是上面那块滚动区，尺寸它自己已经定死了。
+   ⚠️ 这两条是**没量出固有尺寸之前**的兜底；量出来之后由 `lbApplyZoom` 写死具体的宽高
+   （并且会把这两条上限内联成 `none`，否则放大时会被 `max-width` 顶回来）。 */
 .lightbox .lb-stage img,
 .lightbox .lb-stage video {
-    max-width: 92vw; max-height: 80vh; display: block; object-fit: contain;
+    max-width: 100%; max-height: 100%; display: block; object-fit: contain;
     border-radius: 6px; background: rgba(0, 0, 0, .35);
 }
+/* ⚠️★ 放大之后可以**拖着看**：macOS 的滚动条是悬浮的（不滚就不显），而滚轮已经被缩放占用
+   了 —— 不能拖的话，放大到超出窗口就只剩左上角那一块看得见。
+   ⚠️ `-webkit-user-drag: none`：不给它，按住图片一拖触发的是**浏览器原生的拖图**
+   （拖出一个半透明的缩略图跟着指针走，而我们的平移一行都没执行）。 */
+.lightbox .lb-stage img { cursor: grab; user-select: none; -webkit-user-drag: none; }
+.lightbox .lb-stage img:active { cursor: grabbing; }
 .lightbox .lb-load { color: #fff; font-size: 11.5px; opacity: .8; }
 /* ⚠️ 文件行**可点**（存进下载目录）：没有 `cursor: pointer` 的话，
    它看着和「一行说明文字」一样，用户不会去点它 —— 而这个功能就白做了。 */
@@ -1864,7 +1886,19 @@ table.ra td input[type='checkbox'] { margin: 0; }
         <div class="lb-box">
             <div class="lb-head">
                 <span class="lb-name" id="lightbox-name"></span>
-                <button class="lb-x" id="lightbox-close" type="button" data-i18n-title="关闭">✕</button>
+                <!-- ⚠️★ 缩放这三颗（2026-10-04 Jonny：「大图预览窗口需要支持鼠标滚轮放大缩小，
+                     和 + - 号图标放大缩小」）。
+                     ① 滚轮是**主**入口（指针在哪就往哪放大，见 `app.js` 的 `lbApplyZoom`）；
+                     ② 中间那颗百分比既是**读数**又是**复位键**（点一下回到「恰好放得下」）——
+                        它比多一颗「复位」按钮省地方，而那个数本来就是用户要看的东西；
+                     ③ 数字由 `app.js` 写，标记里只放初值（判据 15：标记里不许有中文文案）。
+                     ⚠️★ 图标（− / ＋ / ✕）由 `app.js` 挂 `icon(...)`，**不在标记里写字形**：
+                        字形在 22px 的方块里不居中（全角 `＋` 与 `−` 的基线偏移还不一样），
+                        四颗里会有两颗看着是歪的。 -->
+                <button class="lb-z" id="lightbox-zoom-out" type="button" data-i18n-title="缩小"></button>
+                <button class="lb-z wide" id="lightbox-zoom-reset" type="button" data-i18n-title="复位：恰好放得下（100%）">100%</button>
+                <button class="lb-z" id="lightbox-zoom-in" type="button" data-i18n-title="放大"></button>
+                <button class="lb-x" id="lightbox-close" type="button" data-i18n-title="关闭"></button>
             </div>
             <div class="lb-stage" id="lightbox-stage"></div>
         </div>
