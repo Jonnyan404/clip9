@@ -165,9 +165,16 @@ window.ActionLibrary = (() => {
    * 理由见它的注释（动作自己的输出文案在同步过来的那一份里）。
    * ⚠️ `params` 是**带参数的动作**（目前只有 text.replace）要的第三个参数，
    * 与网页版 `runChain` 的同一个位置 —— 形状以目录里的 `params` 为准。
+   *
+   * ⚠️★ 返回**总是** `{ output, html }`，不是字符串 —— 拆双表示用的是 `pure.js` 那份
+   * `actionOutput`（网页版 `runChain` 调的是同一个）。以前这里写 `String(...)`，
+   * 于是「注音制表」那条画出来的是 ** `[object Object]` **：动作没报错、有反应，
+   * 只是结果是一串废话（2026-10-03 报的「注音制表无法显示」）。
+   * ⚠️ `html` 非空表示这一份**只能**当 HTML 画（`innerHTML`），走 `textContent` 会印出一屏标签。
    */
   async function run(action, text, params) {
-    return Promise.resolve(action.run(text, { t: translate }, params));
+    const raw = await Promise.resolve(action.run(text, { t: translate }, params));
+    return pure.actionOutput(raw);
   }
 
   /** 给一段**已经画进 DOM** 的 HTML 里的 ``` 代码块上色。
@@ -200,7 +207,8 @@ window.ActionLibrary = (() => {
     const state = loaded ?? (await ensure());
     const action = state.actions.find((one) => one.id === id);
     if (!action || !action.run) return '';
-    return run(action, '');
+    const { output } = await run(action, '');
+    return output;
   }
 
   return { ensure, label, translate, availability, run, runById, highlightIn };

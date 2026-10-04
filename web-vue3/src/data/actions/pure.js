@@ -14,6 +14,28 @@
 // ⚠️ 这个文件由 `tools/sync-action-catalog.mjs` **逐字节**拷到
 // `rust/crates/desktop/ui/actions-pure.js`，那边同样跑这份实现。
 
+/** 把一条动作的返回值拆成「显示用的文本」与「可选的 HTML」。
+ *
+ * ⚠️★ 动作有**两种**返回形态，而这件事只有这一处知道：
+ *   · 字符串            —— 绝大多数动作。半数还得按目录里 `render: 'html'` 再判一次
+ *                        （markdown / 代码高亮吐的是 HTML **串**，双表示之外的另一回事）；
+ *   · `{ html, text }`  —— **双表示**：html 用来渲染、text 用来复制。
+ * 只有「注音制表」用第二种（它的对齐非得靠 `<table>` 排版，而复制出去要能粘进表格软件）。
+ *
+ * ⚠️★ 为什么不各写一个 `String(raw)` 了事：`String({ html, text })` 是 **`[object Object]`**
+ * —— 桌面端就把这一整串画进了卡片，而动作本身**没报错**（点了有反应，只是结果是一串废话）。
+ * 「哪些形态合法」只有一处答案，谁各自 `String` 一遍，谁就漏掉另一半。
+ * 2026-10-03：桌面端把 8 个动作打包进去之后注音制表**仍然**显示不出来，根因就在这一步。
+ *
+ * @returns {{ output: string, html: string }}
+ */
+export function actionOutput(raw) {
+    if (raw && typeof raw === 'object' && typeof raw.html === 'string') {
+        return { output: String(raw.text ?? ''), html: raw.html };
+    }
+    return { output: String(raw ?? ''), html: '' };
+}
+
 export function isJsonLike(text) {
     const s = String(text || '').trim();
     return s.length > 1 && (s[0] === '{' || s[0] === '[');

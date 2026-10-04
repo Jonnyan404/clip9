@@ -2238,6 +2238,13 @@ if (entryViewFiles.length !== 1) {
     if (!renderBody.includes('viewed.html')) {
       problems.push('渲染段没认 `viewed.html` —— markdown / 代码高亮的结果会被画成一整屏 `<p>` 标签');
     }
+    // ⚠️★ 画的是 `viewed.htmlText`，**不是** `viewed.output`：双表示那条（注音制表）的
+    // output 是复制用的纯文本，HTML 在另一份里。拿 output 去 innerHTML 的症状最像
+    // 「功能就是坏的」 —— 表格不出，只出一行 tab（2026-10-03 修的就是这个）。
+    if (!renderBody.includes('box.innerHTML = viewed.htmlText')) {
+      problems.push('html 结果画的是 `viewed.output` 而不是 `viewed.htmlText`'
+        + ' —— 注音制表会只剩一行 tab 文本（双表示的 HTML 在另一份里）');
+    }
     if (!renderBody.includes('box.innerHTML')) {
       problems.push('html 结果没有走 `box.innerHTML` —— 那用户看到的就是标签本身');
     }
@@ -2260,6 +2267,31 @@ if (entryViewFiles.length !== 1) {
     problems.push('action-library.js 的 `run` 不再收 `params` —— 替换那条跑起来全是默认值');
   } else if (!/, params\)/.test(runBody)) {
     problems.push('`run` 收了 `params` 却没递给实现 —— 表填了个寂寞');
+  }
+
+  // ⑥b ⚠️★ `run` 必须走 **pure.js 那份 `actionOutput`** 拆双表示 —— 不许再 `String(raw)`：
+  //      那样拿不到 `html`，注音制表就只剩纯文本（而动作**不报错**）。
+  if (runBody && !runBody.includes('actionOutput(')) {
+    problems.push('`run` 没有用 `actionOutput` 拆双表示 —— 注音制表的 `<table>` 拿不到，'
+      + '而且 `String({html,text})` 就是 `[object Object]`（2026-10-03 报的那一个）');
+  }
+  if (runBody && !/return\s+pure\.actionOutput\(raw\)/.test(runBody)) {
+    problems.push('`run` 的返回值不是 `pure.actionOutput(raw)` —— 网页 `runChain` 用同一个函数，'
+      + '这里另写一份就会两边各说一套（「哪些形态合法」只有一处答案）');
+  }
+
+  // ⑥c `runAction` 要把「画的那一份」单独存成 `htmlText`，并用它判空。
+  const runActionBody = /async function runAction\(entry, action, library, params\)\s*\{[\s\S]*?\n\}/.exec(bareJs)?.[0] ?? '';
+  if (!runActionBody) {
+    problems.push('找不到 `runAction` —— 这条判据要跟着代码改');
+  } else {
+    if (!runActionBody.includes('htmlText')) {
+      problems.push('`runAction` 没有存 `htmlText` —— html 那一版丢了，画出来的是复制用的纯文本');
+    }
+    if (!/\bhtml\b/.test(runActionBody) || !/render === 'html'/.test(runActionBody)) {
+      problems.push('`runAction` 没有合并「目录声明的 render」与「返回值自带的 html」两个来源'
+        + ' —— 少一个就有一条动作被画成一屏标签');
+    }
   }
 
   // ⑦ 样式：那张表浮着，字段行 / 按钮排都得有规则。

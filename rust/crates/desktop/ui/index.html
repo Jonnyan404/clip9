@@ -272,7 +272,14 @@
     /* 跑过动作的那张卡片：结果与原文要有**看得见的区别**（不然分不清现在看的是哪一份）。 */
     .card .txt.actout {
         padding-left: 8px; border-left: 2px solid var(--accent);
+        /* ⚠️★ 结果不该再被 clamp 住（`.card .txt` 那 12 行是给**预览**用的）：
+           改回 `display: block`，多长都完整显示。
+           ⚠️ 横向滚动放在这一层：「注音制表」吐的宽表格不必把整张卡片撑破。 */
+        display: block; overflow-x: auto;
     }
+
+    /* 「注音制表」吐的是一张 `<table>`：单元格的样式由动作内联写在 `style` 上。 */
+    .card .txt.actout table { border-collapse: collapse; font-size: inherit; }
 
     /* ⚠️★ markdown / 代码高亮那两条吐的是 **HTML**（`<p>` / `<ul>` / `<pre><code>`），
        而卡片正文从前只画纯文本 —— 没有这几条规则，浏览器默认样式会把整块挤成一团

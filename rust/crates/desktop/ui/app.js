@@ -913,9 +913,12 @@ function renderEntry(entry) {
       // ⚠️★ 但它是**已经消过毒**的 HTML：消毒在动作实现包里（`util.js` 的
       // `renderMarkdownHtml` 过 DOMPurify），这一侧**不自己也来一遍**（第二份消毒 =
       // 第二套规则，两套规则早晚漂移）。「包里一定有 DOMPurify」由同步工具在构建时断言。
+      // ⚠️★ 「画什么」用 `htmlText`（没有就是 `output`），「怎么画」用 `html` ——
+      // 两个不能合成一个：双表示那条（注音制表）的 `output` 是**复制用**的纯文本，
+      // 真要画的是另一份 HTML —— 拿 output 去 innerHTML 就恰好是「表格没出来，只出了一行 tab」。
       const box = h('div', 'txt actout');
       if (viewed.html) {
-        box.innerHTML = viewed.output;
+        box.innerHTML = viewed.htmlText;
         // ⚠️★ 颜色是**回头补**的（marked 的 renderer 同步、高亮器只能按需加载）：
         // 先按没颜色画出来（代码本来就是转义好的纯文本，看得见），chunk 回来了再上色。
         // 与网页版 `MarkdownBody.vue` 走的是 `highlight.js` 里同一个函数。
@@ -1349,10 +1352,11 @@ function openActionForm(action, library, at) {
 async function runAction(entry, action, library, params) {
   try {
     const text = await invoke('entry_text', { id: entry.id });
-    const output = String(await window.ActionLibrary.run(action, text, params));
-    if (!output) {
-      // 空结果不是错误（`formatJson` 这类动作对「本来就是那样」的内容就返回空串）——
-      // 但也不能什么都不说：点了没反应是这个项目最忌讳的。
+    const { output, html } = await window.ActionLibrary.run(action, text, params);
+    // ⚠️★ 「这条的产出是 HTML」由 `ActionLibrary.run` 归一（双表示 / 目录里的 `render`），
+    // 画的那一份单独存 —— 见上面渲染处那条注释。
+    const htmlText = html || (action.render === 'html' ? output : '');
+    if (!output && !htmlText) {
       showNotice('warn', t('这个动作跑出来是空的 —— 这条本来就是这个样子。'));
       return;
     }
@@ -1360,9 +1364,8 @@ async function runAction(entry, action, library, params) {
       actionId: action.id,
       label: window.ActionLibrary.label(library, action.nameKey),
       output,
-      // ⚠️ `render: 'html'` 是**目录里声明的**（同步过来的 `actions-catalog.json`），
-      // 不是这里猜的 —— 「这条的输出是 HTML」只有声明那一处知道。
-      html: action.render === 'html',
+      htmlText,
+      html: Boolean(htmlText),
     });
     repaint();
   } catch (error) {

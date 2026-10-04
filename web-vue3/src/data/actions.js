@@ -33,7 +33,7 @@
 import catalog from './actions/catalog.json';
 import * as pure from './actions/pure.js';
 import * as impl from './actions/impl.js';
-import { stepId, stepParams, makeStep } from './actions/pure.js';
+import { actionOutput, stepId, stepParams, makeStep } from './actions/pure.js';
 
 /** 面板按这个顺序渲染小节（数据在 catalog.json 里，加分组要同时补 i18n）。 */
 export const ACTION_GROUPS = catalog.groups;
@@ -114,19 +114,10 @@ export async function runChain(text, chain, ctx = {}) {
         const input = current;
         try {
             const raw = await action.run(input, ctx, params);
-            // 动作的返回值有**两种**形态：
-            //   · 字符串          —— 纯文本结果（绝大多数动作）
-            //   · `{ html, text }` —— **双表示**：html 用来渲染、text 用来复制。
-            //     目前只有「注音制表」用它 —— 那个格式必须靠表格排版才能对齐，
-            //     而复制时用户要的是能粘进表格软件的纯文本（见 pinyin.js 的说明）。
-            let output;
-            let html = '';
-            if (raw && typeof raw === 'object' && typeof raw.html === 'string') {
-                html = raw.html;
-                output = String(raw.text ?? '');
-            } else {
-                output = String(raw ?? '');
-            }
+            // ⚠️★ 拆 `output` / `html` 走的是 pure.js 那份 `actionOutput` —— 桌面端跑的是
+            // 同一个函数。别在这里自己 `String(raw)`：那样拿不到 `html`，
+            // 于是「注音制表」在链条里只剩一行 tab 文本、丢了表格。
+            const { output, html } = actionOutput(raw);
             steps.push({ id, params, action, input, output, html, error: '' });
             current = output;
         } catch (err) {
