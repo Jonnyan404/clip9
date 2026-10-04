@@ -5,6 +5,7 @@ import { createRoot } from 'react-dom/client';
 // `mdi-brightness-4` 这类**类名**，靠这套 CSS 字体渲染 —— 保留 `@mdi/font` 可让数据层零改动。
 import '@mdi/font/css/materialdesignicons.css';
 import './styles/highlight.css';
+import './styles/components.css';
 import './styles/global.css';
 
 // i18n 实例必须在使用 `t()` 的代码之前初始化（资源随包打进 bundle，所以是同步完成的）。
