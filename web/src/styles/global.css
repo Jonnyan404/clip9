@@ -1,0 +1,18 @@
+/* 全局基础样式。Phase 1 只放最小集；Phase 3–5 迁移组件 CSS 时，
+   这里会补上 `--v-theme-*` → MUI 变量的**兼容别名层**（见 theme/index.ts 的说明）。 */
+
+html,
+body {
+    height: 100%;
+    margin: 0;
+}
+
+#app {
+    min-height: 100%;
+}
+
+/* 模式根容器：与 web-vue3/src/views/Home.vue 的 .mode-root 一致 */
+.mode-root {
+    min-height: 100vh;
+    min-height: 100dvh;
+}

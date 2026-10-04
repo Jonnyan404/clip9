@@ -114,7 +114,7 @@ try {
       shellMain: !!document.querySelector('.app-shell__main'),
       roomAside: !!document.querySelector('.room-browser'),
       gate: !!document.querySelector('.share-page__center--form'),
-      fieldError: !!document.querySelector('.share-page .v-field--error'),
+      fieldError: !!document.querySelector('.share-page .v-field--error, .share-page .Mui-error'),
       img: (() => { const i = document.querySelector('img.share-page__image'); return i ? i.naturalWidth : -1; })(),
       downloadHref: document.querySelector('.share-page a[download]')?.getAttribute('href') || '',
       url: location.pathname,

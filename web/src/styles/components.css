@@ -1,0 +1,150 @@
+/* 组件级样式（从 web-vue3 各组件的 <style scoped> 移植）。
+   ⚠️ 一律用 `currentColor` 混色而不是 Vuetify 的 `--v-theme-*` 变量 ——
+   这样明暗两套主题自动适配，不必再维护一层变量桥。 */
+
+/* ── CodeBlock（web-vue3/src/components/CodeBlock.vue）──────────────────── */
+.code-block {
+    margin: 0;
+    max-height: 62vh;
+    overflow: auto;
+    padding: 12px 14px;
+    border-radius: 8px;
+    background: color-mix(in srgb, currentColor 4%, transparent);
+    font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+    font-size: 0.8125rem;
+    line-height: 1.6;
+    color: inherit;
+    /* 代码按行排，长行横向滚 —— 折行会把缩进层级弄乱，比滚动更难读。 */
+    white-space: pre;
+}
+
+.code-block code {
+    font-family: inherit;
+    font-size: inherit;
+}
+
+/* ── MarkdownBody（web-vue3/src/components/MarkdownBody.vue）────────────── */
+.markdown-body {
+    font-size: 0.875rem;
+    line-height: 1.65;
+    word-break: break-word;
+}
+
+.markdown-body > :first-child { margin-top: 0; }
+.markdown-body > :last-child { margin-bottom: 0; }
+.markdown-body p { margin: 0 0 8px; }
+
+.markdown-body h1,
+.markdown-body h2,
+.markdown-body h3,
+.markdown-body h4,
+.markdown-body h5,
+.markdown-body h6 {
+    font-size: 1rem;
+    font-weight: 600;
+    line-height: 1.4;
+    margin: 14px 0 6px;
+}
+.markdown-body h1 { font-size: 1.2rem; }
+.markdown-body h2 { font-size: 1.1rem; }
+
+.markdown-body ul,
+.markdown-body ol { margin: 0 0 8px; padding-left: 22px; }
+.markdown-body li { margin: 2px 0; }
+
+.markdown-body code {
+    background: color-mix(in srgb, currentColor 8%, transparent);
+    padding: 1px 5px;
+    border-radius: 4px;
+    font-size: 0.85em;
+}
+
+.markdown-body pre {
+    background: color-mix(in srgb, currentColor 8%, transparent);
+    padding: 10px 12px;
+    border-radius: 8px;
+    overflow-x: auto;
+    margin: 0 0 8px;
+}
+.markdown-body pre code { background: none; padding: 0; }
+
+.markdown-body blockquote {
+    border-left: 3px solid color-mix(in srgb, currentColor 25%, transparent);
+    padding-left: 10px;
+    margin: 0 0 8px;
+    opacity: 0.85;
+}
+
+.markdown-body table { border-collapse: collapse; width: 100%; margin: 0 0 8px; }
+.markdown-body th,
+.markdown-body td {
+    border: 1px solid color-mix(in srgb, currentColor 20%, transparent);
+    padding: 4px 8px;
+    text-align: left;
+}
+
+.markdown-body a { color: var(--mui-palette-primary-main); }
+.markdown-body img { max-width: 100%; border-radius: 8px; }
+.markdown-body hr {
+    border: none;
+    border-top: 1px solid color-mix(in srgb, currentColor 20%, transparent);
+    margin: 12px 0;
+}
+
+/* ── MarkdownToggle（web-vue3/src/components/MarkdownToggle.vue）──────────
+   ⚠️ 全局变量契约：消费方在**滚动盒**上写 `padding-right: var(--md-toggle-gutter)`。
+   图标最多三个（原文 + 2 个针对性动作 + ⋯），所以只有两个值。 */
+:root {
+    --md-toggle-gutter: 64px;
+    --md-toggle-gutter-wide: 96px;
+    --md-toggle-height: 1lh;
+}
+
+.md-toggle {
+    position: absolute;
+    top: 2px;
+    /* 右缩进必须**大于滚动条宽度**，否则会压在滚动条上 */
+    right: 12px;
+    z-index: 2;
+    display: inline-flex;
+    align-items: center;
+    gap: 2px;
+}
+
+.md-toggle__icon {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 2px 3px;
+    border-radius: 4px;
+    cursor: pointer;
+    opacity: 0.55;
+    color: inherit;
+    background: none;
+    border: none;
+}
+
+.md-toggle__icon:hover { opacity: 1; }
+.md-toggle__icon--active { opacity: 1; color: var(--mui-palette-primary-main); }
+
+/* 有 md 图标时给图标让位（只让开一行，不是整段压窄）。 */
+.md-preview { position: relative; }
+
+.md-preview--md::before {
+    content: '';
+    float: right;
+    width: var(--md-toggle-gutter);
+    height: 22px;
+    height: var(--md-toggle-height);
+}
+
+/* ⚠️ 正文以 `<pre>` 开头时不能用浮动占位（`<pre>` 是 BFC，不会绕着浮动块排版），
+   改成给 pre 自己留右边距。 */
+.md-preview--block::before {
+    float: none;
+    width: 0;
+    height: 0;
+}
+.md-preview--block pre:first-child {
+    padding-right: var(--md-toggle-gutter);
+}

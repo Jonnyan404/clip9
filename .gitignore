@@ -61,6 +61,12 @@ dev-docs/
 #    所以只忽略、**绝不要删** —— 删了会丢历史日志。
 /.workbuddy/
 
+# ⚠️★ AI 助手的工作区数据目录（`memory/` 工作日志、`skills/`、项目级设置）——
+#    与 `/.workbuddy/` 同一条理由：**工具的数据目录，只忽略、绝不要删**。
+#    ⚠️ 上面那条 `/.workbuddy/` **盖不到**它（目录名多了 `-ai`），曾经因此一直
+#    显示为未跟踪、随时会被 `git add -A` 带进提交。
+/.workbuddy-ai/
+
 # 本地运行数据（redb 库、uploads/、config.json）—— 由服务自己创建，不入库
 /data/
 *.redb
