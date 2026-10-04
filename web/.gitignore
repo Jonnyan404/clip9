@@ -1,0 +1,7 @@
+node_modules
+dist
+.vite
+# 派生产物：由 scripts/sync-shortcuts.mjs 从仓库根的 shortcuts/ 生成 —— 唯一源在 shortcuts/
+public/shortcuts
+*.local
+.DS_Store
