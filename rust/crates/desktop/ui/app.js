@@ -186,6 +186,34 @@ const openedBodies = new Map(); // id -> 取回来的**全文**（取过一次�
  */
 const actionViews = new Map();
 
+/* ── 滚动与「N 条新消息」───────────────────────────────────────────────
+ *
+ * ⚠️★ 三条规矩（2026-10-04 Jonny 报的那两件）：
+ *   ① 往上翻着读历史时，新内容**不许把人拽回底部**（原来就是这样，别改回去）；
+ *   ② 于是必须有一个**不侵入**的提示：「输入框上方」一颗「N 条新消息」，点它跳到底；
+ *   ③ 而**自己发东西**的那一刻反过来 —— 必须跟到最新（不然发完看不见自己发的那条）。
+ * ⚠️ ②与③共用同一份「贴不贴底」的判断，所以一起写在这里，别拆到两处各判一遍。
+ */
+
+/** 不在底部那段时间新来了几条（`> 0` 才把那颗胶囊亮出来）。 */
+let unseenCount = 0;
+
+/** 「已经看过的末尾条目 id」—— 算 `unseenCount` 的**基线**。
+ *
+ * ⚠️ 用 id 而不是「条数」：撤销 / 清空都会让条数变少，只比条数会把「看过」算错。
+ * ⚠️ 换房间必须清（见 `render` 里清展开态那一处）：id 是**每个房间各自**单调的。
+ */
+let seenLastId = 0;
+
+/** 「刚发过东西」——下一拍不管贴不贴底都跟到最新。见 [`followToNewest`]。 */
+let followAfterSend = false;
+
+/** 发之前列表有几条（发出去的那条到了就比它多，见 [`followToNewest`]）。 */
+let followBaseline = 0;
+
+/** 「跟到底」那个状态的兜底超时（上行失败 / 半天不回来时别一直挂着）。 */
+let followTimer = null;
+
 /** 超过多少字节才画「展开」。
  *
  * ⚠️ 这个数是**估的**：卡片宽约 590px、13px 字体 ≈ 一行 80 字符，
@@ -1983,9 +2011,21 @@ function renderTimeline(state) {
   // ⚠️★ 先记「刚才是不是贴在底部」，**再**动 DOM —— 清空之后 `scrollHeight` 已经是 0，
   // 那时候判会永远算出「贴底」，等于没判。
   //
-  // ⚠️ 只有贴底时才自动滚：无条件滚的话，用户往上翻着读历史时，
+  // ⚠️ 只有贴底（或**刚发过东西**）时才自动滚：无条件滚的话，用户往上翻着读历史时，
   // 来一条新消息就把他**拽回底部**。那比「不自动滚」烦得多（「我在看旧的，它一直弹走」）。
   const wasPinned = host.scrollHeight - host.scrollTop - host.clientHeight < 24;
+  // ⚠️★ 「刚发过」也算贴底（见 `followToNewest`）：发完必须看得见自己那一条。
+  const follow = wasPinned || followAfterSend;
+  const lastId = lastEntryId(state);
+  // ⚠️★ 贴底（或刚发过）= **看过了** → 基线推到末尾；否则数一数这段时间新来了几条
+  //（那颗「N 条新消息」就是给它用的，见文件里那段状态注释）。
+  // ⚠️ `state.entries` 在空态那三条分支里是空的，`filter` 自然是 0，不用另判。
+  if (follow) {
+    unseenCount = 0;
+    seenLastId = lastId;
+  } else if (lastId > seenLastId) {
+    unseenCount = state.entries.filter((entry) => entry.id > seenLastId).length;
+  }
   const room = state.rooms[state.selected];
   const fresh = [];
   if (!room) {
@@ -2007,8 +2047,64 @@ function renderTimeline(state) {
     fresh.push(...timelineCards(host, state));
   }
   reconcileChildren(host, fresh);
-  // 新的内容在末尾 → 贴底时跟到底（用户刚复制的东西要立刻看见）。
-  if (wasPinned) host.scrollTop = host.scrollHeight;
+  // 新的内容在末尾 → 贴底（或刚发过东西）时跟到底（用户刚复制的东西要立刻看见）。
+  if (follow) host.scrollTop = host.scrollHeight;
+  // ⚠️★ 自己那条（或那张「正在发送」的占位）到了就收工；没到就继续跟着 ——
+  // 超时兜底在 `followToNewest` 里（免得上行失败时这个状态一直挂着，把用户往回拽）。
+  if (followAfterSend && state.entries.length > followBaseline) {
+    followAfterSend = false;
+    clearTimeout(followTimer);
+  }
+  renderNewPill();
+}
+
+/** 末尾那条的 id（空列表 = `0`）。
+ *
+ * ⚠️ 取的是**末尾**那条，不是「最大的 id」：列表本来就旧的在前（末尾最新），
+ * 而撤销之后「最大 id」可能是别人那条、且不在末尾 —— 拿它当基线会数错。
+ */
+function lastEntryId(state) {
+  const entries = state?.entries ?? [];
+  return entries.length ? entries[entries.length - 1].id : 0;
+}
+
+/** 那颗「N 条新消息」胶囊 —— 只在真有没看过的东西时亮出来。
+ *
+ * ⚠️ 文案（含条数）在这里拼（`t(…)`），标记里一个字都不写：那份界面是手写的、没有构建步骤，
+ * 中文写在 HTML 里就没有第二份字典能翻它（判据 15 会红）。
+ */
+function renderNewPill() {
+  const pill = el('new-pill');
+  if (!pill) return;
+  pill.hidden = unseenCount <= 0;
+  if (unseenCount > 0) pill.textContent = t('↓ {n} 条新消息', { n: unseenCount });
+}
+
+/** 把「最新的已经看过了」记下来（用户自己滚到底、或点了那颗胶囊都会走这里）。 */
+function markTimelineRead() {
+  unseenCount = 0;
+  seenLastId = lastEntryId(lastState);
+  renderNewPill();
+}
+
+/** 刚在输入框里发了东西 —— 让**下一拍**不管贴不贴底都跟到最新。
+ *
+ * ⚠️★ 为什么是「下一拍」而不是当场滚：发出去的东西要等它从服务端**广播回来**才在列表里
+ *（文本与文件都是这条通路；文件还会先长出一张「正在发送」的占位卡）—— 现在滚到底，
+ * 等它到了会发现自己还在原地。所以这里只**置一个标志**，由 `renderTimeline` 在
+ * 内容真的到了那一拍跟上去。
+ * ⚠️ 清掉的时机 = **列表真的长了一条**（`followBaseline` 是发之前那条数）；
+ * 另配一个超时兜底，免得上行失败时「跟到底」一直挂着（那会把用户往底部拽 8 秒）。
+ */
+function followToNewest() {
+  followAfterSend = true;
+  followBaseline = lastState?.entries?.length ?? 0;
+  clearTimeout(followTimer);
+  followTimer = setTimeout(() => {
+    followAfterSend = false;
+  }, 8000);
+  // ⚠️ 别干等下一拍（700ms 才轮询一次）：立刻问一次，那一拍就能跟上。
+  refreshNow();
 }
 
 /** 已经画出来的卡片各自的**签名**（节点 → 它就是照哪一份内容画的）。
@@ -2238,6 +2334,10 @@ function render(state) {
     // ⚠️ 预览地址那份缓存**也要清**：它的键是条目 id，而 id 是每个房间各自单调的 ——
     // 留着就会把 A 房间那条 7 的地址用到 B 房间的 7 上（显示**别人的内容**，不报错）。
     previewSrcs.clear();
+    // ⚠️★ 「看过哪里」与「有几条新的」同样是**按房间**的：基线不清的话，那颗胶囊会
+    // 拿 A 房间的 id 去数 B 房间的条目 —— 数字是假的，而界面上看不出来。
+    unseenCount = 0;
+    seenLastId = 0;
   }
   lastSelected = state.selected;
   lastLimits = state.limits;
@@ -2405,6 +2505,9 @@ function sendCurrentInput() {
   if (!text.trim()) return;
   invoke('send_text', { text }).catch((error) => showNotice('error', t('发不出去：{error}', { error: errorText(error) })));
   input.value = '';
+  // ⚠️★ 发完**跟到最新**（2026-10-04 Jonny：「我发送消息时，窗口应该定位到最新消息」）——
+  // 用户往上翻着读历史时也不会「发完了看不见自己那条」。
+  followToNewest();
 }
 
 /* ── 从界面发文件：📎 / 🖼 / 拖进来 / 粘贴 ────────────────────────────
@@ -2434,6 +2537,9 @@ function sendFiles(paths) {
   const list = (paths || []).filter((path) => typeof path === 'string' && path.trim() !== '');
   if (!list.length) return;
   invoke('send_files', { paths: list }).catch((error) => showNotice('error', t('发不出去：{error}', { error: errorText(error) })));
+  // ⚠️ 与 `sendCurrentInput` 同一条规矩：发完跟到最新（那几张「正在发送」的占位卡
+  // 就长在列表末尾，用户得看得见它们）。
+  followToNewest();
 }
 
 /** 📎 / 🖼：让**壳**弹系统文件选择框（页面自己没有这个能力，见 `commands::pick_files`）。 */
@@ -3858,3 +3964,22 @@ document.addEventListener('keydown', (event) => {
   // 而关着的时候 ESC 归动作菜单 / 动作表单（它们各自的 `onKey` 已经先注册了）。
   if (event.key === 'Escape' && !el('lightbox').hidden) closeLightbox();
 }, true);
+
+// ── 「N 条新消息」那颗胶囊（见文件里 `unseenCount` 那段状态注释）──────────────────
+//
+// ⚠️★ 点了就**跳到底**并清掉 —— 用户按它就是在说「我要看新的」。
+el('new-pill').addEventListener('click', () => {
+  const host = el('timeline');
+  host.scrollTop = host.scrollHeight;
+  markTimelineRead();
+});
+
+// ⚠️★ 用户**自己**滚到底也算看过了：不清的话那颗胶囊会一直挂着，而它写着「有 3 条新消息」
+// —— 明明已经看到最新的了（这种「界面在说假话」是这个项目最忌讳的一类）。
+// ⚠️ 早退放在最前面：`scroll` 事件很密，而绝大多数时候什么都不用做。
+el('timeline').addEventListener('scroll', () => {
+  if (unseenCount <= 0) return;
+  const host = el('timeline');
+  if (host.scrollHeight - host.scrollTop - host.clientHeight >= 24) return;
+  markTimelineRead();
+});

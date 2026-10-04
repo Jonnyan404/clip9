@@ -967,6 +967,30 @@ function stripJs(source) {
   return out;
 }
 
+/** 从 `header` 那一点往后，取**配平的那一对花括号**之间的整块源码。
+ *
+ * ⚠️★ 为什么需要它：判据里凡是「这件事必须发生在**那一支 / 那个回调**里」的，
+ * 都不能用 `[\s\S]{0,80}` 这种**有界通配**糊过去 —— 它跨得过块边界，
+ * 于是「把整块删空」这种变异照样能过（2026-10-04 实测：胶囊那颗按钮的回调被清空、
+ * 房间切换里的清理被删掉，两条判据都还是绿的）。
+ * ⚠️ 找不到 `header` 或括号不配平 → 返回空串（调用方据此报「判据要跟着代码改」）。
+ */
+function bracedBlock(source, header) {
+  const at = source.indexOf(header);
+  if (at < 0) return '';
+  const open = source.indexOf('{', at);
+  if (open < 0) return '';
+  let depth = 0;
+  for (let i = open; i < source.length; i += 1) {
+    if (source[i] === '{') depth += 1;
+    else if (source[i] === '}') {
+      depth -= 1;
+      if (depth === 0) return source.slice(open, i + 1);
+    }
+  }
+  return '';
+}
+
 /** ⚠️★ **汉字** —— 「这个键是不是中文原文」按这个判（判据 14 的两条分类）。
  *  ⚠️ 它**故意只认汉字、不认标点**：`'{label}…'` 这种「没有中文词、只有标点」的键
  *  得当**符号键**看（两份字典都要有一条）—— 拿「有标点」当「有中文」的话，
@@ -2781,23 +2805,8 @@ if (entryViewFiles.length !== 1) {
         + '而它与播放条冲突（按开始/暂停也会弹大屏）');
     }
     // ⚠️★ 下面两条是**位置性**的：光看「有没有」不够，要看它在**哪一支**里。
-    const blockOf = (src, header) => {
-      const at = src.indexOf(header);
-      if (at < 0) return '';
-      const open = src.indexOf('{', at);
-      if (open < 0) return '';
-      let depth = 0;
-      for (let i = open; i < src.length; i += 1) {
-        if (src[i] === '{') depth += 1;
-        else if (src[i] === '}') {
-          depth -= 1;
-          if (depth === 0) return src.slice(open, i + 1);
-        }
-      }
-      return '';
-    };
-    const textBranch = blockOf(actionsFn, 'if (entry.kind === \u0000text\u0000)');
-    const fileBranch = blockOf(actionsFn, 'if (entry.kind === \u0000file\u0000)');
+    const textBranch = bracedBlock(actionsFn, 'if (entry.kind === \u0000text\u0000)');
+    const fileBranch = bracedBlock(actionsFn, 'if (entry.kind === \u0000file\u0000)');
     if (!textBranch.includes('add(\u0000copy\u0000')) {
       problems.push('文本条目那支里没有 📋 复制 —— 文本条目复制不了');
     }
@@ -3273,6 +3282,84 @@ if (entryViewFiles.length !== 1) {
     for (const one of problems) console.error(`    · ${one}`);
   } else {
     console.log('· 判据 37：时间线按签名复用卡片节点（版本号变了也不重建没有变化的那几张）。');
+  }
+}
+
+// ── 判据 38：往上翻的时候别把新消息藏起来（理由见下）──────────────────────────
+//
+// ⚠️★ 它钉的是 2026-10-04 Jonny 报的那两件：
+//   ① 「浏览其它信息时，新消息来了应该在输入框上方提示有多少条新消息」——
+//      时间线本来就**不会**把翻着历史的人拽回底部（那条规矩是对的），
+//      可那样一来新内容就等于消失了 ⇒ 必须有一颗**不侵入**的提示兜住它；
+//   ② 「我发送消息时，窗口应该定位到最新消息」—— 反过来，**自己发**的那一刻必须跟到底。
+// ⚠️ 这两条共用同一份「贴不贴底」的判断（`renderTimeline` 里那个 `follow`）——
+// 分成两处各判一遍的话，早晚会出现「胶囊说 0 条、而列表已经不在底部」这类自相矛盾。
+{
+  const problems = [];
+  const bareJs = stripJs(js);
+  if (!/id="new-pill"/.test(html)) {
+    problems.push('`index.html` 里没有 `#new-pill` —— 翻着历史时新消息就等于消失了');
+  }
+  const renderFn = /function renderTimeline\(state\)[\s\S]*?\n\}/.exec(bareJs)?.[0] ?? '';
+  if (!/follow\s*=\s*wasPinned \|\| followAfterSend/.test(renderFn)) {
+    problems.push('`renderTimeline` 里没有「贴底**或刚发过**都算跟到底」——'
+      + '自己发完那条看不见（或者翻着历史时被拽回底部）');
+  }
+  if (!/unseenCount = state\.entries\.filter\(/.test(renderFn)) {
+    problems.push('`renderTimeline` 没有数「不在底部期间新来了几条」—— 那颗胶囊永远是 0');
+  }
+  const pillFn = /function renderNewPill\(\)[\s\S]*?\n\}/.exec(bareJs)?.[0] ?? '';
+  if (!pillFn) {
+    problems.push('找不到 `renderNewPill` —— 那颗胶囊没有落点');
+  } else {
+    if (!/pill\.hidden = unseenCount <= 0/.test(pillFn)) {
+      problems.push('`renderNewPill` 没有按条数藏它 —— 没有新消息时那颗胶囊还挂着');
+    }
+    if (!/\u0000?↓ \{n\} 条新消息\u0000?/.test(pillFn)) {
+      problems.push('`renderNewPill` 没有写条数（`t(\'↓ {n} 条新消息\')`）—— 用户看不到有几条');
+    }
+  }
+  // 点了跳到底；而**自己滚到底**也算看过了（不然那颗胶囊会说假话）。
+  // ⚠️★ 两个回调都**按块**判（`bracedBlock`），不用有界通配 —— 后者跨得过块边界，
+  // 于是「回调被清空」这种变异照样能过（实测过）。
+  const pillHandler = bracedBlock(bareJs, "el(\u0000new-pill\u0000).addEventListener(\u0000click\u0000");
+  if (!/scrollHeight/.test(pillHandler) || !/markTimelineRead\(\)/.test(pillHandler)) {
+    problems.push('那颗胶囊的回调没有「跳到底 + 标记已读」 —— 它写着「有新消息」，'
+      + '点了却停在原地（或者不把提示清掉）');
+  }
+  const scrollHandler = bracedBlock(bareJs, "el(\u0000timeline\u0000).addEventListener(\u0000scroll\u0000");
+  if (!/markTimelineRead\(\)/.test(scrollHandler)) {
+    problems.push('用户**自己滚到底**没有清掉那颗胶囊 —— 它会在已经看完之后继续说「有 N 条新消息」');
+  }
+  // 发送那两条路都要跟到底。
+  for (const [name, why] of [
+    ['sendCurrentInput', '发文本'],
+    ['sendFiles', '发文件（📎 / 🖼 / 拖 / 粘都汇到它）'],
+  ]) {
+    const body = new RegExp(`function ${name}\\([^)]*\\)[\\s\\S]*?\\n\\}`).exec(bareJs)?.[0] ?? '';
+    if (!body) {
+      problems.push(`找不到 \`${name}\` —— 这条自检要跟着代码改`);
+    } else if (!/\n  followToNewest\(\);\n\}/.test(body)) {
+      // ⚠️★ 要求它是**函数体最后一个语句**（而不是「函数体里出现过」）：
+      // 出现过就够的话，把它挪到一句 `if (…) { … }` 里、或者后面再补一个提前 `return`
+      // 都照样绿。⚠️ 但**可达性**这类事正则证不了（实测：在调用前插一句裸 `return;`
+      // 这条判据抓不住）—— 那一半归**真浏览器台子**（滚上去发一条，看是不是到底了）。
+      problems.push(`\`${name}\` 最后没有 \`followToNewest()\` —— ${why}之后看不见自己那条`);
+    }
+  }
+  // 换房间要清基线（id 是每个房间各自单调的）。
+  // ⚠️★ 也要**按块**判：有界通配会跨到模块级那两行 `let … = 0;` 上去，
+  // 于是「把清理删掉」照样全绿（实测过）。
+  const switchBlock = bracedBlock(bareJs, 'if (state.selected !== lastSelected)');
+  if (!/unseenCount = 0;/.test(switchBlock) || !/seenLastId = 0;/.test(switchBlock)) {
+    problems.push('换房间没有清「看过哪里」—— 那颗胶囊会拿上一个房间的 id 去数这个房间');
+  }
+  if (problems.length) {
+    failed = true;
+    console.error(`✗ 判据 38：新消息的提示 / 发送后跟到底没落实（${problems.length} 处）：`);
+    for (const one of problems) console.error(`    · ${one}`);
+  } else {
+    console.log('· 判据 38：翻历史时给「N 条新消息」、点它跳到底，自己发完则跟到最新。');
   }
 }
 

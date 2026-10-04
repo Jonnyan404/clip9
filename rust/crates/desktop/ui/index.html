@@ -462,6 +462,21 @@
 
     .composer .row .spacer { flex: 1; }
 
+    /* ⚠️★ 「N 条新消息」（`app.js` 的 `renderNewPill`）。
+       用户往上翻着读历史时，新来的内容**不把他拽回底部**（那条规矩见 `renderTimeline`），
+       于是必须有一个**不侵入**的提示告诉他「下面还有新的」—— 否则那些内容就等于消失了。
+       位置与「/」那排胶囊同一套（`bottom: 100%`，挂在 `.composer` 上而不是塞进 `.box`）。 */
+    .composer .newpill {
+        position: absolute; left: 50%; transform: translateX(-50%);
+        bottom: calc(100% + 8px); z-index: 28;
+        padding: 5px 12px; border-radius: 999px; cursor: pointer;
+        border: 1px solid var(--accent); background: var(--accent); color: #fff;
+        font: inherit; font-size: 11.5px; line-height: 1;
+        box-shadow: var(--shadow); white-space: nowrap;
+    }
+
+    .composer .newpill:hover { filter: brightness(1.08); }
+
     .composer .lim { color: var(--text-2); font-size: 10.5px; }
 
     /* 「/」模板那排胶囊（见 `app.js` 的 `openSlashMenu`）。
@@ -1383,6 +1398,12 @@ table.ra td input[type='checkbox'] { margin: 0; }
                      只能用鼠标拖的话，它就是一个只能用鼠标的功能。 -->
                 <div class="rs" id="composer-resize" role="separator" aria-orientation="horizontal"
                      tabindex="0" data-i18n-title="拖动调整输入区高度"></div>
+                <!-- ⚠️★ 「N 条新消息」那颗胶囊（2026-10-04，Jonny：「浏览其它信息时，新消息来了
+                     应该在输入框上方提示有多少条新消息」）。
+                     ⚠️ 文案（含条数）由 `app.js` 的 `renderNewPill` 写进去 —— 标记里不写中文（判据 15）。
+                     ⚠️ 与「/」那排胶囊同一套挂法：`bottom: 100%` 顶到**输入区上方**，
+                     不塞进 `.box`（塞进去会把输入区撑高，而输入区高度是用户拖出来的）。 -->
+                <button class="newpill" id="new-pill" type="button" hidden></button>
                 <div class="box">
                     <!-- ⚠️★ `autocapitalize="off"`：macOS 会在这个框里把每句首字母**自动大写**，
                          而用户发的常常是命令、路径、代码片段 —— 一个大写字母就让它变成另一回事。
