@@ -11,7 +11,7 @@ import { useAppStore, type ReceivedItem } from '@/stores/appStore';
 import { useWebSocketStore } from '@/stores/wsStore';
 import { toast } from '@/stores/toastStore';
 import { useDisplaySettings } from '@/hooks/useDisplaySettings';
-import { copyTextToClipboard, deviceLabel, errorMessage, formatTimestamp, isImageName, prettyFileSize } from '@/lib/util';
+import { copyTextToClipboard, deviceLabel, errorMessage, formatTimestamp, isFileEntry, isImageName, prettyFileSize } from '@/lib/util';
 import { updateEntryColumn } from '@/services/share';
 
 const COLUMNS = [
@@ -72,7 +72,7 @@ export default function BoardWall() {
             if (device) parts.push(device);
         }
         if (display.ip && item.senderIP) parts.push(String(item.senderIP));
-        if (item.type === 'file' && item.size) parts.push(prettyFileSize(Number(item.size)));
+        if (isFileEntry(item) && item.size) parts.push(prettyFileSize(Number(item.size)));
         return parts.join(' · ');
     };
 
@@ -166,7 +166,7 @@ export default function BoardWall() {
                                         }}
                                     >
                                         <Stack direction="row" alignItems="flex-start" spacing={0.5}>
-                                            {item.type === 'file' ? (
+                                            {isFileEntry(item) ? (
                                                 <>
                                                     <MdiIcon name={isImageName(item.name) ? 'mdi-image-outline' : 'mdi-file-outline'} size={14} />
                                                     <Typography variant="caption" sx={{ wordBreak: 'break-all' }}>{item.name || 'file'}</Typography>
@@ -220,7 +220,7 @@ export default function BoardWall() {
             <Dialog open={Boolean(detailItem)} onClose={() => setDetailItem(null)} maxWidth="sm" fullWidth>
                 <DialogTitle sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
                     <Typography variant="caption" sx={{ letterSpacing: '0.04em' }}>
-                        {detailItem?.type === 'file' ? 'FILE' : 'TEXT'}
+                        {isFileEntry(detailItem) ? 'FILE' : 'TEXT'}
                     </Typography>
                     <Typography variant="caption" color="text.secondary" sx={{ flex: 1 }}>
                         {detailItem?.timestamp ? formatTimestamp(detailItem.timestamp) : ''}
@@ -230,7 +230,7 @@ export default function BoardWall() {
                     </IconButton>
                 </DialogTitle>
                 <DialogContent>
-                    {detailItem?.type === 'file' ? (
+                    {detailItem && isFileEntry(detailItem) ? (
                         <Stack direction="row" alignItems="center" spacing={1}>
                             <MdiIcon name={isImageName(detailItem.name) ? 'mdi-image-outline' : 'mdi-file-outline'} size={18} />
                             <Typography variant="body2" sx={{ wordBreak: 'break-all' }}>{detailItem.name || 'file'}</Typography>
@@ -240,7 +240,7 @@ export default function BoardWall() {
                         <BoardCardBody meta={detailItem} />
                     ) : null}
                     <Stack direction="row" alignItems="center" spacing={0.5} sx={{ mt: 2, flexWrap: 'wrap' }}>
-                        {detailItem && detailItem.type !== 'file' && (
+                        {detailItem && !isFileEntry(detailItem) && (
                             <Button size="small" variant="text" startIcon={<MdiIcon name="mdi-content-copy" size={16} />} onClick={() => copyItemText(detailItem)}>
                                 {t('copyText')}
                             </Button>

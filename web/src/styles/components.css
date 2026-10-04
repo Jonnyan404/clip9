@@ -91,10 +91,96 @@
     margin: 12px 0;
 }
 
-/* ── 便签卡片正文（web-vue3/src/components/sticky/StickyNote.vue）──────────
-   ⚠️ 卡片**本身就渲染 md**（不只是阅读器）：任务列表 / 表格默认就是 md，
-   于是卡片上的复选框也能直接勾。纯文本按贴纸观感截断 4 行；渲染态放开，
-   否则一张表只露 4 行、复选框也点不到。 */
+/* ── 便签卡片（web-vue3/src/components/sticky/StickyNote.vue 的 scoped 样式）──
+   ⚠️★ 整块**逐条照抄** Vue：配色、旋转、胶带条、悬停动作行都在这里。
+   之前 React 侧用 MUI 的 `sx` 另写了一套（更淡的配色、没有悬停动作行、
+   过期信息还挪到了卡片头部），于是同一张便签两版长得不一样。 */
+.sticky-note {
+    position: relative;
+    border-radius: 4px;
+    padding: 12px 14px 10px;
+    box-shadow: 0 2px 1px rgba(0, 0, 0, 0.06), 0 6px 14px rgba(68, 64, 42, 0.12);
+    /* 旋转角由 JS 给的 `--rt` 决定（同一张便签每次都长一样） */
+    transform: rotate(var(--rt, 0deg));
+    font-family: 'Comic Sans MS', 'Kaiti', 'PingFang SC', sans-serif;
+    min-height: 92px;
+    height: 100%;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    /* 便签底色是**固定的浅色**（见下面 --c0..--c4），与主题无关。不写死文字色的话
+       会继承主题的 on-surface，深色主题下就成了浅色字配浅色底（几乎读不出来）。 */
+    color: #444034;
+    cursor: pointer;
+}
+
+/* 顶上那条「胶带」。⚠️ 卡片是 `overflow: hidden`，所以它其实被裁掉了 ——
+   与 Vue 一致（Vue 也这样）。照抄是为了两边逐字对齐，别当成 bug 去「修」。 */
+.sticky-note::before {
+    content: '';
+    position: absolute;
+    top: -8px;
+    left: 50%;
+    transform: translateX(-50%);
+    width: 40px;
+    height: 13px;
+    background: rgba(0, 0, 0, 0.08);
+    border-radius: 2px;
+    z-index: 2;
+}
+
+.sticky-note--c0 { background: #fff8c5; }
+.sticky-note--c1 { background: #ffd8d8; }
+.sticky-note--c2 { background: #d6f0d6; }
+.sticky-note--c3 { background: #d9e6ff; }
+.sticky-note--c4 { background: #e9d9ff; }
+
+/* 过期文件：文件名划掉（过期信息本身只出现在阅读器里，卡片上不放） */
+.sticky-note--expired .sticky-note__fname {
+    text-decoration: line-through;
+}
+
+.sticky-note__label {
+    font-size: 10px;
+    font-weight: 700;
+    opacity: 0.55;
+    margin-bottom: 6px;
+    letter-spacing: 0.06em;
+}
+
+.sticky-note__file {
+    display: flex;
+    align-items: baseline;
+    gap: 5px;
+    font-size: 12px;
+    line-height: 1.45;
+    word-break: break-all;
+}
+
+.sticky-note__fic {
+    flex-shrink: 0;
+    font-size: 13px;
+}
+
+.sticky-note__fname {
+    font-weight: 700;
+    font-size: 12px;
+    line-height: 1.45;
+    min-width: 0;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+}
+
+.sticky-note__meta {
+    font-size: 11px;
+    margin-top: 6px;
+    opacity: 0.7;
+}
+
+/* 卡片正文。⚠️ 卡片**本身就渲染 md**（任务列表 / 表格默认就是 md），
+   于是卡片上的复选框也能直接勾。纯文本按贴纸观感截断 4 行。 */
 .sticky-note__text {
     font-size: 13px;
     line-height: 1.5;
@@ -105,10 +191,9 @@
     -webkit-line-clamp: 4;
     -webkit-box-orient: vertical;
     overflow: hidden;
-    flex: 1;
-    min-height: 0;
 }
 
+/* 渲染态必须放开 clamp：否则一张表只露 4 行、复选框也点不到。改成限高 + 滚动。 */
 .sticky-note__text--rendered {
     display: block;
     -webkit-line-clamp: unset;
@@ -136,16 +221,63 @@
     font-size: 11px;
 }
 
-.sticky-note__fname {
-    font-weight: 700;
-    font-size: 12px;
-    line-height: 1.45;
-    min-width: 0;
+.sticky-note__text--link {
+    color: #1e6bb8;
+    text-decoration: underline;
+    font-size: 12.5px;
+    word-break: break-all;
     display: -webkit-box;
     -webkit-line-clamp: 2;
     -webkit-box-orient: vertical;
     overflow: hidden;
-    word-break: break-all;
+}
+
+/* `margin-top: auto` 把时间行顶到卡片底部（卡片是 flex 列）。 */
+.sticky-note__time {
+    font-size: 10px;
+    opacity: 0.55;
+    margin-top: auto;
+    padding-top: 8px;
+}
+
+/* 悬停才出现的动作行（下载/复制 + 删除）。 */
+.sticky-note__ops {
+    position: absolute;
+    top: 6px;
+    right: 6px;
+    display: none;
+    gap: 2px;
+    background: rgba(255, 255, 255, 0.55);
+    border-radius: 999px;
+    padding: 2px 3px;
+    box-shadow: 0 1px 4px rgba(0, 0, 0, 0.12);
+    z-index: 3;
+}
+
+.sticky-note:hover .sticky-note__ops {
+    display: flex;
+}
+
+/* 触摸设备没有悬停，动作行恒显 —— 否则手机上永远点不到下载/删除。 */
+@media (hover: none) {
+    .sticky-note__ops {
+        display: flex;
+    }
+}
+
+.sticky-note__op {
+    color: rgba(68, 64, 42, 0.72);
+}
+
+/* MUI 的 IconButton 自带 40px 的圆底与涟漪，会把那张小圆角条撑破 ——
+   这里要的是 Vue 里 `v-btn icon density=compact size=small variant=text` 那种朴素小图标。 */
+.sticky-note__ops .MuiIconButton-root {
+    padding: 2px;
+    background: transparent;
+}
+
+.sticky-note__ops .MuiIconButton-root:hover {
+    background: rgba(0, 0, 0, 0.06);
 }
 
 /* ── 非标准模式的输入区（web-vue3/src/components/sticky/StickyComposer.vue）──

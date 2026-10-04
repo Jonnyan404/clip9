@@ -249,6 +249,36 @@ export function isImageName(name?: string): boolean {
     return IMAGE_NAME_RE.test(String(name || ''));
 }
 
+/**
+ * 这条条目是不是「文件」类 —— **全站唯一实现**。⚠️★ 判据是 **`type !== 'text'`**，
+ * **不是** `type === 'file'`。
+ *
+ * 为什么不能写 `=== 'file'`（两个独立的坑，任一个都够把所有图片干趴下）：
+ *
+ * ① **`type` 是 MIME 派生的，不是 `file`。** 服务端 `determine_response_type()`
+ *    （`handlers.rs`，对应 Go `utils.go:199`）按扩展名给 `type` 赋
+ *    `image` / `audio` / `video` / `document` / `archive` / `file` ——
+ *    只有「猜不出 MIME」的才是 `file`。所以 `.png` 条目的 `type` 是 `image`。
+ *    见 fixture `cases/protocol/content_entry_file.json`（`screenshot.png` → `"type":"image"`）。
+ *
+ * ② **同一个条目在两条链路上的 `type` 并不相同。** WS `receive` 事件发的是**入库时的**
+ *    `type`（永远是 `text` / `file`，见 `post_event_file.json`），而历史接口
+ *    （`/content`、`/content/latest`）走 `content_entry()`，发的是上面那个 **MIME 类型**。
+ *    于是 `=== 'file'` 的表现是：**刚上传时正常，一刷新就坏** —— 这种「刷新才坏」的
+ *    bug 最难查，因为刷新前一切正常。两个形状都是 Go 导出的 fixture，都是既有契约，
+ *    所以修在**客户端**，别去动线上形状（Android / 桌面端 / Worker 都在读）。
+ *
+ * 判据与服务端自己的判别（`ReceiveHolder`：`text` vs 其余）、以及标准模式的卡片分发
+ * （`type === 'text' ? ReceivedText : ReceivedFile`）完全一致 —— 三处同一个语义。
+ *
+ * 认不出 `type`（空）时**当文本**：那是「宁可少渲染一个文件卡片，也别把正文当文件名」
+ * 的方向，也与改动前的行为一致。
+ */
+export function isFileEntry(item?: { type?: unknown } | null): boolean {
+    const type = String(item?.type ?? '').trim();
+    return type !== '' && type !== 'text';
+}
+
 // 文件条目「能不能就地预览、该按哪一类渲染」—— **全站唯一实现**。
 // 返回 `'image' | 'video' | 'audio' | 'text'`，不预览时返回 `''`（调用方退回图标）。
 const VIDEO_NAME_RE = /\.(mp4|webm|ogv|mov)$/i;

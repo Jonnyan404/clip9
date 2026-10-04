@@ -8,7 +8,7 @@ import { ReceivedFile } from '@/components/received-item/File';
 import { MdiIcon } from '@/components/ui/MdiIcon';
 import { useAppStore, selectComposerDisabledEverywhere, selectComposerFullyHidden, selectVisibleReceived, type ReceivedItem } from '@/stores/appStore';
 import { useDisplaySettings } from '@/hooks/useDisplaySettings';
-import { isImageName, looksLikeTable, looksLikeTaskList } from '@/lib/util';
+import { isFileEntry, isImageName, looksLikeTable, looksLikeTaskList } from '@/lib/util';
 
 const TIMELINE_FILTER_KEY = 'timelineFilter';
 const TIMELINE_FILTER_KEYS = ['all', 'text', 'image', 'file', 'task', 'table'] as const;
@@ -67,7 +67,7 @@ export default function DefaultMode() {
         if (filter === 'task') return visible.filter((item) => item.type === 'text' && looksLikeTaskList(String(item.content || '')));
         if (filter === 'table') return visible.filter((item) => item.type === 'text' && looksLikeTable(String(item.content || '')));
         const wantImage = filter === 'image';
-        return visible.filter((item) => item.type === 'file' && isImageName(item.name) === wantImage);
+        return visible.filter((item) => isFileEntry(item) && isImageName(item.name) === wantImage);
     }, [visible, display.timelineFilter, filter]);
 
     // 新消息到达时吸顶（读者在顶部附近才跟随）。

@@ -6,7 +6,7 @@ import { useWebSocketStore } from '@/stores/wsStore';
 import { toast } from '@/stores/toastStore';
 import { useMarkdown } from '@/hooks/useMarkdown';
 import {
-    SHARE_DEFAULT_TTL, copyTextToClipboard, deviceLabel, errorMessage, filePreviewKind, formatTimestamp, prettyFileSize,
+    SHARE_DEFAULT_TTL, copyTextToClipboard, deviceLabel, errorMessage, filePreviewKind, formatTimestamp, isFileEntry, prettyFileSize,
 } from '@/lib/util';
 import { createShareLink } from '@/services/share';
 import { MarkdownBody } from '@/components/MarkdownBody';
@@ -31,7 +31,7 @@ export function GlancePreview({ item }: { item: ReceivedItem | null }) {
     const [loading, setLoading] = useState(false);
     const [downloading, setDownloading] = useState(false);
 
-    const isFile = item?.type === 'file';
+    const isFile = isFileEntry(item);
     const content = String(item?.content || '');
     // 文件条目的**可预览类型**。判型收在 `lib/util.ts` 的 `filePreviewKind`（**全站唯一实现**）。
     // ⚠️ 只看扩展名、不看内容 —— 服务端不嗅探、客户端也不嗅探，两边同一套标准。
