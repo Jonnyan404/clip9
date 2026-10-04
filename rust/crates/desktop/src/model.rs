@@ -53,7 +53,27 @@ pub struct EntryView {
     ///
     /// ⚠️★ **本地拼的**（`endpoint::download_url`），**不信条目里那个 `url`** ——
     /// 那个字段是「谁发的、从哪发的」，可能是别人的服务端。
+    ///
+    /// ⚠️★ 它是**裸地址**（不带凭据）：房间**要密码**时这个地址一定 401 ——
+    /// 那时 [`Self::preview_needs_token`] 为真，**快照里这一格是 `None`**，
+    /// 由页面回头找壳要一条带令牌的地址（见 [`crate::runtime::Runtime::preview_url`]）。
     pub preview_url: Option<String>,
+    /// 这条的预览**必须先换一条带令牌的地址**（房间要密码）——
+    /// 页面看到它就**不要去读 `preview_url`**（那时它是 `None`），直接问壳。
+    ///
+    /// ⚠️★ 为什么必须有这个布尔：`<img>` / `<video>` 的 `src` **带不了
+    /// `Authorization` 头**，而 `/file/...` 在配了密码的实例上要凭据
+    /// （`server::auth_gate::require_file_read_access`）—— 裸地址一定 401，
+    /// 而 `<img>` 的 error 会被静默换成一介文件行（2026-10-04 实测复现）。
+    /// 项目自己给的解法是**分享令牌**：只读、按条、会过期、**本来就是给人贴进地址栏的**
+    /// （与「房间凭据永远不进 URL」不冲突，见 `clip9_client::endpoint` 的模块文档第 3 条）。
+    pub preview_needs_token: bool,
+    /// 文件在服务端那边的编号（= 协议里的 `cache`，通常就是 uuid）。
+    ///
+    /// ⚠️★ `#[serde(skip)]`：**它不出现在快照里**，界面用不上它（页面只递 id，地址由壳查）。
+    /// 壳自己要用：签分享令牌必须把 uuid 发给 `/share`（`payload.url` 里那段只是给人看的）。
+    #[serde(skip)]
+    pub file_cache: String,
     /// 发送端设备名（界面上「来自谁」）。
     pub device: String,
     /// **是不是本机发的** —— 比的是 `senderClientID` 与本机的持久 id。
@@ -125,11 +145,25 @@ impl EntryView {
     /// - `our_client_id`：本机的持久客户端 id（用来判 `mine`）；
     /// - `server`：这个房间**自己的**服务端地址（拼预览地址用）——
     ///   传空就**不给**预览地址，而不是去猜一个（宁可少一个预览，不要指到别人的服务端）。
+    /// - `needs_token`：这个房间**要不要密码**（= 那条通道上有没有凭据）——
+    ///   要的话预览地址必须换成带分享令牌的那一条，见 [`Self::preview_needs_token`]。
     #[must_use]
-    pub fn from_holder(holder: &ReceiveHolder, our_client_id: &str, server: &str) -> Self {
+    pub fn from_holder(
+        holder: &ReceiveHolder,
+        our_client_id: &str,
+        server: &str,
+        needs_token: bool,
+    ) -> Self {
         let base = holder.base();
-        let (kind, text, file_name, file_size, preview_url) = match holder {
-            ReceiveHolder::Text(t) => ("text", t.content.clone(), String::new(), 0, None),
+        let (kind, text, file_name, file_size, preview_url, file_cache) = match holder {
+            ReceiveHolder::Text(t) => (
+                "text",
+                t.content.clone(),
+                String::new(),
+                0,
+                None,
+                String::new(),
+            ),
             ReceiveHolder::File(f) => {
                 // ⚠️ 文件名被清洗成空时 `download_url` 会报错 → 没有预览地址。
                 // 这不是失败：一个没有预览的文件条目照样能显示（名字、大小、时间）。
@@ -143,7 +177,14 @@ impl EntryView {
                         // 所以这里显式转成字符串，形状与 `EntryView` 声明的一致。
                         .map(|url| url.to_string())
                 };
-                ("file", String::new(), f.name.clone(), f.size, url)
+                (
+                    "file",
+                    String::new(),
+                    f.name.clone(),
+                    f.size,
+                    url,
+                    f.cache.clone(),
+                )
             }
         };
 
@@ -157,6 +198,8 @@ impl EntryView {
             file_name,
             file_size,
             preview_url,
+            preview_needs_token: needs_token,
+            file_cache,
             device: device_label(base.sender_device.as_ref()),
             // ⚠️ 两边都非空才比 —— 空 client id 会和所有「没带 id 的老条目」撞上，
             // 那会让一堆别人的消息都被标成「本机发的」。
@@ -191,6 +234,14 @@ impl EntryView {
             text,
             text_bytes,
             truncated,
+            // ⚠️★ 要换令牌的那种房间**不给地址**（见 `preview_needs_token` 的注释）：
+            // 递一个「拿去就 401」的地址过去，页面要么把它塞进 `src`（那条内容永远是空的），
+            // 要么自己判错。**一个用不了的地址不该递出去** —— 要地址就回头问壳。
+            preview_url: if self.preview_needs_token {
+                None
+            } else {
+                self.preview_url.clone()
+            },
             ..self.clone()
         }
     }
@@ -256,6 +307,15 @@ pub struct ShareLinkView {
     /// 分享页地址。⚠️ **空串不被允许**（见 `crate::runtime::Runtime::share_entry`）：
     /// 「复制成功」但粘出来是空，是这个功能里最能骗人的一种失败。
     pub url: String,
+    /// **直连正文**的地址（带分享令牌的那一条）。
+    ///
+    /// ⚠️★ 它的用途只有一个：**塞进 `<img>` / `<video>` 的 `src`** ——
+    /// 那两个标签带不了 `Authorization` 头，而配了密码的实例上 `/file/...` 要凭据。
+    /// 没有它，带密码的房间里的图片与视频永远是 401（2026-10-04 实测复现）。
+    /// ⚠️ 令牌进 URL 是**设计如此**：它是只读、按条、会过期、本来就是给人贴出去的东西
+    /// （与「房间凭据永远不进 URL」不冲突，见 `clip9_client::endpoint` 模块文档第 3 条）。
+    /// ⚠️ 老服务端可能不给这个字段 —— 那时是空串（不是错误：分享页地址照样能用）。
+    pub raw_url: String,
     /// 实际生效的有效期（秒）。服务端归一化过的那个值。
     pub ttl: i64,
     /// 实际生效的次数上限（`0` = 不限次数）。
@@ -303,7 +363,8 @@ mod tests {
 
     #[test]
     fn a_text_entry_maps_to_a_text_card() {
-        let view = EntryView::from_holder(&text_entry(7, "hello"), "", "http://127.0.0.1:9501");
+        let view =
+            EntryView::from_holder(&text_entry(7, "hello"), "", "http://127.0.0.1:9501", false);
         assert_eq!(view.kind, "text");
         assert_eq!(view.text, "hello");
         assert_eq!(view.id, 7);
@@ -316,7 +377,7 @@ mod tests {
     #[test]
     fn a_file_entry_gets_a_locally_built_preview_url() {
         let holder = file_entry(9, "u-1", "报告.pdf", 2048);
-        let view = EntryView::from_holder(&holder, "", "http://127.0.0.1:9501");
+        let view = EntryView::from_holder(&holder, "", "http://127.0.0.1:9501", false);
         assert_eq!(view.kind, "file");
         assert_eq!(view.text, "", "文件条目不该有正文");
         assert_eq!(view.file_name, "报告.pdf");
@@ -331,9 +392,47 @@ mod tests {
     /// 指到别人的服务端的预览，比没有预览更糟。
     #[test]
     fn without_a_server_there_is_no_preview_url() {
-        let view = EntryView::from_holder(&file_entry(9, "u-1", "a.png", 1), "", "");
+        let view = EntryView::from_holder(&file_entry(9, "u-1", "a.png", 1), "", "", false);
         assert!(view.preview_url.is_none());
         assert_eq!(view.file_name, "a.png", "名字照常显示");
+    }
+
+    /// ⚠️★ **要密码的房间：快照里不许给裸地址。**
+    ///
+    /// `<img>` / `<video>` 的 `src` 带不了 `Authorization` 头，而配了密码的实例上
+    /// `/file/...` 要凭据（`server::auth_gate::require_file_read_access`）——
+    /// 那条地址拿去就是 401，而 `<img>` 的 error 会被静默换成一介文件行；
+    /// 2026-10-04 实测过（裸 401 / `?auth=` 200），用户那边的症状正是「列表只显示文件名」。
+    /// 所以：**一个用不了的地址不该递出去**，由页面回头找壳要一条带只读令牌的
+    ///（`Runtime::preview_url`）。
+    ///
+    /// ⚠️ 壳自己那一份**必须留着**：存盘（`save_entry_file`）走的是同一个字段 +
+    /// `Authorization` 头，那条路本来就能用。
+    #[test]
+    fn a_password_room_keeps_the_bare_url_away_from_the_page() {
+        let holder = file_entry(4, "u-1", "a.png", 9);
+
+        let open = EntryView::from_holder(&holder, "", "http://127.0.0.1:9501", false);
+        assert!(!open.preview_needs_token);
+        assert!(
+            open.for_snapshot().preview_url.is_some(),
+            "不要密码的房间照旧给地址（那一条真的取得回来）"
+        );
+        assert_eq!(open.file_cache, "u-1", "uuid 壳自己要留着（签令牌要用）");
+
+        let guarded = EntryView::from_holder(&holder, "", "http://127.0.0.1:9501", true);
+        assert!(
+            guarded.preview_needs_token,
+            "要密码的房间要告诉页面「去问壳」"
+        );
+        assert!(
+            guarded.for_snapshot().preview_url.is_none(),
+            "要密码的房间不许把裸地址递出去"
+        );
+        assert!(
+            guarded.preview_url.is_some(),
+            "壳手上那份还在（存盘那条路要用）"
+        );
     }
 
     /// ⚠️★ 预览必须切在**字符边界**上。
@@ -342,7 +441,7 @@ mod tests {
     /// 而这条路径是「用户发一条长中文」—— 一踩一个准。
     #[test]
     fn a_long_cjk_body_is_truncated_on_a_char_boundary() {
-        let view = EntryView::from_holder(&text_entry(1, &"汉".repeat(2000)), "", "");
+        let view = EntryView::from_holder(&text_entry(1, &"汉".repeat(2000)), "", "", false);
         assert_eq!(view.text_bytes, 6000, "记录里那份是全文");
         assert!(!view.truncated, "记录自己不算「截断」");
 
@@ -375,14 +474,15 @@ mod tests {
     fn a_body_at_or_below_the_preview_size_is_not_truncated() {
         for size in [0, 1, PREVIEW_BYTES - 1, PREVIEW_BYTES] {
             let body = "x".repeat(size);
-            let preview = EntryView::from_holder(&text_entry(2, &body), "", "").for_snapshot();
+            let preview =
+                EntryView::from_holder(&text_entry(2, &body), "", "", false).for_snapshot();
             assert!(!preview.truncated, "{size} 字节不该算截断");
             assert_eq!(preview.text_bytes, size);
             assert_eq!(preview.text, body, "没截断就该原样给");
         }
         // 多一个字节才算。
         let over = "x".repeat(PREVIEW_BYTES + 1);
-        let preview = EntryView::from_holder(&text_entry(3, &over), "", "").for_snapshot();
+        let preview = EntryView::from_holder(&text_entry(3, &over), "", "", false).for_snapshot();
         assert!(preview.truncated);
         assert_eq!(preview.text_bytes, PREVIEW_BYTES + 1);
         assert_eq!(preview.text.len(), PREVIEW_BYTES);
@@ -391,8 +491,9 @@ mod tests {
     /// 文件条目**没有正文**，所以既不该被标成截断、字节数也得是 0。
     #[test]
     fn a_file_entry_has_no_body_and_no_preview() {
-        let preview = EntryView::from_holder(&file_entry(4, "u-1", "a.png", 9), "", "http://x")
-            .for_snapshot();
+        let preview =
+            EntryView::from_holder(&file_entry(4, "u-1", "a.png", 9), "", "http://x", false)
+                .for_snapshot();
         assert_eq!(preview.kind, "file");
         assert_eq!(preview.text_bytes, 0);
         assert!(!preview.truncated);
@@ -418,7 +519,7 @@ mod tests {
             ..TextReceive::default()
         });
 
-        let view = EntryView::from_holder(&holder, "", "http://127.0.0.1:9501");
+        let view = EntryView::from_holder(&holder, "", "http://127.0.0.1:9501", false);
         assert!(view.automation, "定时消息要标出来");
         assert!(view.late, "补发也要标出来");
         assert_eq!(view.scheduled_at, 1_757_000_400);
@@ -429,7 +530,7 @@ mod tests {
     /// 不是定时的消息不能被误标成定时（`source` 为空或别的值）。
     #[test]
     fn a_human_entry_is_not_marked_as_automation() {
-        let view = EntryView::from_holder(&text_entry(13, "x"), "", "");
+        let view = EntryView::from_holder(&text_entry(13, "x"), "", "", false);
         assert!(!view.automation);
         assert!(!view.late);
         assert_eq!(view.scheduled_at, 0);
@@ -444,13 +545,13 @@ mod tests {
         if let ReceiveHolder::Text(t) = &mut holder {
             t.base.sender_client_id = "client-a".to_owned();
         }
-        assert!(EntryView::from_holder(&holder, "client-a", "").mine);
-        assert!(!EntryView::from_holder(&holder, "client-b", "").mine);
+        assert!(EntryView::from_holder(&holder, "client-a", "", false).mine);
+        assert!(!EntryView::from_holder(&holder, "client-b", "", false).mine);
         // 本机 id 还没拿到（还没连过）→ 一条都不算自己的。
-        assert!(!EntryView::from_holder(&holder, "", "").mine);
+        assert!(!EntryView::from_holder(&holder, "", "", false).mine);
 
         // 老条目压根没带 id → 也不能算自己的。
-        assert!(!EntryView::from_holder(&text_entry(22, "old"), "client-a", "").mine);
+        assert!(!EntryView::from_holder(&text_entry(22, "old"), "client-a", "", false).mine);
     }
 
     /// 设备名按 `name` → `os` → `type` 取；全都没有就是空串（**不是**一个空格 ——

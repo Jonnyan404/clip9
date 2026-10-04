@@ -984,6 +984,23 @@ pub async fn share_entry(
     runtime.share_entry(id, ttl, max_uses, password).await
 }
 
+/// 给界面一个**能直接塞进 `img` / `video` 的 `src`** 的预览地址。
+///
+/// ⚠️★ 为什么需要一条命令、而不是让快照里那个 `previewUrl` 一用到底：
+/// `<img>` / `<video>` 的 `src` **带不了 `Authorization` 头**，而配了密码的实例上
+/// `/file/...` 要凭据（`server::auth_gate::require_file_read_access`）—— 裸地址一定 401，
+/// 而 `<img>` 的 error 会被静默换成一介文件行。2026-10-04 实测：同一个地址，
+/// 裸的 401、带 `?auth=` 的 200。房间有凭据时快照里**故意不给** `previewUrl`
+///（`EntryView::for_snapshot`），页面就来问这一条。
+///
+/// ⚠️★ 与 `save_entry_file` / `open_entry_file` 同一条规矩：**只从页面收 id**。
+/// 地址、文件名、uuid 全由壳从**自己的列表**里查 —— 收了地址，就等于给页面一个
+/// 「让壳带着房间凭据去取任意 URL」的能力。
+#[tauri::command]
+pub async fn preview_url(runtime: State<'_, Arc<Runtime>>, id: i32) -> Result<String, Msg> {
+    runtime.preview_url(id).await
+}
+
 /// 弹一个**系统文件选择框**，把选中的路径还给页面。
 ///
 /// ⚠️★ 为什么这条命令在 Rust 侧而不在页面上：Tauri 2 的插件 JS API 是一个 npm 包

@@ -70,6 +70,50 @@ fn room_key(channel: &clip9_client::Channel) -> String {
     channel_key(&channel.server, &channel.room)
 }
 
+/// 这个房间的通道上**有没有凭据** —— 有就说明预览地址必须换成带分享令牌的那一条。
+///
+/// ⚠️★ 为什么要判在这一侧：`<img>` / `<video>` 的 `src` **带不了 `Authorization` 头**，
+/// 而配了密码的实例上 `/file/...` 要凭据（`server::auth_gate::require_file_read_access`）
+/// —— 裸地址一定 401，而 `<img>` 的 error 会被静默换成一介文件行。
+/// 见 [`EntryView::preview_needs_token`]。
+///
+/// ⚠️ 判据是「**客户端有没有配**凭据」，不是「服务端要不要」：后者只有服务端自己知道
+/// （`/server` 那一条里没有这一项）。方向是安全的 —— **多**换一次令牌只是白签一条
+/// 只读记录，**少**换一次就是「图片永远显示不出来，而界面只说这是一介文件」
+/// （2026-10-04 实测复现过）。
+/// ⚠️★ `pub(crate)`：`crate::runtime::Runtime::preview_url` 必须问**同一个问题**
+/// （这个房间要不要换令牌）—— 两处各判一遍，早晚会漂成「界面以为要、壳以为不要」。
+pub(crate) fn channel_needs_token(channel: &clip9_client::Channel) -> bool {
+    channel
+        .auth_token
+        .as_deref()
+        .map(str::trim)
+        .is_some_and(|token| !token.is_empty())
+}
+
+/// 预览令牌到期前**留出的余量**（秒）。见 [`Store::preview_token`]。
+const PREVIEW_TOKEN_MARGIN_SECS: i64 = 60;
+
+/// 预览令牌的缓存键。
+///
+/// ⚠️★ 必须**连房间一起**：id 是每个房间各自单调的（`CONTRIBUTING.md` §6），
+/// 只按 id 记会把 A 房间那条 7 的令牌用到 B 房间的 7 上 —— 而那是**别人的内容**
+/// （症状是「这张图不是我刚才看的那张」，不报错）。用与 `channel_key` 同一套分隔符。
+fn preview_key(server: &str, room: &str, id: i32) -> String {
+    format!("{}\u{0}{id}", channel_key(server, room))
+}
+
+/// 现在的 Unix 秒。
+///
+/// ⚠️ 只用来比「令牌还有多久过期」，所以**读不到系统时间就当 0**（= 不主动判过期）——
+/// 那条路的退化方向是「多签一条令牌」，而不是「明明没过期却当成过期，于是每张图重签」。
+fn unix_now() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| i64::try_from(d.as_secs()).unwrap_or(i64::MAX))
+        .unwrap_or(0)
+}
+
 /// 每个房间在界面上**留多少条**。
 ///
 /// ⚠️ 这**不是**「历史长度」—— 历史长度是服务端的 `server.history` 旋钮，而这里管的是
@@ -488,6 +532,17 @@ struct Inner {
     uploads: Vec<UploadView>,
     /// 下一个「正在发送」的编号（只增，不复用）。
     next_upload_id: u64,
+    /// 已经签出来的**预览令牌**：`(服务端 \0 房间 \0 条目 id) → (地址, 过期时刻)`。
+    ///
+    /// ⚠️★ 为什么要缓存：签一条令牌是**一次网络请求**（远端服务端就是一次往返），
+    /// 而页面对**每一张图 / 每一段视频**都要问一次地址 —— 不缓存的话，每次重绘都会
+    /// 再签一遍，只读记录会以肉眼可见的速度堆起来（`/share/list` 里全是它们）。
+    ///
+    /// ⚠️ 过期时刻是**服务端回的那个**（`expiresAt`，unix 秒）—— 区间由服务端归一化，
+    /// 这一侧不抄一份。「远端老服务端没给」= `0`，那时**不主动判过期**
+    ///（宁可多用一会儿，也不要每轮重签一条）。
+    /// ⚠️ 与 `saved_files` 同一个定位：**缓存**，不是真相。
+    preview_tokens: std::collections::HashMap<String, (String, i64)>,
 }
 
 impl Inner {
@@ -536,6 +591,7 @@ impl Store {
                 saved_files: std::collections::HashMap::new(),
                 uploads: Vec::new(),
                 next_upload_id: 1,
+                preview_tokens: std::collections::HashMap::new(),
             }),
             config_path,
             data_dir,
@@ -735,7 +791,8 @@ impl Store {
             ReceiverEvent::Entry(entry) => {
                 let server = inner.config.channels[index].server.clone();
                 let client_id = inner.config.client_id.clone();
-                let view = EntryView::from_holder(&entry, &client_id, &server);
+                let needs_token = channel_needs_token(&inner.config.channels[index]);
+                let view = EntryView::from_holder(&entry, &client_id, &server, needs_token);
                 // ⚠️ `upsert` 自己答「列表真变了没有」（同一条**原样重传**会答 `false`，
                 // 那不该触发一次整屏重绘）—— 它里面同时收两道界（条数 + 字节）。
                 if inner.rooms[index].upsert(view) {
@@ -747,9 +804,10 @@ impl Store {
             ReceiverEvent::History(entries) => {
                 let server = inner.config.channels[index].server.clone();
                 let client_id = inner.config.client_id.clone();
+                let needs_token = channel_needs_token(&inner.config.channels[index]);
                 let mut changed = false;
                 for entry in &entries {
-                    let view = EntryView::from_holder(entry, &client_id, &server);
+                    let view = EntryView::from_holder(entry, &client_id, &server, needs_token);
                     changed |= inner.rooms[index].upsert(view);
                 }
                 if !inner.rooms[index].history_loaded {
@@ -844,8 +902,9 @@ impl Store {
         if let Some(index) = inner.room_index(server, room) {
             let server = inner.config.channels[index].server.clone();
             let client_id = inner.config.client_id.clone();
+            let needs_token = channel_needs_token(&inner.config.channels[index]);
             for entry in &entries {
-                let view = EntryView::from_holder(entry, &client_id, &server);
+                let view = EntryView::from_holder(entry, &client_id, &server, needs_token);
                 // ⚠️ 返回的「变了没有」这里**故意丢掉**：这是一次**用户点的刷新**
                 //（低频），直接前进更省事，方向也是安全的（多一次重绘只是慢一点）。
                 inner.rooms[index].upsert(view);
@@ -1181,8 +1240,30 @@ impl Store {
         (!name.trim().is_empty()).then_some(name)
     }
 
-    /// 这一条**已经存到本地**了吗（在 → 落盘路径，不在 → `None`）。
+    /// 一条文件条目在服务端那边的编号（= 协议里的 `cache`，通常就是 uuid）。
     ///
+    /// ⚠️★ 签预览令牌要用它：`POST /share` 认的是 `uuid`，而**地址里那一段是给人看的**
+    /// （`download_url` 那个 `/file/<uuid>/<name>`）—— 从地址里抠回 uuid 是「解析自己的输出」，
+    /// 形状一改就静默失效（那时症状是「带密码的房间又只有文件名了」）。
+    ///
+    /// ⚠️ 与 [`Self::entry_file_name`] 同一套规矩：只认当前选中房间、只按 id 找。
+    #[must_use]
+    pub fn entry_file_cache(&self, id: i32) -> Option<String> {
+        let inner = self.lock();
+        let cache = inner
+            .rooms
+            .get(inner.selected)?
+            .entries
+            .iter()
+            .find(|entry| entry.id == id)?
+            .file_cache
+            .clone();
+        // ⚠️ 空的不回：`/share` 收到空 uuid 会去签一条指向不存在文件的令牌
+        //（服务端会回错，但那时错误文案说的是「分享失败」，与真因差得远）。
+        (!cache.trim().is_empty()).then_some(cache)
+    }
+
+    /// 这一条**已经存到本地**了吗（在 → 落盘路径，不在 → `None`）。
     /// ⚠️★ 要**先看看文件还在不在**：那张表是缓存，而用户完全可能把下载目录里的东西
     /// 删掉或挪走。照着一张过期的表去「定位」，文件管理器会打开一个父目录、
     /// 什么都不选中 —— 症状是「点了没反应」，而真因没人看得见。
@@ -1251,6 +1332,35 @@ impl Store {
     /// 而每存一次就整屏重绘一次是没有道理的代价。
     pub fn remember_saved_file(&self, id: i32, path: std::path::PathBuf) {
         self.lock().saved_files.insert(id, path);
+    }
+
+    /// 这一条的预览令牌**还在有效期内**吗（在 → 那个能直接塞进 `src` 的地址）。
+    ///
+    /// ⚠️★ 留 [`PREVIEW_TOKEN_MARGIN_SECS`] 的余量：正好用到最后一秒的话，
+    /// 一次播放中途就会变成 401 —— 而**拖进度条**正是那种「一次访问拖很久」的场景。
+    /// ⚠️ 服务端没给过期时刻（`0`）时**不判过期**：那种情况下重签是白签一条记录。
+    #[must_use]
+    pub fn preview_token(&self, server: &str, room: &str, id: i32) -> Option<String> {
+        let inner = self.lock();
+        let (url, expires_at) = inner.preview_tokens.get(&preview_key(server, room, id))?;
+        if *expires_at > 0 && *expires_at - unix_now() < PREVIEW_TOKEN_MARGIN_SECS {
+            return None;
+        }
+        Some(url.clone())
+    }
+
+    /// 记住刚签出来的那条预览令牌（见 [`Inner::preview_tokens`]）。
+    pub fn remember_preview_token(
+        &self,
+        server: &str,
+        room: &str,
+        id: i32,
+        url: String,
+        expires_at: i64,
+    ) {
+        self.lock()
+            .preview_tokens
+            .insert(preview_key(server, room, id), (url, expires_at));
     }
 
     /// 握手里拿到的限额（上行要用）。
@@ -3553,5 +3663,101 @@ mod tests {
             ..SyncScopePatch::default()
         });
         assert_eq!(store.config().poll_interval_ms, 1);
+    }
+
+    /// 预览令牌的缓存：**没过期就复用**（不然界面每张图都会重签一条只读记录），
+    /// **快到期就作废**（不然一次播放中途会变成 401）。
+    #[test]
+    fn a_preview_token_is_reused_until_it_is_about_to_expire() {
+        let (_dir, store) = temp_store();
+        let server = "http://127.0.0.1:9501";
+        assert_eq!(
+            store.preview_token(server, "default", 7),
+            None,
+            "没签过就是没有"
+        );
+
+        store.remember_preview_token(
+            server,
+            "default",
+            7,
+            "http://h/file/u/a.png?t=x".to_owned(),
+            unix_now() + 3600,
+        );
+        assert_eq!(
+            store.preview_token(server, "default", 7).as_deref(),
+            Some("http://h/file/u/a.png?t=x"),
+            "有效期还长 → 直接复用"
+        );
+
+        // ⚠️ 余量之内就**当它过期**：大视频拖进度条正是「一次访问拖很久」的场景。
+        store.remember_preview_token(
+            server,
+            "default",
+            7,
+            "http://h/file/u/a.png?t=old".to_owned(),
+            unix_now() + 5,
+        );
+        assert_eq!(
+            store.preview_token(server, "default", 7),
+            None,
+            "只剩几秒 → 宁可重签一条，也不要播到一半 401"
+        );
+
+        // ⚠️ 服务端没给过期时刻（`0`）= **不主动判过期**（判了就是每轮重签一条）。
+        store.remember_preview_token(
+            server,
+            "default",
+            7,
+            "http://h/file/u/a.png?t=forever".to_owned(),
+            0,
+        );
+        assert!(
+            store.preview_token(server, "default", 7).is_some(),
+            "不知道什么时候过期时不许当成过期"
+        );
+    }
+
+    /// 令牌按 **(服务端, 房间, 条目 id)** 记。
+    ///
+    /// ⚠️★ 只按 id 记的话，A 房间那条 7 的地址会被用到 B 房间的 7 上 ——
+    /// 显示**别人的内容**，而且不报错（id 是每个房间各自单调的）。
+    #[test]
+    fn preview_tokens_never_leak_across_rooms_or_servers() {
+        let (_dir, store) = temp_store();
+        let far = unix_now() + 3600;
+        store.remember_preview_token("http://a.test", "default", 7, "u-a".to_owned(), far);
+
+        assert!(
+            store.preview_token("http://b.test", "default", 7).is_none(),
+            "别的服务端不算"
+        );
+        assert!(
+            store.preview_token("http://a.test", "work", 7).is_none(),
+            "别的房间不算"
+        );
+        assert_eq!(
+            store
+                .preview_token("http://a.test", "default", 7)
+                .as_deref(),
+            Some("u-a")
+        );
+    }
+
+    /// 「这个房间要不要换令牌」**只有一条判据** —— 界面那个标志（`preview_needs_token`）
+    /// 与签令牌那条路（`Runtime::preview_url`）共用它。
+    ///
+    /// ⚠️★ 两处各判一遍的话，早晚会漂成「界面以为要、壳以为不要」，
+    /// 而那个方向的症状正是「图片永远显示不出来」。
+    #[test]
+    fn a_credential_is_what_decides_whether_a_preview_needs_a_token() {
+        let mut channel = Channel::new("本机", "http://127.0.0.1:9501");
+        assert!(!channel_needs_token(&channel), "没配凭据 = 不用换");
+        for empty in [Some(String::new()), Some("   ".to_owned())] {
+            channel.auth_token = empty;
+            assert!(!channel_needs_token(&channel), "空白凭据不算凭据");
+        }
+        channel.auth_token = Some("s3cr3t".to_owned());
+        assert!(channel_needs_token(&channel), "配了凭据就要换");
     }
 }

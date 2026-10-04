@@ -224,6 +224,9 @@
       'deleteFailed': '删除失败：{reason}',
       'shareFailed': '分享失败：{reason}',
       'shareNoURL': '服务端没有给出链接地址',
+      // ⚠️ 预览令牌：房间要密码时，图片/视频的地址必须换成一条**带只读令牌**的
+      //（`<img src>` 带不了 Authorization 头）。这一句说的是「连令牌也没签出来」。
+      'previewTokenFailed': '这一条拿不到预览地址（服务端没有给出可直连的令牌）',
       'serverRejectedAuth': '服务端不收这个凭据（房间密码不对，或者这个房间要密码而这里没填）',
       'serverRejectedStatus': '服务端回了 HTTP {status}',
       '给这条跑个动作': '给这条跑个动作',
@@ -802,6 +805,7 @@
       'deleteFailed': 'Delete failed: {reason}',
       'shareFailed': 'Share failed: {reason}',
       'shareNoURL': 'the server returned no link',
+      'previewTokenFailed': 'No preview address for this one (the server returned no direct-use token)',
       'serverRejectedAuth': 'the server rejected the credentials (wrong room password, or the room needs one and none is set)',
       'serverRejectedStatus': 'the server answered HTTP {status}',
       '给这条跑个动作': 'Run an action on this entry',
@@ -827,6 +831,8 @@
       '点开存到下载目录，并在文件管理器里选中它': 'Click to save it to the download folder and select it in the file manager',
       '已存到 {path}': 'Saved to {path}',
       '存不下来：{error}': 'Could not save it: {error}',
+      '存到下载目录，并在文件管理器里选中它': 'Save it into the download folder and select it in the file manager',
+      '取不到预览地址：{error}': 'Could not get a preview address: {error}',
       '点开播放（原始大小）': 'Click to play it',
       '正在载入…': 'Loading…',
       '正在发送…': 'Sending…',

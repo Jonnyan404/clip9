@@ -816,6 +816,9 @@ const ICON_PATHS = {
     + '<path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>',
   // 动作库：闪电
   bolt: '<polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/>',
+  // 下载：箭头落进托盘（Feather 的 `download`）
+  download: '<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>'
+    + '<polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/>',
   // 分享：一个向上的箭头从盒子里出去
   share: '<path d="M4 12v8a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-8"/>'
     + '<polyline points="16 6 12 2 8 6"/><line x1="12" y1="2" x2="12" y2="15"/>',
@@ -887,6 +890,19 @@ const VIDEO_SUFFIX = /\.(mp4|m4v|mov|webm)$/i;
  *  壳画不出 pdf / zip / docx，把用户踢给系统程序是上一版的行为，而它的实际后果是
  *  「点一下就离开应用」—— 他要的是拿到那份文件，不是看一个打不开的弹窗。
  */
+/** 把这一条**存进下载目录，并在文件管理器里选中它**。
+ *
+ * ⚠️★ 只有一份（文件行的点击与灯箱里那颗「存下来」共用）：两处各写一遍的话，
+ * 提示语、错误处理、以及「递什么给壳」三样都会漂 —— 而它们漂了都不报错。
+ * ⚠️ 只递条目 id：地址与文件名都由壳从它自己的列表里查（收了地址就等于
+ * 给页面一个「让壳去取任意 URL」的能力）。
+ */
+function saveEntryFile(entry) {
+  return invoke('save_entry_file', { id: entry.id })
+    .then((path) => showNotice('ok', t('已存到 {path}', { path })))
+    .catch((error) => showNotice('error', t('存不下来：{error}', { error: errorText(error) })));
+}
+
 function fileRow(entry) {
   const row = h('div', 'filerow');
   row.append(h('div', 'fi', '📄'));
@@ -896,13 +912,7 @@ function fileRow(entry) {
   if (size) meta.append(h('div', 'fs', size));
   row.append(meta);
   row.title = t('点开存到下载目录，并在文件管理器里选中它');
-  row.addEventListener('click', () => {
-    // ⚠️ 只递条目 id：地址与文件名都由壳从它自己的列表里查（收了地址就等于
-    // 给页面一个「让壳去取任意 URL」的能力）。
-    invoke('save_entry_file', { id: entry.id })
-      .then((path) => showNotice('ok', t('已存到 {path}', { path })))
-      .catch((error) => showNotice('error', t('存不下来：{error}', { error: errorText(error) })));
-  });
+  row.addEventListener('click', () => saveEntryFile(entry));
   return row;
 }
 
@@ -917,8 +927,9 @@ function fileRow(entry) {
  *     要么整段都拉（同上面那条流量问题）。
  * ⚠️ 不自动播放、不静音自动播：这条内容是要**看**的，不该自己动起来、更不该出声。
  * ⚠️ 点开走**壳内的灯箱**（`openLightbox`），不再叫系统程序打开。
+ * ⚠️★ 地址可能是**回头问壳要**的（房间要密码时，见 `previewSrc`）—— 由 `loadPreviewSrc` 负责。
  */
-function mediaPreview(entry, url) {
+function mediaPreview(entry) {
   const isVideo = VIDEO_SUFFIX.test(entry.fileName || '');
   const media = isVideo ? h('video', 'preview') : h('img', 'preview');
   media.title = isVideo ? t('点开播放（原始大小）') : t('点开看大图（原始大小）');
@@ -936,9 +947,88 @@ function mediaPreview(entry, url) {
     // ⚠️★ 换成文件行，而不是留一个破图在那儿 —— 见上面那条注释。
     media.replaceWith(fileRow(entry));
   });
-  media.addEventListener('click', () => openLightbox(entry, url));
-  media.src = url;
+  media.addEventListener('click', () => openLightbox(entry));
+  loadPreviewSrc(media, entry);
   return media;
+}
+
+/** 已经向壳要到的预览地址（条目 id → 能直接塞进 `src` 的地址）。
+ *
+ * ⚠️ 页面这一层也要缓存：卡片会重建（`repaint()` / 签名变了），
+ * 不缓存就会为同一张图反复问壳（壳那边还有一层，但那也是一次 IPC + 一次查表）。
+ * ⚠️★ 键只用 id 的前提是「它只在当前选中房间里找」——**换房间必须清掉**
+ *（id 是每个房间各自单调的，见 `render` 里清展开态那一处）。
+ */
+const previewSrcs = new Map();
+
+/** 一个**能直接当 `src` 用**的预览地址。
+ *
+ * ⚠️★ 两条来源（见 `EntryView::preview_needs_token`）：
+ *   · 快照里给了 `previewUrl` → 那是**不要密码的房间**的裸地址，直接用，一次网络都不用；
+ *   · 没给 → 房间要密码，而 `<img src>` / `<video src>` **带不了 `Authorization` 头**
+ *     （裸地址一定 401，而 `<img>` 的 error 会把它静默换成一介文件行）——
+ *     必须回头问壳要一条**带只读令牌**的地址。
+ */
+async function previewSrc(entry) {
+  if (entry.previewUrl) return entry.previewUrl;
+  const cached = previewSrcs.get(entry.id);
+  if (cached) return cached;
+  const url = await invoke('preview_url', { id: entry.id });
+  if (typeof url === 'string' && url) previewSrcs.set(entry.id, url);
+  return typeof url === 'string' ? url : '';
+}
+
+/** 把 `src` 装上 —— 需要的话先问壳要地址；取不到就退回文件行，**并且说一句**。
+ *
+ * ⚠️★ 不许静默：静默的表现是「一张永远空着的框」或者「一行 📄」，
+ * 而真因（令牌签不出来 / 密码不对 / 这一条已经不在了）没人知道。
+ */
+function loadPreviewSrc(media, entry) {
+  const direct = entry.previewUrl || '';
+  if (direct) {
+    media.src = direct;
+    return;
+  }
+  // ⚠️★ 等到**真的进入视口**再问（见 `whenVisible`）：预览令牌是一次网络请求
+  //（远端服务端就是一次往返），而列表里大多数条目用户根本没看 —— 为看不见的东西
+  // 签令牌，用户那边什么都不会多出来，只会在「分享记录」里多出一串他自己没签过的。
+  whenVisible(media, () => {
+    previewSrc(entry)
+      .then((url) => {
+        if (!url) {
+          showNotice('error', t('previewTokenFailed'));
+          media.replaceWith(fileRow(entry));
+          return;
+        }
+        media.src = url;
+      })
+      .catch((error) => {
+        showNotice('error', t('取不到预览地址：{error}', { error: errorText(error) }));
+        media.replaceWith(fileRow(entry));
+      });
+  });
+}
+
+/** 等这个元素**进入视口**再跑一次（跑完就断开）。
+ *
+ * ⚠️★ 用它而不是「渲染时就问」：见 `loadPreviewSrc` 里那段（令牌要一次网络请求）。
+ * ⚠️ 拿不到 `IntersectionObserver`（老 webview）就**直接跑** —— 宁可多问一次，
+ * 也不要让图片永远不显示。
+ * ⚠️ 观察器挂在这个节点上（`__previewObserver`）：卡片被丢掉时要断开
+ *（`renderTimeline` 里那一处），不然观察器会一直拽着那个节点不放。
+ */
+function whenVisible(node, run) {
+  if (typeof IntersectionObserver !== 'function') {
+    run();
+    return;
+  }
+  const observer = new IntersectionObserver((entries) => {
+    if (!entries.some((one) => one.isIntersecting)) return;
+    observer.disconnect();
+    run();
+  });
+  node.__previewObserver = observer;
+  observer.observe(node);
 }
 
 /** 壳内灯箱：点开一条图片 / 视频，在**壳里**看原始大小。
@@ -953,8 +1043,10 @@ function mediaPreview(entry, url) {
  *
  * ⚠️ 那一行「正在载入」是给**大文件**看的：小图一瞬间就到，而几百兆的那份
  * 在 `load` 之前是**一块空白** —— 没有它，用户会以为点开了个空窗口。
+ * ⚠️★ 地址可能是**回头问壳要**的（带密码的房间）—— 所以这里是**异步**拿到 `src` 的：
+ * 先挂「正在载入」、拿到再设；设一个空串会立刻算一次加载失败。
  */
-function openLightbox(entry, url) {
+function openLightbox(entry) {
   const box = el('lightbox');
   const stage = el('lightbox-stage');
   if (!box || !stage) return;
@@ -983,8 +1075,24 @@ function openLightbox(entry, url) {
     loading.remove();
     stage.append(h('div', 'lb-load', t('这一条取不回来（可能已经被删了）')));
   });
-  media.src = url;
-  stage.append(media);
+  media.addEventListener('click', (event) => event.stopPropagation());
+
+  // ⚠️★ 地址先问一次（开放房间就是快照里那份裸地址，一次网络都不用）——
+  // 拿到之后再设 `src`。
+  previewSrc(entry)
+    .then((url) => {
+      if (!url) {
+        loading.remove();
+        stage.append(h('div', 'lb-load', t('previewTokenFailed')));
+        return;
+      }
+      media.src = url;
+      stage.append(media);
+    })
+    .catch((error) => {
+      loading.remove();
+      stage.append(h('div', 'lb-load', t('取不到预览地址：{error}', { error: errorText(error) })));
+    });
 
   box.hidden = false;
 }
@@ -1011,8 +1119,12 @@ function renderEntry(entry) {
     // 一个非 http 的地址（配置被人手改坏）不许进 `src`。
     const url = entry.previewUrl || '';
     const name = entry.fileName || '';
-    if (url.startsWith('http') && (IMAGE_SUFFIX.test(name) || VIDEO_SUFFIX.test(name))) {
-      card.append(mediaPreview(entry, url));
+    // ⚠️★ 两个来源：`previewNeedsToken` 为真时快照里**故意没有地址**
+    //（房间要密码，裸地址一定 401，见 `EntryView::preview_needs_token`）——
+    // 那种情况这里照样要画媒体，地址由 `mediaPreview` 回头问壳要。
+    const ask = entry.previewNeedsToken === true;
+    if ((ask || url.startsWith('http')) && (IMAGE_SUFFIX.test(name) || VIDEO_SUFFIX.test(name))) {
+      card.append(mediaPreview(entry));
     } else {
       card.append(fileRow(entry));
     }
@@ -1215,6 +1327,21 @@ function entryActions(entry) {
   if (entry.kind === 'text') {
     const actionButton = add('bolt', t('给这条跑个动作'), () => openActionMenu(actionButton, entry));
     if (viewed) actionButton.classList.add('on');
+  }
+
+  // ⚠️★ 文件条目要有**一颗下载**（2026-10-04 Jonny：「点击预览，下载单个放个下载按钮」）。
+  // 为什么非有不可：图片 / 视频的卡片上画的**就是那条媒体本身**，点它是**预览**（壳内灯箱）
+  // —— 于是「非图非视频」那种 📄 文件行（点一下存到下载目录）在媒体条目上**根本不存在**，
+  // 媒体的存盘入口只剩从前那条「叫系统程序打开」（而它已经按 Jonny 的要求换成灯箱了）。
+  //
+  // ⚠️ 走壳的 `save_entry_file`，与文件行**同一个入口**（`saveEntryFile`）：
+  // 地址 / 文件名 / 凭据全在壳里查，页面只递 id。
+  // ⚠️ 用 `once` 禁用它：存一个大文件要一会儿，禁掉才不会点出第二份
+  //（`unique_path` 会老老实实存成 `报告 (1).pdf`）。
+  if (entry.kind === 'file') {
+    add('download', t('存到下载目录，并在文件管理器里选中它'), (button) => {
+      once(button, () => saveEntryFile(entry));
+    });
   }
 
   // ⚠️★ 以前这里是「点一下直接建一个默认链接」—— 网页那颗分享按钮有完整的配置画面
@@ -2001,6 +2128,9 @@ function render(state) {
   if (state.selected !== lastSelected) {
     openedIds.clear();
     openedBodies.clear();
+    // ⚠️ 预览地址那份缓存**也要清**：它的键是条目 id，而 id 是每个房间各自单调的 ——
+    // 留着就会把 A 房间那条 7 的地址用到 B 房间的 7 上（显示**别人的内容**，不报错）。
+    previewSrcs.clear();
   }
   lastSelected = state.selected;
   lastLimits = state.limits;

@@ -40,7 +40,7 @@ use clip9_protocol::ReceiveHolder;
 
 use crate::model::ShareLinkView;
 use crate::notify::Notifier;
-use crate::store::{NoticeLevel, Store};
+use crate::store::{NoticeLevel, Store, channel_needs_token};
 
 /// 客户端运行时。
 pub struct Runtime {
@@ -826,7 +826,6 @@ impl Runtime {
             .store
             .selected_channel()
             .ok_or_else(|| Msg::key("noRoomsConfigured"))?;
-        let (url, token) = room_endpoint(&channel, "/share")?;
         let mut body = serde_json::json!({
             "type": "content",
             "id": id.to_string(),
@@ -843,18 +842,7 @@ impl Runtime {
         if !password.is_empty() {
             body["password"] = serde_json::json!(password);
         }
-        let response = send(self.http.post(url).json(&body), token.as_deref())
-            .send()
-            .await
-            .map_err(|err| Msg::key("shareFailed").param("reason", err.to_string()))?;
-        let status = response.status();
-        if !status.is_success() {
-            return Err(Msg::key("shareFailed").param_msg("reason", http_status(status)));
-        }
-        let value: serde_json::Value = response
-            .json()
-            .await
-            .map_err(|err| Msg::key("shareFailed").param("reason", err.to_string()))?;
+        let value = self.post_share(&channel, &body).await?;
         let link = value
             .get("url")
             .and_then(serde_json::Value::as_str)
@@ -871,6 +859,7 @@ impl Runtime {
         self.copy_to_clipboard(&link);
         Ok(ShareLinkView {
             url: link,
+            raw_url: raw_url_of(&value),
             // ⚠️ 都回落成「没有」而不是报错：老服务端不一定每个字段都给，
             // 少一个数只是结果面板上少一行，不该让已经建出来的链接失败。
             ttl: num_field(&value, "ttl"),
@@ -878,6 +867,93 @@ impl Runtime {
             expires_at: num_field(&value, "expiresAt"),
             visits: num_field(&value, "visits"),
         })
+    }
+
+    /// 把一条 `/share` 请求发出去，回它的 JSON。
+    ///
+    /// ⚠️★ 抽出来的理由：**签发**这件事现在有两个消费者 —— 用户点的「分享」
+    /// （[`Self::share_entry`]）与界面要一条能塞进 `src` 的预览地址（[`Self::preview_url`]）。
+    /// 两处各写一遍请求，早晚会漂（凭据、超时、错误文案三样都会）。
+    /// ⚠️ 它**只做「发出去 + 拿回 JSON」**：「复制进剪贴板」是分享那条独有的副作用，
+    /// 不在这里做 —— 一条预览令牌悄悄写进用户的剪贴板是另一件事（而且会覆盖掉
+    /// 他刚复制的东西）。
+    async fn post_share(
+        &self,
+        channel: &clip9_client::Channel,
+        body: &serde_json::Value,
+    ) -> Result<serde_json::Value, Msg> {
+        let (url, token) = room_endpoint(channel, "/share")?;
+        let response = send(self.http.post(url).json(body), token.as_deref())
+            .send()
+            .await
+            .map_err(|err| Msg::key("shareFailed").param("reason", err.to_string()))?;
+        let status = response.status();
+        if !status.is_success() {
+            return Err(Msg::key("shareFailed").param_msg("reason", http_status(status)));
+        }
+        response
+            .json()
+            .await
+            .map_err(|err| Msg::key("shareFailed").param("reason", err.to_string()))
+    }
+
+    /// 给界面一个**能直接塞进 `src`** 的预览地址（图片 / 视频用）。
+    ///
+    /// ⚠️★ 为什么不能像从前那样把 `EntryView::preview_url` 直接递过去：
+    /// `<img>` / `<video>` 的 `src` **带不了 `Authorization` 头**，而配了密码的实例上
+    /// `/file/...` 要凭据（`server::auth_gate::require_file_read_access`）——
+    /// 裸地址一定 401，而 `<img>` 的 error 会被静默换成一介文件行（2026-10-04 实测：
+    /// 同一个地址，裸的 401、带 `?auth=` 的 200）。
+    ///
+    /// 两条路（同一个问题只判一次：`store::channel_needs_token`）：
+    /// - 房间**没有**凭据 → 裸地址本来就取得回来，**一次网络都不用**；
+    /// - 房间**有**凭据 → 向 `/share` 签一条 `type=file` 的**只读令牌**，用它的 `rawUrl`
+    ///   （`/file/<uuid>/<name>?t=…`）。那是项目里唯一「可以进 URL 的凭据」——
+    ///   房间凭据永远只走请求头（见 `clip9_client::endpoint` 的模块文档第 3 条）。
+    ///
+    /// ⚠️ 令牌**按条目缓存**（[`Store::preview_token`]）：界面每一张图 / 每一段视频都会问一次，
+    /// 不缓存就是每个媒体条目一条只读记录（`/share/list` 里全是它们）。
+    pub async fn preview_url(self: &Arc<Self>, id: i32) -> Result<String, Msg> {
+        let channel = self
+            .store
+            .selected_channel()
+            .ok_or_else(|| Msg::key("noRoomsConfigured"))?;
+        // ⚠️ 地址**由壳自己查**（只按 id）—— 与 `save_entry_file` 同一套规矩：
+        // 页面递地址，就等于给了页面「让壳去取任意 URL」的能力。
+        let bare = self
+            .store
+            .entry_preview_url(id)
+            .ok_or_else(|| Msg::key("entryPreviewUnavailable"))?;
+        if !channel_needs_token(&channel) {
+            return Ok(bare);
+        }
+        if let Some(url) = self.store.preview_token(&channel.server, &channel.room, id) {
+            return Ok(url);
+        }
+        let cache = self
+            .store
+            .entry_file_cache(id)
+            .ok_or_else(|| Msg::key("entryPreviewUnavailable"))?;
+        // ⚠️ `maxUses: 0` = 不限次数：**视频拖进度条会发很多次请求**，限次数会让它播到一半断掉。
+        // ⚠️ 不给 `ttl`：那一个数只有服务端一个定义处（它自己归一化），这一侧不抄一份。
+        let body = serde_json::json!({
+            "type": "file",
+            "uuid": cache,
+            "maxUses": 0,
+        });
+        let value = self.post_share(&channel, &body).await?;
+        let raw = raw_url_of(&value);
+        if raw.is_empty() {
+            return Err(Msg::key("previewTokenFailed"));
+        }
+        self.store.remember_preview_token(
+            &channel.server,
+            &channel.room,
+            id,
+            raw.clone(),
+            num_field(&value, "expiresAt"),
+        );
+        Ok(raw)
     }
 
     /// 按需取回**选中房间**的历史（`GET /content`，不碰剪贴板）。
@@ -1014,6 +1090,20 @@ fn http_status(status: reqwest::StatusCode) -> Msg {
 /// ⚠️ 没有 / 不是整数 → `0`（「没有」），**不报错**：`/share` 的响应里这几个字段是
 /// 后来才加的，老服务端不一定给。少一个数只是结果面板上少一行，
 /// 不该让一条**已经签发出来**的链接失败。
+/// `/share` 响应里那条**直连正文**的地址（`rawUrl`）。
+///
+/// ⚠️ 老服务端可能不给这个字段 —— 那时是**空串**（不是错误：分享页地址照样能用）。
+/// 调用方自己决定空串算不算失败：分享那条只是少一行信息，预览那条**必须**当成失败
+///（没有它就没有任何办法把图片显示出来）。
+fn raw_url_of(value: &serde_json::Value) -> String {
+    value
+        .get("rawUrl")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or_default()
+        .trim()
+        .to_owned()
+}
+
 fn num_field(value: &serde_json::Value, key: &str) -> i64 {
     value
         .get(key)
@@ -1379,5 +1469,33 @@ mod tests {
             let (_, token) = room_endpoint(&channel, "/share").expect("要拼得出来");
             assert_eq!(token, None, "空凭据（{empty:?}）不该变成一个 Bearer 头");
         }
+    }
+
+    /// `/share` 响应里那条**直连正文**的地址（预览用它当 `src`）。
+    ///
+    /// ⚠️ 老服务端可能不给这个字段 —— 那时是**空串**（不是错误：分享那条只是少一行信息，
+    /// 而预览那条会把它当失败 —— 「有没有」由各自的调用方决定，这里只负责「取出来」）。
+    /// ⚠️ 两边空白必须去干净：塞进 `src` 时带着空白就是**另一个地址**（浏览器不会自己修）。
+    #[test]
+    fn the_raw_url_is_read_out_of_the_share_response() {
+        assert_eq!(
+            raw_url_of(&serde_json::json!({})),
+            "",
+            "没有这个字段 = 空串"
+        );
+        assert_eq!(
+            raw_url_of(&serde_json::json!({ "rawUrl": "  " })),
+            "",
+            "只有空白 = 空串"
+        );
+        assert_eq!(
+            raw_url_of(&serde_json::json!({ "rawUrl": 7 })),
+            "",
+            "不是字符串就当没有"
+        );
+        assert_eq!(
+            raw_url_of(&serde_json::json!({ "rawUrl": " http://h/file/u/a.png?t=x " })),
+            "http://h/file/u/a.png?t=x"
+        );
     }
 }

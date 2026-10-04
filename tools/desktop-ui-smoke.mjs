@@ -584,6 +584,14 @@ const camelCase = (name) => name.replace(/_([a-z])/g, (_, ch) => ch.toUpperCase(
  *
  * ⚠️★ 参数是**源码**、不是文件名：判据 8 读 `commands.rs`、判据 19 读 `EntryView`
  * 所在的那一份（`model.rs`）—— 两个结构体不在同一个文件里。
+ *
+ * ⚠️★ **`#[serde(skip)]` 的字段不算**（2026-10-04 补）：判据 8 / 19 问的是
+ * 「壳**发**了这个字段、界面有没有读」—— 而 skip 的字段**根本不进 JSON**，
+ * 界面读不到也**不该**读（它是壳自己用的，比如签预览令牌要的那个 uuid）。
+ * 不排除它的话，加一个内部字段就会把这条判据打红，而人会往「加白名单」或
+ * 「把这个字段删掉」那条错路上走 —— 两条都会把真问题盖掉。
+ * ⚠️ 只认**属性行**（`#[…]`）里的 `skip`：文档注释里提到 `#[serde(skip)]` 不算。
+ * ⚠️ `\bskip\b` 的边界要紧：`skip_serializing_if` 是另一回事（那个字段**会**下发）。
  */
 function structFields(source, name) {
   const pattern = new RegExp(
@@ -591,7 +599,22 @@ function structFields(source, name) {
   );
   const body = source.match(pattern);
   if (!body) return null;
-  return [...body[2].matchAll(/^\s*pub (\w+):/gm)].map((match) => camelCase(match[1]));
+  const fields = [];
+  let attrs = '';
+  for (const line of body[2].split('\n')) {
+    const trimmed = line.trim();
+    if (trimmed.startsWith('#[')) {
+      attrs += `${trimmed}\n`;
+      continue;
+    }
+    const field = /^pub (\w+):/.exec(trimmed);
+    if (!field) continue;
+    const skipped = /serde\([^)]*\bskip\b/.test(attrs);
+    attrs = '';
+    if (skipped) continue;
+    fields.push(camelCase(field[1]));
+  }
+  return fields;
 }
 
 const viewFields = structFields(rust, 'SettingsView');
@@ -2736,6 +2759,34 @@ if (entryViewFiles.length !== 1) {
   if (!/Escape[\s\S]{0,120}closeLightbox/.test(bare)) {
     problems.push('ESC 关不掉灯箱 —— 它盖着整个窗口，那时 ESC 没有别的含义');
   }
+  // ⚠️★ **文件条目要有一颗下载**（2026-10-04 Jonny：「点击预览，下载单个放个下载按钮」）。
+  // 它补的是这次改动**自己造成**的那个洞：图片 / 视频的卡片上画的就是那条媒体本身，
+  // 点它是预览（壳内灯箱）；而「点一下存到下载目录」的 📄 文件行**只长在非图非视频**上
+  // —— 于是媒体条目一个存盘入口都没有（从前是「叫系统程序打开」，那条路顺带能另存）。
+  const actionsFn = /function entryActions\(entry\)[\s\S]*?\n\}/.exec(bare)?.[0] ?? '';
+  if (!actionsFn) {
+    problems.push('找不到 `entryActions` —— 卡片脚那一排动作没了');
+  } else {
+    if (!/add\(\u0000?download\u0000?/.test(actionsFn)) {
+      problems.push('卡片动作里没有那颗**下载** —— 图片 / 视频条目就没有存盘入口了'
+        + '（它们画的是媒体本身，点开走的是预览）');
+    }
+    if (!/saveEntryFile\(entry\)/.test(actionsFn)) {
+      problems.push('那颗下载没有接上 `saveEntryFile` —— 点了没反应');
+    }
+  }
+  if (!/function saveEntryFile\(entry\)/.test(bare)) {
+    problems.push('找不到 `saveEntryFile` —— 文件行与那颗下载应当**共用同一个**存盘入口'
+      + '（两处各写一遍，提示语与错误处理早晚会漂）');
+  }
+  // ⚠️★ 判在 **`ICON_PATHS` 那一块**里，不是判全文 —— 全文搜索会被别处同名的
+  // 普通属性喂饱（`{ upload: false, download: false }` 那个字面量就是），
+  // 于是「图标被删掉」照样全绿（变异验证抓到的）。
+  const iconBlock = /const ICON_PATHS = \{[\s\S]*?\n\};/.exec(bare)?.[0] ?? '';
+  if (!/^\s*download\s*:/m.test(iconBlock)) {
+    problems.push('`ICON_PATHS` 里没有 `download` 那个图标 —— 那一排图标会缺一颗'
+      + '（`icon()` 认不出名字会**当场抛**，整条时间线都画不出来）');
+  }
   if (!/\.card video\.preview/.test(styleText)) {
     problems.push('`index.html` 里没有 `.card video.preview` 那条规则 —— 视频会按原始尺寸把卡片撑破');
   } else if (!/object-fit:\s*contain/.test(styleText)) {
@@ -2984,6 +3035,143 @@ if (entryViewFiles.length !== 1) {
     for (const one of problems) console.error(`    · ${one}`);
   } else {
     console.log('· 判据 34：CSP 放行 img-src / media-src 的 http(s)（远端服务端的媒体看得见）。');
+  }
+}
+
+// ── 判据 36：预览地址必须**带凭据通道**（理由见下）────────────────────────────
+//
+// ⚠️★ 它钉的是 2026-10-04 实测复现的那条：`<img>` / `<video>` 的 `src`
+// **带不了 `Authorization` 头**，而 `/file/...` 在**配了密码**的实例上要凭据
+//（`server::auth_gate::require_file_read_access`）—— 于是裸地址一定 401，
+// 而 `<img>` 的 error 会被静默换成一介文件行。用户看到的症状是
+// 「列表本来是直接显示图片的，现在只显示文件名了」，**一个字都不提密码**。
+//
+// ⚠️ 实测（真服务端 + 真浏览器）：同一个地址，裸的 401、带 `?auth=` 的 200；
+// 而 `type=file` 签出来的 `rawUrl`（`/file/<uuid>/<name>?t=…`）裸取就是 200、Range 206。
+// 所以「带令牌的那条地址」是唯一能让图片/视频在带密码的房间显形的路。
+//
+// ⚠️★ 顺带钉住一条**禁止**：把房间凭据拼进 URL（`?auth=…`）。
+// `clip9_client::endpoint` 的模块文档第 3 条写着「房间密码 / 会话令牌一律走请求头」，
+// 那里还有断言盯着。要进 URL 的只能是**分享令牌**（它本来就是给人贴出去的东西）。
+{
+  const problems = [];
+  const read1 = (rel) => {
+    try { return readFileSync(join(root, rel), 'utf8'); } catch { return ''; }
+  };
+  /** 一个函数在**原文**里的那一段 —— 用「去注释、去字符串」的那份定位，取原文的同一段。
+   *
+   * ⚠️★ 为什么不能直接对 `blanked` 判：`scanRust` 把字符串字面量**擦成了空格**，
+   * 而这里要判的恰恰是 `"type": "file"` 这种字面量 —— 在 `blanked` 里它已经不存在了。
+   * ⚠️★ 也不能直接对**整份原文**判：文档注释在函数声明**之前**，
+   * 而我自己的注释里就写着「按 `type: file` 签一条只读令牌」——
+   * 拿全文判的话，**注释就能满足判据**（这条自检在这上面被人喂饱过一次）。
+   * 从函数声明那一点往后切，注释自然被排在**外面**。
+   */
+  const fnSlice = (blankedSrc, rawSrc, header) => {
+    const at = blankedSrc.indexOf(header);
+    if (at < 0) return '';
+    const end = blankedSrc.indexOf('\n    }', at);
+    return rawSrc.slice(at, end < 0 ? blankedSrc.length : end);
+  };
+  const modelSrc = read1('rust/crates/desktop/src/model.rs');
+  const runtimeSrc = read1('rust/crates/desktop/src/runtime.rs');
+  const mainSrc = read1('rust/crates/desktop/src/main.rs');
+  const storeSrc = read1('rust/crates/desktop/src/store.rs');
+  if (!modelSrc || !runtimeSrc || !mainSrc || !storeSrc) {
+    problems.push('读不到 `model.rs` / `runtime.rs` / `main.rs` / `store.rs` —— 判据要跟着仓库结构改');
+  } else {
+    const model = scanRust(modelSrc).blanked;
+    const runtime = scanRust(runtimeSrc).blanked;
+    // ① 壳要告诉页面「这一条的地址得换」
+    if (!/preview_needs_token/.test(model)) {
+      problems.push('`EntryView` 里没有 `preview_needs_token` —— 页面分不出「地址能直接用」'
+        + '与「要回头问壳换一条带令牌的」，于是带密码的房间只能显示文件名');
+    }
+    const snapshot = /pub fn for_snapshot\([\s\S]*?\n    \}/.exec(model)?.[0] ?? '';
+    if (!/preview_needs_token[\s\S]{0,200}None/.test(snapshot)) {
+      problems.push('`for_snapshot` 没有把「要换令牌」那些条目的 `preview_url` 置空 ——'
+        + '递给页面一条**用不了**的地址：它拿去当 `src` 只会 401（而且界面上看不出来）');
+    }
+    // ② 壳要能签一条只读令牌
+    const previewFn = fnSlice(runtime, runtimeSrc, 'pub async fn preview_url');
+    if (!previewFn) {
+      problems.push('`Runtime` 里没有 `preview_url` —— 页面要不到那条带令牌的地址');
+    } else {
+      if (!/"type"\s*:\s*"file"/.test(previewFn)) {
+        problems.push('`preview_url` 没有按 `type: file` 去签 —— 那样 `rawUrl` 会指向 `/content/…`，'
+          + '那是给分享页看的，不是「直连正文」的那一条');
+      }
+      if (!/raw_url_of|rawUrl/.test(previewFn)) {
+        problems.push('`preview_url` 没有取 `rawUrl` —— 拿到的是分享**页**地址，'
+          + '塞进 `src` 只会得到一张 HTML');
+      }
+      if (!/maxUses"\s*:\s*0/.test(previewFn)) {
+        problems.push('预览令牌没有给 `maxUses: 0`（不限次数）——'
+          + '**视频拖进度条会发很多次请求**，限了次数就会播到一半断掉');
+      }
+      if (!/channel_needs_token/.test(previewFn)) {
+        problems.push('`preview_url` 没有判「这个房间要不要换令牌」——'
+          + '开放房间也会白签一条只读记录');
+      }
+    }
+    if (!/remember_preview_token/.test(runtime)) {
+      problems.push('签出来的令牌没有缓存 —— 界面每一张图都会问一次，'
+        + '只读记录会以肉眼可见的速度堆起来');
+    }
+    // ③ **禁止**把房间凭据拼进 URL
+    //
+    // ⚠️★ 判在**字面量**上（`scanRust(...).literals`），不是判在 `blanked` 上：
+    // 后者把字符串擦成了空格，而 `format!("…?auth={token}")` 里的 `?auth=` 正好在字符串里
+    // —— 拿 `blanked` 判的话，**真的拼了也看不见**（这一条是变异验证抓出来的：写成
+    // `?auth=` 之后判据照样全绿）。⚠️ 反过来也不能拿整份原文判：注释里提到 `?auth=`
+    // 是**正常**的（这条判据自己的说明里就有），那样会被注释喂饱。
+    const leaked = (source) => scanRust(source).literals.some((one) =>
+      /[?&]auth=/.test(one.body) || one.body === 'auth');
+    for (const [name, source] of [['runtime.rs', runtimeSrc], ['model.rs', modelSrc]]) {
+      if (leaked(source)) {
+        problems.push(`\`${name}\` 里把房间凭据拼进了 URL（\`?auth=\` / \`"auth"\`）——`
+          + '房间密码 / 会话令牌**只走请求头**（`clip9_client::endpoint` 模块文档第 3 条），'
+          + '要进 URL 的只能是分享令牌');
+      }
+    }
+    // ④ 命令要注册，不然页面调了等于没调
+    if (!/commands::preview_url/.test(mainSrc)) {
+      problems.push('`main.rs` 的 `generate_handler!` 里没有 `commands::preview_url` ——'
+        + '页面调它会失败，而失败的表现恰好是「图片又变成一行文件名」');
+    }
+  }
+  // ⑤ 页面那侧：拿不到地址时要**回头问壳**，而不是拿着空串去设 `src`
+  const bareJs = stripJs(js);
+  const mediaFn = /function mediaPreview\([\s\S]*?\n\}/.exec(bareJs)?.[0] ?? '';
+  const srcFn = /(?:async )?function previewSrc\([\s\S]*?\n\}/.exec(bareJs)?.[0] ?? '';
+  const loadFn = /function loadPreviewSrc\([\s\S]*?\n\}/.exec(bareJs)?.[0] ?? '';
+  if (!mediaFn) {
+    problems.push('找不到 `mediaPreview` —— 预览那套没了');
+  } else if (!/loadPreviewSrc\(media, entry\)/.test(mediaFn)) {
+    problems.push('`mediaPreview` 没有走 `loadPreviewSrc` —— 地址从哪来就没人管了');
+  }
+  if (!srcFn) {
+    problems.push('找不到 `previewSrc` —— 没有「要不要回头问壳」那一步');
+  } else if (!/\u0000?preview_url\u0000?/.test(srcFn)) {
+    problems.push('`previewSrc` 没有向壳要地址（`invoke(\'preview_url\')`）——'
+      + '带密码的房间又只剩文件名了');
+  }
+  if (!loadFn) {
+    problems.push('找不到 `loadPreviewSrc` —— 拿不到地址时没有兜底');
+  } else {
+    if (!/previewSrc\(entry\)/.test(loadFn)) {
+      problems.push('`loadPreviewSrc` 没有走 `previewSrc`');
+    }
+    if (!/replaceWith\(fileRow\(/.test(loadFn)) {
+      problems.push('`loadPreviewSrc` 取不到地址时没有退回文件行 —— 屏幕上会留一个空框');
+    }
+  }
+  if (problems.length) {
+    failed = true;
+    console.error(`✗ 判据 36：预览地址的凭据通道没落实（${problems.length} 处）：`);
+    for (const one of problems) console.error(`    · ${one}`);
+  } else {
+    console.log('· 判据 36：带密码的房间会换一条只读令牌地址（且房间凭据不进 URL）。');
   }
 }
 

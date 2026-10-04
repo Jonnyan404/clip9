@@ -393,6 +393,7 @@ fn main() {
             // 分享让服务端签发链接。少注册一个的表现同样是「点了没反应、不报错」。
             commands::delete_entry,
             commands::share_entry,
+            commands::preview_url,
             commands::pick_files,
             commands::send_files,
             // 发送框里 ⌘/Ctrl+V 粘进来的图 / 文件（2026-10-04）：webview 只给字节不给路径，
