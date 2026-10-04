@@ -95,6 +95,22 @@
    ⚠️★ 整块**逐条照抄** Vue：配色、旋转、胶带条、悬停动作行都在这里。
    之前 React 侧用 MUI 的 `sx` 另写了一套（更淡的配色、没有悬停动作行、
    过期信息还挪到了卡片头部），于是同一张便签两版长得不一样。 */
+/* ── 便签墙：每张便签的**包装盒**（web-vue3/src/views/modes/StickyWall.vue 的 `.sticky-wall__item`）
+   ⚠️★ 第二条（`> *` 撑满）**不能省**：`.sticky-note` 自己是 `display:flex` 的容器，
+   在包装盒里默认按**内容宽**收缩，于是同一行里一张宽一张窄（实测 530px vs 225px）。
+   Vue 那边正是靠这一条把卡片拉齐的 —— 移植时漏了它，就是「宽度参差不齐」的全部原因。
+   ⚠️ 它用 `sx` 表达不出来（`sx` 只能作用在自己身上），所以包装盒必须走类名。 */
+.sticky-wall__item {
+    flex: 1 1 220px;
+    max-width: 100%;
+    min-width: 0;
+    display: flex;
+}
+
+.sticky-wall__item > * {
+    width: 100%;
+}
+
 .sticky-note {
     position: relative;
     border-radius: 4px;
@@ -1291,3 +1307,170 @@
 }
 
 .action-chain__empty { font-size: 0.75rem; opacity: 0.7; }
+
+/* ── 时间线条目：跳过屏外卡片的布局与绘制 ───────────────────────────────
+   ⚠️★ `content-visibility: auto` 让浏览器**不渲染**视口外的子树 —— 相当于浏览器
+   自带的虚拟化，零 JS 成本。实测切到标准模式：中位 323→258ms，最长长任务 304→220ms。
+   ⚠️ `contain-intrinsic-size` **必须给**：不给的话屏外卡片的高度按 0 算，
+   滚动条会随着滚动不停跳动（`auto 140px` = 记住上次渲染出来的真实高度，
+   没渲染过就先用 140px 兜底）。
+   ⚠️ 只加在**竖直时间线**上：便签墙是 `flex-wrap` 布局，宽度也参与换行计算，
+   给它加这个会算错行 —— 别顺手推广过去。 */
+.timeline-item {
+    content-visibility: auto;
+    contain-intrinsic-size: auto 140px;
+}
+
+/* ── 标准模式的时间线条目卡片（components/received-item/Text.tsx / File.tsx）──
+   ⚠️★ 为什么不用 MUI 的 `sx`：`sx` 每次渲染都要走一遍 `styleFunctionSx` ——
+   解析主题值 → 序列化 → 哈希 → 交给 emotion。50 张卡片 × 十几个 `sx` ≈ 每渲染 750 次，
+   而卡片还有第二次渲染（markdown 算完 setHtml）。改成静态 class 之后这一整块开销归零。
+   ⚠️ 下面的数值全部是**从改动前的计算样式里量出来的**（不是按 spacing 倍数推的），
+   逐条对齐才不会在观感上悄悄变样。 */
+/* ⚠️★ 必须写成 `.text-card.MuiPaper-root`（两个类）：MUI 自己的 `.MuiPaper-rounded`
+   也声明了 `border-radius`，**权重相同**，而 emotion 的样式是运行时注入、排在静态 CSS 后面 ——
+   一个类的话会被它顶掉（实测圆角从 12px 变回 4px，肉眼能看出来但不报错）。
+   同理下面 `.text-card__content.MuiCardContent-root` / `.text-card__chip.MuiChip-root`
+   都是刻意写的两个类。 */
+.text-card.MuiPaper-root {
+    position: relative;
+    border-radius: 12px;
+    margin-bottom: 12px;
+    overflow: hidden;
+}
+
+/* 顶部那条渐变细带 */
+.text-card__bar {
+    height: 4px;
+    background: linear-gradient(90deg, #0ea5e9, #14b8a6);
+}
+
+/* 右上角的条目编号 */
+.text-card__id {
+    position: absolute;
+    top: 6px;
+    right: 20px;
+}
+
+/* ⚠️ 要盖住 MUI 自带的 `&:last-child { padding-bottom: 24px }` ——
+   原实现是 `sx={{ '&:last-child': { pb: 2 } }}`，量出来四边都是 16px。 */
+.text-card__content.MuiCardContent-root {
+    padding: 16px;
+}
+
+.text-card__content.MuiCardContent-root:last-child {
+    padding-bottom: 16px;
+}
+
+.text-card__meta {
+    margin-bottom: 8px;
+    flex-wrap: nowrap;
+    overflow: hidden;
+}
+
+.text-card__meta-item {
+    white-space: nowrap;
+}
+
+.text-card__chip.MuiChip-root {
+    height: 20px;
+    font-size: 10px;
+}
+
+.text-card__chip .MuiChip-label {
+    padding-left: 8px;
+    padding-right: 8px;
+}
+
+/* ⚠️★ `display: flex` 不能少：这里原来是一个 MUI 的 `Stack direction="row"`，
+   换成 div 之后忘了补，折叠箭头就会**独占一行**（用户报的）。
+   一条 `sx` → class 的搬运里最容易漏的就是这类「组件默认行为」——
+   `Stack` 自带 `display:flex`，而 `div` 不自带。 */
+.text-card__summary {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    flex: 1;
+    min-width: 0;
+    cursor: pointer;
+}
+
+.text-card__summary-text {
+    flex: 1;
+    min-width: 0;
+}
+
+.text-card__chevron {
+    transition: transform .2s;
+    transform: rotate(0deg);
+}
+
+.text-card__chevron--open {
+    transform: rotate(90deg);
+}
+
+.text-card__preview {
+    white-space: pre-wrap;
+    word-break: break-all;
+}
+
+/* 卡片里那几排 —— 原来是 MUI 的 `Stack`（`spacing` 走的是子元素 margin，
+   每次渲染都要过一遍 styled()）。这里都是 `nowrap`，换成 `gap` **完全等价**，
+   顺手把那份开销也去掉。 */
+.text-card__meta,
+.text-card__row,
+.text-card__actions {
+    display: flex;
+    align-items: center;
+}
+
+.text-card__meta {
+    gap: 12px;
+}
+
+.text-card__row {
+    gap: 4px;
+}
+
+.text-card__actions {
+    gap: 2px;
+}
+
+.text-card__divider {
+    margin: 8px 0;
+}
+
+/* ── 文件条目卡片（components/received-item/File.tsx）──
+   外壳与文本卡片共用 `.text-card*`，只有渐变带与几处结构不同。 */
+.text-card__bar--file {
+    background: linear-gradient(90deg, #10b981, #06b6d4);
+}
+
+.file-card__row {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+}
+
+.file-card__thumb {
+    width: 40px;
+    height: 40px;
+    border-radius: 3px;
+    object-fit: cover;
+}
+
+.file-card__info {
+    flex: 1;
+    min-width: 0;
+}
+
+.file-card__name--expired {
+    text-decoration: line-through;
+}
+
+.file-card__truncated {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-top: 8px;
+}

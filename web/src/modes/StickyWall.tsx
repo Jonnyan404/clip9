@@ -110,7 +110,10 @@ export default function StickyWall() {
                         sx={{ flex: 1, minHeight: 0, overflowY: 'auto', overflowX: 'hidden', display: 'flex', flexWrap: 'wrap', gap: 1.75, py: 1.75, alignContent: 'flex-start' }}
                     >
                         {items.map((item) => (
-                            <Box key={item.id} sx={{ flex: '1 1 220px', maxWidth: '100%', minWidth: 0, display: 'flex' }}>
+                            // ⚠️★ 类名 `sticky-wall__item` 与 Vue 同名 —— 样式在 components.css 里。
+                            // **别**在这里用 `sx` 重写：`> *` 那条选择器（让卡片撑满包装盒）
+                            // 用 `sx` 表达不出来，漏掉它的后果就是卡片按内容宽收缩、一排里宽窄不一。
+                            <Box key={item.id} className="sticky-wall__item">
                                 <StickyNote meta={item} />
                             </Box>
                         ))}

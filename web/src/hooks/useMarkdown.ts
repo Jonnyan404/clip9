@@ -16,6 +16,11 @@ import { prefersRenderedView } from '@/lib/util';
  *
  * @param getText         取原始文本
  * @param isMarkdownFile  可选：扩展名是 .md 这类可靠信号（文件预览的正文是截断过的，启发式可能判不出来）
+ * @param enabled         可选，默认 true。**屏外条目传 false 可以跳过整条动作链** ——
+ *                        它是异步的，每条都要跑一遍 + 二次 setState 重渲染；
+ *                        50 条一起跑就是切换模式时那 ~120ms 的主要来源。
+ *                        ⚠️ 图标排（`available`）照常算：那是同步的、很便宜，
+ *                        真藏起来反而会让「滚回来时图标突然出现」。
  */
 export interface MarkdownAction {
     id: string;
@@ -39,6 +44,7 @@ export interface UseMarkdownResult {
 export function useMarkdown(
     getText: () => string,
     isMarkdownFile: () => boolean = () => false,
+    enabled = true,
 ): UseMarkdownResult {
     const markdownEnabled = useAppStore((s) => Boolean(selectDisplay(s).markdown));
     const { t } = useTranslation();
@@ -81,6 +87,12 @@ export function useMarkdown(
             setViewText('');
             return;
         }
+        // ⚠️★ 还没进视口：**先不算**。等 `enabled` 变真（滚到了）这个 effect 会再跑一次。
+        // 注意上面那条 reset 要留在前面 —— 用户手动把视图切回「原文」时，
+        // 不管在不在视口里都得把渲染结果清掉。
+        if (!enabled) {
+            return;
+        }
         let cancelled = false;
         void (async () => {
             // `truncated` 告诉动作「这条正文是截断过的」—— 目前只有 markdown 那个动作在意它。
@@ -113,7 +125,7 @@ export function useMarkdown(
         return () => {
             cancelled = true;
         };
-    }, [text, mode, available, mdFile, t]);
+    }, [text, mode, available, mdFile, t, enabled]);
 
     // 渲染结果是不是以 `<pre>` 开头（代码视图 / JSON / 编解码结果都是）——
     // 消费方据此**关掉浮动占位**（`<pre>` 带 overflow-x，是 BFC，不会绕着浮动块排版）。
