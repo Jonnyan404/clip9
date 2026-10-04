@@ -126,6 +126,13 @@ jobs:
       - name: 文档链接静态自检
         run: node tools/docs-links-smoke.mjs
 
+      # ⚠️★ 「本机该跑哪几条」此前只活在这个文件里和人的记性里 —— 2026-10-04 因此
+      # 推完才发现**前一天的 CI 一直是红的**（本机跑的那套少了 `sync-web-assets --check`
+      # 与 `cargo fmt --check`，两处都真红在上面）。`tools/ci-local.mjs` 一条命令跑完这一整套，
+      # 这条判据盯着**它的清单没漏**（漏了会红，见它抬头判据 A）。
+      - name: 本机那条「照 ci.yml 跑一遍」的入口，清单没漏
+        run: node tools/ci-local.mjs --check
+
   # ── Rust：fmt / clippy / test ──────────────────────────────────────
   #
   # ubuntu 上要装 Tauri 的系统库：缺 webkit2gtk 时 `tauri-build` 会直接失败，报错与「代码写错了」很像。
