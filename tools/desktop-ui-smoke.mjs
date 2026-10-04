@@ -2811,6 +2811,133 @@ if (entryViewFiles.length !== 1) {
   }
 }
 
+// ── 判据 35：发文件要有**真的**进度条（理由见下）─────────────────────────────
+//
+// ⚠️★ 2026-10-04 加（Jonny：「需要显示文件的上传进度条」）。
+// 三件事都是「**不出声的坏**」：
+//   · 不画 → 用户按了发送，大文件那种**几十秒什么都没有**（他会再按一次，于是发两份）；
+//   · 画了但分母是假的 → 进度条一路冲到 100% 又退回来，比没有更不可信；
+//   · 传完不撤 → 屏幕上留一张永远 100% 的「正在发送」，而真条目由下行广播回来，
+//     于是同一条内容出现两遍。
+//
+// ⚠️ 而且它逼着上行**不能整份进内存**：大文件走 `/upload/chunk` 三件套，
+// 否则服务端单次请求那个 16 MiB 的硬上限会让它**根本发不出去**。
+{
+  const problems = [];
+  const bare = stripComments(js);
+
+  const card = /function renderUpload\([\s\S]*?\n\}/.exec(bare)?.[0] ?? '';
+  if (!card) {
+    problems.push('找不到 `renderUpload` —— 发一个大文件时屏幕上什么都没有');
+  } else {
+    if (!/ufill/.test(card)) {
+      problems.push('进度条没有那一层填充 —— 只有一条空的槽，看不出走到哪儿了');
+    }
+    if (!/style\.width/.test(card)) {
+      problems.push('填充的宽度不是按 `sent / total` 算的 —— 那是一条假的进度条');
+    }
+    // ⚠️★ `total === 0`（还不知道）时**不许画成 0%**：「0%」看着像卡住了。
+    if (!/upload\.total > 0/.test(card)) {
+      problems.push('没有处理「还不知道总共多少」—— 那时画成 0%，看着像卡住了');
+    }
+  }
+  if (!/renderUpload\(upload\)/.test(bare)) {
+    problems.push('`renderUpload` 没被接到渲染里 —— 壳给了进度，界面不画');
+  }
+
+  const read1 = (name) => {
+    try {
+      return scanRust(readFileSync(join(dirname(rustPath), name), 'utf8')).blanked;
+    } catch {
+      return null;
+    }
+  };
+  const storeSrc = read1('store.rs');
+  const runtimeSrc = read1('runtime.rs');
+  if (!storeSrc || !runtimeSrc) {
+    problems.push('读不到 `store.rs` / `runtime.rs` —— 判据要跟着仓库结构改');
+  } else {
+    for (const [name, why] of [
+      ['begin_upload', '按下发送之后屏幕上还是什么都没有（上行是 fire-and-forget）'],
+      ['set_upload_progress', '发出去的字节数没有地方记 —— 进度条不会动'],
+      ['end_upload', '传完不撤卡片 —— 同一条内容会在屏幕上出现两遍'],
+    ]) {
+      if (!new RegExp(`pub fn ${name}\\(`).test(storeSrc)) {
+        problems.push(`\`store.rs\` 里没有 \`${name}\` —— ${why}`);
+      }
+    }
+    if (!/uploads: inner\.uploads\.clone\(\)/.test(storeSrc)) {
+      problems.push('快照里没有 `uploads` —— 界面拿不到正在发的那几份');
+    }
+    // ⚠️★ 三个都要 `touch`：不上前进版本号，界面就用旧快照，进度永远不动。
+    const begin = /pub fn begin_upload\([\s\S]*?\n    \}/.exec(storeSrc)?.[0] ?? '';
+    const tick = /pub fn set_upload_progress\([\s\S]*?\n    \}/.exec(storeSrc)?.[0] ?? '';
+    const end = /pub fn end_upload\([\s\S]*?\n    \}/.exec(storeSrc)?.[0] ?? '';
+    if (!begin || !/touch\(\)/.test(begin)) {
+      problems.push('`begin_upload` 没有让版本号前进 —— 那张卡片画不出来');
+    }
+    if (!tick || !/touch\(\)/.test(tick)) {
+      problems.push('`set_upload_progress` 没有让版本号前进 —— 进度条永远停在第一片');
+    }
+    if (!end || !/touch\(\)/.test(end)) {
+      problems.push('`end_upload` 没有让版本号前进 —— 传完了卡片还在屏幕上');
+    }
+    // ⚠️★ 回调**必须**接上行：不接的话上面三个一个都不会被喊到。
+    if (!/upload_explicit\([\s\S]{0,400}?progress/.test(runtimeSrc)) {
+      problems.push('`upload_explicit` 没有把进度回调递进去 —— 发出去的字节数没人记');
+    }
+    if (!/end_upload\(id\)/.test(runtimeSrc)) {
+      problems.push('发完没有 `end_upload` —— 那张「正在发送」会永远留在屏幕上');
+    }
+  }
+
+  // ⚠️★ 大文件**必须**走分片：整份发的话服务端那个 16 MiB 的硬上限会把它挡回来，
+  // 而且内存里会同时有两份字节。
+  const clientRoot = join(root, 'rust/crates/client/src');
+  const readIfExists = (path) => (existsSync(path) ? readFileSync(path, 'utf8') : null);
+  const uploader = readIfExists(join(clientRoot, 'uploader.rs'));
+  const endpoint = readIfExists(join(clientRoot, 'endpoint.rs'));
+  if (!uploader || !endpoint) {
+    problems.push('读不到 `client/src/uploader.rs` / `endpoint.rs` —— 判据要跟着仓库结构改');
+  } else {
+    const up = scanRust(uploader).blanked;
+    if (!/UPLOAD_CHUNK_SIZE/.test(up)) {
+      problems.push('`uploader.rs` 里没有 `UPLOAD_CHUNK_SIZE` —— 大文件没有分片那一说');
+    }
+    if (!/enum UploadPayload[\s\S]*?LargeFile/.test(up)) {
+      problems.push('`UploadPayload` 里没有 `LargeFile` —— 大文件还是整份读进内存');
+    }
+    // ⚠️★ **光有 `LargeFile` 这个变体是不够的**：那是一条**死路**的话，
+    // 上面那两条照样全绿（变异验证抓到过：把判据写成 `if false` 它还是绿的）。
+    // 所以这里钉的是 `materialize` 里**那句按大小分流的条件**。
+    if (!/size >= UPLOAD_CHUNK_SIZE/.test(up)) {
+      problems.push('`materialize` 没有按大小分流到 `LargeFile` —— 那个变体是死的，'
+        + '大文件仍然整份读进内存（内存里两份，而且发不出去）');
+    }
+    if (!/async fn upload_chunked\(/.test(up)) {
+      problems.push('`uploader.rs` 里没有 `upload_chunked` —— 大文件还是一趟 multipart，'
+        + '会被服务端单次请求那个 16 MiB 的上限挡回来');
+    }
+    // ⚠️ 分片的每一片都要喊进度 —— 那才是「已发多少」这个真信号。
+    if (!/on\(sent, size\)/.test(up)) {
+      problems.push('分片循环里没有喊进度 —— 分母分子都不动，进度条是假的');
+    }
+    for (const fn of ['chunk_init_url', 'chunk_push_url', 'chunk_finish_url']) {
+      if (!new RegExp(`pub fn ${fn}\\(`).test(endpoint)) {
+        problems.push(`\`endpoint.rs\` 里没有 \`${fn}\` —— 分片上传少了一趟`);
+      }
+    }
+  }
+
+  if (problems.length) {
+    failed = true;
+    console.error(`✗ 判据 35：发文件的进度条没落实（${problems.length} 处）：`);
+    for (const one of problems) console.error(`    · ${one}`);
+  } else {
+    console.log('· 判据 35：大文件走分片上传，每片喊一次进度，卡片有进度条且传完撤掉。');
+  }
+}
+
 // ── 判据 34：CSP 要放行**远端服务端**上的图片与视频（理由见下）──────────────
 //
 // ⚠️★ 2026-10-04 加。房间的服务端**多半不是本机**（用户填的是自己那台），

@@ -223,6 +223,14 @@ pub struct Snapshot {
     pub selected: usize,
     /// 当前房间的时间线（**旧的在前**，末尾最新）。
     pub entries: Vec<EntryView>,
+    /// **正在发出去**的那几份（界面把它们画成「正在发送」的卡片，带进度条）。
+    ///
+    /// ⚠️★ 为什么它们**不在** `entries` 里：`entries` 是**服务端已经收下**的东西
+    /// （每条都有服务端给的 id）。而正在发的这份还没有 id —— 混进去就是两种
+    /// 「id 从哪来」的形状，那条边会一直要特殊判断。
+    /// ⚠️ 于是**传完就删**：真条目由下行自己广播回来（那时它才有 id）。
+    /// 留着那张卡片的话，同一条内容会在屏幕上出现两遍。
+    pub uploads: Vec<UploadView>,
     /// 服务端限额（`0` = 还没连上、**不知道**）。
     ///
     /// ⚠️ 它是**一份**、不是每个房间一份：限额来自握手，而同一个服务端的每个房间
@@ -317,6 +325,21 @@ pub struct DeviceView {
     pub kind: String,
     /// 是不是本机。⚠️ 只有**真的连上**时才会出现本机那一个（见 `snapshot`）。
     pub me: bool,
+}
+
+/// **正在发出去**的那一份（界面画成一张带进度条的「正在发送」卡片）。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UploadView {
+    /// 这一次的编号（**壳自己给的**，与条目的 id 不是一套：条目 id 来自服务端）。
+    pub id: u64,
+    /// 文件名（多个文件时是「第一个 +N」）。
+    pub name: String,
+    /// 已经发出去的字节。
+    pub sent: u64,
+    /// 一共多少字节。**`0` = 还不知道**（`stat` 没读出来），界面要画成不确定的样子，
+    /// 而不是「0%」—— 「0%」看着像卡住了。
+    pub total: u64,
 }
 
 /// 限额给界面看的那一份。
@@ -458,6 +481,13 @@ struct Inner {
     /// 所以 [`Store::saved_file_path`] 要**先看看还在不在**（不在就当没存过）。
     /// ⚠️★ 不进快照：界面用不上（它只在壳里被查一次），塞进去就是又一份要漂的字段。
     saved_files: std::collections::HashMap<i32, std::path::PathBuf>,
+    /// 正在发出去的那些（见 [`UploadView`]）。
+    ///
+    /// ⚠️ 用 `Vec` 而不是 `HashMap`：**顺序要跟界面上的一样**（先点的排在前面），
+    /// 而同时发的东西通常只有一份。
+    uploads: Vec<UploadView>,
+    /// 下一个「正在发送」的编号（只增，不复用）。
+    next_upload_id: u64,
 }
 
 impl Inner {
@@ -504,6 +534,8 @@ impl Store {
                 //（`'0' !== null`）—— 这正是想要的：界面必须至少画一次。
                 version: 0,
                 saved_files: std::collections::HashMap::new(),
+                uploads: Vec::new(),
+                next_upload_id: 1,
             }),
             config_path,
             data_dir,
@@ -566,6 +598,7 @@ impl Store {
             rooms,
             selected: inner.selected,
             entries,
+            uploads: inner.uploads.clone(),
             limits: inner.limits.into(),
             problems: inner.config.problems(),
             autostart: inner.config.enable_autostart,
@@ -1157,6 +1190,59 @@ impl Store {
     pub fn saved_file_path(&self, id: i32) -> Option<std::path::PathBuf> {
         let path = self.lock().saved_files.get(&id).cloned()?;
         path.exists().then_some(path)
+    }
+
+    /// 界面上发了一批文件 —— 记一张「正在发送」，返回它的编号。
+    ///
+    /// ⚠️★ **要先有它、再开始发**：上行是 fire-and-forget（`Runtime::schedule_upload`
+    /// 一 spawn 就返回），界面如果不先拿到这张卡片，就会看到「按了发送，什么都没有」。
+    #[must_use]
+    pub fn begin_upload(&self, name: String, total: u64) -> u64 {
+        let mut inner = self.lock();
+        let id = inner.next_upload_id;
+        inner.next_upload_id = inner.next_upload_id.wrapping_add(1);
+        inner.uploads.push(UploadView {
+            id,
+            name,
+            sent: 0,
+            total,
+        });
+        // ⚠️ 用户点出来的 → **直接前进版本号**（`Inner::touch` 那两条规则里的低频那一类）。
+        inner.touch();
+        id
+    }
+
+    /// 一片发完了（`sent` 是**已经发出去的字节**，不是「这一片多大」）。
+    ///
+    /// ⚠️★ **先比再写**：一片 1 MiB，一个 200 MB 的文件会喊 200 次，
+    /// 而不判就每喊一次整屏重绘一次 —— 那是 `touch` 那条规则里的高频那一类。
+    pub fn set_upload_progress(&self, id: u64, sent: u64, total: u64) {
+        let mut inner = self.lock();
+        let Some(view) = inner.uploads.iter_mut().find(|view| view.id == id) else {
+            return;
+        };
+        if view.sent == sent && view.total == total {
+            return;
+        }
+        view.sent = sent;
+        if total > 0 {
+            view.total = total;
+        }
+        inner.touch();
+    }
+
+    /// 发完了（或失败了）—— **一定要收掉**那张卡片。
+    ///
+    /// ⚠️★ 留着它就是一条永远停在某个百分比的「正在发送」，而真条目会由下行广播回来 ——
+    /// 于是同一条内容在屏幕上出现两遍。
+    pub fn end_upload(&self, id: u64) {
+        let mut inner = self.lock();
+        let before = inner.uploads.len();
+        inner.uploads.retain(|view| view.id != id);
+        if inner.uploads.len() == before {
+            return;
+        }
+        inner.touch();
     }
 
     /// 记住「这一条存到了哪儿」（见 [`Inner::saved_files`]）。

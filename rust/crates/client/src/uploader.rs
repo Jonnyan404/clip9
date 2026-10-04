@@ -43,9 +43,12 @@
 use std::time::Duration;
 
 use reqwest::header::{AUTHORIZATION, CONTENT_TYPE};
+// ⚠️ 只为了分片上传里那一次 `file.read(..)`（`AsyncReadExt`）—— 一片一片现读，
+// 别把整个文件读进来。
 use reqwest::{Client, multipart};
 use serde::Deserialize;
 use time::{OffsetDateTime, UtcOffset};
+use tokio::io::AsyncReadExt;
 
 use crate::config::{Channel, ClientConfig};
 use crate::endpoint;
@@ -94,13 +97,46 @@ impl ServerLimits {
     }
 }
 
+/// 一片有多大（字节）。
+///
+/// ⚠️★ 服务端**没有**要求某一片必须是多大：`files.rs` 的 `chunk` 就是往文件后面追加，
+/// 而握手下发的 `file.chunk` 只是它「建议」的那个数。所以这里**不读**那个建议值 ——
+/// 读了就要给 `ServerLimits` 加一个字段、还要处理「还没握手过 = 0」这一档，
+/// 换来的只是「和服务端建议的一样大」，而这件事**没有任何行为上的差别**。
+/// ⚠️ 但它有**上界**：`/upload/chunk/:uuid` 也挂着 `DefaultBodyLimit`（16 MiB），
+/// 超了就是一次 413。这里取 1 MiB（服务端配置的默认值），离那个上界很远。
+pub const UPLOAD_CHUNK_SIZE: usize = 1024 * 1024;
+
+/// 上传进度的回调：`(已发字节, 总字节)`。
+///
+/// ⚠️★ 为什么是**闭包**而不是「返回一堆中间状态」：上行是**一个 await**，
+/// 中间没有可以停下来交出控制权的地方。要让它能被界面看见，只能由**里面**往外喊。
+/// ⚠️ `Send + Sync` 是因为它会跨 tokio 任务、也可能跨线程。
+pub type ProgressFn = std::sync::Arc<dyn Fn(u64, u64) + Send + Sync>;
+
 /// 一次上行真正要发出去的东西。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum UploadPayload {
     /// 文本（整段就是正文）。
     Text(String),
-    /// 一个文件（图片也是它，文件名由这边生成）。
+    /// 一个**小**文件（图片也是它，文件名由这边生成）—— 字节已经读进来了。
+    ///
+    /// ⚠️ 只在小于 [`UPLOAD_CHUNK_SIZE`] 时用它：那时「读进来」的代价可以忽略。
     File { name: String, bytes: Vec<u8> },
+    /// 一个**大**文件 —— ⚠️★ **只有路径**，字节按片现读现发。
+    ///
+    /// 为什么必须有这一种：整份读进来（上面那个变体）在两个地方同时出问题 ——
+    ///   · 内存里会同时有**两份**（`post_to_channel` 里 `Part::bytes` 还 clone 一次），
+    ///     一个 200MB 的文件就是 400MB 常驻；
+    ///   · 服务端**单次请求**挂着 16 MiB 的硬上限，那份字节**根本发不出去**
+    ///     （推完才被 413 挡回来，而 `parse_api_error` 兜底只吐一个「HTTP 413」，
+    ///     一个数字都没有）。
+    /// 走分片之后两个问题一起消失：内存里只有一片，而且每一片都在限额内。
+    LargeFile {
+        name: String,
+        path: std::path::PathBuf,
+        size: u64,
+    },
 }
 
 impl UploadPayload {
@@ -108,7 +144,7 @@ impl UploadPayload {
     pub fn kind(&self) -> UploadKind {
         match self {
             UploadPayload::Text(_) => UploadKind::Text,
-            UploadPayload::File { .. } => UploadKind::File,
+            UploadPayload::File { .. } | UploadPayload::LargeFile { .. } => UploadKind::File,
         }
     }
 
@@ -118,6 +154,7 @@ impl UploadPayload {
         match self {
             UploadPayload::Text(text) => text.len() as u64,
             UploadPayload::File { bytes, .. } => bytes.len() as u64,
+            UploadPayload::LargeFile { size, .. } => *size,
         }
     }
 
@@ -137,6 +174,9 @@ impl UploadPayload {
             UploadPayload::File { name, bytes } => Msg::key("payloadFile")
                 .param("name", name)
                 .param("bytes", bytes.len()),
+            UploadPayload::LargeFile { name, size, .. } => Msg::key("payloadFile")
+                .param("name", name)
+                .param("bytes", *size),
         }
     }
 }
@@ -217,11 +257,29 @@ pub async fn materialize(
                 if name.is_empty() {
                     return Err(Msg::key("uploadBadFileName").param("path", path.display()));
                 }
-                // ⚠️★ **先看大小再读文件**：不先看就要把整个文件读进内存，
+                // ⚠️★ **先看大小再决定读不读**：不先看就要把整个文件读进内存，
                 // 复制一个几百 MB 的文件会直接把客户端撑爆。
-                if let Ok(meta) = tokio::fs::metadata(path).await {
-                    size_guard(meta.len(), limits.file_limit, max_file_size_mb)?;
+                let size = tokio::fs::metadata(path)
+                    .await
+                    .map_err(|err| {
+                        Msg::key("uploadFileUnreadable")
+                            .param("path", path.display())
+                            .param("reason", err)
+                    })?
+                    .len();
+                size_guard(size, limits.file_limit, max_file_size_mb)?;
+
+                // ⚠️★ 够大就**只记路径、不读字节**（`LargeFile`）：整份读进来的那份
+                // 既占两份内存、又发不出去（服务端单次请求 16 MiB 的硬上限）。
+                if size >= UPLOAD_CHUNK_SIZE as u64 {
+                    out.push(UploadPayload::LargeFile {
+                        name,
+                        path: path.clone(),
+                        size,
+                    });
+                    continue;
                 }
+
                 let bytes = tokio::fs::read(path).await.map_err(|err| {
                     Msg::key("uploadFileUnreadable")
                         .param("path", path.display())
@@ -466,6 +524,7 @@ pub async fn upload_event(
     limits: ServerLimits,
     now: OffsetDateTime,
     client: &Client,
+    progress: Option<&ProgressFn>,
 ) -> UploadReport {
     // ⚠️★ 两个分支各自报自己的理由（[`SkipReason`]）—— 界面拿到的是**判据本身**，
     // 不是一句要靠猜的「相关开关关着」。顺序就是优先级：先说内容类型、再说房间。
@@ -482,7 +541,9 @@ pub async fn upload_event(
             ..UploadReport::default()
         };
     }
-    send_to(cfg, &targets, event, limits, now, client).await
+    // ⚠️ 剪贴板那条路**不报进度**（`progress: None`）：它是**没有界面**的 ——
+    // 用户没点任何东西，界面上也没有「正在发」的位置。给了也没人看。
+    send_to(cfg, &targets, event, limits, now, client, progress).await
 }
 
 /// 从界面**显式**发一次（输入框的「发送」/ 📎 / 🖼 / 拖进来的文件）。
@@ -509,8 +570,9 @@ pub async fn upload_explicit(
     limits: ServerLimits,
     now: OffsetDateTime,
     client: &Client,
+    progress: Option<&ProgressFn>,
 ) -> UploadReport {
-    send_to(cfg, &[target], event, limits, now, client).await
+    send_to(cfg, &[target], event, limits, now, client, progress).await
 }
 
 /// 真的发：材料化 + 逐个房间发。
@@ -524,6 +586,7 @@ async fn send_to(
     limits: ServerLimits,
     now: OffsetDateTime,
     client: &Client,
+    progress: Option<&ProgressFn>,
 ) -> UploadReport {
     let mut report = UploadReport::default();
 
@@ -537,7 +600,7 @@ async fn send_to(
 
     for payload in payloads {
         report.payloads += 1;
-        let outcome = upload_payload(client, targets, cfg, &payload).await;
+        let outcome = upload_payload(client, targets, cfg, &payload, progress).await;
         report.push(outcome);
     }
     report
@@ -549,6 +612,7 @@ async fn upload_payload(
     targets: &[&Channel],
     cfg: &ClientConfig,
     payload: &UploadPayload,
+    progress: Option<&ProgressFn>,
 ) -> UploadOutcome {
     let mut succeeded = 0usize;
     let mut failures = Vec::new();
@@ -556,7 +620,9 @@ async fn upload_payload(
     let mut entries = Vec::new();
 
     for channel in targets {
-        match post_to_channel(client, channel, cfg, payload).await {
+        // ⚠️ 多个房间时进度**只跟着第一个**喊：界面上只有一条进度条，
+        // 而「两个房间各自 40%」是没有意义的数（用户要的是「传完没有」）。
+        match post_to_channel(client, channel, cfg, payload, progress).await {
             Ok(id) => {
                 succeeded += 1;
                 if let Some(id) = id {
@@ -598,8 +664,15 @@ pub(crate) async fn post_to_channel(
     channel: &Channel,
     cfg: &ClientConfig,
     payload: &UploadPayload,
+    progress: Option<&ProgressFn>,
 ) -> Result<Option<i32>, Msg> {
     let device_name = cfg.device_name.as_str();
+
+    // ⚠️ 大文件**不走这里**：它要的是「初始化 → 逐片追加 → 收尾」那三趟，
+    // 一趟 multipart 发不完（服务端单次请求 16 MiB 的硬上限会把它挡回来）。
+    if let UploadPayload::LargeFile { name, path, size } = payload {
+        return upload_chunked(client, channel, cfg, name, path, *size, progress).await;
+    }
 
     let mut builder = match payload {
         UploadPayload::Text(_) => client.post(endpoint::text_url(
@@ -613,6 +686,7 @@ pub(crate) async fn post_to_channel(
             &channel.room,
             device_name,
         )?),
+        UploadPayload::LargeFile { .. } => unreachable!("上面已经 return 了"),
     };
 
     // ⚠️★ **凭据只走请求头**，不进 URL（`dev-docs/api.md` §1.2 + §8 审计清单）。
@@ -620,6 +694,12 @@ pub(crate) async fn post_to_channel(
         && !token.is_empty()
     {
         builder = builder.header(AUTHORIZATION, format!("Bearer {token}"));
+    }
+
+    // ⚠️ 小文件（与文本）只有「0 → 完」两个点：它们一趟就发完，中间没有可报的时刻。
+    // 这是**有意接受**的粗糙 —— 为 10KB 的东西造一条假的进度曲线没有意义。
+    if let Some(on) = progress {
+        on(0, payload.size());
     }
 
     let response = match payload {
@@ -640,16 +720,162 @@ pub(crate) async fn post_to_channel(
             .send()
             .await
             .map_err(|e| Msg::key("requestFailed").param("reason", e))?,
+        UploadPayload::LargeFile { .. } => unreachable!("大文件在上面已经 return 了"),
     };
 
     let status = response.status().as_u16();
     let body = response.text().await.unwrap_or_default();
     if (200..300).contains(&status) {
+        if let Some(on) = progress {
+            on(payload.size(), payload.size());
+        }
         // ⚠️★ 成不成**不看**这个 id：认不出来照样算成功（它只影响界面上的一个标签）。
         Ok(parse_upload_id(&body))
     } else {
         Err(Msg::verbatim(parse_api_error(status, &body)))
     }
+}
+
+/// 给请求挂上凭据（分片那三趟与整份那趟**共用**一条规矩）。
+///
+/// ⚠️ 没有凭据就是**没有** —— 不发一个空的 `Bearer`（那会被服务端当成
+/// 「给了一个错密码」，而真相是「这个房间不需要密码」）。
+fn with_auth(request: reqwest::RequestBuilder, token: Option<&str>) -> reqwest::RequestBuilder {
+    match token {
+        Some(token) => request.header(AUTHORIZATION, format!("Bearer {token}")),
+        None => request,
+    }
+}
+
+/// 分片上传一个大文件：`/upload/chunk` 登记 → 逐片 `/upload/chunk/:uuid` 追加 →
+/// `/upload/finish/:uuid` 收尾。
+///
+/// ⚠️★ 形状照**服务端**那份（`files.rs` 的三个 handler），并照网页版
+/// `StickyComposer.vue` 的 `sendFiles` 那一段 —— 那一边已经跑通了，别另发明一种。
+///
+/// ⚠️★ 每片都是**现读现发**：内存里同时只有 `UPLOAD_CHUNK_SIZE` 那么多字节。
+/// 对照整份那条路（`tokio::fs::read` + `Part::bytes` 再 clone 一次）在 200MB 的
+/// 文件上是 400MB 常驻 —— 而且那一趟**发不出去**（服务端单次请求 16 MiB 的硬上限）。
+///
+/// ⚠️ 每一片完成就喊一次进度（`已发 / 总共`）。这个信号是**真的**：它数的是
+/// 真正被服务端收下的字节（一片 2xx 之后才前进），不是「写进了 socket」。
+async fn upload_chunked(
+    client: &Client,
+    channel: &Channel,
+    cfg: &ClientConfig,
+    name: &str,
+    path: &std::path::Path,
+    size: u64,
+    progress: Option<&ProgressFn>,
+) -> Result<Option<i32>, Msg> {
+    let token = channel
+        .auth_token
+        .as_deref()
+        .map(str::trim)
+        .filter(|token| !token.is_empty());
+
+    /// 一趟请求发完，非 2xx 就把服务端那句**带数字**的话带回来。
+    macro_rules! fail_on {
+        ($response:expr) => {{
+            let status = $response.status().as_u16();
+            let body = $response.text().await.unwrap_or_default();
+            if !(200..300).contains(&status) {
+                return Err(Msg::verbatim(parse_api_error(status, &body)));
+            }
+            body
+        }};
+    }
+
+    // ① 登记：body 是文件名，`Content-Type` 必须是 **全等**的 `text/plain`
+    //（服务端靠它在同一个 handler 里分叉，`text/plain; charset=utf-8` 不算）。
+    let response = with_auth(
+        client
+            .post(endpoint::chunk_init_url(
+                &channel.server,
+                &channel.room,
+                &cfg.device_name,
+            )?)
+            .header(CONTENT_TYPE, "text/plain")
+            .body(name.to_owned()),
+        token,
+    )
+    .send()
+    .await
+    .map_err(|err| Msg::key("requestFailed").param("reason", err))?;
+    let body = fail_on!(response);
+    let uuid = serde_json::from_str::<serde_json::Value>(body.trim())
+        .ok()
+        .and_then(|value| {
+            value
+                .pointer("/result/uuid")
+                .and_then(serde_json::Value::as_str)
+                .map(str::to_owned)
+        })
+        .ok_or_else(|| Msg::key("uploadChunkNoUuid"))?;
+
+    // ② 逐片追加。
+    let mut file = tokio::fs::File::open(path).await.map_err(|err| {
+        Msg::key("uploadFileUnreadable")
+            .param("path", path.display())
+            .param("reason", err)
+    })?;
+    let mut buffer = vec![0u8; UPLOAD_CHUNK_SIZE];
+    let mut sent = 0u64;
+    while sent < size {
+        let want = (size - sent).min(UPLOAD_CHUNK_SIZE as u64) as usize;
+        // ⚠️ `read_exact` 不够：文件在「看大小」与「读」之间被改小了的话它会一直等。
+        // 这里按「读到了多少就发多少」处理，读不动就停 —— 少发的那截由服务端登记的
+        // size 兜住（`files.rs` 每片都更新它），不会记出一个比实际大的文件。
+        let mut got = 0usize;
+        while got < want {
+            let read = file.read(&mut buffer[got..want]).await.map_err(|err| {
+                Msg::key("uploadFileUnreadable")
+                    .param("path", path.display())
+                    .param("reason", err)
+            })?;
+            if read == 0 {
+                break;
+            }
+            got += read;
+        }
+        if got == 0 {
+            break;
+        }
+
+        let response = with_auth(
+            client
+                .post(endpoint::chunk_push_url(&channel.server, &uuid)?)
+                .header(CONTENT_TYPE, "application/octet-stream")
+                .body(buffer[..got].to_vec()),
+            token,
+        )
+        .send()
+        .await
+        .map_err(|err| Msg::key("requestFailed").param("reason", err))?;
+        fail_on!(response);
+
+        sent += got as u64;
+        if let Some(on) = progress {
+            on(sent, size);
+        }
+    }
+
+    // ③ 收尾：登记消息 + 广播。⚠️ 少了这一趟，字节已经在服务端了，
+    // 但**房间里没有这条消息** —— 症状是「传完了，别人什么都收不到」。
+    let response = with_auth(
+        client.post(endpoint::chunk_finish_url(
+            &channel.server,
+            &channel.room,
+            &cfg.device_name,
+            &uuid,
+        )?),
+        token,
+    )
+    .send()
+    .await
+    .map_err(|err| Msg::key("requestFailed").param("reason", err))?;
+    let body = fail_on!(response);
+    Ok(parse_upload_id(&body))
 }
 
 /// 从上行成功的响应体里抠出「服务端给这条内容编的号」。
@@ -1085,8 +1311,15 @@ mod tests {
             content: "x".to_owned(),
             subtype: None,
         };
-        let report =
-            upload_event(&cfg, &event, ServerLimits::default(), fixed_now(), &client).await;
+        let report = upload_event(
+            &cfg,
+            &event,
+            ServerLimits::default(),
+            fixed_now(),
+            &client,
+            None,
+        )
+        .await;
         // ⚠️★ 断言的是**哪一道**，不是一个布尔：布尔分不出「内容类型没开」与
         // 「没有开着 ↑ 的房间」，而界面上的话就是要照着这个说（见 [`SkipReason`]）。
         assert_eq!(report.skip, Some(SkipReason::ContentKind));
@@ -1109,8 +1342,15 @@ mod tests {
             content: "x".to_owned(),
             subtype: None,
         };
-        let report =
-            upload_event(&cfg, &event, ServerLimits::default(), fixed_now(), &client).await;
+        let report = upload_event(
+            &cfg,
+            &event,
+            ServerLimits::default(),
+            fixed_now(),
+            &client,
+            None,
+        )
+        .await;
         // 内容类型是开着的（`ClientConfig::default()` 里 `enable_text` 是 `true`）——
         // 所以卡住它的**只能**是「一个开着 ↑ 的房间都没有」。这条钉的正是这个区分。
         assert_eq!(report.skip, Some(SkipReason::NoUploadRoom));
@@ -1182,8 +1422,15 @@ mod tests {
 
         // ⚠️ 先钉住「剪贴板那条路确实会被开关拦住」—— 少了这一条，
         // 下面的断言可能只是碰巧成立（比如两个入口其实走了同一段代码）。
-        let automatic =
-            upload_event(&cfg, &event, ServerLimits::default(), fixed_now(), &client).await;
+        let automatic = upload_event(
+            &cfg,
+            &event,
+            ServerLimits::default(),
+            fixed_now(),
+            &client,
+            None,
+        )
+        .await;
         assert!(automatic.skipped(), "剪贴板那条路要过开关");
         assert_eq!(automatic.payloads, 0);
 
@@ -1195,6 +1442,7 @@ mod tests {
             ServerLimits::default(),
             fixed_now(),
             &client,
+            None,
         )
         .await;
         assert!(

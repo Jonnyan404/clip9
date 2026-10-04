@@ -1861,8 +1861,42 @@ function renderTimeline(state) {
     return;
   }
   state.entries.forEach((entry) => host.append(renderEntry(entry)));
+  // ⚠️★ 「正在发送」那几张**排在末尾**：新内容本来就出现在末尾，而用户按下发送之后
+  // 视线就在那儿。放在顶部的话，他会先看到一张新卡片从上面长出来（那不像「我发的」）。
+  (state.uploads || []).forEach((upload) => host.append(renderUpload(upload)));
   // 新的内容在末尾 → 贴底时跟到底（用户刚复制的东西要立刻看见）。
   if (wasPinned) host.scrollTop = host.scrollHeight;
+}
+
+/** 一张**正在发送**的卡片（带进度条）。
+ *
+ * ⚠️★ 它**不是**一条条目：条目是服务端已经收下的东西（有服务端给的 id），
+ * 而这份还没有 id —— 所以它没有「复制 / 分享 / 删除」那一排，也不进 `openedBodies` 那些表。
+ * 传完壳会把它撤掉，真条目由下行广播回来（那时才有 id）。
+ *
+ * ⚠️ `total === 0` = **还不知道**总共多少（`stat` 没读出来）。这时**不许画成 0%**
+ * —— 「0%」看着像卡住了，而真相是「正在开始」。画成满格 + 一句「正在发送…」。
+ */
+function renderUpload(upload) {
+  const card = h('div', 'card me');
+  card.append(h('div', 'fn', upload.name || ''));
+
+  const bar = h('div', 'ubar');
+  const fill = h('div', 'ufill');
+  const known = upload.total > 0;
+  const pct = known ? Math.min(100, Math.round((upload.sent / upload.total) * 100)) : 0;
+  fill.style.width = known ? `${pct}%` : '100%';
+  bar.append(fill);
+  card.append(bar);
+
+  card.append(h('div', 'fs', known
+    ? t('已发 {sent} / 共 {total}（{pct}%）', {
+      sent: sizeLabel(upload.sent),
+      total: sizeLabel(upload.total),
+      pct,
+    })
+    : t('正在发送…')));
+  return card;
 }
 
 /** 输入区右下角那个计数（稿 1 画的是 `0 / 4096`）。

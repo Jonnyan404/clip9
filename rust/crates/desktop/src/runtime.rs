@@ -556,12 +556,46 @@ impl Runtime {
                 Some(channel)
             }
         };
+        // ⚠️★ 进度条**只给「界面上发的文件」**：
+        //   · 剪贴板那条**没有界面位置**（用户没点任何东西，那一格也不属于任何房间）；
+        //   · 文本一瞬间就发完 —— 为它插一张「正在发送」的卡片只会闪一下，
+        //     而闪一下的进度条比没有更像「界面坏了」。
+        let task = match (&source, &event) {
+            (UploadSource::FromUi, ClipboardEvent::Files { paths }) => Some(
+                self.store
+                    .begin_upload(upload_label(paths), total_bytes(paths).await),
+            ),
+            _ => None,
+        };
+        // ⚠️ 回调里只做一件事：把「已发 / 总共」写进 `Store`。它会被**每一片**调一次，
+        // 所以里面不许有 IO、不许有锁以外的等待 —— 上行那个 await 正卡在它后面。
+        let progress = task.map(|id| {
+            let store = Arc::clone(&self.store);
+            Arc::new(move |sent: u64, total: u64| {
+                store.set_upload_progress(id, sent, total);
+            }) as clip9_client::uploader::ProgressFn
+        });
+
         let report = match &target {
-            None => upload_event(&config, &event, limits, now(), &self.http).await,
+            None => upload_event(&config, &event, limits, now(), &self.http, None).await,
             Some(channel) => {
-                upload_explicit(&config, channel, &event, limits, now(), &self.http).await
+                upload_explicit(
+                    &config,
+                    channel,
+                    &event,
+                    limits,
+                    now(),
+                    &self.http,
+                    progress.as_ref(),
+                )
+                .await
             }
         };
+        // ⚠️★ 传完（或失败）**一定要收掉**那张卡片：留着它就是一条永远 100%
+        // 的「正在发送」，而真条目会由下行广播回来 —— 于是同一条内容出现两遍。
+        if let Some(id) = task {
+            self.store.end_upload(id);
+        }
         // ⚠️★ **只有剪贴板那条**把「这几条是我同步过去的」记下来（界面上那条标签用：
         // 「我发的」还是「剪贴板同步」）。判据在那个小函数里，有测试（两个方向）。
         // ⚠️ 放在这里（结果一到就记）而不是等界面来问：界面只认变化，没有「问一次」的入口。
@@ -921,6 +955,36 @@ fn room_endpoint(
         .filter(|token| !token.is_empty())
         .map(str::to_owned);
     Ok((url, token))
+}
+
+/// 「正在发送」那张卡片上写什么名字。
+///
+/// ⚠️ 一个文件就写它的名字；多个写「第一个 +N」。⚠️★ 不用中文拼 —— 那会变成
+/// 壳里的一句界面文案（CONTRIBUTING §5：文案归字典），而这里只有**文件名**（不是句子），
+/// 文件名本来就不翻。
+fn upload_label(paths: &[std::path::PathBuf]) -> String {
+    let first = paths
+        .first()
+        .map(|path| clip9_client::download::sanitize_file_name(&path.to_string_lossy()))
+        .unwrap_or_default();
+    if paths.len() <= 1 {
+        return first;
+    }
+    format!("{first} +{}", paths.len() - 1)
+}
+
+/// 这批文件一共多少字节（给进度条的分母）。
+///
+/// ⚠️ 这里只 `stat`，不读内容 —— 分母要**在发出去之前**就有，而读内容就又变成
+/// 「整份进内存」那条老路了。
+async fn total_bytes(paths: &[std::path::PathBuf]) -> u64 {
+    let mut total = 0u64;
+    for path in paths {
+        if let Ok(meta) = tokio::fs::metadata(path).await {
+            total = total.saturating_add(meta.len());
+        }
+    }
+    total
 }
 
 /// 给请求挂上凭据。⚠️ 没有凭据就是**没有** —— 不发一个空的 `Bearer`（那会被服务端当成

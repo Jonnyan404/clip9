@@ -947,6 +947,14 @@ body {
 /* ⚠️ 文件行**可点**（存进下载目录）：没有 `cursor: pointer` 的话，
    它看着和「一行说明文字」一样，用户不会去点它 —— 而这个功能就白做了。 */
 .card .filerow { cursor: pointer; }
+/* ③c 「正在发送」那张卡片上的进度条（`ui/app.js` 的 `renderUpload`）。
+   ⚠️ 高度只有 4px：它是**一条状态**，不是要用户去操作的东西 ——
+   做得粗了会跟正文抢注意力，而那张卡片的主角是文件名。 */
+.card .ubar {
+    height: 4px; border-radius: 999px; overflow: hidden; margin-top: 6px;
+    background: var(--border);
+}
+.card .ufill { height: 100%; background: var(--accent); }
 /* 方向开关在**设置表格**里也要能画（稿 1 只定义了 .room .dir，表格里不在 .room 下） */
 .dir {
     width: 17px; height: 17px; border-radius: 5px; flex: none;

@@ -88,6 +88,44 @@ pub fn upload_url(server: &str, room: &str, device_name: &str) -> Result<Endpoin
     api_url(server, "/upload", &[("room", room), ("name", device_name)])
 }
 
+/// `POST /upload/chunk` —— **分片上传的初始化**（body 是文件名，回一个 uuid）。
+///
+/// ⚠️★ 这一条与 `/upload` **是同一个 handler**，靠 `Content-Type: text/plain`（**全等**）
+/// 在服务端分叉（`files.rs`）。所以这里只给地址，那一个头由 `uploader` 自己带。
+pub fn chunk_init_url(server: &str, room: &str, device_name: &str) -> Result<Endpoint, Msg> {
+    api_url(
+        server,
+        "/upload/chunk",
+        &[("room", room), ("name", device_name)],
+    )
+}
+
+/// `POST /upload/chunk/:uuid` —— **追加一片**（body 就是那一片的字节）。
+///
+/// ⚠️ 房间**不带**：服务端按 uuid 查到文件自己登记的那个房间
+///（`files.rs` 的 `file_room`）—— 客户端传什么不算数。
+pub fn chunk_push_url(server: &str, uuid: &str) -> Result<Endpoint, Msg> {
+    api_url(server, &format!("/upload/chunk/{uuid}"), &[])
+}
+
+/// `POST /upload/finish/:uuid` —— 分片上传**收尾**（登记消息 + 广播）。
+///
+/// ⚠️ 房间要带：收尾那一趟服务端还在做鉴权，而「文件自己登记的房间」只在
+/// 客户端传 `default` 时才被采用（`files.rs::finish`）—— 带上我们真正要发的那个，
+/// 就不必依赖那条兜底。
+pub fn chunk_finish_url(
+    server: &str,
+    room: &str,
+    device_name: &str,
+    uuid: &str,
+) -> Result<Endpoint, Msg> {
+    api_url(
+        server,
+        &format!("/upload/finish/{uuid}"),
+        &[("room", room), ("name", device_name)],
+    )
+}
+
 /// `GET /content` —— 取历史（**游标是 id、返回正序**，见 `dev-docs/api.md` §2）。
 ///
 /// ⚠️ 不带 `?format=`：这个端点**永远**是 JSON（`{"messages":[…]}`），
