@@ -1,24 +1,24 @@
 # clip9 前端产物的同步清单 —— 由 tools/sync-web-assets.mjs 生成，别手改。
-source 927417865b99ccd094c51633969db51ce54231740a5e36e78597b52cfeded26a
+source 42edd8842bb3b04ad436e9b2a245a8aa601f2e20ba64be1a0586a8ed7f5ae77d
 apple-touch-icon.png
-assets/ShareView-2rHPcIGf.js
-assets/ShareView-2rHPcIGf.js.br
-assets/ShareView-2rHPcIGf.js.gz
 assets/ShareView-DjLm0d4-.css
 assets/ShareView-DjLm0d4-.css.br
 assets/ShareView-DjLm0d4-.css.gz
+assets/ShareView-XaYRKHRA.js
+assets/ShareView-XaYRKHRA.js.br
+assets/ShareView-XaYRKHRA.js.gz
 assets/highlight-langs-Dt8YXhtn.js
 assets/highlight-langs-Dt8YXhtn.js.br
 assets/highlight-langs-Dt8YXhtn.js.gz
 assets/i18n-B2E8evwD.js
 assets/i18n-B2E8evwD.js.br
 assets/i18n-B2E8evwD.js.gz
-assets/index-B_knTG2D.css
-assets/index-B_knTG2D.css.br
-assets/index-B_knTG2D.css.gz
-assets/index-Bnb79r-q.js
-assets/index-Bnb79r-q.js.br
-assets/index-Bnb79r-q.js.gz
+assets/index-B0DRmUvn.js
+assets/index-B0DRmUvn.js.br
+assets/index-B0DRmUvn.js.gz
+assets/index-Cm-S1YT7.css
+assets/index-Cm-S1YT7.css.br
+assets/index-Cm-S1YT7.css.gz
 assets/materialdesignicons-webfont-B7mPwVP_.ttf
 assets/materialdesignicons-webfont-CSr8KVlo.eot
 assets/materialdesignicons-webfont-Dp5v-WZN.woff2
