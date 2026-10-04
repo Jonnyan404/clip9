@@ -206,7 +206,7 @@ export const useAppStore = create<AppState>((set, get) => ({
  * 否则搜索框只在部分模式生效，看着像坏了。
  * 计数、空态判断仍然用 received（那是「房间里有多少内容」，与搜索无关）。
  */
-export function selectVisibleReceived(state: AppState): ReceivedItem[] {
+export function selectVisibleReceived(state: Pick<AppState, 'searchQuery' | 'received'>): ReceivedItem[] {
     const q = String(state.searchQuery || '').trim().toLowerCase();
     if (!q) return state.received;
     return state.received.filter((item) => {
@@ -222,7 +222,7 @@ export function selectVisibleReceived(state: AppState): ReceivedItem[] {
  * 但**允许手动打开**（用户在个性化里拨过的照旧算数）。为什么在源头改**默认值**而不是各模式
  * 各判一遍 `embedded`：发送区有两套实现，在源头改两边自动都吃到。
  */
-export function selectDisplay(state: AppState): Record<string, boolean> {
+export function selectDisplay(state: Pick<AppState, 'displayByMode' | 'uiMode' | 'embedded'>): Record<string, boolean> {
     const stored = state.displayByMode[state.uiMode] || {};
     const base: Record<string, boolean> = { ...INITIAL_DISPLAY, ...stored };
     if (!state.embedded) {
@@ -242,7 +242,7 @@ export function selectDisplay(state: AppState): Record<string, boolean> {
  * 这时候只剩一个空外框，该把整个输入区一起藏掉。
  * ⚠️ 只是图标全关、输入框还在时**不该**藏 —— 框是输入框的容器。
  */
-export function selectComposerFullyHidden(state: AppState): boolean {
+export function selectComposerFullyHidden(state: Pick<AppState, 'displayByMode' | 'uiMode' | 'embedded'>): boolean {
     const d = selectDisplay(state);
     if (d.composerText || d.composerUpload) return false;
     const iconKeys = (DISPLAY_TOGGLES as Array<{ key: string; group: string }>)
@@ -255,7 +255,7 @@ export function selectComposerFullyHidden(state: AppState): boolean {
  * 六个模式**全都**把文本区与上传区关掉了 —— 即「纯预览模式」。
  * ⚠️ 模式列表**现取**（不要在模块顶层算成常量）：见 meta.ts 的循环依赖说明。
  */
-export function selectComposerDisabledEverywhere(state: AppState): boolean {
+export function selectComposerDisabledEverywhere(state: Pick<AppState, 'displayByMode'>): boolean {
     return MODES_META.map((m) => m.key).every((mode) => {
         const cfg = state.displayByMode[mode] || {};
         const off = (key: string) => (key in cfg ? cfg[key] : (DEFAULT_DISPLAY as Record<string, boolean>)[key]) === false;
@@ -264,7 +264,7 @@ export function selectComposerDisabledEverywhere(state: AppState): boolean {
 }
 
 /** 深浅色策略解析成「现在是不是暗色」。 */
-export function selectUseDark(state: AppState): boolean {
+export function selectUseDark(state: Pick<AppState, 'dark'>): boolean {
     switch (state.dark) {
         case 'time': {
             const hour = new Date().getHours();
