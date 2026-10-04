@@ -3175,6 +3175,65 @@ if (entryViewFiles.length !== 1) {
   }
 }
 
+// ── 判据 37：重绘要**复用**卡片节点（理由见下）───────────────────────────────
+//
+// ⚠️★ 它钉的是 2026-10-04 Jonny 报的「列表每过一会儿就闪一下」：
+// `ReceiverEvent::Latency` **每轮 ping 都推一份**，RTT 本来就在抖 —— `store` 里那道
+// 「先比再写」的护拦对**会抖的数**天然无效，于是版本号每 ~1.4 秒前进一次。
+// 而从前 `renderTimeline` 是「清空 + 每张卡片重新 createElement」：
+// **图片节点被丢掉再造**（浏览器要重新解码、重新画），屏幕就闪一下。
+//
+// ⚠️ 判据只能钉**形状**（真行为在真浏览器台子里：跨一次版本号变化，同一张卡片
+// 必须是**同一个节点**）。这里钉的是「那条路还在不在」。
+{
+  const problems = [];
+  const bareJs = stripJs(js);
+  const timelineFn = /function renderTimeline\(state\)[\s\S]*?\n\}/.exec(bareJs)?.[0] ?? '';
+  if (!timelineFn) {
+    problems.push('找不到 `renderTimeline`');
+  } else {
+    if (!/reconcileChildren\(host, fresh\)/.test(timelineFn)) {
+      problems.push('`renderTimeline` 没有走 `reconcileChildren` —— 又回到「整列重建」了'
+        + '（图片节点被丢掉再造，每 1.4 秒闪一下）');
+    }
+    // ⚠️★ 「先清空」那两种写法都要认出来：`textContent = ''` 与 `replaceChildren()`。
+    // ⚠️ 注意 `stripJs` 把字符串字面量包成了 `\u0000…\u0000`（`''` 在这里是 `\u0000\u0000`）
+    // —— 直接写 `/textContent = ''/` **永远匹配不上**，那正是这条判据第一版的样子
+    //（变异验证抓到：把清空那句加回来，判据照样全绿）。
+    if (/\.textContent\s*=\s*\u0000|\.replaceChildren\(\)/.test(timelineFn)) {
+      problems.push('`renderTimeline` 里还有「先清空」那句（`textContent = \'\'` / `replaceChildren()`）'
+        + ' —— 清空之后再填就是重建，图片会被重新拉一遍');
+    }
+  }
+  const cardsFn = /function timelineCards\(host, state\)[\s\S]*?\n\}/.exec(bareJs)?.[0] ?? '';
+  if (!cardsFn) {
+    problems.push('找不到 `timelineCards` —— 复用那一段没有落点');
+  } else if (!/cardSignatures\.get\(node\)/.test(cardsFn) || !/reusable/.test(cardsFn)) {
+    problems.push('`timelineCards` 没有按签名挑可复用的节点 —— 那还是每拍重建');
+  }
+  const sigFn = /function entrySignature\(entry\)[\s\S]*?\n\}/.exec(bareJs)?.[0] ?? '';
+  if (!sigFn) {
+    problems.push('找不到 `entrySignature` —— 没有「这张卡还一样吗」的判据');
+  } else {
+    for (const [needle, why] of [
+      ['openedIds', '展开态变了却不重画（展开之后过一会儿自己收起来）'],
+      ['actionViews', '动作结果变了却不重画（跑出来的结果不显示）'],
+      ['previewNeedsToken', '「这一条要换令牌」变了却不重画'],
+    ]) {
+      if (!sigFn.includes(needle)) {
+        problems.push(`\`entrySignature\` 里没有 \`${needle}\` —— ${why}`);
+      }
+    }
+  }
+  if (problems.length) {
+    failed = true;
+    console.error(`✗ 判据 37：列表重绘没有复用节点（${problems.length} 处）：`);
+    for (const one of problems) console.error(`    · ${one}`);
+  } else {
+    console.log('· 判据 37：时间线按签名复用卡片节点（版本号变了也不重建没有变化的那几张）。');
+  }
+}
+
 if (cssOnly.length) {
   console.log(`· ${cssOnly.length} 个 id 只被选择器用（形如 #id { … }），正常：${cssOnly.join('、')}`);
 }if (dynamicPrefixes.size) {

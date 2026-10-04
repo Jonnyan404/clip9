@@ -1960,19 +1960,17 @@ function renderRooms(state) {
 
 function renderTimeline(state) {
   const host = el('timeline');
-  // ⚠️★ 先记「刚才是不是贴在底部」，**再**清空 —— 清空之后 `scrollHeight` 已经是 0，
+  // ⚠️★ 先记「刚才是不是贴在底部」，**再**动 DOM —— 清空之后 `scrollHeight` 已经是 0，
   // 那时候判会永远算出「贴底」，等于没判。
   //
   // ⚠️ 只有贴底时才自动滚：无条件滚的话，用户往上翻着读历史时，
   // 来一条新消息就把他**拽回底部**。那比「不自动滚」烦得多（「我在看旧的，它一直弹走」）。
   const wasPinned = host.scrollHeight - host.scrollTop - host.clientHeight < 24;
-  host.textContent = '';
   const room = state.rooms[state.selected];
+  const fresh = [];
   if (!room) {
-    host.append(h('div', 'empty', t('没有房间。')));
-    return;
-  }
-  if (!state.entries.length) {
+    fresh.push(h('div', 'empty', t('没有房间。')));
+  } else if (!state.entries.length) {
     // ⚠️ 「还没加载」与「这个房间确实是空的」**必须**分开说 ——
     // 两种都画成空列表的话，用户会以为功能坏了。
     // ⚠️ 「还没加载」那句**不能**再说「点右上角刷新」：那个按钮按界面稿删掉了
@@ -1980,19 +1978,108 @@ function renderTimeline(state) {
     // ⚠️★ 三态（2026-09-30）：取失败过要说「取不到」并告诉用户**怎么再试**
     //（点一下这个房间 = 壳里那条 `ByUser`）—— 否则它会永远写着「正在取…」，
     // 而那是假话（自动重试已经停了，见 `ensureHistory`）。
-    host.append(h('div', 'empty', room.historyFailed
+    fresh.push(h('div', 'empty', room.historyFailed
       ? t('这个房间的历史取不到（多半是连不上服务端）—— 点一下这个房间再试一次。')
       : room.historyLoaded
         ? t('这个房间还没有内容。')
         : t('正在取这个房间的历史…')));
-    return;
+  } else {
+    fresh.push(...timelineCards(host, state));
   }
-  state.entries.forEach((entry) => host.append(renderEntry(entry)));
-  // ⚠️★ 「正在发送」那几张**排在末尾**：新内容本来就出现在末尾，而用户按下发送之后
-  // 视线就在那儿。放在顶部的话，他会先看到一张新卡片从上面长出来（那不像「我发的」）。
-  (state.uploads || []).forEach((upload) => host.append(renderUpload(upload)));
+  reconcileChildren(host, fresh);
   // 新的内容在末尾 → 贴底时跟到底（用户刚复制的东西要立刻看见）。
   if (wasPinned) host.scrollTop = host.scrollHeight;
+}
+
+/** 已经画出来的卡片各自的**签名**（节点 → 它就是照哪一份内容画的）。
+ *
+ * ⚠️ 用 `WeakMap` 而不是往节点上写个属性：签名可能很长（含正文），
+ * 而节点被丢掉时这张表也该跟着放掉 —— `WeakMap` 正好是这个语义。
+ */
+const cardSignatures = new WeakMap();
+
+/** 一张卡片的**签名**：只要它不变，那张卡就不必重建。
+ *
+ * ⚠️★ 签名里要有什么 = **`renderEntry` 读过的东西**（外加那几份参与渲染的页面状态：
+ * 展开过没有、动作结果是什么）。往 `renderEntry` 里加一处读，就要往这里加一处 ——
+ * 漏了的表现是「那一处变了、卡片不更新」，很轻，但很难查。
+ * ⚠️ 正文（`entry.text`）也算进去：动作结果、展开的那份都在别处，但原文变了
+ *（同一条被 `update` 改过）时必须重画。
+ */
+function entrySignature(entry) {
+  const viewed = actionViews.get(entry.id);
+  const common = [
+    entry.id, entry.kind, entry.mine ? 'me' : '', entry.device, entry.timestamp,
+    entry.fromClipboard ? 'cb' : '', entry.automation ? 'auto' : '',
+    entry.late ? 'late' : '', entry.scheduledAt,
+  ];
+  const own = entry.kind === 'file'
+    ? [entry.fileName, entry.fileSize, entry.previewUrl, entry.previewNeedsToken ? 'tok' : '']
+    : [
+      entry.text,
+      entry.textBytes,
+      entry.truncated ? 'tr' : '',
+      openedIds.has(entry.id) ? 'open' : '',
+      openedBodies.get(entry.id) ?? '',
+      viewed ? `act\u0000${viewed.label}\u0000${viewed.html ? viewed.htmlText : viewed.output}` : '',
+    ];
+  return common.concat(own).join('\u0000');
+}
+
+/** 时间线要画的那几张卡片 —— **能复用就复用原来的节点**。
+ *
+ * ⚠️★ 为什么非复用不可（2026-10-04，Jonny：「桌面端列表现在每过一会儿就会闪一下」）：
+ * 从前每一拍都 `replaceChildren`，而每张卡片都是**新 `createElement` 出来的**。
+ * 而版本号**每 ~1.4 秒就会前进一次**：`ReceiverEvent::Latency` 每轮 ping 都推一份，
+ * RTT 本来就在抖，`store` 里那道「先比再写」的护拦对**会抖的数**天然无效 ——
+ * 于是每 1.4 秒整列重建一次，**图片节点被丢掉再造**（浏览器要重新解码、重新画），
+ * 屏幕就闪一下。复用一个节点时图片不会被重新拉（元素没变，资源还在）。
+ */
+function timelineCards(host, state) {
+  const wanted = new Map();
+  state.entries.forEach((entry) => wanted.set(String(entry.id), entrySignature(entry)));
+
+  // 现有节点里，签名**没变**的那些可以留着用（按 `data-id` 找）。
+  const reusable = new Map();
+  for (const node of host.children) {
+    const id = node.dataset ? node.dataset.id : '';
+    if (!id || cardSignatures.get(node) !== wanted.get(id)) continue;
+    reusable.set(id, node);
+  }
+
+  const fresh = state.entries.map((entry) => {
+    const id = String(entry.id);
+    const kept = reusable.get(id);
+    if (kept) return kept;
+    const node = renderEntry(entry);
+    cardSignatures.set(node, wanted.get(id));
+    return node;
+  });
+  // ⚠️★ 「正在发送」那几张**排在末尾**：新内容本来就出现在末尾，而用户按下发送之后
+  // 视线就在那儿。放在顶部的话，他会先看到一张新卡片从上面长出来（那不像「我发的」）。
+  // ⚠️ 它们**不复用**：进度每一片都在变，而重造一张只有两行字的卡片没有代价。
+  (state.uploads || []).forEach((upload) => fresh.push(renderUpload(upload)));
+  return fresh;
+}
+
+/** 把 `host` 的子节点换成 `fresh`，**一个都没变就不动它**。
+ *
+ * ⚠️ 顺序也要比：复用回来的节点可能换了位置（撤销 / 清空之后）——
+ * 逐个 `===` 比一遍最省事，也比「算一遍序列化」便宜得多。
+ * ⚠️★ 被丢掉的那些节点要**断开预览观察器**（见 `whenVisible`）：
+ * `IntersectionObserver` 会一直拽着它的目标不放。
+ */
+function reconcileChildren(host, fresh) {
+  const keep = new Set(fresh);
+  for (const node of host.children) {
+    if (keep.has(node) || !node.__previewObserver) continue;
+    node.__previewObserver.disconnect();
+    node.__previewObserver = null;
+  }
+  const same = host.children.length === fresh.length
+    && fresh.every((node, index) => host.children[index] === node);
+  if (same) return;
+  host.replaceChildren(...fresh);
 }
 
 /** 一张**正在发送**的卡片（带进度条）。
