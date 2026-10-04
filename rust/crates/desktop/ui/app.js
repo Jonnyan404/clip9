@@ -819,6 +819,9 @@ const ICON_PATHS = {
   // 下载：箭头落进托盘（Feather 的 `download`）
   download: '<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>'
     + '<polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/>',
+  // 放大：四角向外（Feather 的 `maximize-2`）
+  expand: '<polyline points="15 3 21 3 21 9"/><polyline points="9 21 3 21 3 15"/>'
+    + '<line x1="21" y1="3" x2="14" y2="10"/><line x1="3" y1="21" x2="10" y2="14"/>',
   // 分享：一个向上的箭头从盒子里出去
   share: '<path d="M4 12v8a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-8"/>'
     + '<polyline points="16 6 12 2 8 6"/><line x1="12" y1="2" x2="12" y2="15"/>',
@@ -947,7 +950,10 @@ function mediaPreview(entry) {
     // ⚠️★ 换成文件行，而不是留一个破图在那儿 —— 见上面那条注释。
     media.replaceWith(fileRow(entry));
   });
-  media.addEventListener('click', () => openLightbox(entry));
+  // ⚠️★ 视频**不挂**这个点击（2026-10-04 Jonny：「开始/暂停按钮会触发大屏预览，
+  // 导致操作冲突」）：那个元素自己带着**播放条**，整块点击区是**它的**；
+  // 视频的大号预览走卡片动作里那颗「放大」（`entryActions` 里的 `expand`）。
+  if (!isVideo) media.addEventListener('click', () => openLightbox(entry));
   loadPreviewSrc(media, entry);
   return media;
 }
@@ -1309,19 +1315,26 @@ function entryActions(entry) {
     });
   }
 
+  // ⚠️★ **文件条目没有复制**（2026-10-04）：
+  //   · 它根本没有正文（`EntryView::text` 对文件条目是空串），`copy_entry` 于是走到
+  //     `copy_to_clipboard("")` —— 那个函数**空串直接 return**，所以那是一颗
+  //     **点了没反应**的按钮（这个项目最忌讳的一类）；
+  //   · 网页版也一致：`File.vue` 那一排只有下载 / 预览 / 分享 / 删除，没有复制。
+  // ⚠️ 于是「复制动作的结果」那条分支也只在文本条目上出现（动作库本来就只给文本条目）。
   const viewed = actionViews.get(entry.id);
-
-  // ⚠️★ 跑过动作时，📋 复制的是**卡片上那份结果**（`copy_to_clipboard` 直接收文本）。
-  // 反过来（还去复制原文）的症状是「屏幕上明明是天梯图/大写的，粘出来是原来的」——
-  // 而复制这条命令在文档里写的就是「复制这一条」，不复制「你看的那一份」是说不通的。
-  add('copy', viewed ? t('复制动作的结果') : t('复制这条'), (button) => {
-    const copy = viewed
-      ? () => invoke('copy_to_clipboard', { text: viewed.output })
-      : () => invoke('copy_entry', { id: entry.id });
-    once(button, copy).catch((error) => {
-      showNotice('error', t('复制不了：{error}', { error: errorText(error) }));
+  if (entry.kind === 'text') {
+    // ⚠️★ 跑过动作时，📋 复制的是**卡片上那份结果**（`copy_to_clipboard` 直接收文本）。
+    // 反过来（还去复制原文）的症状是「屏幕上明明是天梯图/大写的，粘出来是原来的」——
+    // 而复制这条命令在文档里写的就是「复制这一条」，不复制「你看的那一份」是说不通的。
+    add('copy', viewed ? t('复制动作的结果') : t('复制这条'), (button) => {
+      const copy = viewed
+        ? () => invoke('copy_to_clipboard', { text: viewed.output })
+        : () => invoke('copy_entry', { id: entry.id });
+      once(button, copy).catch((error) => {
+        showNotice('error', t('复制不了：{error}', { error: errorText(error) }));
+      });
     });
-  });
+  }
 
   // 动作库：只有文本条目才有（文件条目的正文是一串文件名，跑「转大写」没有意义）。
   if (entry.kind === 'text') {
@@ -1342,6 +1355,13 @@ function entryActions(entry) {
     add('download', t('存到下载目录，并在文件管理器里选中它'), (button) => {
       once(button, () => saveEntryFile(entry));
     });
+    // ⚠️★ **视频的大号预览走这一颗**（2026-10-04 Jonny 拍的）：
+    // 卡片里的视频**保留播放条**（点一下 = 播 / 停），而「点一下开大屏」那条手势在
+    // 视频上会与播放条**抢同一块点击区** —— 按「开始/暂停」也弹出大屏，两件事冲突。
+    // ⚠️ 图片不受影响（它没有播放条），照旧**点一下就放大**，所以这里只为视频加。
+    if (VIDEO_SUFFIX.test(entry.fileName || '')) {
+      add('expand', t('打开大号预览'), () => openLightbox(entry));
+    }
   }
 
   // ⚠️★ 以前这里是「点一下直接建一个默认链接」—— 网页那颗分享按钮有完整的配置画面

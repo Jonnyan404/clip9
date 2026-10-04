@@ -832,6 +832,7 @@
       '已存到 {path}': 'Saved to {path}',
       '存不下来：{error}': 'Could not save it: {error}',
       '存到下载目录，并在文件管理器里选中它': 'Save it into the download folder and select it in the file manager',
+      '打开大号预览': 'Open the large preview',
       '取不到预览地址：{error}': 'Could not get a preview address: {error}',
       '点开播放（原始大小）': 'Click to play it',
       '正在载入…': 'Loading…',

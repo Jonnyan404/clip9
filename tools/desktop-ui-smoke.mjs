@@ -2774,6 +2774,46 @@ if (entryViewFiles.length !== 1) {
     if (!/saveEntryFile\(entry\)/.test(actionsFn)) {
       problems.push('那颗下载没有接上 `saveEntryFile` —— 点了没反应');
     }
+    // ⚠️★ **视频**要有那颗「放大」：卡片里的视频保留播放条，所以「点一下开大屏」
+    // 那条手势在它身上会与播放条抢点击区（Jonny 2026-10-04 报的那个 bug）。
+    if (!/add\(\u0000?expand\u0000?[\s\S]{0,80}openLightbox\(entry\)/.test(actionsFn)) {
+      problems.push('视频条目没有那颗「放大」—— 那就只剩「点视频开大屏」那条手势了，'
+        + '而它与播放条冲突（按开始/暂停也会弹大屏）');
+    }
+    // ⚠️★ 下面两条是**位置性**的：光看「有没有」不够，要看它在**哪一支**里。
+    const blockOf = (src, header) => {
+      const at = src.indexOf(header);
+      if (at < 0) return '';
+      const open = src.indexOf('{', at);
+      if (open < 0) return '';
+      let depth = 0;
+      for (let i = open; i < src.length; i += 1) {
+        if (src[i] === '{') depth += 1;
+        else if (src[i] === '}') {
+          depth -= 1;
+          if (depth === 0) return src.slice(open, i + 1);
+        }
+      }
+      return '';
+    };
+    const textBranch = blockOf(actionsFn, 'if (entry.kind === \u0000text\u0000)');
+    const fileBranch = blockOf(actionsFn, 'if (entry.kind === \u0000file\u0000)');
+    if (!textBranch.includes('add(\u0000copy\u0000')) {
+      problems.push('文本条目那支里没有 📋 复制 —— 文本条目复制不了');
+    }
+    if (fileBranch.includes('add(\u0000copy\u0000')) {
+      problems.push('文件条目那支里有 📋 复制 —— 那是一颗**点了没反应**的按钮：'
+        + '文件条目没有正文（`EntryView::text` 是空串），而 `copy_to_clipboard` 对空串**直接 return**'
+        + '（网页版 `File.vue` 也没有这一颗）');
+    }
+    if (!fileBranch.includes('add(\u0000download\u0000')) {
+      problems.push('文件条目那支里没有那颗下载');
+    }
+  }
+  // ⚠️★ 视频**不许**挂「点一下开大屏」：那个元素自己带播放条，整块点击区是它的。
+  if (!/if \(!isVideo\) media\.addEventListener\(\u0000?click/.test(media)) {
+    problems.push('视频也挂了「点一下开大屏」—— 与播放条抢点击区'
+      + '（症状：按开始/暂停也弹出大屏）');
   }
   if (!/function saveEntryFile\(entry\)/.test(bare)) {
     problems.push('找不到 `saveEntryFile` —— 文件行与那颗下载应当**共用同一个**存盘入口'
@@ -2783,9 +2823,11 @@ if (entryViewFiles.length !== 1) {
   // 普通属性喂饱（`{ upload: false, download: false }` 那个字面量就是），
   // 于是「图标被删掉」照样全绿（变异验证抓到的）。
   const iconBlock = /const ICON_PATHS = \{[\s\S]*?\n\};/.exec(bare)?.[0] ?? '';
-  if (!/^\s*download\s*:/m.test(iconBlock)) {
-    problems.push('`ICON_PATHS` 里没有 `download` 那个图标 —— 那一排图标会缺一颗'
-      + '（`icon()` 认不出名字会**当场抛**，整条时间线都画不出来）');
+  for (const name of ['download', 'expand']) {
+    if (!new RegExp(`^\\s*${name}\\s*:`, 'm').test(iconBlock)) {
+      problems.push(`\`ICON_PATHS\` 里没有 \`${name}\` 那个图标 —— 那一排会缺一颗`
+        + '（`icon()` 认不出名字会**当场抛**，整条时间线都画不出来）');
+    }
   }
   if (!/\.card video\.preview/.test(styleText)) {
     problems.push('`index.html` 里没有 `.card video.preview` 那条规则 —— 视频会按原始尺寸把卡片撑破');
