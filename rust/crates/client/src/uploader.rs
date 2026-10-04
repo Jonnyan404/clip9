@@ -685,6 +685,7 @@ pub(crate) async fn post_to_channel(
             &channel.server,
             &channel.room,
             device_name,
+            &cfg.client_id,
         )?),
         UploadPayload::LargeFile { .. } => unreachable!("上面已经 return 了"),
     };
@@ -794,6 +795,7 @@ async fn upload_chunked(
                 &channel.server,
                 &channel.room,
                 &cfg.device_name,
+                &cfg.client_id,
             )?)
             .header(CONTENT_TYPE, "text/plain")
             .body(name.to_owned()),
@@ -867,6 +869,7 @@ async fn upload_chunked(
             &channel.server,
             &channel.room,
             &cfg.device_name,
+            &cfg.client_id,
             &uuid,
         )?),
         token,

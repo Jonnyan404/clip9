@@ -84,23 +84,49 @@ pub fn text_url(
 }
 
 /// `POST /upload` —— 文件与**图片**上行（图片走文件那条路，见 [`crate::UploadKind`]）。
-pub fn upload_url(server: &str, room: &str, device_name: &str) -> Result<Endpoint, Msg> {
-    api_url(server, "/upload", &[("room", room), ("name", device_name)])
+///
+/// ⚠️★ **`client` 必须带**（2026-10-04 补）：服务端拿它填 `senderClientID`，而界面用它
+/// 判「这条是不是我发的」（`EntryView::mine` → 卡片靠左还是靠右）。少了它，自己发的
+/// **文件**会排到「别人那一边」—— 而文本那条一直带着，于是只有文件看着不对。
+/// ⚠️ 与 `text_url` 同一套：`name`（给人看的设备名）与 `client`（程序判归属）都要带。
+/// 空值也带 —— 「空」与「没这个参数」含义不同（服务端对 `name` 空会去推 User-Agent）。
+pub fn upload_url(
+    server: &str,
+    room: &str,
+    device_name: &str,
+    client_id: &str,
+) -> Result<Endpoint, Msg> {
+    api_url(
+        server,
+        "/upload",
+        &[("room", room), ("name", device_name), ("client", client_id)],
+    )
 }
 
 /// `POST /upload/chunk` —— **分片上传的初始化**（body 是文件名，回一个 uuid）。
 ///
 /// ⚠️★ 这一条与 `/upload` **是同一个 handler**，靠 `Content-Type: text/plain`（**全等**）
 /// 在服务端分叉（`files.rs`）。所以这里只给地址，那一个头由 `uploader` 自己带。
-pub fn chunk_init_url(server: &str, room: &str, device_name: &str) -> Result<Endpoint, Msg> {
+///
+/// ⚠️★ `client` 同样必须带（理由见 [`upload_url`]）：收尾那一步才是真正**入库广播**的
+/// 那一步，服务端是在那里填 `senderClientID` 的 —— 少一个参数，大文件就又排到左边去了。
+pub fn chunk_init_url(
+    server: &str,
+    room: &str,
+    device_name: &str,
+    client_id: &str,
+) -> Result<Endpoint, Msg> {
     api_url(
         server,
         "/upload/chunk",
-        &[("room", room), ("name", device_name)],
+        &[("room", room), ("name", device_name), ("client", client_id)],
     )
 }
 
 /// `POST /upload/chunk/:uuid` —— **追加一片**（body 就是那一片的字节）。
+///
+/// ⚠️ 它**不带 `client`** 也不带房间：身份（房间 / 设备 / 客户端 id）在初始化那一步已经
+/// 记在服务端的文件登记里了，而这一条只是往文件后面追加字节。
 ///
 /// ⚠️ 房间**不带**：服务端按 uuid 查到文件自己登记的那个房间
 ///（`files.rs` 的 `file_room`）—— 客户端传什么不算数。
@@ -117,12 +143,13 @@ pub fn chunk_finish_url(
     server: &str,
     room: &str,
     device_name: &str,
+    client_id: &str,
     uuid: &str,
 ) -> Result<Endpoint, Msg> {
     api_url(
         server,
         &format!("/upload/finish/{uuid}"),
-        &[("room", room), ("name", device_name)],
+        &[("room", room), ("name", device_name), ("client", client_id)],
     )
 }
 
@@ -247,7 +274,7 @@ mod tests {
     fn room_is_always_sent_explicitly() {
         for url in [
             text_url("http://h:9501", "default", "", "").unwrap(),
-            upload_url("http://h:9501", "default", "").unwrap(),
+            upload_url("http://h:9501", "default", "", "client-1").unwrap(),
             history_url("http://h:9501", "default", 50).unwrap(),
             ws_url("http://h:9501", "default").unwrap(),
         ] {
@@ -267,7 +294,7 @@ mod tests {
         // 真实用法里凭据只在请求头里 —— 这些端点根本没有「塞凭据」的参数槽。
         let urls = [
             text_url("http://h:9501", "work", "Mac", "client-1").unwrap(),
-            upload_url("http://h:9501", "work", "Mac").unwrap(),
+            upload_url("http://h:9501", "work", "Mac", "client-1").unwrap(),
             history_url("http://h:9501", "work", 50).unwrap(),
             ws_url("http://h:9501", "work").unwrap(),
         ];
@@ -303,6 +330,40 @@ mod tests {
             .collect();
         assert_eq!(pairs.get("name").map(String::as_str), Some("书房的 Mac"));
         assert_eq!(pairs.get("client").map(String::as_str), Some("uuid-42"));
+    }
+
+    /// ⚠️★ **上传那三条也要带 `client`**（2026-10-04 修的那条）。
+    ///
+    /// 服务端拿 `client` 填 `senderClientID`，界面据此判「这条是不是我发的」
+    /// （`EntryView::mine` → 卡片靠左还是靠右）。**文本那条一直带着，只有文件没带** ——
+    /// 症状精确得有点好笑：「我发的文字在右边，我发的文件跑到左边去了」。
+    /// ⚠️ 分片那条的收尾（`finish`）才是真正入库广播的一步，所以它也必须带。
+    #[test]
+    fn the_upload_carries_the_client_id() {
+        let client_of = |url: &url::Url| {
+            url.query_pairs()
+                .find(|(k, _)| k == "client")
+                .map(|(_, v)| v.into_owned())
+        };
+        assert_eq!(
+            client_of(&upload_url("http://h:9501", "work", "Mac", "client-1").unwrap()).as_deref(),
+            Some("client-1"),
+            "整份上传要带 client（不然自己发的文件排到别人那边）"
+        );
+        assert_eq!(
+            client_of(&chunk_init_url("http://h:9501", "work", "Mac", "client-1").unwrap())
+                .as_deref(),
+            Some("client-1"),
+            "分片初始化要带 client"
+        );
+        assert_eq!(
+            client_of(
+                &chunk_finish_url("http://h:9501", "work", "Mac", "client-1", "u-1").unwrap()
+            )
+            .as_deref(),
+            Some("client-1"),
+            "分片收尾要带 client —— 入库广播是在那一步"
+        );
     }
 
     /// ⚠️ 协议要跟着换：`https` → `wss`。不换的表现是「https 上 WebSocket 静默连不上」。
