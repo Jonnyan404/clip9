@@ -58,8 +58,10 @@ const RANGE = rangeFlag >= 0 ? argv[rangeFlag + 1] : null;
 
 const STEPS = [
   // frontend 作业
-  { job: 'frontend', cwd: 'web-vue3', cmd: 'npm ci', skip: '本机不重装依赖（见抬头）' },
-  { job: 'frontend', cwd: 'web-vue3', cmd: 'npm run build', slow: true },
+  { job: 'frontend', cwd: 'web', cmd: 'npm ci', skip: '本机不重装依赖（见抬头）' },
+  { job: 'frontend', cwd: 'web', cmd: 'npm run build', slow: true },
+  // ⚠️ 2026-10-04 起生产前端是 `web/`（React）；`web-vue3`（Vue）只留作比对、**不再构建**，
+  // 但它的界面约定自检留着（只读源码文本、不需要 node_modules）。
   { job: 'frontend', cwd: 'web-vue3', cmd: 'node scripts/check-display-semantics.mjs' },
   { job: 'frontend', cmd: 'node tools/sync-web-assets.mjs --check' },
   { job: 'frontend', cmd: 'node tools/sync-action-catalog.mjs --check' },
@@ -150,17 +152,17 @@ if (!ciCode.includes('tools/ci-local.mjs')) {
 for (const s of STEPS) {
   const m = s.cmd.match(/(?:node )?((?:tools|scripts)\/[A-Za-z0-9_.-]+\.mjs)/);
   if (!m) continue;
-  const rel = s.cwd === 'web-vue3' ? join('web-vue3', m[1]) : m[1];
+  const rel = s.cwd ? join(s.cwd, m[1]) : m[1];
   if (!existsSync(join(ROOT, rel))) {
     fail(`判据 C：清单里的 ${rel} 不在了`, '文件改名 / 搬走了 —— 改清单，别让它静默跳过');
   }
 }
 if (!failures.some((f) => f.label.startsWith('判据 C'))) console.log('✓ 判据 C：清单里的脚本都在');
 
-// ── 判据 D：`web-vue3/node_modules` 在不在（只提示）────────────────────────────
+// ── 判据 D：`web/node_modules` 在不在（只提示）──────────────────────────────
 
-if (!existsSync(join(ROOT, 'web-vue3', 'node_modules'))) {
-  notes.push('web-vue3/node_modules 不在 —— `npm run build` 会失败，先在 web-vue3 里 npm ci');
+if (!existsSync(join(ROOT, 'web', 'node_modules'))) {
+  notes.push('web/node_modules 不在 —— `npm run build` 会失败，先在 web 里 npm ci');
 }
 
 if (CHECK_ONLY) {

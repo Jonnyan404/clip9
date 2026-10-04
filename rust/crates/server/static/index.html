@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="zh" data-build-id="46e082f0">
+<html lang="zh" data-build-id="d8ad36fa">
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=0">
@@ -7,25 +7,29 @@
     <link rel="apple-touch-icon" href="./apple-touch-icon.png">
     <meta name="theme-color" content="#1e88e5">
     <!-- ⚠️★ 「这是 clip9 的网页版」的**身份标记**（桌面端嵌 iframe 之前要读它）。
-         `content` 是**协议版本**，与 `src/host-bridge.js` 的 `HOST_PROTOCOL` 一个数。
+         `content` 是**协议版本**，与 `src/services/hostBridge.ts` 的 `HOST_PROTOCOL` 一个数。
          ⚠️ 桌面端读的是**这个 HTML 源文件**（不是渲染后的 DOM），所以放在模板里就够。
          ⚠️★ 老版本的服务端没有这一行 → 桌面端探测不到 → 显示「这个站点不支持内嵌网页 ·
          请把服务器更新到 clip9」，而不是傻傻地把一个陌生页面嵌进去。改协议时要连
-         `host-bridge.js` 的 `HOST_PROTOCOL` 一起改。 -->
+         `hostBridge.ts` 的 `HOST_PROTOCOL` 一起改。
+         ⚠️ 这一行与 `<html data-build-id>` 都是**服务端外壳注入契约**的一部分
+         （见 rust/crates/server/src/spa_shell.rs），重写前端时**形状不许改**。 -->
     <meta name="clip9-web" content="1">
     <title>clip9</title>
     <style>
         html, body { height: 100%; margin: 0; }
     </style>
-  <script type="module" crossorigin src="./assets/index-B0DRmUvn.js"></script>
-  <link rel="modulepreload" crossorigin href="./assets/vue-core-0sVBZCoF.js">
-  <link rel="modulepreload" crossorigin href="./assets/vendor-XysI45BE.js">
-  <link rel="modulepreload" crossorigin href="./assets/vuetify-BurkFjyD.js">
-  <link rel="modulepreload" crossorigin href="./assets/i18n-B2E8evwD.js">
-  <link rel="stylesheet" crossorigin href="./assets/vuetify-DFw_bfLT.css">
-  <link rel="stylesheet" crossorigin href="./assets/index-Cm-S1YT7.css">
+  <script type="module" crossorigin src="./assets/index-j2rIhOi6.js"></script>
+  <link rel="modulepreload" crossorigin href="./assets/react-core-CC8OCTbx.js">
+  <link rel="modulepreload" crossorigin href="./assets/mui-BxFaDncX.js">
+  <link rel="modulepreload" crossorigin href="./assets/i18n-BE673QtD.js">
+  <link rel="modulepreload" crossorigin href="./assets/vendor-DPh3fjEz.js">
+  <link rel="stylesheet" crossorigin href="./assets/mui-f3sFGprf.css">
+  <link rel="stylesheet" crossorigin href="./assets/index-COXjRxV1.css">
 <link rel="manifest" href="./manifest.webmanifest"></head>
 <body>
+    <!-- ⚠️ 挂载点 id 保持 `app` 不变：服务端外壳（spa_shell.rs）与 PWA 导航兜底都按
+         现有产物形状工作，改 id 等于引入一处「改错不报错」的隐性契约破坏。 -->
     <div id="app"></div>
 </body>
 </html>

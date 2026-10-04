@@ -1,19 +1,22 @@
 #!/usr/bin/env node
-// 把 `web-vue3` 的构建产物同步进 `rust/crates/server/static/`（那一份会被**编进二进制**）。
+// 把 `web`（React 版前端）的构建产物同步进 `rust/crates/server/static/`（那一份会被**编进二进制**）。
+//
+// ⚠️★ 2026-10-04 起**生产前端是 `web/`（React 版）**；`web-vue3/`（Vue 版）只留作比对，不再入库。
+// 切换那一次改了本文件的 `FE` 与 `SOURCES`，并重跑了同步（`static/` 与清单都跟着换了一份）。
 //
 // 用法：
-//   node tools/sync-web-assets.mjs            # 从 web-vue3/dist 同步
+//   node tools/sync-web-assets.mjs            # 从 web/dist 同步
 //   node tools/sync-web-assets.mjs <源目录>    # 指定别的源
 //   node tools/sync-web-assets.mjs --check    # 只比对不写；不一致退出 1
 //
 // ⚠️★ 忘了同步是**无症状**的：编得过、跑起来也正常，只是界面永远停在上一版。
 //
-// ⚠️★ 而「逐字节比产物」**发现不了**这件事：`web-vue3/vite.config.js` 每次构建都注入一个
+// ⚠️★ 而「逐字节比产物」**发现不了**这件事：`web/vite.config.ts` 每次构建都注入一个
 // **随机** build id（那是故意的 —— 让 PWA 缓存失效、并能核对线上跑的是哪次构建），
-// 入口 chunk 又与 ShareView chunk 互相引用对方带 hash 的文件名，于是**每次构建的文件名都不同**。
+// 入口 chunk 又与 SharePage chunk 互相引用对方带 hash 的文件名，于是**每次构建的文件名都不同**。
 // 逐字节比 = 每次构建都红 = 没人会再看它。
 //
-// 所以这里比的是**前端源码的指纹**：同步时记进 `rust/crates/server/static.sync.json`，
+// 所以这里比的是**前端源码的指纹**：同步时记进 `rust/crates/server/static.sync-manifest`，
 // `--check` 重算一遍比对。源码没动就绿；动了没同步就红 —— 与随机盐、与构建平台都无关。
 //
 // ⚠️ 旧目录**挪**进系统临时目录，不用 `rm -rf`：这样「哪些文件没了」看得见。
@@ -46,11 +49,11 @@ const MANIFEST = join(ROOT, 'rust/crates/server/static.sync-manifest');
 const MANIFEST_HEADER = '# clip9 前端产物的同步清单 —— 由 tools/sync-web-assets.mjs 生成，别手改。';
 
 // 「前端源码」= 指纹算哪些东西。⚠️ 跳过 node_modules / dist / .vite（本机产物，不进指纹）。
-// ⚠️ 跳过 `web-vue3/public/shortcuts`：它是 `sync-shortcuts.mjs` 从 `shortcuts/` 生成的派生物，
+// ⚠️ 跳过 `web/public/shortcuts`：它是 `sync-shortcuts.mjs` 从 `shortcuts/` 生成的派生物，
 // 而 `shortcuts/` 本身已经在指纹里 —— 两头都算等于同一件事算两遍。
-const FE = join(ROOT, 'web-vue3');
+const FE = join(ROOT, 'web');
 const SOURCES = [
-  { label: 'web-vue3', dir: FE, skip: ['node_modules', 'dist', '.vite', 'public/shortcuts'] },
+  { label: 'web', dir: FE, skip: ['node_modules', 'dist', '.vite', 'public/shortcuts'] },
   { label: 'shortcuts', dir: join(ROOT, 'shortcuts'), skip: [] },
 ];
 
@@ -147,7 +150,7 @@ if (checkOnly) {
 if (!existsSync(join(source, 'index.html'))) {
   missing(
     `${source} 里没有 index.html —— 那不像一份前端产物。\n` +
-      '  先在 web-vue3 里构建：npm run build（或 DEPLOY_STATIC=1 npm run build）'
+      '  先在 web 里构建：npm run build（或 DEPLOY_STATIC=1 npm run build）'
   );
 }
 

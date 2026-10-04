@@ -1,10 +1,8 @@
 import { readFileSync, writeFileSync, readdirSync, statSync } from 'node:fs';
-import { execFileSync } from 'node:child_process';
 import { gzipSync, brotliCompressSync } from 'node:zlib';
-import { join, dirname } from 'node:path';
+import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-const here = dirname(fileURLToPath(import.meta.url));
 const distDir = fileURLToPath(new URL('./dist', import.meta.url));
 
 function compress(dir) {
@@ -23,16 +21,16 @@ function compress(dir) {
 
 compress(distDir);
 
-// 默认只压缩 dist，不动服务端的产物目录。
-//
-// 显式设置 DEPLOY_STATIC=1 时，把 dist 同步进 `rust/crates/server/static`（那一份会被
-// `include_bytes!` 编进 `clip9-server`）—— 委托给 `tools/sync-web-assets.mjs`，
-// 它才是「前端产物进服务端」的**唯一入口**（会挪旧目录、逐个报新增/改动/消失、带 `--check`）。
-// 两条路各写一份拷贝逻辑 = 同一个动作两处实现，不再加第三处。
+// ⚠️★ 2026-10-04：**这个前端已不是生产前端** —— 生产换成 `web/`（React 版），
+// 发布链路（`tools/sync-web-assets.mjs`）也已指向 `web/`。所以这里**刻意不再同步**：
+// 若照旧调 sync-web-assets，它会用默认源 `web/dist` 去覆盖 `rust/crates/server/static/`
+// —— 明明是在编 Vue 版、入库的却是 React 产物，症状极难查。
+// `web-vue3/` 现在只留作比对（见 dev-docs/specs/react-migration-plan.md 附四）。
 if (process.env.DEPLOY_STATIC === '1') {
-    execFileSync(process.execPath, [join(here, '..', 'tools', 'sync-web-assets.mjs')], {
-        stdio: 'inherit',
-    });
+    console.log(
+        '⚠️ web-vue3 已不是生产前端 —— DEPLOY_STATIC 在这里**不再同步**。\n' +
+            '   要发布前端请到 web/ 里跑：npm run deploy'
+    );
 } else {
     console.log(
         'after-build: gz/br generated in dist/. Set DEPLOY_STATIC=1 to copy into rust/crates/server/static.'
