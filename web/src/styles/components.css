@@ -91,6 +91,32 @@
     margin: 12px 0;
 }
 
+/* ── 工具栏（web-vue3/src/components/PageToolbar.vue）────────────────────
+   ⚠️★ 背景色是**按模式**给的，不能统一成一种：
+     · `--default`（标准模式 / 动作台）→ #f5f7fa，暗色 #1e1e24
+     · `--sticky`（便签墙）→ #f3ead2，暗色 #211d12
+     · `--glance` / `--board` → Vue **故意不给背景**（透明），让模式自己的底色透上来。
+   统一写 `background.paper` 会让后两个模式的顶栏变成一块白，跟 Vue 对不上。 */
+.page-toolbar--default {
+    background: #f5f7fa;
+    border-bottom: 1px solid rgba(148, 163, 184, 0.18);
+}
+
+.page-toolbar--sticky {
+    background: #f3ead2;
+    border-bottom: 1px solid rgba(120, 90, 40, 0.16);
+}
+
+.dark .page-toolbar--default {
+    background: #1e1e24;
+    border-bottom-color: rgba(148, 163, 184, 0.22);
+}
+
+.dark .page-toolbar--sticky {
+    background: #211d12;
+    border-bottom-color: rgba(238, 232, 214, 0.12);
+}
+
 /* ── 时间流：历史用量 chip（web-vue3 DefaultMode.vue 的 .timeline-panel__count-chip--overlay）──
    ⚠️ 它压在卡片上方，必须**有半透明底色 + 模糊**，否则底下的正文会透上来跟它叠在一起。 */
 .timeline-count-chip {

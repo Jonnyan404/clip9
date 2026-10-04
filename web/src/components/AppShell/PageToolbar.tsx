@@ -84,9 +84,10 @@ export function PageToolbar({ variant = 'default' }: { variant?: string }) {
                 position: 'sticky',
                 top: 0,
                 zIndex: 40,
-                bgcolor: 'background.paper',
-                borderBottom: 1,
-                borderColor: 'divider',
+                // ⚠️ 背景与下边框**不在这里**：它们按模式不同（见 styles/components.css 的
+                // `.page-toolbar--*`）—— Vue 里 default 是 #f5f7fa、sticky 是 #f3ead2，
+                // 而 glance / board **故意透明**（让模式自己的底色透上来）。
+                // 统一写 `background.paper` 会让这几个模式的顶栏变成一块白，跟 Vue 对不上。
             }}
         >
             {!collapsed && (
@@ -115,6 +116,10 @@ export function PageToolbar({ variant = 'default' }: { variant?: string }) {
                             <Chip
                                 size="small"
                                 variant="outlined"
+                                color="primary"
+                                // MUI 的 Chip 只有 filled / outlined（`tonal` 是 Vuetify 的），
+                                // 所以用主色的浅底补出那个观感 —— 房间名跟随主题色。
+                                sx={{ bgcolor: 'color-mix(in srgb, var(--mui-palette-primary-main) 12%, transparent)' }}
                                 onClick={actions.openPageQr}
                                 icon={<MdiIcon name={isProtected ? 'mdi-lock' : 'mdi-earth'} size={16} />}
                                 label={

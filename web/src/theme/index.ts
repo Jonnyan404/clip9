@@ -22,6 +22,9 @@ export function createAppTheme(primaryLight: string, primaryDark: string) {
                     primary: { main: primaryLight },
                     secondary: { main: '#424242' },
                     error: { main: '#ff5252' },
+                    // ⚠️ 页面底色跟随 Vue 版（App.vue 的 `.app-shell { background: #f4f7fb }`）——
+                    // MUI 默认是纯白，跟 Vue 的浅灰蓝对不上。
+                    background: { default: '#f4f7fb' },
                 },
             },
             dark: {
@@ -29,6 +32,8 @@ export function createAppTheme(primaryLight: string, primaryDark: string) {
                     primary: { main: primaryDark },
                     secondary: { main: '#424242' },
                     error: { main: '#ff5252' },
+                    // Vue：`.app-shell--dark { background: #0f172a }`
+                    background: { default: '#0f172a' },
                 },
             },
         },

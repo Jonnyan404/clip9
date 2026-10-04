@@ -331,7 +331,7 @@ export const UnifiedComposer = forwardRef<UnifiedComposerHandle>(function Unifie
                 )}
 
                 {progress && (
-                    <Box sx={{ pt: 1 }}>
+                    <Box sx={{ pt: 1, order: 4 }}>
                         <Typography variant="caption" color="text.secondary" sx={{ display: 'block', textAlign: 'right' }}>
                             {prettyFileSize(Math.min(uploadedSize, fileSize))} / {prettyFileSize(fileSize)} ({Math.round(uploadProgress * 100)}%)
                         </Typography>
@@ -341,9 +341,13 @@ export const UnifiedComposer = forwardRef<UnifiedComposerHandle>(function Unifie
                 {/* ⚠️ 页脚是**三列 grid**（对应 Vue 的 `minmax(0,1fr) auto minmax(0,1fr)`）：
                     图标组占第 2 列 → 视觉居中；发送按钮占第 3 列 → 右对齐。
                     用 flex + `flex:1` 撑开是做不到居中的（那样只会把图标推到右边）。 */}
+                {/* ⚠️★ 页脚必须显式 `order: 5`。上面那三个块用了 `order` 1/2/3 做「交换」，
+                    而**没写 order 的元素默认是 0** —— 于是页脚会被排到它们**前面**（跑到输入区顶部）。
+                    这是引入 order 交换时踩的坑：凡是同容器里有元素用了 order，其余元素都要显式给值。 */}
                 <Box
                     className="unified-composer__footer"
                     sx={{
+                        order: 5,
                         display: 'grid',
                         gridTemplateColumns: 'minmax(0, 1fr) auto minmax(0, 1fr)',
                         alignItems: 'center',
@@ -357,7 +361,7 @@ export const UnifiedComposer = forwardRef<UnifiedComposerHandle>(function Unifie
                     <Stack className="unified-composer__footer-icons" direction="row" alignItems="center" justifyContent="center" spacing={0.5} sx={{ gridColumn: 2, minWidth: 0 }}>
                     {display.composerDevice && (
                         <Tooltip title={t('connectedTotal', { count: devices.length })}>
-                            <Button className="unified-composer__device" size="small" startIcon={<MdiIcon name="mdi-laptop" size={16} />} onClick={() => setDeviceDialog(true)}>
+                            <Button className="unified-composer__device" size="small" sx={{ color: 'text.secondary' }} startIcon={<MdiIcon name="mdi-laptop" size={16} />} onClick={() => setDeviceDialog(true)}>
                                 {deviceStats.desktop} / {deviceStats.mobile} / {deviceStats.other}
                             </Button>
                         </Tooltip>
