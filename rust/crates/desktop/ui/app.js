@@ -1382,6 +1382,28 @@ function expandLabel(entry) {
       : t('展开');
 }
 
+/** 改一张卡片的高度时，把它**钉在同一个屏幕位置**。
+ *
+ * ⚠️★ 存在的理由：展开／收起会让这条消息的正文高度变几千像素，而 `#timeline` 是一次
+ * 可滚动的列表。紧跟着它下面的那些卡片会整体往上（或往下）**挪同样多** —— 浏览器的滚动位置
+ * （`scrollTop`）却原地不动，于是屏幕上剩下的完全是**另一段内容**。
+ * 收起一条长文时最明显：一按「收起」，视口立刻跳到很远的地方，用户找不到刚才那一条。
+ *
+ * ⚠️ 目标位置怎么算：
+ *   · 卡片的顶边**本来就在视口里**（最常见）→ 让它留在原处（钉在上一次那个 y 上）；
+ *   · 顶边**已经滚到视口上方**（长文读到一半再收起是这种）→ 把顶边贴到视口顶部。
+ *     关键是「定位到这一条」—— 停在别处和跳走一样糟，用户要找的是**那条消息**。
+ */
+function holdCardPosition(card, mutate) {
+  const host = el('timeline');
+  const view = host.getBoundingClientRect();
+  const before = card.getBoundingClientRect().top;
+  const wanted = before >= view.top ? before : view.top;
+  mutate();
+  const drift = card.getBoundingClientRect().top - wanted;
+  if (drift) host.scrollTop += drift;
+}
+
 /** 展开 / 收起一条。
  *
  * ⚠️★ 只改**这一张卡片**的 DOM，不触发整屏重绘；`openedIds` / `openedBodies` 才是状态，
@@ -1389,12 +1411,16 @@ function expandLabel(entry) {
  *
  * ⚠️★ **只有真被截断的才去取全文**（`entry.truncated`）：短消息本地摊开就够，
  * 省一次 IPC。判错的代价是「本地摊开却没内容」—— 而截断与否是壳算好给的，不会错。
+ *
+ * ⚠️ 两个方向都过一遍 `holdCardPosition`：展开同样会把下面的内容整段往下挪。
  */
 async function toggleEntry(card, entry, button) {
   const text = card.querySelector('.txt');
   if (openedIds.has(entry.id)) {
-    openedIds.delete(entry.id);
-    text.classList.remove('open');
+    holdCardPosition(card, () => {
+      openedIds.delete(entry.id);
+      text.classList.remove('open');
+    });
     button.textContent = expandLabel(entry);
     return;
   }
@@ -1413,8 +1439,10 @@ async function toggleEntry(card, entry, button) {
     button.disabled = false;
     text.textContent = openedBodies.get(entry.id);
   }
-  openedIds.add(entry.id);
-  text.classList.add('open');
+  holdCardPosition(card, () => {
+    openedIds.add(entry.id);
+    text.classList.add('open');
+  });
   button.textContent = expandLabel(entry);
 }
 

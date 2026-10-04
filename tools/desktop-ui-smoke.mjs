@@ -2315,6 +2315,67 @@ if (entryViewFiles.length !== 1) {
   }
 }
 
+// ── 判据 28：展开 / 收起之后，这条消息要**还在屏幕上**（理由见下）──────────────
+//
+// ⚠️★ 2026-10-03 加。正文被 CSS clamp 成 12 行，展开／收起会让这一张卡片差几千像素高。
+// 而 `#timeline` 是一整块可滚动区域：`scrollTop` 原地不动、内容却整体挪了那么多，
+// 于是屏幕上剩下的完全是**另一段**。收起一条长文时最明显 —— 一按「收起」就找不着那条了。
+//
+// 钉的是「两个方向都过一遍 `holdCardPosition`」这一件事：只钉展开或只钉收起，
+// 剩下的那个方向仍然丢人，而**没有报错**（滚走了而已）。
+{
+  const bareJs = stripComments(js).split('\u0000').join("'");
+  const problems = [];
+
+  const hold = /function holdCardPosition\(card, mutate\)\s*\{[\s\S]*?\n\}/.exec(bareJs)?.[0] ?? '';
+  if (!hold) {
+    problems.push('找不到 `holdCardPosition` —— 展开/收起之后视口会跳到别处（不报错，只是找不着那条）');
+  } else {
+    // ⚠️ 三条都要在：量**改之前**的顶边、改、再把顶边拨回目标位置。
+    if (!/getBoundingClientRect\(\)\.top/.test(hold)) {
+      problems.push('`holdCardPosition` 没有量卡片顶边 —— 拨不回原位');
+    }
+    if (!/scrollTop \+=/.test(hold)) {
+      problems.push('`holdCardPosition` 没有改 `scrollTop` —— 量了也没用');
+    }
+    if (!/before >= view\.top/.test(hold)) {
+      problems.push('`holdCardPosition` 没有区分「顶边在视口内」与「已经滚过顶边」'
+        + ' —— 长文读到一半再收起时会被拨到视口外（比跳走还糟）');
+    }
+    if (!/mutate\(\)/.test(hold)) {
+      problems.push('`holdCardPosition` 没有调 `mutate()` —— 状态改不了，等于没钉');
+    }
+  }
+
+  const toggle = /async function toggleEntry\(card, entry, button\)\s*\{[\s\S]*?\n\}/.exec(bareJs)?.[0] ?? '';
+  if (!toggle) {
+    problems.push('找不到 `toggleEntry` —— 这条判据要跟着代码改');
+  } else {
+    const wraps = (toggle.match(/holdCardPosition\(/g) || []).length;
+    if (wraps < 2) {
+      problems.push(`\`toggleEntry\` 里只找到 ${wraps} 处 \`holdCardPosition\`（要 2 处：展开 + 收起）`
+        + ' —— 漏掉的那个方向仍然会把视口带走');
+    }
+    // ⚠️★ 展开 / 收起**必须发生在 mutate 里**：先改了再量，「之前」的顶边就是假的，
+    // 于是偏移量算成 0，拨都不拨（症状与「没钉」一模一样，而且不报错）。
+    if (!/holdCardPosition\(card, \(\) => \{[\s\S]*?classList\.remove\('open'\)[\s\S]*?\}\)/.test(toggle)) {
+      problems.push('收起不是写在 `holdCardPosition` 的回调里 —— 量到的是改完之后的顶边，偏移永远是 0');
+    }
+    if (!/holdCardPosition\(card, \(\) => \{[\s\S]*?classList\.add\('open'\)[\s\S]*?\}\)/.test(toggle)) {
+      problems.push('展开不是写在 `holdCardPosition` 的回调里 —— 同上，等于没钉');
+    }
+  }
+
+  if (problems.length) {
+    failed = true;
+    console.error(`✗ 判据 28：展开 / 收起没有把这张卡片钉住（${problems.length} 处）：`);
+    for (const one of problems) console.error(`    · ${one}`);
+    console.error('  ⚠️ 症状是「按了收起，屏幕上变了一段别的内容」—— 不报错，只是找不着。');
+  } else {
+    console.log('· 判据 28：展开 / 收起都过 `holdCardPosition`（量顶边 → 改 → 拨回，顶边滚出视口时贴顶）。');
+  }
+}
+
 // ── 判据 30：发送框那一行要把**两个**上限都说出来，而且用同一句话（理由见下）─────
 //
 // ⚠️★ 2026-10-03 加。字节的那个数一直都在（`0 / 4096`），文件的只在「设置 → 下载」
