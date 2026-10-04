@@ -3501,7 +3501,9 @@ if (entryViewFiles.length !== 1) {
 //      而且要**内联掉** CSS 那两条上限，否则放大时被 `max-width: 100%` 顶回来；
 //   ④ 容器要能滚（`overflow: auto`）而且居中得用 `margin: auto` —— 在滚动容器里用
 //      `place-items: center`，超出部分会被裁在左上角**且滚不过去**；
-//   ⑤ 开下一条 / 关掉都要把倍数复位（不清的话下一条按上一条的倍率画）。
+//   ⑤ 开下一条 / 关掉都要把倍数复位（不清的话下一条按上一条的倍率画）；
+//   ⑥ 缩放那一排要在**整条标题栏里居中**（`.lb-head` 三列网格）——
+//      图标在按钮里居中还不够，整排贴在右边缘同样不是「居中」（2026-10-04 Jonny）。
 {
   const problems = [];
   const bareJs = stripJs(js);
@@ -3636,6 +3638,32 @@ if (entryViewFiles.length !== 1) {
       problems.push(`\`#${id}\` 的标记里又写上了字形（\`${glyph}\`）—— 字形在那个方块里不居中，`
         + '图标要由 `icon()` 挂');
     }
+  }
+  // ⑥ 缩放那一排要**整条栏居中**（2026-10-04 Jonny：「我要的就是标题栏水平居中」）。
+  // ⚠️★ 只判「图标挂在按钮里」是不够的：图标在按钮里是居中的，但那一排**整体**贴在右边缘 ——
+  // 用户说的居中是后者。三条各管一种「看着改了、其实没居中」：
+  //   · `1fr auto 1fr`：左右两列同宽，中间那列才在正中；
+  //   · `.lb-name` 的 `min-width: 0`：左列压不窄的话，长文件名把两列撑成不同宽 = 中间偏左；
+  //   · `.lb-tools`：三颗要作为一个整体居中，散开成三列就各按各的走了。
+  const headCss = /\.lightbox \.lb-head \{[\s\S]{0,300}?\}/.exec(html)?.[0] ?? '';
+  if (!/grid-template-columns:\s*1fr auto 1fr/.test(headCss)) {
+    problems.push('`.lb-head` 不是「左右两列同宽」的三列网格（`grid-template-columns: 1fr auto 1fr`）'
+      + ' —— 缩放那一排会贴在右边缘，而不是整条栏的正中');
+  }
+  const nameCss = /\.lightbox \.lb-name \{[^}]*\}/.exec(html)?.[0] ?? '';
+  if (!/min-width: 0/.test(nameCss)) {
+    problems.push('`.lb-name` 没有 `min-width: 0` —— 左列就压不窄（nowrap 的文件名 min-content'
+      + ' 是整行）：长文件名一撑，左右两列不同宽，中间的缩放排随之偏左'
+      + '（`overflow: hidden` 现在替它挡着，但那是**隐式**的，别指望它一直挡）');
+  }
+  if (!/class="lb-tools"/.test(html)) {
+    problems.push('缩放那三颗没有包成 `.lb-tools` —— 它们会各自占一列，整排就散了（居中也无从谈起）');
+  }
+  if (!/\.lightbox \.lb-tools \{[^}]*justify-self: center/.test(html)) {
+    problems.push('`.lb-tools` 没有居中（`justify-self: center`）—— 缩放那排会靠在那一列的左边');
+  }
+  if (!/\.lightbox \.lb-x \{[^}]*justify-self: end/.test(html)) {
+    problems.push('`.lb-x` 没有靠右（`justify-self: end`）—— 关闭那颗会跟着跑到栏中央');
   }
   if (problems.length) {
     failed = true;

@@ -963,11 +963,27 @@ body {
     position: relative; flex: 1; min-height: 0; width: 92vw; margin: 0 auto; padding: 10px 0;
     display: flex; flex-direction: column; gap: 6px;
 }
+/* ⚠️★ 三列 `1fr auto 1fr`（2026-10-04 Jonny：「放大和缩小图标**居中**显示」）：
+   左右两列同宽（`1fr` 平分剩下的空间），中间那列自然落在**整条栏的正中**。
+   ⚠️ 别退回「文件名 `flex: 1` + 按钮跟在后面」—— 那是把按钮推到**右边缘**，
+   文件名一长，那一排还会跟着文件名往左挪（用户点一次放大就得重新找按钮在哪）。
+   ⚠️ 也不用 `position: absolute` + `translateX(-50%)` 去居中：那样文件名**不知道**
+   中间还有一排，长文件名会钻到按钮底下（grid 里它是**同一行的一列**，挤不过来）。 */
 .lightbox .lb-head {
-    flex: none; display: flex; align-items: center; gap: 8px;
+    flex: none; display: grid; grid-template-columns: 1fr auto 1fr; align-items: center; gap: 8px;
     color: #fff; font-size: 11.5px;
 }
-.lightbox .lb-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* ⚠️★ `min-width: 0` 钉的是「左列**压得窄**」：`1fr` 的最小值是 `auto`（＝内容的
+   min-content），而文件名是 `white-space: nowrap` 的一整行 —— 左列压不窄，左右两列就
+   不再同宽，中间那排随之偏左（实测：把这一条与下面的 `overflow: hidden` 一起拿掉，
+   长文件名把缩放排推偏 270px，连关闭那颗都被挤出栏外）。
+   ⚠️ 单独拿掉这一条**现在还看不出问题**：`overflow: hidden` 已经把自动最小尺寸压成 0
+   （实测长文件名下依然居中）。留着它是把这条隐式依赖**写出来** ——
+   哪天有人动 `overflow`，居中不该跟着一起坏。 */
+.lightbox .lb-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* 缩放那三颗：整排作为一个**不可分的整体**居中（不能让它们各自占一列）。 */
+.lightbox .lb-tools { display: flex; align-items: center; gap: 8px; justify-self: center; }
+.lightbox .lb-x { justify-self: end; }
 .lightbox .lb-z, .lightbox .lb-x {
     flex: none; height: 22px; min-width: 22px; padding: 0 5px; border-radius: 6px; cursor: pointer;
     border: 1px solid rgba(255, 255, 255, .35); background: rgba(255, 255, 255, .12);
@@ -1894,10 +1910,16 @@ table.ra td input[type='checkbox'] { margin: 0; }
                      ③ 数字由 `app.js` 写，标记里只放初值（判据 15：标记里不许有中文文案）。
                      ⚠️★ 图标（− / ＋ / ✕）由 `app.js` 挂 `icon(...)`，**不在标记里写字形**：
                         字形在 22px 的方块里不居中（全角 `＋` 与 `−` 的基线偏移还不一样），
-                        四颗里会有两颗看着是歪的。 -->
-                <button class="lb-z" id="lightbox-zoom-out" type="button" data-i18n-title="缩小"></button>
-                <button class="lb-z wide" id="lightbox-zoom-reset" type="button" data-i18n-title="复位：恰好放得下（100%）">100%</button>
-                <button class="lb-z" id="lightbox-zoom-in" type="button" data-i18n-title="放大"></button>
+                        四颗里会有两颗看着是歪的。
+                     ⚠️★ 缩放那三颗包在 `.lb-tools` 里、由 CSS 摆到**整条栏的正中**
+                        （2026-10-04 Jonny：「标题栏水平居中」）；关闭那颗留在**右端** ——
+                        它是「关掉这一层」，待在角上才是找得着的地方，
+                        而居中的那一排是**看图**的控件，两者不该混成一排。 -->
+                <div class="lb-tools">
+                    <button class="lb-z" id="lightbox-zoom-out" type="button" data-i18n-title="缩小"></button>
+                    <button class="lb-z wide" id="lightbox-zoom-reset" type="button" data-i18n-title="复位：恰好放得下（100%）">100%</button>
+                    <button class="lb-z" id="lightbox-zoom-in" type="button" data-i18n-title="放大"></button>
+                </div>
                 <button class="lb-x" id="lightbox-close" type="button" data-i18n-title="关闭"></button>
             </div>
             <div class="lb-stage" id="lightbox-stage"></div>
