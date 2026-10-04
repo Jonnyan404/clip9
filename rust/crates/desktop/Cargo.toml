@@ -66,6 +66,9 @@ tokio = { version = "1", features = ["sync"] }
 # 它不是新依赖（workspace 里 `clip9-core` 的分享令牌已经带着它），自己写一份解码器
 # 就是「第二份定义」，而且 base64 的边界（填充 / 换行 / 非法字符）正是最容易写错的那种。
 base64 = { workspace = true }
+# ⚠️ 只为了 `StreamExt::next` —— 存一个条目时要把响应**边下边写**，
+# 见 `Runtime::download_entry`（整份读进来是下行自动落盘那条路的老毛病，别照抄）。
+futures-util = { workspace = true }
 
 [dev-dependencies]
 # 配置文件要落盘才能测（原子写、坏了不许覆盖）—— 所以测试要一个真的临时目录。

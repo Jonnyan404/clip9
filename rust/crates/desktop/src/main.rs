@@ -388,7 +388,7 @@ fn main() {
             commands::copy_entry,
             // 卡片上的图片 / 视频预览点开（2026-10-04）。⚠️ 只收条目 id：
             // 少注册它的表现与上面那两个一样 —— 点了没反应、不报错。
-            commands::open_entry_file,
+            commands::save_entry_file,
             // ⚠️ 卡片上那颗 🗑 与 ↗（2026-10-03）：删除走服务端 `/revoke`，
             // 分享让服务端签发链接。少注册一个的表现同样是「点了没反应、不报错」。
             commands::delete_entry,

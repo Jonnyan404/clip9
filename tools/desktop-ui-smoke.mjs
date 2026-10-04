@@ -2697,9 +2697,44 @@ if (entryViewFiles.length !== 1) {
       problems.push('载入失败没有退回文件行 —— 屏幕上留一个破图图标，'
         + '用户分不清「这个文件坏了」还是「界面画错了」（而这两件事该去的地方完全不同）');
     }
-    if (!/open_entry_file/.test(media)) {
-      problems.push('点开预览没有走壳命令 —— 要么点了没反应，要么页面自己去取（第二份上行）');
+    // ⚠️★ 2026-10-04 换过形状：**原来**钉的是「点开走 `open_entry_file` 那条壳命令」，
+    // 而那条命令把用户**踢出应用**（交给系统默认程序 / 浏览器去看一张图）。
+    // 现在点开走**壳内的灯箱** —— 判据跟着改成「不许再走系统 opener」。
+    if (!/openLightbox\(/.test(media)) {
+      problems.push('点开预览没有走壳内灯箱 —— 要么点了没反应，要么又退回「叫系统程序打开」');
     }
+    if (/open_entry_file/.test(media)) {
+      problems.push('点开预览又走回 `open_entry_file` 了 —— 那一下把用户踢出应用去看一张图');
+    }
+  }
+  // ⚠️★ 灯箱自己那三条：**直连 src**（浏览器流式拉，服务端有 Range）、**大文件有「正在载入」**、
+  // **关掉要清空**。少了第二条，几百兆那份在到之前是一块空白 —— 用户会以为点开了个空窗口。
+  const lb = /function openLightbox\([\s\S]*?\n\}/.exec(bare)?.[0] ?? '';
+  if (!lb) {
+    problems.push('找不到 `openLightbox` —— 点开预览还是会被踢出应用');
+  } else {
+    if (!/media\.src = url/.test(lb)) {
+      problems.push('灯箱没有直连 `src` —— 别改成「先整份读进内存再转 Blob」'
+        + '（网页版 `File.vue` 那条 `arraybuffer` 的路子：丢掉 Range，还让大文件常驻内存）');
+    }
+    if (!/lb-load/.test(lb)) {
+      problems.push('灯箱没有「正在载入」那一层 —— 大文件到手之前是一块空白，看着像点开了空窗口');
+    }
+  }
+  if (!/function closeLightbox\(/.test(bare)) {
+    problems.push('找不到 `closeLightbox` —— 关不掉，而且 `<video>` 会一直占着那条连接');
+  }
+  // 三种关法都要（只留叉号的话，鼠标停在图上的人要被迫去找那颗按钮）。
+  for (const [id, why] of [
+    ['lightbox-close', '✕ 那颗按钮'],
+    ['lightbox-bg', '点背景'],
+  ]) {
+    if (!new RegExp(`el\\(\\u0000?${id}\\u0000?\\)\\.addEventListener\\(\\u0000?click`).test(bare)) {
+      problems.push(`\`#${id}\` 没有接上关闭（${why}）—— 灯箱关不掉`);
+    }
+  }
+  if (!/Escape[\s\S]{0,120}closeLightbox/.test(bare)) {
+    problems.push('ESC 关不掉灯箱 —— 它盖着整个窗口，那时 ESC 没有别的含义');
   }
   if (!/\.card video\.preview/.test(styleText)) {
     problems.push('`index.html` 里没有 `.card video.preview` 那条规则 —— 视频会按原始尺寸把卡片撑破');
@@ -2716,30 +2751,53 @@ if (entryViewFiles.length !== 1) {
   const commandsSrc = read1('commands.rs');
   const mainSrc = read1('main.rs');
   const storeSrc = read1('store.rs');
-  if (!commandsSrc || !mainSrc || !storeSrc) {
-    problems.push('读不到 `commands.rs` / `main.rs` / `store.rs` —— 判据要跟着仓库结构改');
+  const runtimeSrc = read1('runtime.rs');
+  if (!commandsSrc || !mainSrc || !storeSrc || !runtimeSrc) {
+    problems.push('读不到 `commands.rs` / `main.rs` / `store.rs` / `runtime.rs` —— 判据要跟着仓库结构改');
   } else {
-    const cmd = /pub fn open_entry_file\([\s\S]*?\n\}/.exec(commandsSrc)?.[0] ?? '';
+    // ⚠️★ 文件行（pdf / zip / docx 这些壳画不出来的）点下去的去处：
+    // **存进下载目录 + 在文件管理器里选中**，不是「叫系统程序打开它」。
+    const cmd = /pub async fn save_entry_file\([\s\S]*?\n\}/.exec(commandsSrc)?.[0] ?? '';
     if (!cmd) {
-      problems.push('`commands.rs` 里没有 `open_entry_file` —— 点预览没有命令可调');
+      problems.push('`commands.rs` 里没有 `save_entry_file` —— 点一个文件条目没有命令可调');
     } else {
       if (/\burl: String\b/.test(cmd)) {
-        problems.push('`open_entry_file` 从页面收 URL 了 —— 那就给了页面「让系统 opener'
-          + ' 打开任意地址」的能力（见 `open_project_page` 那条注释）');
+        problems.push('`save_entry_file` 从页面收 URL 了 —— 那就给了页面「让壳去取任意地址」的能力');
       }
       if (!/openable_url/.test(cmd)) {
-        problems.push('`open_entry_file` 没有过 `openable_url` —— 那是交给系统 opener 之前的最后一道闸');
+        problems.push('`save_entry_file` 没有过 `openable_url` —— 那是取网络内容之前的最后一道闸');
       }
       if (!/entry_preview_url/.test(cmd)) {
-        problems.push('`open_entry_file` 没有从壳自己那份列表里查地址 —— 页面递什么就开什么');
+        problems.push('`save_entry_file` 没有从壳自己那份列表里查地址 —— 页面递什么就去取什么');
       }
+      if (!/reveal_in_file_manager/.test(cmd)) {
+        problems.push('存下来之后没有定位 —— 用户不知道它去哪儿了（下载目录不是人人找得到）');
+      }
+      if (!/saved_file_path/.test(cmd)) {
+        problems.push('存之前没有查「这一条是不是已经存过」—— 点两下会在下载目录里留两份');
+      }
+    }
+    if (!/fn reveal_in_file_manager\(/.test(commandsSrc)) {
+      problems.push('`commands.rs` 里没有 `reveal_in_file_manager` —— 存下来之后定位不了');
     }
     if (!/pub fn entry_preview_url\(/.test(storeSrc)) {
       problems.push('`store.rs` 里没有 `entry_preview_url` —— 壳查不到这一条的地址（点了没反应）');
     }
-    if (!/commands::open_entry_file\b/.test(mainSrc)) {
-      problems.push('`main.rs` 的 `generate_handler!` 里没有 `commands::open_entry_file`'
+    if (!/commands::save_entry_file\b/.test(mainSrc)) {
+      problems.push('`main.rs` 的 `generate_handler!` 里没有 `commands::save_entry_file`'
         + ' —— 点了没反应，而且连报错都没有');
+    }
+    // ⚠️ 存一个条目要**边下边写**：整份进内存是下行自动落盘那条路的老毛病。
+    const dl = /pub async fn download_entry\([\s\S]*?\n    \}/.exec(runtimeSrc)?.[0] ?? '';
+    if (!dl) {
+      problems.push('`runtime.rs` 里没有 `download_entry` —— 存一个文件条目没有落盘的那一步');
+    } else if (!/bytes_stream/.test(dl) || !/write_all/.test(dl)) {
+      problems.push('`download_entry` 不是边下边写 —— 整份读进内存再写盘，'
+        + '一个 200MB 的文件就是 200MB 常驻');
+    }
+    if (!/sanitize_file_name/.test(dl)) {
+      problems.push('`download_entry` 的文件名没过 `sanitize_file_name` —— 那个名字来自**网络**，'
+        + '写错的后果是写到磁盘上别的地方');
     }
   }
 
@@ -2748,7 +2806,57 @@ if (entryViewFiles.length !== 1) {
     console.error(`✗ 判据 33：图片 / 视频预览那几条规矩没落实（${problems.length} 处）：`);
     for (const one of problems) console.error(`    · ${one}`);
   } else {
-    console.log('· 判据 33：预览懒加载 + 元数据 + 失败退回文件行，点开走只收 id 的壳命令。');
+    console.log('· 判据 33：预览懒加载 + 元数据 + 失败退回文件行，点开走壳内灯箱，'
+      + '文件行存进下载目录并定位。');
+  }
+}
+
+// ── 判据 34：CSP 要放行**远端服务端**上的图片与视频（理由见下）──────────────
+//
+// ⚠️★ 2026-10-04 加。房间的服务端**多半不是本机**（用户填的是自己那台），
+// 于是 `/file/<uuid>/<name>` 是一个 `http(s)://别的主机/...` 的地址。
+// CSP3 里 `media-src` **不会**回落到 `img-src`，只回落到 `default-src` ——
+// 而 `default-src` 这里是 `'self'`。
+// ⚠️ 于是「只补了 `img-src`、没补 `media-src`」这个漏法的症状是：
+// **图片看得见、视频那一块是空白**，而 `mediaPreview` 的 `error` 回退会把它
+// **静默换成一行 📄** —— 用户看到的是「这个文件不能预览」，真因谁也看不见。
+{
+  const problems = [];
+  const confPath = join(root, 'rust/crates/desktop/tauri.conf.json');
+  let csp = null;
+  try {
+    // ⚠️ 带注释的 JSON 走不了 `JSON.parse` 的话就退成正则抠 —— 这里只要那一行字符串。
+    const raw = readFileSync(confPath, 'utf8');
+    csp = /"csp"\s*:\s*"([^"]*)"/.exec(raw)?.[1] ?? null;
+  } catch {
+    csp = null;
+  }
+  if (csp === null) {
+    problems.push(`读不出 \`tauri.conf.json\` 里的 \`csp\`（${confPath}）—— 判据要跟着仓库结构改`);
+  } else {
+    const directive = (name) => new RegExp(`(?:^|;)\\s*${name}\\s+([^;]*)`).exec(csp)?.[1] ?? '';
+    for (const [name, why] of [
+      ['img-src', '远端服务端上的图片会被挡住（卡片里那张缩略图是一片空白）'],
+      ['media-src', '远端服务端上的视频会被挡住 —— 而且它**不回落** `img-src`，'
+        + '只会落回 `default-src: \'self\'`（症状：图片看得见、视频那一块是空的，'
+        + '还被 `error` 回退静默换成一行 📄）'],
+    ]) {
+      const value = directive(name);
+      if (!value) {
+        problems.push(`CSP 里没有 \`${name}\` —— ${why}`);
+      } else if (!/\bhttps?:/.test(value)) {
+        problems.push(`CSP 的 \`${name}\` 没有放行 \`http:\` / \`https:\`（现在是 \`${value.trim()}\`）`
+          + ` —— ${why}`);
+      }
+    }
+  }
+
+  if (problems.length) {
+    failed = true;
+    console.error(`✗ 判据 34：CSP 没放行远端服务端上的图片 / 视频（${problems.length} 处）：`);
+    for (const one of problems) console.error(`    · ${one}`);
+  } else {
+    console.log('· 判据 34：CSP 放行 img-src / media-src 的 http(s)（远端服务端的媒体看得见）。');
   }
 }
 

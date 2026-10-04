@@ -449,6 +449,15 @@ struct Inner {
     /// 快照内容的版本号 —— 见 [`Snapshot::version`] 与 [`Inner::touch`]。
     /// ⚠️ **只有 `touch` 改它**，别在别处直接写（那样就绕过了「前进规则」）。
     version: u64,
+    /// 「已经存到本地的那几条」：条目 id → 落盘路径。
+    ///
+    /// ⚠️★ 只为**同一条点第二下**服务（那时直接定位，不再下一次）—— 不判重的话，
+    /// `unique_path` 会在下载目录里留下 `报告.pdf` 与 `报告 (1).pdf` 两份，
+    /// 而用户看不出这两个是同一个东西。
+    /// ⚠️ 它是**缓存**，不是真相：文件被用户删了/挪了，这一格就指向一个不存在的地方 ——
+    /// 所以 [`Store::saved_file_path`] 要**先看看还在不在**（不在就当没存过）。
+    /// ⚠️★ 不进快照：界面用不上（它只在壳里被查一次），塞进去就是又一份要漂的字段。
+    saved_files: std::collections::HashMap<i32, std::path::PathBuf>,
 }
 
 impl Inner {
@@ -494,6 +503,7 @@ impl Store {
                 // ⚠️ 从 0 起。页面那边「上一份」的初值是 `null`，所以**第一拍一定重绘**
                 //（`'0' !== null`）—— 这正是想要的：界面必须至少画一次。
                 version: 0,
+                saved_files: std::collections::HashMap::new(),
             }),
             config_path,
             data_dir,
@@ -1116,6 +1126,45 @@ impl Store {
             .find(|entry| entry.id == id)?
             .preview_url
             .clone()
+    }
+
+    /// 一条文件条目的**文件名**（存进下载目录时要用）。
+    ///
+    /// ⚠️ 与 [`Self::entry_preview_url`] 同一套规矩：只认当前选中房间、只按 id 找，
+    /// 名字由壳自己从列表里取 —— 不从页面收（收了就是「让壳按任意名字写盘」）。
+    #[must_use]
+    pub fn entry_file_name(&self, id: i32) -> Option<String> {
+        let inner = self.lock();
+        let name = inner
+            .rooms
+            .get(inner.selected)?
+            .entries
+            .iter()
+            .find(|entry| entry.id == id)?
+            .file_name
+            .clone();
+        // ⚠️ 空名字**不回一个空串**：那会让下载目录里出现一个没有名字的文件
+        //（`sanitize_file_name` 对空串也是空串），而 `unique_path` 会安静地造一个。
+        (!name.trim().is_empty()).then_some(name)
+    }
+
+    /// 这一条**已经存到本地**了吗（在 → 落盘路径，不在 → `None`）。
+    ///
+    /// ⚠️★ 要**先看看文件还在不在**：那张表是缓存，而用户完全可能把下载目录里的东西
+    /// 删掉或挪走。照着一张过期的表去「定位」，文件管理器会打开一个父目录、
+    /// 什么都不选中 —— 症状是「点了没反应」，而真因没人看得见。
+    #[must_use]
+    pub fn saved_file_path(&self, id: i32) -> Option<std::path::PathBuf> {
+        let path = self.lock().saved_files.get(&id).cloned()?;
+        path.exists().then_some(path)
+    }
+
+    /// 记住「这一条存到了哪儿」（见 [`Inner::saved_files`]）。
+    ///
+    /// ⚠️★ **不前进版本号**：界面用不到它（它只在壳里被查一次），
+    /// 而每存一次就整屏重绘一次是没有道理的代价。
+    pub fn remember_saved_file(&self, id: i32, path: std::path::PathBuf) {
+        self.lock().saved_files.insert(id, path);
     }
 
     /// 握手里拿到的限额（上行要用）。

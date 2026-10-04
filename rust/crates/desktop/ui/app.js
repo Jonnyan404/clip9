@@ -882,6 +882,10 @@ const VIDEO_SUFFIX = /\.(mp4|m4v|mov|webm)$/i;
 
 /** 文件条目那一行（📄 + 名字 + 大小）。⚠️ 预览**加载不出来**时退回的也是它 ——
  *  两种情形画成同一个样子是对的：对用户来说都是「看不到内容，只知道有这么个文件」。
+ *
+ *  ⚠️★ 这一行**可点**（2026-10-04）：点下去把它存进下载目录，并在文件管理器里选中它。
+ *  壳画不出 pdf / zip / docx，把用户踢给系统程序是上一版的行为，而它的实际后果是
+ *  「点一下就离开应用」—— 他要的是拿到那份文件，不是看一个打不开的弹窗。
  */
 function fileRow(entry) {
   const row = h('div', 'filerow');
@@ -891,6 +895,14 @@ function fileRow(entry) {
   const size = sizeLabel(entry.fileSize);
   if (size) meta.append(h('div', 'fs', size));
   row.append(meta);
+  row.title = t('点开存到下载目录，并在文件管理器里选中它');
+  row.addEventListener('click', () => {
+    // ⚠️ 只递条目 id：地址与文件名都由壳从它自己的列表里查（收了地址就等于
+    // 给页面一个「让壳去取任意 URL」的能力）。
+    invoke('save_entry_file', { id: entry.id })
+      .then((path) => showNotice('ok', t('已存到 {path}', { path })))
+      .catch((error) => showNotice('error', t('存不下来：{error}', { error: errorText(error) })));
+  });
   return row;
 }
 
@@ -904,12 +916,12 @@ function fileRow(entry) {
  *   · 视频不写 `preload='metadata'`：要么什么都不拉（点开才拉，第一帧是黑的），
  *     要么整段都拉（同上面那条流量问题）。
  * ⚠️ 不自动播放、不静音自动播：这条内容是要**看**的，不该自己动起来、更不该出声。
- * ⚠️ 点开走壳命令 `open_entry_file`（**只给它条目 id**，地址由壳自己查）。
+ * ⚠️ 点开走**壳内的灯箱**（`openLightbox`），不再叫系统程序打开。
  */
 function mediaPreview(entry, url) {
   const isVideo = VIDEO_SUFFIX.test(entry.fileName || '');
   const media = isVideo ? h('video', 'preview') : h('img', 'preview');
-  media.title = t('点开用系统默认程序看（原始大小）');
+  media.title = isVideo ? t('点开播放（原始大小）') : t('点开看大图（原始大小）');
   if (isVideo) {
     // ⚠️ `playsinline`：iOS 上不给它就是「一点播放就全屏」，而这里要的是**在卡片里**看。
     media.controls = true;
@@ -924,13 +936,66 @@ function mediaPreview(entry, url) {
     // ⚠️★ 换成文件行，而不是留一个破图在那儿 —— 见上面那条注释。
     media.replaceWith(fileRow(entry));
   });
-  media.addEventListener('click', () => {
-    invoke('open_entry_file', { id: entry.id }).catch((error) => {
-      showNotice('error', t('打不开：{error}', { error: errorText(error) }));
-    });
-  });
+  media.addEventListener('click', () => openLightbox(entry, url));
   media.src = url;
   return media;
+}
+
+/** 壳内灯箱：点开一条图片 / 视频，在**壳里**看原始大小。
+ *
+ * ⚠️★ 为什么**不再**交给系统默认程序（2026-10-04 之前的行为）：那一下把用户**踢出应用**
+ * 去看一张图，而图在这里本来就看得全 —— 为了少写一层浮层付这个代价不划算。
+ *
+ * ⚠️★ 大图 / 大视频靠**浏览器自己流式拉**：地址直连服务端 `/file/<uuid>`，那一端是
+ * `ServeFile`（支持 Range，见 `files.rs`），于是拖动进度条只取那一段、内存里也不落整份。
+ * ⚠️ 反过来**不要**照网页版 `File.vue` 那条 `axios({ responseType: 'arraybuffer' })` 的做法：
+ * 它把整份字节读进内存再转成 Blob —— 一个 200MB 的视频就是 200MB 常驻，还把 Range 丢了。
+ *
+ * ⚠️ 那一行「正在载入」是给**大文件**看的：小图一瞬间就到，而几百兆的那份
+ * 在 `load` 之前是**一块空白** —— 没有它，用户会以为点开了个空窗口。
+ */
+function openLightbox(entry, url) {
+  const box = el('lightbox');
+  const stage = el('lightbox-stage');
+  if (!box || !stage) return;
+
+  const isVideo = VIDEO_SUFFIX.test(entry.fileName || '');
+  el('lightbox-name').textContent = entry.fileName || '';
+
+  stage.replaceChildren();
+  const loading = h('div', 'lb-load', t('正在载入…'));
+  stage.append(loading);
+
+  const media = isVideo ? h('video') : h('img');
+  if (isVideo) {
+    media.controls = true;
+    media.preload = 'metadata';
+    media.playsInline = true;
+  } else {
+    media.alt = entry.fileName || '';
+  }
+  // ⚠️ 加载完（图 `load` / 视频 `loadedmetadata`）就把「正在载入」摘掉 ——
+  // 但**出错也要摘**：否则用户盯着一行「正在载入…」永远等下去（那条内容其实取不回来）。
+  const done = () => loading.remove();
+  media.addEventListener('load', done);
+  media.addEventListener('loadedmetadata', done);
+  media.addEventListener('error', () => {
+    loading.remove();
+    stage.append(h('div', 'lb-load', t('这一条取不回来（可能已经被删了）')));
+  });
+  media.src = url;
+  stage.append(media);
+
+  box.hidden = false;
+}
+
+function closeLightbox() {
+  const box = el('lightbox');
+  if (!box) return;
+  box.hidden = true;
+  // ⚠️★ 关掉就**清空**：留着 `<video>` 在隐藏的层里，它会继续占着那条连接
+  // （`preload='metadata'` 已经拉过一次了），下次开是另一条内容时还会先闪一下旧的。
+  el('lightbox-stage').replaceChildren();
 }
 
 /** 一张卡片。 */
@@ -3509,3 +3574,16 @@ function roomAuthPatch() {
 }
 
 el('log-refresh').addEventListener('click', refreshLog);
+
+// ── 灯箱的三种关法 ────────────────────────────────────────────────────────────
+//
+// ⚠️★ 三种都要：只有叉号的话，鼠标停在图上的人会被迫去找那颗按钮；
+// 只有背景的话，习惯了「右上角 ✕」的人会以为关不掉；没有 ESC 就只能在窗口里摸。
+// ⚠️ 三种都走**同一个** `closeLightbox` —— 关掉要做的事（清空 stage）只有一份。
+el('lightbox-close').addEventListener('click', closeLightbox);
+el('lightbox-bg').addEventListener('click', closeLightbox);
+document.addEventListener('keydown', (event) => {
+  // ⚠️ 只在**灯箱开着**时吃掉 ESC：它盖着整个窗口，那时 ESC 没有别的含义；
+  // 而关着的时候 ESC 归动作菜单 / 动作表单（它们各自的 `onKey` 已经先注册了）。
+  if (event.key === 'Escape' && !el('lightbox').hidden) closeLightbox();
+}, true);

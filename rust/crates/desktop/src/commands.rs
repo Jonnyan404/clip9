@@ -899,19 +899,42 @@ pub fn entry_text(store: State<'_, Arc<Store>>, id: i32) -> Result<String, Msg> 
     store.entry_text(id).ok_or_else(|| Msg::key("entryGone"))
 }
 
-/// 把一个条目的预览（图片 / 视频）交给**系统默认程序**打开。
+/// 把一个文件条目**存进下载目录**，并在系统文件管理器里选中它。
+///
+/// ⚠️★ 为什么是「存 + 定位」而不是「打开」：壳只会渲染图片 / 视频（那两层由灯箱管），
+/// pdf / zip / docx 这些**壳内画不出来** —— 把它们交给系统 opener 是上一版的行为
+/// （`open_entry_file`，2026-10-04 删），而它的实际后果是「点一下就被踢出应用」。
+/// 用户要的是拿到那份文件，不是看一个他打不开的弹窗；给出一个**看得见的落点**
+/// （文件管理器里选中那一行）比替他猜一个程序好。
 ///
 /// ⚠️★ 与 `open_project_page` 同一个规矩：**不从页面收地址**。页面只给条目 id，地址由壳
 /// 从自己的列表里查（`Store::entry_preview_url`）—— 收了地址，就等于给页面一个
-/// 「让系统 opener 打开任意 URL」的能力，而这里要的只有「这一条自己的那份」。
-/// ⚠️ 查到的地址**仍然过一遍** `openable_url`：那是「交给系统 opener 之前的最后一道闸」，
-/// 因为「这次是壳自己查的」而破例，破掉的就是下次漏掉的那次。
+/// 「让壳去取任意 URL」的能力。
+/// ⚠️ 已经存过的（`Store` 记着那张 id → 路径的表）**直接定位**，不再下一次：
+/// 同一个文件点两下不该在下载目录里留下第二份（`unique_path` 会加成 `xxx (1)`，
+/// 而用户看不出这两份是同一个东西）。
 #[tauri::command]
-pub fn open_entry_file(store: State<'_, Arc<Store>>, id: i32) -> Result<(), Msg> {
-    let url = store
+pub async fn save_entry_file(
+    store: State<'_, Arc<Store>>,
+    runtime: State<'_, Arc<Runtime>>,
+    id: i32,
+) -> Result<String, Msg> {
+    // ⚠️ 已经存过的**不再下一次**：同一个文件点两下不该在下载目录里留下第二份。
+    if let Some(saved) = store.saved_file_path(id) {
+        reveal_in_file_manager(&saved)?;
+        return Ok(saved.display().to_string());
+    }
+    let (url, name) = store
         .entry_preview_url(id)
+        .zip(store.entry_file_name(id))
         .ok_or_else(|| Msg::key("entryPreviewUnavailable"))?;
-    open_in_system_browser(&openable_url(&url)?)
+    // ⚠️ 查到的地址**仍然过一遍** `openable_url`：那是「交给网络之前」的最后一道闸，
+    // 因为「这次是壳自己查的」而破例，破掉的就是下次漏掉的那次。
+    let url = openable_url(&url)?;
+    let path = runtime.download_entry(&url, &name).await?;
+    store.remember_saved_file(id, path.clone());
+    reveal_in_file_manager(&path)?;
+    Ok(path.display().to_string())
 }
 
 /// 「复制内容」（时间线右键菜单）—— ⚠️ 走壳，**不让页面把自己那份传回来**。
@@ -1192,6 +1215,43 @@ fn open_in_system_browser(url: &str) -> Result<(), Msg> {
     command.spawn().map(|_| ()).map_err(|reason| {
         Msg::key("openBrowserFailed")
             .param("url", url)
+            .param("reason", reason)
+    })
+}
+
+/// 在系统文件管理器里**选中**那一个文件（macOS 的 `open -R` / Windows 的 `explorer /select,`）。
+///
+/// ⚠️★ 为什么是「选中」而不是「打开」：打开要靠系统去猜一个能开它的程序，而猜错的
+/// 后果由用户承担（一个 200 页的 pdf 被一个图片查看器打开）。给出**看得见的落点**
+/// —— 文件管理器里那一行是亮的 —— 之后由他自己决定双击还是拖走。
+///
+/// ⚠️ Linux 上**选不中**（`xdg-open` 没有这个语义，桌面环境之间也没有统一的参数）：
+/// 退成打开它所在的目录。❗ 这是**有意接受**的差距，不是漏了 —— 为了一个「选中」
+/// 去接一整套 DBus 的 FileManager1 调用不划算。
+/// ⚠️ 参数**逐个传**（不拼成一条命令字符串）：拼字符串 = 过一遍 shell，而这条路
+/// 上的字符串来自**网络**（谁都可以往房间里发一个奇怪的文件名）。
+fn reveal_in_file_manager(path: &std::path::Path) -> Result<(), Msg> {
+    #[cfg(target_os = "macos")]
+    let mut command = {
+        let mut command = std::process::Command::new("open");
+        command.arg("-R").arg(path);
+        command
+    };
+    #[cfg(target_os = "windows")]
+    let mut command = {
+        let mut command = std::process::Command::new("explorer");
+        command.arg(format!("/select,{}", path.display()));
+        command
+    };
+    #[cfg(all(not(target_os = "macos"), not(target_os = "windows")))]
+    let mut command = {
+        let mut command = std::process::Command::new("xdg-open");
+        command.arg(path.parent().unwrap_or(path));
+        command
+    };
+    command.spawn().map(|_| ()).map_err(|reason| {
+        Msg::key("revealFailed")
+            .param("path", path.display())
             .param("reason", reason)
     })
 }

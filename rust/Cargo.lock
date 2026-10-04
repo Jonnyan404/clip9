@@ -734,6 +734,7 @@ dependencies = [
  "clip9-client",
  "clip9-core",
  "clip9-protocol",
+ "futures-util",
  "reqwest",
  "serde",
  "serde_json",

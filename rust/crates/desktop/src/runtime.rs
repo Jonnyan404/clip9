@@ -23,7 +23,11 @@
 //! 留在本文件（两条纯函数），注入的是一个 `dyn Notifier` —— 否则这条最需要被测的判据
 //!（发一条 vs 发一万条）就只能靠手点界面验。
 
+use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
+
+use futures_util::StreamExt;
+use tokio::io::AsyncWriteExt;
 
 use clip9_client::receiver::fetch_history;
 use clip9_client::uploader::{build_client, now};
@@ -699,6 +703,67 @@ impl Runtime {
             return Err(Msg::key("entryGone"));
         }
         Err(Msg::key("deleteFailed").param_msg("reason", http_status(status)))
+    }
+
+    /// 把一个文件条目**存进下载目录**，返回落盘路径。
+    ///
+    /// ⚠️★ **边下边写**，不许整份进内存：下行自动落盘那条路（`receiver` 里那个
+    /// `download_file`）是 `.bytes()` 一次读完再 `write` —— 那是**自动**那一侧的历史形状，
+    /// 而这里是用户**手动**点出来的（他挑的往往正是最大的那个文件）。
+    /// 一个 200MB 的视频在内存里过一遍就是 200MB 常驻，而它根本不需要在内存里待着。
+    ///
+    /// ⚠️ 凭据与 [`Self::delete_entry`] 同一条路：走选中房间那条通道、进 `Authorization` 头
+    /// （不进 URL —— 进了就进服务端访问日志，以及用户随手分享出去的那串地址）。
+    pub async fn download_entry(&self, url: &str, name: &str) -> Result<PathBuf, Msg> {
+        let token = self
+            .store
+            .selected_channel()
+            .ok_or_else(|| Msg::key("noRoomsConfigured"))?
+            .auth_token
+            .as_deref()
+            .map(str::trim)
+            .filter(|token| !token.is_empty())
+            .map(str::to_owned);
+        let response = send(self.http.get(url), token.as_deref())
+            .send()
+            .await
+            .map_err(|err| Msg::key("downloadFailed").param("reason", err.to_string()))?;
+        let status = response.status();
+        if !status.is_success() {
+            return Err(Msg::key("downloadFailed").param_msg("reason", http_status(status)));
+        }
+
+        let dir = self.store.config().download_dir()?;
+        tokio::fs::create_dir_all(&dir).await.map_err(|err| {
+            Msg::key("downloadDirCreateFailed")
+                .param("path", dir.display())
+                .param("reason", err)
+        })?;
+        // ⚠️ 名字过一遍 `sanitize_file_name`：它来自**网络**（谁都可以往房间里发一个
+        // 叫 `../../.bashrc` 的文件），而写错的后果是写到磁盘上别的地方。
+        let safe = clip9_client::download::sanitize_file_name(name);
+        let path = clip9_client::download::unique_path(&dir, &safe, |candidate| candidate.exists());
+        let mut file = tokio::fs::File::create(&path).await.map_err(|err| {
+            Msg::key("downloadWriteFailed")
+                .param("path", path.display())
+                .param("reason", err)
+        })?;
+        let mut stream = response.bytes_stream();
+        while let Some(chunk) = stream.next().await {
+            let chunk = chunk
+                .map_err(|err| Msg::key("downloadReadFailed").param("reason", err.to_string()))?;
+            file.write_all(&chunk).await.map_err(|err| {
+                Msg::key("downloadWriteFailed")
+                    .param("path", path.display())
+                    .param("reason", err)
+            })?;
+        }
+        file.flush().await.map_err(|err| {
+            Msg::key("downloadWriteFailed")
+                .param("path", path.display())
+                .param("reason", err)
+        })?;
+        Ok(path)
     }
 
     /// 让服务端签发一条分享链接，**并把它复制进剪贴板**（返回那串地址）。

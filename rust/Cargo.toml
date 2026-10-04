@@ -102,7 +102,11 @@ clipboard-rs = "0.3"
 #   ⚠️ TLS 用 `rustls-tls-native-roots`（跟系统信任库），不是 webpki-roots：
 #   这个客户端连的是**用户自己的**服务端，很可能是自签 / 内网 CA ——
 #   自带的那套根证书认不了它。理由与 `crates/store` 那张「否决表」同一个规矩（§1 第 3 条）。
-reqwest = { version = "0.13", features = ["json", "multipart"] }
+# ⚠️ `stream` 是 2026-10-04 加的，两处都要它：
+#   · 下行：存一个条目时**边下边写**（`Runtime::download_entry`）—— 整份读进来是老毛病；
+#   · 上行：发大文件时给进度条一个**真信号**（按已发出的字节数）。
+#   没有它，`Response::bytes_stream` 与 `Body::wrap_stream` 这两个方法根本不存在。
+reqwest = { version = "0.13", features = ["json", "multipart", "stream"] }
 tokio-tungstenite = { version = "0.29", features = ["connect", "url", "rustls-tls-native-roots"] }
 url = "2.5"
 

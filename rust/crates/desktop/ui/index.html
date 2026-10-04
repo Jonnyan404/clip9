@@ -907,6 +907,46 @@ body {
     max-width: 100%; max-height: 220px; border-radius: 6px; display: block;
     object-fit: contain; cursor: pointer; background: var(--bg);
 }
+/* ③b 壳内灯箱（点开预览看的那一层，`ui/app.js` 的 `openLightbox`）。
+   ⚠️★ 为什么**不再**叫系统程序打开：那是 2026-10-04 之前的行为，把用户**踢出应用**
+   去看一张图。图片 / 视频在壳里本来就看得全，犯不着为了少写一层浮层付这个代价。
+   ⚠️ `inset: 0` + `position: fixed`：它盖的是**整个窗口**，不是卡片那一块 ——
+   点开看的是原始大小，卡片那 220px 的上限在这里不作数。
+   ⚠️ 媒体自己**不设**宽高上限以外的尺寸：`object-fit: contain` 保证不裁切，
+   而「多大」由 92vw / 80vh 这两个上限兜住（再大的图也缩得进窗口）。 */
+.lightbox { position: fixed; inset: 0; z-index: 60; display: grid; place-items: center; }
+.lightbox .lb-bg {
+    position: absolute; inset: 0; background: rgba(0, 0, 0, .62);
+}
+.lightbox .lb-box {
+    position: relative; max-width: 92vw; max-height: 92vh;
+    display: flex; flex-direction: column; gap: 6px;
+}
+.lightbox .lb-head {
+    display: flex; align-items: center; gap: 8px;
+    color: #fff; font-size: 11.5px;
+}
+.lightbox .lb-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.lightbox .lb-x {
+    flex: none; width: 22px; height: 22px; border-radius: 6px; cursor: pointer;
+    border: 1px solid rgba(255, 255, 255, .35); background: rgba(255, 255, 255, .12);
+    color: #fff; font: inherit; font-size: 11px; line-height: 1; display: grid; place-items: center;
+}
+.lightbox .lb-x:hover { background: rgba(255, 255, 255, .24); }
+.lightbox .lb-stage {
+    position: relative; min-height: 40px; display: grid; place-items: center;
+}
+/* ⚠️ `max-height: 80vh`（不是 92vh）：上面那一行标题要占掉一点，
+   留出来才不会让「关闭」那颗按钮被挤到窗口外。 */
+.lightbox .lb-stage img,
+.lightbox .lb-stage video {
+    max-width: 92vw; max-height: 80vh; display: block; object-fit: contain;
+    border-radius: 6px; background: rgba(0, 0, 0, .35);
+}
+.lightbox .lb-load { color: #fff; font-size: 11.5px; opacity: .8; }
+/* ⚠️ 文件行**可点**（存进下载目录）：没有 `cursor: pointer` 的话，
+   它看着和「一行说明文字」一样，用户不会去点它 —— 而这个功能就白做了。 */
+.card .filerow { cursor: pointer; }
 /* 方向开关在**设置表格**里也要能画（稿 1 只定义了 .room .dir，表格里不在 .room 下） */
 .dir {
     width: 17px; height: 17px; border-radius: 5px; flex: none;
@@ -1760,6 +1800,22 @@ table.ra td input[type='checkbox'] { margin: 0; }
           <button class="btn primary" id="share-close" data-i18n="关闭">关闭</button>
         </div>
       </div>
+    </div>
+
+    <!-- ⚠️★ 壳内灯箱：点开图片 / 视频看的那一层（`ui/app.js` 的 `openLightbox`）。
+         ⚠️ `hidden` 是初值 —— 只有 `openLightbox` 摘掉它（判据 20 盯着 `[hidden]` 真的藏得住）。
+         ⚠️ 里面**不预置** `<img>` / `<video>`：是图还是视频由条目自己说了算，
+           每次开都现造一个新的 —— 换一条内容时不会留着上一张的残影。
+         ⚠️ 文案走 `data-i18n*`，标记里不写死中文（判据 15）。 -->
+    <div class="lightbox" id="lightbox" hidden>
+        <div class="lb-bg" id="lightbox-bg"></div>
+        <div class="lb-box">
+            <div class="lb-head">
+                <span class="lb-name" id="lightbox-name"></span>
+                <button class="lb-x" id="lightbox-close" type="button" data-i18n-title="关闭">✕</button>
+            </div>
+            <div class="lb-stage" id="lightbox-stage"></div>
+        </div>
     </div>
 
 <!-- ⚠️★ 顺序有讲究：`i18n.js` 必须在 `app.js` **前面**。两份都是 `defer`，按文档顺序执行，
