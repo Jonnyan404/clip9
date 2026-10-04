@@ -15,16 +15,17 @@ import { readLocationParam } from '@/lib/util';
 import { setupAxios } from '@/services/http';
 import { setupServiceWorkerUpdate } from '@/services/swUpdate';
 import { installShareBridge } from '@/services/shareBridge';
-import { installHostBridge } from '@/services/hostBridge';
-import { isShareRoute, router } from '@/router';
 import { useAppStore, type DarkMode } from '@/stores/appStore';
-import { useWebSocketStore } from '@/stores/wsStore';
 import { App } from './App';
 
 /**
  * 应用引导 —— 与 web-vue3/src/main.js **一一对应**，顺序敏感（每一步都写了原因）。
+ *
+ * ⚠️★ 这里**不做**路由初始化、也**不建** WebSocket：React Router 的 `RouterProvider`
+ * 会自己初始化（手动再调一次会让 history 注册两个监听器、整树挂掉 —— 真浏览器验收抓到过），
+ * 实时连接改由路由树内的 `RootLayout` 在挂载后启动（见 services/bootstrap.ts）。
  */
-async function bootstrap(): Promise<void> {
+function bootstrap(): void {
     // 1. axios：baseURL（= 外壳基准目录）+ 拦截器。必须最先 —— 后面所有请求都靠它。
     setupAxios();
 
@@ -46,20 +47,7 @@ async function bootstrap(): Promise<void> {
     //    外壳是「页面加载完就调」，晚一步那次分享就落在空的 window 上。
     installShareBridge();
 
-    // 5. 等首个 location 解析完 —— 之后才谈得上「是不是分享页」。
-    await router.initialize();
-
-    // 6. 分享页是给收件人看的独立页面：不建 WebSocket、不碰房间状态、不装宿主桥。
-    //    它只认 URL 里的 token，走自己那几个相对路径请求（见 pages/SharePage.tsx）。
-    if (!isShareRoute()) {
-        const ws = useWebSocketStore.getState();
-        ws.initFromRoute(new URLSearchParams(router.state.location.search).get('room') || '');
-        void ws.connect();
-        // 嵌入态的宿主消息通道（`?embed=1` 才真的装上）—— 桌面端用它切房间 / 切主题，
-        // 免得每次重设 `iframe.src` 把整个页面重载一遍。契约见 services/hostBridge.ts。
-        installHostBridge();
-    }
-
+    // 5. 渲染。首个 location 的解析与实时连接都交给路由树自己（见文件头）。
     createRoot(document.getElementById('app')!).render(
         <StrictMode>
             <App />
@@ -67,4 +55,4 @@ async function bootstrap(): Promise<void> {
     );
 }
 
-void bootstrap();
+bootstrap();

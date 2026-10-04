@@ -33,9 +33,14 @@ interface ShareInfo {
  *
  * ⚠️★ 这一页由**服务端外壳**（rust/crates/server/src/spa_shell.rs）注入 OG 后下发：
  * 抓取程序与真人拿的是同一份 HTML、同一个地址（`<prefix>/s/<token>`）。
- * ⚠️ 这一页**不建 WebSocket、不碰房间状态、不装宿主桥**（见 main.tsx 的引导分岔）。
+ * ⚠️ 这一页**不建 WebSocket、不碰房间状态、不装宿主桥**（见 services/bootstrap.ts）。
  * ⚠️ 接口一律用**相对路径**（不带前导斜杠），由 axios 的 baseURL 落到 `<prefix>/`。
  * ⚠️ 同一条路由上换 token **不会重新挂载组件** —— 必须盯住 token 重载，否则会一直显示上一条分享。
+ *
+ * ⚠️★ `share-page` / `share-page__raw` / `share-page__center--form` / `share-page__image` 这几个
+ * **结构类名是刻意保留的契约**：`tools/share-page-acceptance.mjs` 按它们定位元素（不按文案，
+ * 因为文案挂在 locale 上）。改成 MUI 之后 DOM 结构变了，所以把这些钩子显式补回来 ——
+ * 否则那条真浏览器验收会红，而**红的原因跟功能无关**，属于最难查的一类。
  */
 export default function SharePage() {
     const { t } = useTranslation();
@@ -175,7 +180,7 @@ export default function SharePage() {
     })();
 
     return (
-        <Box sx={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'center', minHeight: '100dvh', p: { xs: 2, sm: 4 } }}>
+        <Box className="share-page" sx={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'center', minHeight: '100dvh', p: { xs: 2, sm: 4 } }}>
             <Card variant="outlined" sx={{ width: '100%', maxWidth: 720, p: 2.5 }}>
                 <Stack direction="row" alignItems="center" spacing={1}>
                     <MdiIcon name="mdi-lock-outline" size={20} />
@@ -192,7 +197,7 @@ export default function SharePage() {
                 )}
 
                 {!loading && passwordNeeded && (
-                    <Stack alignItems="center" spacing={1.75} sx={{ py: 5 }}>
+                    <Stack className="share-page__center--form" alignItems="center" spacing={1.75} sx={{ py: 5 }}>
                         <MdiIcon name="mdi-lock-outline" size={34} color="var(--mui-palette-primary-main)" />
                         <Typography variant="body2" color="text.secondary">{t('sharePagePasswordHint')}</Typography>
                         <TextField
@@ -254,7 +259,7 @@ export default function SharePage() {
                                     </Button>
                                 </Stack>
                                 {mdMode === 'raw'
-                                    ? <pre className="code-block" style={{ maxHeight: '60vh', whiteSpace: 'pre-wrap' }}>{text}</pre>
+                                    ? <pre className="code-block share-page__raw" style={{ maxHeight: '60vh', whiteSpace: 'pre-wrap' }}>{text}</pre>
                                     : <MarkdownBody html={html} />}
                             </>
                         )}
@@ -263,7 +268,7 @@ export default function SharePage() {
                             <>
                                 <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: 60, mt: 1.75 }}>
                                     {previewLoading && <CircularProgress size={28} />}
-                                    {!previewLoading && previewKind === 'image' && <img src={fileUrl} alt={info.name} style={{ maxWidth: '100%', maxHeight: '62vh', borderRadius: 8 }} />}
+                                    {!previewLoading && previewKind === 'image' && <img className="share-page__image" src={fileUrl} alt={info.name} style={{ maxWidth: '100%', maxHeight: '62vh', borderRadius: 8 }} />}
                                     {!previewLoading && previewKind === 'video' && <video src={fileUrl} controls preload="metadata" style={{ maxWidth: '100%', maxHeight: '62vh', borderRadius: 8 }} />}
                                     {!previewLoading && previewKind === 'audio' && <audio src={fileUrl} controls preload="metadata" style={{ width: '100%' }} />}
                                     {!previewLoading && previewKind === 'text' && fileText && <CodeBlock text={fileText} name={info.name} />}
