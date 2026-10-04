@@ -395,6 +395,9 @@ fn main() {
             commands::share_entry,
             commands::pick_files,
             commands::send_files,
+            // 发送框里 ⌘/Ctrl+V 粘进来的图 / 文件（2026-10-04）：webview 只给字节不给路径，
+            // 这条命令把它落成临时文件再交给上面那条。少注册它的表现同样是「粘了没反应」。
+            commands::save_pasted_file,
             commands::refresh,
             commands::open_web,
             // ⚠️★ 网页视图跟着**当前房间的服务端**走（用户部署在别处的那几台也一样），

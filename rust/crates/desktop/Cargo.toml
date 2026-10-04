@@ -61,6 +61,11 @@ reqwest = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 tokio = { version = "1", features = ["sync"] }
+# ⚠️ 只为**一条命令**：把粘进发送框的字节（`save_pasted_file` 收到的是 base64）解回来。
+# 页面只能给字节（webview 的粘贴事件没有路径），而 IPC 里带裸字节数组比带 base64 大得多。
+# 它不是新依赖（workspace 里 `clip9-core` 的分享令牌已经带着它），自己写一份解码器
+# 就是「第二份定义」，而且 base64 的边界（填充 / 换行 / 非法字符）正是最容易写错的那种。
+base64 = { workspace = true }
 
 [dev-dependencies]
 # 配置文件要落盘才能测（原子写、坏了不许覆盖）—— 所以测试要一个真的临时目录。

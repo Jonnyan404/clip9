@@ -1028,6 +1028,64 @@ pub async fn pick_files(app: tauri::AppHandle, images_only: bool) -> Vec<String>
 pub fn send_files(runtime: State<'_, Arc<Runtime>>, paths: Vec<String>) {
     runtime.send_files(&paths);
 }
+
+/// 把**粘进发送框**的一张图 / 一个文件落成一个临时文件，返回它的路径。
+///
+/// ⚠️★ 为什么要有这条命令：webview 的粘贴事件只给 `File`（**字节 + 名字**），**不给路径**
+/// —— macOS 上从访达复制一个文件再粘贴也是这样 —— 而 `send_files` 走的是路径。
+/// 页面自己落不了盘（这份界面没有、也不该有 fs 权限）。
+///
+/// ⚠️ 两个边界在这里挡掉，因为**挡晚了代价更大**：
+///   · 名字过 [`clip9_client::download::sanitize_file_name`]：粘进来的名字是**剪贴板里那个
+///     程序**起的（`image.png`、也可能带 `:` 或 `/`），不是我们起的；
+///   · 超过服务端那条文件限额就**当场拒**（带上具体数字），而不是写满一个 G 再让上传去失败。
+///     ⚠️ 限额为 0 = 不知道（还没握过手）→ 那时**不拒**（fail-open，与上行同一方向）。
+#[tauri::command]
+pub fn save_pasted_file(
+    store: State<'_, Arc<Store>>,
+    name: String,
+    base64: String,
+) -> Result<String, Msg> {
+    use base64::Engine as _;
+    let bytes = base64::engine::general_purpose::STANDARD
+        .decode(base64.trim())
+        .map_err(|reason| Msg::key("pastedNotBase64").param("reason", reason))?;
+    if bytes.is_empty() {
+        return Err(Msg::key("pastedEmpty"));
+    }
+    let limit = store.limits().file_limit;
+    if limit > 0 && bytes.len() as u64 > limit {
+        return Err(Msg::key("pastedTooBig")
+            .param("size", bytes.len())
+            .param("limit", limit));
+    }
+    // ⚠️ 落在**系统临时目录**里：那本来就是给这类东西的地方，系统会自己清；
+    // 别写进下载目录（用户会以为是他存的），也别写进数据目录（那是要备份的）。
+    let dir = std::env::temp_dir().join("clip9-pasted");
+    std::fs::create_dir_all(&dir).map_err(|reason| {
+        Msg::key("pastedWriteFailed")
+            .param("path", dir.display())
+            .param("reason", reason)
+    })?;
+    let safe = clip9_client::download::sanitize_file_name(&name);
+    let name = if safe.is_empty() {
+        "pasted-file"
+    } else {
+        safe.as_str()
+    };
+    // ⚠️ 名字前面加毫秒时间戳：连着粘两张截图不能互相盖掉（那会变成「只发出来一张」）。
+    let stamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis())
+        .unwrap_or(0);
+    let path = dir.join(format!("{stamp}-{name}"));
+    std::fs::write(&path, &bytes).map_err(|reason| {
+        Msg::key("pastedWriteFailed")
+            .param("path", path.display())
+            .param("reason", reason)
+    })?;
+    Ok(path.to_string_lossy().to_string())
+}
 /// 「用**系统浏览器**打开网页版」（§3.5.1 那条硬要求：分享链接、密码管理器、书签、
 /// 五种模式都在浏览器里；塞进 webview 会让桌面端变成「带壳的浏览器」）。
 ///

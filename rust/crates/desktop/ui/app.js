@@ -2071,20 +2071,26 @@ function sendCurrentInput() {
   input.value = '';
 }
 
-/* ── 从界面发文件：📎 / 🖼 / 拖进来 ──────────────────────────────────
+/* ── 从界面发文件：📎 / 🖼 / 拖进来 / 粘贴 ────────────────────────────
  *
- * ⚠️★ 三条路（按钮 / 拖放 / 将来可能加的别的）**必须汇到同一条命令**
+ * ⚠️★ 四条路（两颗按钮 / 拖放 / 粘贴）**必须汇到同一条命令**
  *（`send_files`）—— 它们只是「怎么选到文件」不同，「怎么发出去」是同一件事。
  * 分开写一定会漂（比如只有按钮那条做了校验）。
  *
  * ⚠️★ 页面**不自己发请求**：走壳的命令，限额/凭据/多文件那些规则全在
  * `clip9-client` 里（`runtime.rs` 的 `send_files` 注释）。
  *
- * ⚠️ 「粘贴即发送」**没有做**，而且不是漏了：粘进来的东西是**系统剪贴板**里的内容，
- * 而本机的剪贴板监听（`clip9-client` 的 watcher）**已经在发它了** ——
- * 再加一条粘贴路径就是「同一份内容发两遍」，靠去重兜住而已。
- * 更关键的是 webview 里拿不到粘贴文件的**真实路径**（`File` 对象没有路径），
- * 所以那条路本来也走不通。
+ * ⚠️★ 「粘贴即发送」当年**刻意没做**，那两条理由现在的答案（2026-10-04 补的）：
+ *   ① 「webview 拿不到粘贴文件的**真实路径**」→ 走得通了：`save_pasted_file`
+ *      把字节落成临时文件（`File` 只有字节和名字，而 `send_files` 要的是路径）；
+ *   ② 「粘的东西本来就在剪贴板里，监听**已经在发它了**」→ **仍然成立**，而且
+ *      **去重兜不住它** —— 界面这条路上行**不过去重**（`Runtime::upload` 里
+ *      `UploadSource::FromUi` 直接 `upload_explicit`），而文件那条去重是按**路径**
+ *      算的（`Debouncer::accept` 的 `hash_paths`），临时文件每次都是新路径。
+ *      所以「↑ 开着的时候粘一次」**可能多出一条**：与「🖼 选同一个文件发两次」
+ *      是同一类（主动发送本来就不去重），**不是粘贴独有的**。
+ *      ⚠️ 反过来：↑ **关着**的时候（默认全关）粘贴是**唯一**的入口 —— 那时剪贴板里的
+ *      截图根本不会自己出去，用户想发只能在这儿粘。
  */
 
 /** 把一批路径交给壳去发。⚠️ 空数组**什么都不做**：那是用户按了「取消」。 */
@@ -2102,6 +2108,52 @@ async function pickAndSend(imagesOnly) {
     showNotice('error', t('打不开文件选择框：{error}', { error: errorText(error) }));
   }
 }
+
+/** 粘进来的一个文件 → 字节交给壳落成临时文件 → 拿回路径。
+ *
+ * ⚠️★ 为什么绕这一趟：webview 的 `File` **没有路径**（macOS 上从访达复制一个文件再粘
+ * 也是这样），而 `send_files` 认的是路径；页面自己又落不了盘。
+ */
+async function pastedPath(file) {
+  // ⚠️ `readAsDataURL` 是这份手写界面里唯一不用打包器就能拿到字节的路 ——
+  // 它是**异步**的，所以这里包一层 Promise（别的路都要 `FileReader` 之外的 API）。
+  const base64 = await new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result ?? '').split(',').pop() || '');
+    reader.onerror = () => reject(new Error(t('读不出粘进来的这个文件')));
+    reader.readAsDataURL(file);
+  });
+  return invoke('save_pasted_file', { name: file.name || 'pasted-file', base64 });
+}
+
+/** 发送框里 ⌘/Ctrl+V 粘到图 / 文件时：直接发出去（与 🖼 那条一致 —— 选到就发）。 */
+async function pasteFiles(files) {
+  const paths = [];
+  try {
+    for (const file of files) paths.push(await pastedPath(file));
+  } catch (error) {
+    showNotice('error', t('发不出去：{error}', { error: errorText(error) }));
+    return;
+  }
+  sendFiles(paths);
+}
+
+// ⚠️★ **只在剪贴板里真有文件时动手**：粘一段文字时 `files` 是空的，那时必须
+// **什么都不做** —— 拦了默认行为又不自己把文字插回去，就是「粘贴坏了」。
+// ⚠️ 两个来源都看：有的平台把文件放进 `files`，有的只在 `items` 里给（`kind==='file'`）。
+el('input').addEventListener('paste', (event) => {
+  const data = event.clipboardData;
+  if (!data) return;
+  const files = Array.from(data.files ?? []);
+  const picked = files.length ? files : Array.from(data.items ?? [])
+    .filter((item) => item.kind === 'file')
+    .map((item) => item.getAsFile())
+    .filter(Boolean);
+  if (!picked.length) return;
+  // ⚠️ 不拦的话浏览器会把文件名（或者什么都没有）插进输入框 —— 那一段字还会被当成正文发出去。
+  event.preventDefault();
+  pasteFiles(picked);
+});
 
 el('btn-send').addEventListener('click', sendCurrentInput);
 el('btn-attach').addEventListener('click', () => pickAndSend(false));

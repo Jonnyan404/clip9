@@ -2533,6 +2533,96 @@ if (entryViewFiles.length !== 1) {
   }
 }
 
+// ── 判据 31：发送框里 ⌘/Ctrl+V 粘进来的图 / 文件要能发出去（理由见下）──────────
+//
+// ⚠️★ 2026-10-04 加。这条路当年**刻意没做**，两条理由（见 `app.js` 那段注释）：
+// ① webview 的 `File` **没有路径**；② 剪贴板监听可能已经在发同一份内容。
+// ① 由 `save_pasted_file`（字节落成临时文件）解决了，② **仍然成立**、而且
+// **去重兜不住它**（界面那条上行不过去重）—— 所以这条判据只钉「粘了要有反应」，
+// 不钉「不许重复」：那是主动发送这一类固有的（🖼 选同一个文件发两次也是两条）。
+//
+// ⚠️★ 最容易写坏的是「粘一段**文字**也拦下来」：`preventDefault()` 打在没有文件的
+// 粘贴上，浏览器就不会把文字插进输入框 —— 症状是「粘贴坏了」，而且一份报错都没有。
+{
+  const problems = [];
+  const bare = stripComments(js);
+  // ⚠️ 字符串字面量在 `stripComments` 之后是 `\u0000…\u0000`（引号被换成空字符，内容还在）
+  // —— 所以 `'paste'` 要写成 `\u0000?paste`（判据 21 那一段就是这么写的）。
+  const paste = /el\(\u0000?input\u0000?\)\.addEventListener\(\u0000?paste\u0000?,[\s\S]*?\n\}\);/.exec(bare)?.[0]
+    ?? /addEventListener\(\u0000?paste\u0000?,[\s\S]*?\n\}\);/.exec(bare)?.[0]
+    ?? '';
+  if (!paste) {
+    problems.push('发送框上没有 `paste` 监听 —— 粘一张截图进来什么都不会发生（不报错）');
+  } else {
+    if (!/clipboardData/.test(paste)) {
+      problems.push('`paste` 处理里没有读 `clipboardData` —— 拿不到粘进来的东西');
+    }
+    if (!/preventDefault\(\)/.test(paste)) {
+      problems.push('`paste` 处理里没有 `preventDefault()` —— 浏览器会把文件名插进输入框，'
+        + '那份字还会被当成正文发出去');
+    }
+    // ⚠️★ 没有文件时**必须先返回**（见上面那条）：拦了默认行为又不自己把文字插回去 = 粘贴坏了。
+    if (!/if \(!\w+\.length\) return;/.test(paste)) {
+      problems.push('`paste` 处理里没有「没有文件就返回」那一句 —— 粘一段文字也会被拦下来（粘贴坏了）');
+    }
+    if (!/getAsFile\(\)/.test(paste)) {
+      problems.push('`paste` 处理里没有从 `items` 里 `getAsFile()` —— 只给 `items`、不给 `files`'
+        + ' 的平台（macOS 的截图就是）会漏掉');
+    }
+  }
+  if (!/invoke\(\u0000?save_pasted_file/.test(bare)) {
+    problems.push('没有调 `save_pasted_file` —— webview 只给字节不给路径，而 `send_files` 收的是路径');
+  }
+  const pasteSend = /async function pasteFiles\(files\)\s*\{[\s\S]*?\n\}/.exec(bare)?.[0] ?? '';
+  if (!pasteSend || !pasteSend.includes('sendFiles(')) {
+    problems.push('`pasteFiles` 没有汇到 `sendFiles` —— 那就成了「第二条发送路径」，'
+      + '限额 / 凭据 / 多文件那些规则要再写一遍');
+  }
+  const read1 = (name) => {
+    try {
+      return scanRust(readFileSync(join(dirname(rustPath), name), 'utf8')).blanked;
+    } catch {
+      return null;
+    }
+  };
+  const commandsSrc = read1('commands.rs');
+  const mainSrc = read1('main.rs');
+  if (!commandsSrc || !mainSrc) {
+    problems.push('读不到 `commands.rs` / `main.rs` —— 判据要跟着仓库结构改');
+  } else {
+    const cmd = /pub fn save_pasted_file\([\s\S]*?\n\}/.exec(commandsSrc)?.[0] ?? '';
+    if (!cmd) {
+      problems.push('`commands.rs` 里没有 `save_pasted_file` —— 粘进来的字节没地方落成文件');
+    } else {
+      if (!/sanitize_file_name/.test(cmd)) {
+        problems.push('`save_pasted_file` 没有过 `sanitize_file_name` —— 粘进来的名字是'
+          + '**剪贴板里那个程序**起的（`..` 与 `/` 都可能有）');
+      }
+      if (!/file_limit/.test(cmd)) {
+        problems.push('`save_pasted_file` 没有看服务端那条文件限额 —— 超限的文件要先写满一个'
+          + '临时文件才被拒（用户等了半天才看到一句「太大」）');
+      }
+      if (!/create_dir_all/.test(cmd)) {
+        problems.push('`save_pasted_file` 没有建目录 —— 第一次粘会直接写失败');
+      }
+    }
+    if (!/commands::save_pasted_file\b/.test(mainSrc)) {
+      problems.push('`main.rs` 的 `generate_handler!` 里没有 `commands::save_pasted_file`'
+        + ' —— 粘了没反应，而且连报错都没有');
+    }
+  }
+
+  if (problems.length) {
+    failed = true;
+    console.error(`✗ 判据 31：粘贴那一条路断了（${problems.length} 处）：`);
+    for (const one of problems) console.error(`    · ${one}`);
+    console.error('  ⚠️ 症状：⌘V 一张截图进来「什么都没发生」，或者更糟 —— 粘一段文字时不让它进去。');
+  } else {
+    console.log('· 判据 31：粘贴走 `save_pasted_file` → `send_files`（只拦有文件的那一次，'
+      + '文件名过清洗、超限当场拒）。');
+  }
+}
+
 // ── 判据 32：「还原」与「跑动作」之后要**还看得见那条消息**（理由见下）──────────
 //
 // ⚠️★ 2026-10-04 加。判据 28 钉的是展开 / 收起（**不重画**，卡片还是同一个节点）。

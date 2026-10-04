@@ -249,6 +249,13 @@
       // ⚠️ 点卡片上的图片 / 视频预览时（2026-10-04）。「没有预览地址」有两种：这条不是文件，
       // 或它那条没有服务端可问（见 `Store::entry_preview_url` 的注释）—— 对用户是同一件事。
       'entryPreviewUnavailable': '这条没有可以打开的原文件（它已经不在列表里，或者没有服务端地址）',
+      // ── 发送框里粘贴文件（`commands::save_pasted_file`）──
+      //    ⚠️ 每一条都要说「**为什么没发出去**」：粘一张图却什么都没发生时，
+      //    用户只会以为是网络坏了（他会去重启客户端、去查服务端）。
+      'pastedNotBase64': '粘进来的这份内容不是一份完整的 base64：{reason}',
+      'pastedEmpty': '粘进来的是空的（没有字节）',
+      'pastedTooBig': '粘进来的这个文件有 {size} 字节，超过服务端那条 {limit} 字节的上限 —— 没有发送',
+      'pastedWriteFailed': '临时文件写不进去（{path}）：{reason}',
       // ── 桌面行为：全局快捷键（`rust/crates/desktop/src/hotkeys.rs`）──
       //    ⚠️★ 这三条只在**注册 / 撤销那一下**发出来，落到提示区（`Store::notice`）。
       //    用户看到的症状是「按了没反应」，而原因在这里 —— 所以文案要说**为什么**，
@@ -814,6 +821,7 @@
       '分享不了：{error}': 'Could not share: {error}',
       '打不开：{error}': 'Could not open it: {error}',
       '点开用系统默认程序看（原始大小）': 'Click to open it at full size in the system viewer',
+      '读不出粘进来的这个文件': 'Could not read the file that was pasted',
       '删不掉：{error}': 'Could not delete: {error}',
       '已从房间里删掉。': 'Deleted from the room.',
       '分享链接已复制（没设密码）——贴进聊天工具会显示内容摘要，别贴到公开的地方。': 'Share link copied (no password) — pasting it into a chat app puts a summary of the content in the preview, so do not paste it anywhere public.',
@@ -830,6 +838,10 @@
       'openBrowserFailed': 'Could not open {url} in the system browser: {reason}',
       'noBundledServer': 'This client has no bundled server (clip9-server not found)',
       'entryPreviewUnavailable': 'There is no original file to open for this one (it left the list, or there is no server address)',
+      'pastedNotBase64': 'What was pasted is not one complete base64 payload: {reason}',
+      'pastedEmpty': 'What was pasted is empty (no bytes)',
+      'pastedTooBig': 'The pasted file is {size} bytes, over the server limit of {limit} bytes -- nothing was sent',
+      'pastedWriteFailed': 'Could not write the temporary file ({path}): {reason}',
       'hotkeyRegisterFailed': 'Could not grab {shortcut} (another program probably holds it): {reason}',
       'hotkeyUnregisterFailed': 'Could not release the global shortcut: {reason}',
       'hotkeyUnparsable': 'The shortcut {shortcut} cannot be parsed: {reason}',
