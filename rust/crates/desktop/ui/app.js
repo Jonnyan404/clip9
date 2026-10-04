@@ -880,6 +880,9 @@ const IMAGE_SUFFIX = /\.(png|jpe?g|gif|webp|bmp|heic|svg)$/i;
 /** 一张卡片。 */
 function renderEntry(entry) {
   const card = h('div', entry.mine ? 'card me' : 'card');
+  // ⚠️★ 卡片带上**条目 id**：整条时间线被重画之后（`repaint()`）卡片是新的节点，
+  // 要按这个 id 把那一张找回来 —— 见 `holdCardPosition`（还原 / 跑动作都靠它定位）。
+  card.dataset.id = String(entry.id);
 
   if (entry.kind === 'file') {
     // ⚠️ 预览只认**壳本地拼出来的**地址，而且只认图片；别的按文件条目显示。
@@ -1005,8 +1008,13 @@ function renderEntry(entry) {
     bar.append(h('span', 'tag', viewed.label));
     const back = h('button', 'lnk', t('还原'));
     back.addEventListener('click', () => {
-      actionViews.delete(entry.id);
-      repaint();
+      // ⚠️★ 还原走的是**整条重画**（`repaint()`）—— 卡片会换成新节点，所以这里传**条目 id**：
+      // 传这张（`card`）的话，`holdCardPosition` 事后量的是一个已经被丢掉的节点（顶边 0），
+      // 于是「偏移」算出几千像素、视口被拨走 —— 点了「还原」反而找不着那条消息。
+      holdCardPosition(String(entry.id), () => {
+        actionViews.delete(entry.id);
+        repaint();
+      });
     });
     bar.append(back);
     card.append(bar);
@@ -1502,14 +1510,18 @@ async function runAction(entry, action, library, params) {
       showNotice('warn', t('这个动作跑出来是空的 —— 这条本来就是这个样子。'));
       return;
     }
-    actionViews.set(entry.id, {
-      actionId: action.id,
-      label: window.ActionLibrary.label(library, action.nameKey),
-      output,
-      htmlText,
-      html: Boolean(htmlText),
+    // ⚠️★ 结果挂上去之后同样是**整条重画**（`repaint()`），位置要走同一条锚定 ——
+    // 不然「跑完动作，屏幕上换了一段别的内容」，与收起长文是同一个毛病（不报错，只是找不着）。
+    holdCardPosition(String(entry.id), () => {
+      actionViews.set(entry.id, {
+        actionId: action.id,
+        label: window.ActionLibrary.label(library, action.nameKey),
+        output,
+        htmlText,
+        html: Boolean(htmlText),
+      });
+      repaint();
     });
-    repaint();
   } catch (error) {
     showNotice('error', t('这个动作没跑成：{error}', { error: errorText(error) }));
   }
@@ -1535,14 +1547,28 @@ function expandLabel(entry) {
  *   · 卡片的顶边**本来就在视口里**（最常见）→ 让它留在原处（钉在上一次那个 y 上）；
  *   · 顶边**已经滚到视口上方**（长文读到一半再收起是这种）→ 把顶边贴到视口顶部。
  *     关键是「定位到这一条」—— 停在别处和跳走一样糟，用户要找的是**那条消息**。
+ *
+ * ⚠️★ `card` 也可以是一个**条目 id**（字符串）—— 「还原」与「跑动作」走的是 `repaint()`，
+ * 也就是**整条时间线重画**：那张卡片被丢掉了，改之后是一个新节点。拿旧节点量顶边，
+ * 量到的是 `0`（它已经不在文档里），于是「偏移」算成几千像素 —— 视口被拨到很远的地方，
+ * **比不钉还糟**。所以那两处传 id，这里按 id 在**改之后**再找一次（同一个条目，新节点）。
  */
 function holdCardPosition(card, mutate) {
   const host = el('timeline');
+  const find = () => (typeof card === 'string'
+    ? host.querySelector(`[data-id="${card}"]`)
+    : card);
   const view = host.getBoundingClientRect();
-  const before = card.getBoundingClientRect().top;
+  const target = find();
+  // ⚠️ 这条已经不在列表里了（被删 / 换了房间）：没得钉 —— 也别拿一个不存在的节点算出假偏移。
+  if (!target) { mutate(); return; }
+  const before = target.getBoundingClientRect().top;
   const wanted = before >= view.top ? before : view.top;
   mutate();
-  const drift = card.getBoundingClientRect().top - wanted;
+  const after = find();
+  // ⚠️ 重画之后它不见了（同上）：拨什么都错，直接不拨。
+  if (!after) return;
+  const drift = after.getBoundingClientRect().top - wanted;
   if (drift) host.scrollTop += drift;
 }
 

@@ -2505,6 +2505,45 @@ if (entryViewFiles.length !== 1) {
   }
 }
 
+// ── 判据 32：「还原」与「跑动作」之后要**还看得见那条消息**（理由见下）──────────
+//
+// ⚠️★ 2026-10-04 加。判据 28 钉的是展开 / 收起（**不重画**，卡片还是同一个节点）。
+// 而「还原」与「跑动作」走的是 `repaint()` —— **整条时间线重画**，卡片是**新的节点**。
+// 这时候把旧节点交给 `holdCardPosition` 量顶边，量到的是 `0`（它已经不在文档里），
+// 于是「偏移」算成几千像素：视口被拨到很远的地方 —— **比不钉还糟**。
+{
+  const problems = [];
+  const bare = stripComments(js);
+  const render = /function renderEntry\(entry\)\s*\{[\s\S]*?\n\}/.exec(bare)?.[0] ?? '';
+  if (!render || !/card\.dataset\.id/.test(render)) {
+    problems.push('卡片上没有 `data-id` —— 重画之后没有东西能把它认回来');
+  }
+  const hold = /function holdCardPosition\([\s\S]*?\n\}/.exec(bare)?.[0] ?? '';
+  if (!hold || !/typeof card === \u0000?string/.test(hold)) {
+    problems.push('`holdCardPosition` 不认条目 id —— `repaint()` 之后卡片是新节点，'
+      + '拿旧节点量到的顶边是 0（视口被拨到很远的地方）');
+  } else if (!/querySelector\(/.test(hold)) {
+    problems.push('`holdCardPosition` 没有按 id 重新找卡片 —— 同上');
+  }
+  // ⚠️★ 两处都必须**传 id**（不是传那张卡片），而且状态改动要在回调里。
+  if (!/holdCardPosition\(String\(entry\.id\), \(\) => \{[\s\S]{0,240}actionViews\.delete/.test(bare)) {
+    problems.push('「还原」没有包进 `holdCardPosition`（且传的是条目 id）—— 还原会整条重画，'
+      + '位置就丢了：一按「还原」就找不着那条消息');
+  }
+  if (!/holdCardPosition\(String\(entry\.id\), \(\) => \{[\s\S]{0,240}actionViews\.set/.test(bare)) {
+    problems.push('跑动作之后没有包进 `holdCardPosition` —— 结果挂上去同样是整条重画，视口会跳走');
+  }
+
+  if (problems.length) {
+    failed = true;
+    console.error(`✗ 判据 32：「还原 / 跑动作」之后没有定位回那条（${problems.length} 处）：`);
+    for (const one of problems) console.error(`    · ${one}`);
+    console.error('  ⚠️ 症状：按了「还原」，屏幕上换了一段别的内容 —— 不报错，只是找不着。');
+  } else {
+    console.log('· 判据 32：还原与跑动作都按**条目 id** 过 `holdCardPosition`（重画后重新找卡片）。');
+  }
+}
+
 if (cssOnly.length) {
   console.log(`· ${cssOnly.length} 个 id 只被选择器用（形如 #id { … }），正常：${cssOnly.join('、')}`);
 }if (dynamicPrefixes.size) {
