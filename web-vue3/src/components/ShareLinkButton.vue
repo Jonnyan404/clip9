@@ -43,6 +43,7 @@ import {
     withCurrentOrigin,
     withShareQrFlag,
 } from '@/util.js';
+import { SHARE_TTL_PRESET_MINUTES, shareTtlProgress as shareTtlPercent } from '@/share-config.js';
 
 const mdiContentCopy = 'mdi-content-copy';
 const mdiShareVariant = 'mdi-share-variant';
@@ -98,22 +99,13 @@ const contentUrl = computed(() => {
 const shareQrUrl = computed(() => withShareQrFlag(shareContentUrl.value) || shareContentUrl.value);
 const shareTtlSeconds = computed(() => minutesToShareTTL(shareForm.value.ttlMinutes));
 const shareTtlLabel = computed(() => formatShareDuration(shareTtlSeconds.value, (key, params) => t(key, params)));
-const shareTtlProgress = computed(() => {
-    const min = shareTtlMinMinutes;
-    const max = shareTtlMaxMinutes;
-    const value = Number(shareForm.value.ttlMinutes);
-    if (!Number.isFinite(value) || max <= min) {
-        return 0;
-    }
-    const ratio = (value - min) / (max - min);
-    return Math.max(0, Math.min(100, ratio * 100));
-});
-const shareTtlPresets = computed(() => [
-    { minutes: 15, label: t('shareDurationMinutes', { minutes: 15 }) },
-    { minutes: 60, label: t('shareDurationHours', { hours: 1 }) },
-    { minutes: 360, label: t('shareDurationHours', { hours: 6 }) },
-    { minutes: 1440, label: t('shareDurationHours', { hours: 24 }) },
-]);
+const shareTtlPresets = computed(() =>
+    SHARE_TTL_PRESET_MINUTES.map((minutes) => ({
+        minutes,
+        label: formatShareDuration(minutesToShareTTL(minutes), (key, params) => t(key, params)),
+    })),
+);
+const shareTtlProgress = computed(() => shareTtlPercent(shareForm.value.ttlMinutes));
 function onShareTtlInput(event) {
     const next = Number(event && event.target ? event.target.value : shareForm.value.ttlMinutes);
     shareForm.value.ttlMinutes = Number.isFinite(next) ? next : SHARE_DEFAULT_TTL_MINUTES;

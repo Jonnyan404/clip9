@@ -3,13 +3,18 @@
 //
 // 用法：
 //   node tools/share-limits-smoke.mjs                                  # 默认读真实源码
-//   node tools/share-limits-smoke.mjs <util.js> <share.rs>             # 用别的夹具跑（变异验证）
+//   node tools/share-limits-smoke.mjs <share-config.js> <share.rs>     # 用别的夹具跑（变异验证）
 //
 // # ⚠️ 为什么要有它
 //
 // 「默认有效期 / 最小 / 最大 / 次数上限」这四个数**各写了两遍**：
 // 服务端在 `rust/crates/core/src/share.rs`（那是真值，签发时按它归一化），
-// 前端在 `web-vue3/src/util.js`（滑块范围、档位按钮、提交前的兜底都要它）。
+// 前端在 `web-vue3/src/share-config.js`（滑块范围、档位按钮、提交前的兜底都要它）。
+//
+// ⚠️★ 那一份之所以单独一个文件：桌面端的界面（**没有构建步骤**）也有自己的分享弹窗，
+// 它加载的是同一份 —— 由 `tools/sync-action-catalog.mjs` 逐字节拷过去。
+// `util.js` 只是**再导出**（加上 `axios` 之类桌面端装不下的依赖）。
+// 所以把这四个数抄回 `util.js` 就等于宣告第三处定义存在，忍一句判据 5 拦它。
 //
 // 两边不一致**不会报错**：服务端只是安静地夹一下。症状是
 // **「用户填了 30 分钟，实际生效 15 分钟」**——或者反过来（前端拦掉了服务端本来接受的输入）。
@@ -25,10 +30,11 @@
 // 1. 四个上限：前端常量 === 服务端常量（逐个数，报出各自的行号）；
 // 2. `normalizeShareTTL` 真的夹到服务端那个区间（下限抬、上限压、0 回落默认）；
 // 3. `normalizeShareMaxUses` 同上（`<=0` 归 0 = 不限次数，超过夹到上限）；
-// 4. 前端的「分钟」派生值 === 服务端秒数 / 60（UI 滑块用的是分钟，最容易各自取整）。
+// 4. 前端的「分钟」派生值 === 服务端秒数 / 60（UI 滑块用的是分钟，最容易各自取整）；
+// 5. 这四个数与那两个 `normalize*` **不许在别处再声明一遍**（`util.js` 只能再导出）。
 
 import { createRequire } from 'node:module';
-import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -38,7 +44,9 @@ const ROOT = resolve(HERE, '..');
 const require = createRequire(join(ROOT, 'web-vue3/package.json'));
 const acorn = require('acorn');
 
-const utilPath = process.argv[2] && process.argv[2] !== '-' ? process.argv[2] : join(ROOT, 'web-vue3/src/util.js');
+const sharePath = process.argv[2] && process.argv[2] !== '-'
+  ? process.argv[2]
+  : join(ROOT, 'web-vue3/src/share-config.js');
 const rustPath = process.argv[3] && process.argv[3] !== '-' ? process.argv[3] : join(ROOT, 'rust/crates/core/src/share.rs');
 
 let failed = 0;
@@ -69,8 +77,8 @@ for (const [key, one] of Object.entries(RUST)) {
 if (failed) process.exit(1);
 
 // ── 前端那一份：用 acorn 取出常量与两个 normalize 函数的**源码** ────────────
-const utilCode = readFileSync(utilPath, 'utf8');
-const utilAst = acorn.parse(utilCode, { ecmaVersion: 'latest', sourceType: 'module' });
+const shareCode = readFileSync(sharePath, 'utf8');
+const shareAst = acorn.parse(shareCode, { ecmaVersion: 'latest', sourceType: 'module' });
 
 const WANTED_CONSTS = ['SHARE_DEFAULT_TTL', 'SHARE_MIN_TTL', 'SHARE_MAX_TTL', 'SHARE_MAX_USES_LIMIT',
   'SHARE_DEFAULT_TTL_MINUTES', 'SHARE_MIN_TTL_MINUTES', 'SHARE_MAX_TTL_MINUTES'];
@@ -81,20 +89,20 @@ const constLines = {};
 const foundConsts = new Set();
 const foundFuncs = new Set();
 
-for (const node of utilAst.body) {
+for (const node of shareAst.body) {
   const decl = node.type === 'ExportNamedDeclaration' && node.declaration ? node.declaration : node;
   if (decl.type === 'VariableDeclaration') {
     for (const d of decl.declarations) {
       const name = d.id?.name;
       if (!WANTED_CONSTS.includes(name)) continue;
       foundConsts.add(name);
-      constLines[name] = utilCode.slice(0, node.start).split('\n').length;
-      pieces.push(utilCode.slice(node.start, node.end).replace(/^export\s+/, ''));
+      constLines[name] = shareCode.slice(0, node.start).split('\n').length;
+      pieces.push(shareCode.slice(node.start, node.end).replace(/^export\s+/, ''));
     }
   }
   if (decl.type === 'FunctionDeclaration' && WANTED_FUNCS.includes(decl.id?.name)) {
     foundFuncs.add(decl.id.name);
-    pieces.push(utilCode.slice(node.start, node.end).replace(/^export\s+/, ''));
+    pieces.push(shareCode.slice(node.start, node.end).replace(/^export\s+/, ''));
   }
 }
 for (const name of WANTED_CONSTS) if (!foundConsts.has(name)) bad(`判据 1：前端里找不到常量 ${name}（被删了 / 改名了？那几个 normalize 会当场抛 ReferenceError）`);
@@ -158,6 +166,46 @@ for (const [judge, list] of byJudge) {
     for (const one of broken) console.log(`    ${one.what}${one.err}`);
   } else {
     ok(`${judge}：${list.length} 条行为都与服务端的数一致`);
+  }
+}
+
+// ── 判据 5：那四个数与那两个 normalize **不许在别处再声明一遍** ───────────────
+// 「正面 comprise 一遍」很容易在 `util.js` 里发生：你想加一个小工具，顺手把 `SHARE_MAX_TTL`
+// 再 const 一次 —— 那样桌面端的滑块用的是 `share-config.js` 那份，而网页的一部分调用点
+// 用的是 `util.js` 那份，两边从此各走各路，**没有任何报错**。
+{
+  const reDeclared = [];
+  // ⚠️ `rust/crates/desktop/ui/share-config.js` **故意不查**：它本来就是这一份的逐字节拷贝
+  //（`tools/sync-action-catalog.mjs` 搬的），equality 由 `action-catalog-smoke` 那条判据盯。
+  // 把它算进来只会让每条 Build -flag 的价值都变成零。
+  const others = ['web-vue3/src/util.js'];
+  for (const rel of others) {
+    if (resolve(sharePath) === resolve(join(ROOT, rel))) continue; // 夹具模式：比的就是它自己
+    const path = join(ROOT, rel);
+    if (!existsSync(path)) continue;
+    const code = readFileSync(path, 'utf8');
+    for (const node of acorn.parse(code, { ecmaVersion: 'latest', sourceType: 'module' }).body) {
+      const decl = node.type === 'ExportNamedDeclaration' && node.declaration ? node.declaration : node;
+      if (decl.type !== 'VariableDeclaration' && decl.type !== 'FunctionDeclaration') continue;
+      const names = decl.type === 'FunctionDeclaration'
+        ? [decl.id?.name]
+        : decl.declarations.map((d) => d.id?.name);
+      for (const name of names) {
+        // ⚠️ `export { X } from '…'` 是**再导出**，Node 里它是 `ExportNamedDeclaration`
+        // 且没有 `declaration` —— 上面那句 `node.declaration ? … : node` 会把它原样留下，
+        // 而它的 type 是 `ExportNamedDeclaration`，进不了上面那个 continue 之后的分支。
+        if (WANTED_CONSTS.includes(name) || WANTED_FUNCS.includes(name)) {
+          reDeclared.push(`${rel} 里的 ${name}`);
+        }
+      }
+    }
+  }
+  if (reDeclared.length) {
+    bad(`判据 5：这些名字在别处**又声明了一遍**（桌面端看不见那一份）：`);
+    for (const one of reDeclared) console.log(`    ${one}`);
+    console.log('  ⚠️ `util.js` 应当只用 `export { … } from "./share-config.js"` 转出来。');
+  } else {
+    ok(`判据 5：${WANTED_CONSTS.length + WANTED_FUNCS.length} 个名字只在 share-config.js 里声明过一次（util.js 是再导出）`);
   }
 }
 

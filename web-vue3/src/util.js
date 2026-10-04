@@ -98,79 +98,28 @@ export function readLocationParam(key) {
     return new URLSearchParams(window.location.search).get(name) || '';
 }
 
-/** 分享链接默认/约束（秒）—— ⚠️★ 与 Rust 侧那几个**必须一一对应**
- *（`rust/crates/core/src/share.rs` 的 `DEFAULT_SHARE_TTL_SECONDS` / `MIN_` / `MAX_SHARE_TTL_SECONDS`）。
- * 服务端也会夹一次，所以两边不一致**不报错** —— 症状是「用户填了 A、实际生效的是 B」。
- * 由 `tools/share-limits-smoke.mjs` 逐个数盯着。
- */
-export const SHARE_DEFAULT_TTL = 15 * 60; // 15 分钟
-export const SHARE_MIN_TTL = 60; // 1 分钟
-export const SHARE_MAX_TTL = 24 * 60 * 60; // 24 小时
-
-/** `maxUses` 上限（0 = 不限次数）。对应 `share.rs` 的 `MAX_SHARE_MAX_USES`。
- *
- * ⚠️★ 这个常量在 2026-10-03 之前**根本不存在** —— 下面 `normalizeShareMaxUses` 里用了它、
- * 却从来没声明过。于是「分享面板里填了次数、点生成」会抛 `ReferenceError`，
- * 而表现是**点了没反应**（不填时 `Number('') === 0` 会在前面就返回，所以平时看不出来）。
- * ⇒ `tools/no-undef-smoke.mjs` 现在盯着这一整类：**用了、但从没声明过的标识符**。
- */
-export const SHARE_MAX_USES_LIMIT = 1000;
-
-/** 分钟 <-> 秒，供 UI 滑块使用 */
-export const SHARE_DEFAULT_TTL_MINUTES = Math.floor(SHARE_DEFAULT_TTL / 60);
-export const SHARE_MIN_TTL_MINUTES = Math.floor(SHARE_MIN_TTL / 60);
-export const SHARE_MAX_TTL_MINUTES = Math.floor(SHARE_MAX_TTL / 60);
-
-export function normalizeShareTTL(ttl) {
-    const value = Number(ttl);
-    if (!Number.isFinite(value) || value <= 0) {
-        return SHARE_DEFAULT_TTL;
-    }
-    if (value < SHARE_MIN_TTL) {
-        return SHARE_MIN_TTL;
-    }
-    if (value > SHARE_MAX_TTL) {
-        return SHARE_MAX_TTL;
-    }
-    return Math.floor(value);
-}
-
-export function minutesToShareTTL(minutes) {
-    const mins = Number(minutes);
-    if (!Number.isFinite(mins)) {
-        return SHARE_DEFAULT_TTL;
-    }
-    return normalizeShareTTL(Math.round(mins) * 60);
-}
-
-/**
- * 将秒数格式化为可读时长。
- * 需要传入 i18n t 函数：t(key, params)
- */
-export function formatShareDuration(seconds, t) {
-    const total = normalizeShareTTL(seconds);
-    const hours = Math.floor(total / 3600);
-    const minutes = Math.floor((total % 3600) / 60);
-    if (hours > 0 && minutes > 0) {
-        return t('shareDurationHoursMinutes', { hours, minutes });
-    }
-    if (hours > 0) {
-        return t('shareDurationHours', { hours });
-    }
-    return t('shareDurationMinutes', { minutes: Math.max(1, minutes) });
-}
-
-/** 0 = 不限次数 */
-export function normalizeShareMaxUses(maxUses) {
-    const value = Number(maxUses);
-    if (!Number.isFinite(value) || value <= 0) {
-        return 0;
-    }
-    if (value > SHARE_MAX_USES_LIMIT) {
-        return SHARE_MAX_USES_LIMIT;
-    }
-    return Math.floor(value);
-}
+// ⚠️★ 分享的限额与形状住在 `./share-config.js` —— **桌面端也加载那一份**
+// （由 `tools/sync-action-catalog.mjs` 逐字节拷到 `rust/crates/desktop/ui/`）。
+// 以前这四个上限与两个 `normalize*` 是在这里**自己写**的：那样桌面端要把同一组数字
+// 抄第三遍（服务端一份、这里一份、桌面的滑块一份），而两边不一致**不报错** ——
+// 症状只是「填了 30 分钟，实际生效 15 分钟」。这里现在**只转出来**，
+// 已经 import 它们的调用点一个字都不用改。
+import { normalizeShareMaxUses, normalizeShareTTL } from './share-config.js';
+export {
+    SHARE_DEFAULT_TTL,
+    SHARE_DEFAULT_TTL_MINUTES,
+    SHARE_MAX_TTL,
+    SHARE_MAX_TTL_MINUTES,
+    SHARE_MAX_USES_LIMIT,
+    SHARE_MIN_TTL,
+    SHARE_MIN_TTL_MINUTES,
+    SHARE_TTL_PRESET_MINUTES,
+    formatShareDuration,
+    minutesToShareTTL,
+    normalizeShareMaxUses,
+    normalizeShareTTL,
+    shareTtlProgress,
+} from './share-config.js';
 
 /**
  * 向服务端申请分享链接。
