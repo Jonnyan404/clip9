@@ -91,6 +91,273 @@
     margin: 12px 0;
 }
 
+/* ── 便签卡片正文（web-vue3/src/components/sticky/StickyNote.vue）──────────
+   ⚠️ 卡片**本身就渲染 md**（不只是阅读器）：任务列表 / 表格默认就是 md，
+   于是卡片上的复选框也能直接勾。纯文本按贴纸观感截断 4 行；渲染态放开，
+   否则一张表只露 4 行、复选框也点不到。 */
+.sticky-note__text {
+    font-size: 13px;
+    line-height: 1.5;
+    font-weight: 500;
+    word-break: break-word;
+    white-space: pre-wrap;
+    display: -webkit-box;
+    -webkit-line-clamp: 4;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+    flex: 1;
+    min-height: 0;
+}
+
+.sticky-note__text--rendered {
+    display: block;
+    -webkit-line-clamp: unset;
+    white-space: normal;
+    max-height: 46vh;
+    overflow: auto;
+}
+
+.sticky-note__text--rendered .markdown-body {
+    font-size: 12px;
+    /* 便签正文本身是 500，markdown 段落跟着变粗会很难看 */
+    font-weight: 400;
+}
+
+.sticky-note__text--rendered .markdown-body > :first-child {
+    margin-top: 0;
+}
+
+.sticky-note__text--rendered .markdown-body > :last-child {
+    margin-bottom: 0;
+}
+
+/* 卡片里的表格再收一档：便签卡片窄，12px 的表头会把列挤到换行。 */
+.sticky-note__text--rendered .markdown-body table {
+    font-size: 11px;
+}
+
+.sticky-note__fname {
+    font-weight: 700;
+    font-size: 12px;
+    line-height: 1.45;
+    min-width: 0;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+    word-break: break-all;
+}
+
+/* ── 非标准模式的输入区（web-vue3/src/components/sticky/StickyComposer.vue）──
+   ⚠️★ 这一块是**裸 textarea + 自绘按钮**，不是 MUI 的 TextField/Button —— Vue 版就是
+   这么写的，换成 MUI 之后输入框自带边框与底色，便签那张「纸」的观感就没了。
+   皮肤按模式给：默认（sticky，米黄虚线纸）、`--board`（看板：正文独占一行 + 动作另起一行）。 */
+.sticky-composer {
+    background: #fffbe8;
+    border: 1.5px dashed #d5c49a;
+    border-radius: 12px;
+    padding: 10px 13px;
+    box-shadow: 0 2px 6px rgba(68, 64, 42, 0.08);
+}
+
+.sticky-composer__files {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin-bottom: 8px;
+}
+
+.sticky-composer__file {
+    font-size: 11px;
+    background: rgba(213, 196, 154, 0.28);
+    color: #6f6548;
+    border-radius: 6px;
+    padding: 3px 8px;
+}
+
+.sticky-composer__closer {
+    font-weight: 700;
+    cursor: pointer;
+    margin-left: 4px;
+    opacity: 0.6;
+}
+
+.sticky-composer__progress {
+    font-size: 11px;
+    font-weight: 700;
+    color: #0a0d24;
+}
+
+.sticky-composer__row {
+    display: flex;
+    align-items: center;
+    gap: 9px;
+}
+
+.sticky-composer__attach {
+    font-size: 16px;
+    background: none;
+    border: none;
+    cursor: pointer;
+    padding: 0;
+    line-height: 1;
+    color: #b8ae9a;
+}
+
+.sticky-composer__area {
+    flex: 1;
+    min-width: 0;
+    resize: none;
+    border: none;
+    outline: none;
+    background: transparent;
+    font-size: 12px;
+    line-height: 1.5;
+    color: #444034;
+    font-family: inherit;
+    padding: 6px 0;
+    /* 三行起步：`/` 模板插进来的就是多行骨架（任务清单 / 表格），一行高的框只看得到第一行。
+       ⚠️ 刻意**只用 CSS 定高**（别改成 JS 按内容算高度）。 */
+    min-height: calc(3lh + 12px);
+}
+
+.sticky-composer__area::placeholder {
+    color: #b8ae9a;
+}
+
+.sticky-composer__go {
+    background: #d97706;
+    color: #fff;
+    border: none;
+    border-radius: 8px;
+    font-size: 12px;
+    padding: 6px 14px;
+    font-weight: 650;
+    cursor: pointer;
+    flex-shrink: 0;
+}
+
+.sticky-composer__go:disabled {
+    opacity: 0.55;
+    cursor: not-allowed;
+}
+
+/* 暗色（便签墙那套）—— 对应 Vue 的 `.sticky-wall--dark .sticky-wall__composer :deep(...)`。
+   ⚠️★ **必须挂在 `.sticky-wall` 下**：看板（`.board-wall`）不在便签墙里，它的暗色走
+   `--board-*` 变量。写成裸的 `.dark .sticky-composer` 会连看板一起改掉 —— 而且
+   `.dark .sticky-composer` 权重(0,2,0) 高于 `.sticky-composer--board`(0,1,0)，
+   看板的深色面板会被这张米黄纸顶掉。 */
+.dark .sticky-wall .sticky-composer {
+    background: rgba(255, 251, 232, 0.06);
+    border-color: #4a3f28;
+}
+
+.dark .sticky-wall .sticky-composer__area {
+    color: rgba(238, 232, 214, 0.95);
+}
+
+.dark .sticky-wall .sticky-composer__area::placeholder {
+    color: rgba(184, 174, 154, 0.7);
+}
+
+.dark .sticky-wall .sticky-composer__file {
+    background: rgba(154, 139, 98, 0.24);
+    color: #e6ddc3;
+}
+
+/* ── 看板皮肤 ────────────────────────────────────────────────────────────
+   ⚠️ 看板的发送区是「新建一张卡片」，不是聊天输入条，所以排布与另外几个模式不同：
+   **正文独占一整行**（要写得下任务清单和表格），动作另起一行（附件在左、发送在右）。
+   三样挤在一个 flex 行里的话，正文一长高，附件和发送就被甩到框底。 */
+.sticky-composer--board {
+    background: var(--board-panel-bg, #fff);
+    border: 1px solid var(--board-hairline, rgba(148, 163, 184, 0.32));
+    border-radius: 10px;
+    padding: 7px 11px;
+    box-shadow: none;
+    color: inherit;
+}
+
+.sticky-composer--board .sticky-composer__row {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr);
+    grid-template-rows: auto auto;
+    align-items: center;
+    gap: 6px 8px;
+}
+
+.sticky-composer--board .sticky-composer__area {
+    grid-column: 1 / -1;
+    grid-row: 1;
+    font-size: 12.5px;
+    /* 跟随容器（看板给的文字色），不然深色看板里输入的字是黑的 */
+    color: inherit;
+    padding: 2px 0;
+    /* 起步五行：一行的框写不出任务清单 / 表格 */
+    min-height: calc(5lh + 8px);
+    max-height: 38vh;
+    overflow-y: auto;
+}
+
+.sticky-composer--board .sticky-composer__attach {
+    grid-column: 1;
+    grid-row: 2;
+    justify-self: start;
+    /* 裸 ➕ 看着像误入的字符；给一个按钮的形状，读起来才是「可以点」 */
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 30px;
+    height: 30px;
+    border-radius: 8px;
+    background: rgba(148, 163, 184, 0.18);
+    font-size: 14px;
+    color: var(--board-hint, #a8b1bd);
+}
+
+.sticky-composer--board .sticky-composer__go {
+    grid-column: 2;
+    grid-row: 2;
+    justify-self: end;
+}
+
+.sticky-composer--board .sticky-composer__area::placeholder {
+    color: var(--board-hint, #a8b1bd);
+}
+
+/* 看板的附件小标签 / 进度：底色与文字都**跟着看板面板走**，不要沿用便签那套米黄。
+   （不覆盖的话，浅色看板上会出现一块米黄色的 chip，和面板格格不入。） */
+.sticky-composer--board .sticky-composer__file {
+    background: rgba(148, 163, 184, 0.18);
+    color: inherit;
+}
+
+.sticky-composer--board .sticky-composer__progress {
+    color: inherit;
+}
+
+.sticky-composer__go--board {
+    background: var(--mui-palette-primary-main);
+    color: #fff;
+    border-radius: 8px;
+    font-size: 12px;
+    padding: 6px 14px;
+    font-weight: 650;
+}
+
+/* 看板的面板色（Vue 的 `.board-wall` / `.board-wall--dark` 给这几个变量） */
+.board-wall {
+    --board-panel-bg: #fff;
+    --board-hairline: rgba(148, 163, 184, 0.32);
+    --board-hint: #a8b1bd;
+}
+
+.dark .board-wall {
+    --board-panel-bg: rgba(15, 23, 42, 0.9);
+    --board-hairline: rgba(71, 85, 105, 0.6);
+    --board-hint: #64748b;
+}
+
 /* ── 工具栏（web-vue3/src/components/PageToolbar.vue）────────────────────
    ⚠️★ 背景色是**按模式**给的，不能统一成一种：
      · `--default`（标准模式 / 动作台）→ #f5f7fa，暗色 #1e1e24

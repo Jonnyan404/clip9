@@ -136,9 +136,26 @@ export function StickyNote({ meta }: { meta: ReceivedItem }) {
                     )}
                     <MdiIcon name={isFile ? 'mdi-paperclip' : 'mdi-pin'} size={14} />
                 </Stack>
-                <Typography variant="body2" sx={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word', flex: 1 }}>
-                    {isFile ? (meta.name || 'file') : decodedContent}
-                </Typography>
+                {/* ⚠️★ 卡片正文与 Vue 一致：
+                    1. **卡片本身就渲染 md**（任务列表 / 表格默认就是 md）—— 于是**卡片上的复选框
+                       也能直接勾**（`onMdClick` 挂在卡片正文上，不是只挂在阅读器里）；
+                    2. 纯文本走 `-webkit-line-clamp: 4` 截断（贴纸观感），渲染态**放开**限制
+                       （否则一张表只露 4 行、复选框也点不到）；
+                    3. 文件条目显示文件名（同样 2 行截断）。
+                    样式在 styles/components.css 的 `.sticky-note__*`。 */}
+                {isFile ? (
+                    <div className="sticky-note__fname" title={String(meta.name || 'file')}>
+                        {meta.name || 'file'}
+                    </div>
+                ) : (
+                    <div
+                        className={`sticky-note__text${md.html ? ' sticky-note__text--rendered' : ''}${isLink ? ' sticky-note__text--link' : ''}`}
+                        title={decodedContent}
+                        onClick={onMdClick}
+                    >
+                        {md.html ? <MarkdownBody html={md.html} /> : decodedContent}
+                    </div>
+                )}
                 <Stack direction="row" alignItems="center" spacing={0.5}>
                     <Typography variant="caption" sx={{ opacity: 0.6, flex: 1 }} noWrap>
                         {isFile ? prettyFileSize(Number(meta.size || 0)) : timestampLabel}

@@ -99,7 +99,12 @@ export default function BoardWall() {
     const historyUsageLabel = useMemo(() => `${received.length}/${historyLimit}`, [received.length, historyLimit]);
 
     return (
-        <Box sx={{ display: 'flex', flexDirection: 'column', height: '100dvh' }}>
+        // ⚠️★ `board-wall` 这个类名**必须留着**：看板那几个面板色（`--board-panel-bg` /
+        // `--board-hairline` / `--board-hint`）由它（以及 `.dark .board-wall`）提供，
+        // 而发送区（StickyComposer variant="board"）靠这几个变量取色。
+        // 它同时也是与 Vue 版对齐的锚点 —— Vue 的 BoardWall 根节点就是这个类。
+        // 少了它：浅色下靠 var() 兜底值看着还正常，**暗色下会白底配浅字**（等于看不见）。
+        <Box className="board-wall" sx={{ display: 'flex', flexDirection: 'column', height: '100dvh' }}>
             <PageToolbar variant="board" />
             <Box sx={{ flex: 1, minHeight: 0, width: '100%', maxWidth: 1200, mx: 'auto', px: 1.5, display: 'flex', flexDirection: 'column' }}>
                 <Stack direction="row" justifyContent="space-between" sx={{ py: 1 }}>

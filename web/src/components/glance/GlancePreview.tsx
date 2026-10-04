@@ -33,7 +33,13 @@ export function GlancePreview({ item }: { item: ReceivedItem | null }) {
 
     const isFile = item?.type === 'file';
     const content = String(item?.content || '');
+    // 文件条目的**可预览类型**。判型收在 `lib/util.ts` 的 `filePreviewKind`（**全站唯一实现**）。
+    // ⚠️ 只看扩展名、不看内容 —— 服务端不嗅探、客户端也不嗅探，两边同一套标准。
     const kind = isFile ? filePreviewKind(item?.name) : '';
+    // ⚠️ 与 Vue 严格对齐：`canPreview` 就是「是文件 + 类型认得出」，**不含过期判断**。
+    // 过期的文件照样会去取（然后失败、弹 toast、落回兜底图标）—— 这是 Vue 的行为，
+    // 迁移期先保持逐字一致，别自作主张加优化，否则并排比对时会冒出一堆「假差异」。
+    const canPreview = Boolean(isFile && kind);
     const md = useMarkdown(() => content);
 
     const ensureRawUrl = async (): Promise<string> => {
@@ -44,7 +50,8 @@ export function GlancePreview({ item }: { item: ReceivedItem | null }) {
     useEffect(() => {
         setPreviewSrc('');
         setTextPreview('');
-        if (!item || !isFile || !kind) {
+        // ⚠️ 不是文件 / 类型不支持预览：什么都不取，直接落到下面的兜底图标。
+        if (!item || !canPreview) {
             return;
         }
         let cancelled = false;
@@ -131,7 +138,14 @@ export function GlancePreview({ item }: { item: ReceivedItem | null }) {
                         {!loading && kind === 'video' && previewSrc && <video src={previewSrc} controls style={{ maxWidth: '100%', maxHeight: '46vh', borderRadius: 8 }} />}
                         {!loading && kind === 'audio' && previewSrc && <audio src={previewSrc} controls style={{ width: '100%' }} />}
                         {!loading && kind === 'text' && textPreview && <pre className="code-block" style={{ width: '100%', maxHeight: '46vh' }}>{textPreview}</pre>}
-                        {!loading && !kind && <MdiIcon name="mdi-file-outline" size={40} />}
+                        {/* ⚠️★ 兜底图标 = Vue 那条 `v-if/v-else-if` 链的最后一个 `v-else`：
+                            **只要上面四路预览一路都没命中，就显示它**。
+                            以前这里写的是 `!kind`，于是「类型认得出、但字节取不到」的情况
+                            （最典型的就是**已过期的文件**）四路全空、图标也不显示 → 整块**空白**。
+                            因为 `filePreviewKind` 只会返回 image/video/audio/text/'' 这几种，
+                            而 previewSrc / textPreview 又只在取数成功时才被赋值，
+                            所以 `!previewSrc && !textPreview` 与 Vue 的 `v-else` **逐字等价**。 */}
+                        {!loading && !previewSrc && !textPreview && <MdiIcon name="mdi-file-outline" size={40} />}
                     </Stack>
                     <Stack>
                         <Typography variant="body2" fontWeight={500} sx={{ wordBreak: 'break-all' }}>{item.name || 'file'}</Typography>
