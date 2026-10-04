@@ -214,6 +214,19 @@ let followBaseline = 0;
 /** 「跟到底」那个状态的兜底超时（上行失败 / 半天不回来时别一直挂着）。 */
 let followTimer = null;
 
+/** 「视图现在贴在底部吗」—— **记住**的状态，不是每次重绘现算的。
+ *
+ * ⚠️★ 为什么不能现算（2026-10-04 修的那个「卡片只露 1-2 行」就是这个）：
+ * 「贴不贴底」是**用户意图**，而现算出来的是**几何**，两者会在内容长高之后分叉 ——
+ * 卡片里的图片是**加载完才长高的**（固有尺寸要等字节到；`loading=lazy` 更要等它进视口），
+ * 于是「刚才明明到底了」在这一刻算出「离底 220px」，看起来像用户自己往上翻了：
+ * ① 那一条最新的卡片被顶到视口外面（露在屏幕上的只有它的 meta 那一行）；
+ * ② 下一条新消息也不再跟到底（它以为用户在读历史）。
+ * ⚠️ 初值是 `true`：第一帧必须贴底画（列表末尾才是最新的）。
+ * ⚠️ 只有两处写它：**滚动事件**（用户真的滚了）与 [`pinTimeline`]（我们主动贴过去）。
+ */
+let timelinePinned = true;
+
 /** 超过多少字节才画「展开」。
  *
  * ⚠️ 这个数是**估的**：卡片宽约 590px、13px 字体 ≈ 一行 80 字符，
@@ -2006,16 +2019,63 @@ function renderRooms(state) {
    `rooms[i].connection` 上，只是不再重复画第二遍（侧栏那个房间行是它唯一的落点）。
    留一份就会有两份「哪条连接」的定义 —— §4.7 明说了不要。 */
 
+/** 贴到底部，并记下「现在是贴着的」（见 [`timelinePinned`]）。
+ *
+ * ⚠️★ 滚动这件事**只有这一个地方**做：从前是「哪里需要哪里写一句
+ * `host.scrollTop = host.scrollHeight`」，后面每加一个新场景（发送之后、图片加载完）
+ * 就多一句，而每一句都要自己记得改状态 —— 迟早漏一处。
+ */
+function pinTimeline() {
+  const host = el('timeline');
+  if (!host) return;
+  host.scrollTop = host.scrollHeight;
+  timelinePinned = true;
+}
+
+/** 现在贴在底部吗（阈值与从前那句 `wasPinned` 一样是 24px：滚动是像素级的，
+ *  停在「差一两像素」的地方不该算「没贴底」）。 */
+function timelineAtBottom() {
+  const host = el('timeline');
+  if (!host) return true;
+  return host.scrollHeight - host.scrollTop - host.clientHeight < 24;
+}
+
+/** ⚠️★ **贴底看门狗**：卡片长高之后要再贴一次。
+ *
+ * ⚠️★ 为什么必须有它（2026-10-04 Jonny：「发送文字/图片/文件时，消息卡片只露出大概
+ * 1-2 行的内容区，其余被输入框遮挡」）：`pinTimeline()` 贴的是**那一刻**算出来的
+ * `scrollHeight`，而卡片的高度**之后还会变** —— 图片的固有尺寸要等字节到，视频要等元数据。
+ * 长高的那 220px 全在视口底下（也就是输入框那一片的下面），屏幕上剩下的正好是这张卡片的
+ * meta 那一行。真浏览器量过：图片加载完，末尾那张卡片底边比时间线可见区低 **208px**。
+ *
+ * ⚠️ 观察的是**卡片节点**，不是时间线本身：时间线的大小是 `flex: 1` 定死的，
+ * 内容长高它一点都不变（所以用 `ResizeObserver` 盯它等于没盯）。
+ * ⚠️ 只在**贴着底**时才补一次 —— 用户翻上去读历史时，内容长高把他往下推是正常的，
+ * 一把拽回底部才是那个更烦的行为（见 [`timelinePinned`]）。
+ * ⚠️ 拿不到 `ResizeObserver`（老 webview）就是**没有这个补偿**，其余一切照常 ——
+ * 不降级成一个「每次都拽到底」的坏行为。
+ */
+const timelineSizes = typeof ResizeObserver === 'function'
+  ? new ResizeObserver(() => {
+    if (timelinePinned) pinTimeline();
+  })
+  : null;
+
+/** 盯住这张卡片的大小（新造出来时挂上，被丢掉时摘掉 —— 见 `reconcileChildren`）。 */
+function watchCardSize(node) {
+  if (timelineSizes) timelineSizes.observe(node);
+}
+
 function renderTimeline(state) {
   const host = el('timeline');
-  // ⚠️★ 先记「刚才是不是贴在底部」，**再**动 DOM —— 清空之后 `scrollHeight` 已经是 0，
-  // 那时候判会永远算出「贴底」，等于没判。
+  // ⚠️★ 「贴不贴底」读的是**记住**的那个状态（[`timelinePinned`]），**不再现算**：
+  // 现算出来的几何会在「卡片里的图片加载完、长高了一截」之后与用户意图分叉，而分叉的
+  // 两个后果都很坏 —— 最新的那条被顶到视口外面；下一条新消息也不再跟到底。
   //
   // ⚠️ 只有贴底（或**刚发过东西**）时才自动滚：无条件滚的话，用户往上翻着读历史时，
   // 来一条新消息就把他**拽回底部**。那比「不自动滚」烦得多（「我在看旧的，它一直弹走」）。
-  const wasPinned = host.scrollHeight - host.scrollTop - host.clientHeight < 24;
   // ⚠️★ 「刚发过」也算贴底（见 `followToNewest`）：发完必须看得见自己那一条。
-  const follow = wasPinned || followAfterSend;
+  const follow = timelinePinned || followAfterSend;
   const lastId = lastEntryId(state);
   // ⚠️★ 贴底（或刚发过）= **看过了** → 基线推到末尾；否则数一数这段时间新来了几条
   //（那颗「N 条新消息」就是给它用的，见文件里那段状态注释）。
@@ -2048,7 +2108,9 @@ function renderTimeline(state) {
   }
   reconcileChildren(host, fresh);
   // 新的内容在末尾 → 贴底（或刚发过东西）时跟到底（用户刚复制的东西要立刻看见）。
-  if (follow) host.scrollTop = host.scrollHeight;
+  // ⚠️ 顺带把「贴着」这件事写进状态：这次贴完之后，图片再长高由看门狗接着贴
+  //（见 `timelineSizes`）。
+  if (follow) pinTimeline();
   // ⚠️★ 自己那条（或那张「正在发送」的占位）到了就收工；没到就继续跟着 ——
   // 超时兜底在 `followToNewest` 里（免得上行失败时这个状态一直挂着，把用户往回拽）。
   if (followAfterSend && state.entries.length > followBaseline) {
@@ -2169,12 +2231,20 @@ function timelineCards(host, state) {
     if (kept) return kept;
     const node = renderEntry(entry);
     cardSignatures.set(node, wanted.get(id));
+    // ⚠️★ 新造的卡片要**盯住它的大小**：里面的图片/视频是**之后**才长高的
+    //（见 `timelineSizes` 那段）。复用下来的那些早就盯着了。
+    watchCardSize(node);
     return node;
   });
   // ⚠️★ 「正在发送」那几张**排在末尾**：新内容本来就出现在末尾，而用户按下发送之后
   // 视线就在那儿。放在顶部的话，他会先看到一张新卡片从上面长出来（那不像「我发的」）。
   // ⚠️ 它们**不复用**：进度每一片都在变，而重造一张只有两行字的卡片没有代价。
-  (state.uploads || []).forEach((upload) => fresh.push(renderUpload(upload)));
+  // ⚠️ 也盯一下大小：占位卡与真卡片差着几十像素，传完换掉的那一下同样是「内容长高/变矮」。
+  (state.uploads || []).forEach((upload) => {
+    const node = renderUpload(upload);
+    watchCardSize(node);
+    fresh.push(node);
+  });
   return fresh;
 }
 
@@ -2188,9 +2258,15 @@ function timelineCards(host, state) {
 function reconcileChildren(host, fresh) {
   const keep = new Set(fresh);
   for (const node of host.children) {
-    if (keep.has(node) || !node.__previewObserver) continue;
-    node.__previewObserver.disconnect();
-    node.__previewObserver = null;
+    if (keep.has(node)) continue;
+    // ⚠️ 丢掉的两样**都得摘**：预览观察器（不进视口就没它的事了）与尺寸观察器
+    //（`ResizeObserver` 会一直拽着节点不放 —— 不摘就是**慢泄漏**，而且摘了才知道
+    // 那张卡片真的走了）。
+    if (node.__previewObserver) {
+      node.__previewObserver.disconnect();
+      node.__previewObserver = null;
+    }
+    if (timelineSizes) timelineSizes.unobserve(node);
   }
   const same = host.children.length === fresh.length
     && fresh.every((node, index) => host.children[index] === node);
@@ -2338,6 +2414,10 @@ function render(state) {
     // 拿 A 房间的 id 去数 B 房间的条目 —— 数字是假的，而界面上看不出来。
     unseenCount = 0;
     seenLastId = 0;
+    // ⚠️★ 换房间**从底部开始看**：`#timeline` 是同一个节点，`scrollTop` 会跟着上一个房间
+    // 的位置带过来（只在超出新内容高度时被浏览器夹一下）—— 换过去停在半空中看不出因果。
+    // 置 `true` 之后下一次重绘就贴底（见 `timelinePinned`）。
+    timelinePinned = true;
   }
   lastSelected = state.selected;
   lastLimits = state.limits;
@@ -3969,17 +4049,17 @@ document.addEventListener('keydown', (event) => {
 //
 // ⚠️★ 点了就**跳到底**并清掉 —— 用户按它就是在说「我要看新的」。
 el('new-pill').addEventListener('click', () => {
-  const host = el('timeline');
-  host.scrollTop = host.scrollHeight;
+  pinTimeline();
   markTimelineRead();
 });
 
 // ⚠️★ 用户**自己**滚到底也算看过了：不清的话那颗胶囊会一直挂着，而它写着「有 3 条新消息」
 // —— 明明已经看到最新的了（这种「界面在说假话」是这个项目最忌讳的一类）。
-// ⚠️ 早退放在最前面：`scroll` 事件很密，而绝大多数时候什么都不用做。
+// ⚠️★ 顺序要紧：「贴不贴底」这个状态**先更新**（`renderTimeline` 读它决定跟不跟到底），
+// 早退放在它前面就会漏掉 —— 症状是「明明翻上去了，下一条新消息还是把他拽回底部」，
+// 而那条早退恰好是绝大多数滚动事件都会走的那一支（没新消息时 `unseenCount` 是 0）。
 el('timeline').addEventListener('scroll', () => {
-  if (unseenCount <= 0) return;
-  const host = el('timeline');
-  if (host.scrollHeight - host.scrollTop - host.clientHeight >= 24) return;
+  timelinePinned = timelineAtBottom();
+  if (!timelinePinned || unseenCount <= 0) return;
   markTimelineRead();
 });

@@ -3301,7 +3301,10 @@ if (entryViewFiles.length !== 1) {
     problems.push('`index.html` 里没有 `#new-pill` —— 翻着历史时新消息就等于消失了');
   }
   const renderFn = /function renderTimeline\(state\)[\s\S]*?\n\}/.exec(bareJs)?.[0] ?? '';
-  if (!/follow\s*=\s*wasPinned \|\| followAfterSend/.test(renderFn)) {
+  // ⚠️★ 2026-10-04 换过形状：原来这里读的是一个**当场算出来**的 `wasPinned`，
+  // 而它会在「卡片里的图片加载完、长高一截」之后跟用户意图分叉（见判据 39）——
+  // 现在读的是记住的 `timelinePinned`。
+  if (!/follow\s*=\s*timelinePinned \|\| followAfterSend/.test(renderFn)) {
     problems.push('`renderTimeline` 里没有「贴底**或刚发过**都算跟到底」——'
       + '自己发完那条看不见（或者翻着历史时被拽回底部）');
   }
@@ -3323,7 +3326,7 @@ if (entryViewFiles.length !== 1) {
   // ⚠️★ 两个回调都**按块**判（`bracedBlock`），不用有界通配 —— 后者跨得过块边界，
   // 于是「回调被清空」这种变异照样能过（实测过）。
   const pillHandler = bracedBlock(bareJs, "el(\u0000new-pill\u0000).addEventListener(\u0000click\u0000");
-  if (!/scrollHeight/.test(pillHandler) || !/markTimelineRead\(\)/.test(pillHandler)) {
+  if (!/\bpinTimeline\(\)/.test(pillHandler) || !/markTimelineRead\(\)/.test(pillHandler)) {
     problems.push('那颗胶囊的回调没有「跳到底 + 标记已读」 —— 它写着「有新消息」，'
       + '点了却停在原地（或者不把提示清掉）');
   }
@@ -3360,6 +3363,88 @@ if (entryViewFiles.length !== 1) {
     for (const one of problems) console.error(`    · ${one}`);
   } else {
     console.log('· 判据 38：翻历史时给「N 条新消息」、点它跳到底，自己发完则跟到最新。');
+  }
+}
+
+// ── 判据 39：卡片长高之后仍然贴着底（理由见下）────────────────────────────────
+//
+// ⚠️★ 2026-10-04 Jonny 报的：「发送文字/图片/文件时，消息卡片只露出大概 1-2 行的内容区，
+// 其余被输入框遮挡」。真因**不是**布局（时间线与输入框不重叠，量过：交界处 716 = 716），
+// 而是**滚动位置算早了**：`scrollTop = scrollHeight` 贴的是**那一刻**的 `scrollHeight`，
+// 而卡片的高度是之后才定型的 —— 图片的固有尺寸要等字节到（`loading=lazy` 更要等它进视口）、
+// 视频要等元数据。真浏览器量到的数：图片加载完，末尾那张卡片底边比时间线可见区低 **208px**
+// （屏幕上剩下的正好是它的 meta 那一行）。
+// ⚠️★ 它还有第二个后果，伤的是**文字**：那一刻几何上「离底 220px」，看起来像用户自己往上翻了
+// —— 于是下一条新消息也不再跟到底，文字卡片同样停在视口外面（实测：低 384px）。
+{
+  const problems = [];
+  const bareJs = stripJs(js);
+  const renderFn = /function renderTimeline\(state\)[\s\S]*?\n\}/.exec(bareJs)?.[0] ?? '';
+  // ① 「贴不贴底」必须是**记住**的状态，不能现算几何 —— 现算就会在内容长高之后与用户意图分叉。
+  if (/\bwasPinned\b/.test(bareJs)) {
+    problems.push('又出现了**现算**的 `wasPinned` —— 卡片里的图片加载完会长高，'
+      + '那一刻算出来的「离底 220px」不是用户意图（最新那条会被顶出视口，'
+      + '而且下一条新消息不再跟到底）');
+  }
+  // ② 贴到底只能有一个入口（否则每加一个场景就多一句「自己记得改状态」）。
+  const pinFn = /function pinTimeline\(\)[\s\S]*?\n\}/.exec(bareJs)?.[0] ?? '';
+  if (!pinFn) {
+    problems.push('找不到 `pinTimeline()` —— 贴底散在各处，后面每加一个场景就多一句');
+  } else {
+    if (!/scrollTop = [^;]*scrollHeight/.test(pinFn)) {
+      problems.push('`pinTimeline()` 没有把视图滚到底（`scrollTop = …scrollHeight`）');
+    }
+    if (!/timelinePinned = true/.test(pinFn)) {
+      problems.push('`pinTimeline()` 没有记下「现在贴着了」—— 看门狗与下一拍重绘都读这个状态');
+    }
+  }
+  if (!/if \(follow\) pinTimeline\(\);/.test(renderFn)) {
+    problems.push('`renderTimeline` 没有在「该跟到底」时调 `pinTimeline()`');
+  }
+  // ③ 看门狗：卡片**长高之后**要再贴一次。
+  if (!/new ResizeObserver\(/.test(bareJs)) {
+    problems.push('没有 `ResizeObserver` —— 卡片长高之后没人补那一下'
+      + '（症状：末尾那张只露出 meta 一行，其余压在输入框那一带下面）');
+  }
+  if (!/if \(timelinePinned\) pinTimeline\(\);/.test(bareJs)) {
+    problems.push('看门狗没有「只在自己贴着底时才补」那道闸 —— 用户翻上去读旧的，'
+      + '图片一加载完就把他拽回底部（那正是 `timelinePinned` 要防的事）');
+  }
+  const cardsFn = bracedBlock(bareJs, 'function timelineCards(host, state)');
+  // ⚠️★ 只看整个函数「有没有 `watchCardSize(node)`」是不够的：占位卡那条也在同一个函数里
+  //（`(state.uploads || []).forEach(…)`），于是**把真卡片那一处删掉**、判据照样全绿
+  //（实测过）。要盯的是「真卡片那一处」，所以取 `renderEntry` 到 `return node` 之间那一段。
+  const newCard = /const node = renderEntry\(entry\);[\s\S]*?return node;/.exec(cardsFn)?.[0] ?? '';
+  if (!newCard) {
+    problems.push('`timelineCards` 里找不到「造一张新卡片」那一段 —— 判据要跟着代码改');
+  } else if (!/watchCardSize\(node\)/.test(newCard)) {
+    problems.push('新造出来的卡片没有挂上尺寸看门狗 —— 它长高之后没人管'
+      + '（复用下来的那些早就挂着了，新造的这一条最容易漏）');
+  }
+  const reconcileFn = bracedBlock(bareJs, 'function reconcileChildren(host, fresh)');
+  if (!/unobserve\(node\)/.test(reconcileFn)) {
+    problems.push('卡片被丢掉时没有摘掉尺寸看门狗 —— `ResizeObserver` 会一直拽着那个节点不放');
+  }
+  // ④ 滚动事件里**先**更新状态再早退：那条早退是绝大多数滚动都会走的一支
+  //（没新消息时 `unseenCount` 是 0），放在它后面的话「用户翻上去了」这件事没人知道。
+  const scrollHandler = bracedBlock(bareJs, "el(\u0000timeline\u0000).addEventListener(\u0000scroll\u0000");
+  const early = scrollHandler.indexOf('return');
+  const head = early < 0 ? '' : scrollHandler.slice(0, early);
+  if (!/timelinePinned = timelineAtBottom\(\)/.test(head)) {
+    problems.push('滚动事件里没有**先**更新「贴不贴底」就早退了 —— 于是「翻上去了」没人知道，'
+      + '下一条新消息还会把他拽回底部');
+  }
+  // ⑤ 换房间要把它置回 true：`#timeline` 是同一个节点，`scrollTop` 会从上个房间带过来。
+  const switchBlock = bracedBlock(bareJs, 'if (state.selected !== lastSelected)');
+  if (!/timelinePinned = true;/.test(switchBlock)) {
+    problems.push('换房间没有把「贴底」置回 `true` —— 换过去会停在半空中（`scrollTop` 带过来了）');
+  }
+  if (problems.length) {
+    failed = true;
+    console.error(`✗ 判据 39：卡片长高之后没有仍然贴着底（${problems.length} 处）：`);
+    for (const one of problems) console.error(`    · ${one}`);
+  } else {
+    console.log('· 判据 39：贴底是记住的状态 + 尺寸看门狗（图片/视频加载完长高也不掉出视口）。');
   }
 }
 
