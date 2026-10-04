@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Box, Button, Dialog, DialogContent, DialogTitle, Divider, IconButton, Stack, Tooltip, Typography } from '@mui/material';
+import { Button, CircularProgress, Dialog, IconButton, Tooltip } from '@mui/material';
 import axios from 'axios';
 import { useWebSocketStore } from '@/stores/wsStore';
 import { toast } from '@/stores/toastStore';
@@ -8,7 +8,7 @@ import { useDisplaySettings } from '@/hooks/useDisplaySettings';
 import { useMarkdown } from '@/hooks/useMarkdown';
 import { useTaskListToggle } from '@/hooks/useTaskListToggle';
 import {
-    SHARE_DEFAULT_TTL, copyTextToClipboard, deviceLabel, errorMessage, formatTimestamp, isFileEntry, isImageName, prettyFileSize,
+    SHARE_DEFAULT_TTL, copyTextToClipboard, deviceLabel, errorMessage, filePreviewKind, formatTimestamp, isFileEntry, isImageName, prettyFileSize,
 } from '@/lib/util';
 import { createShareLink } from '@/services/share';
 import { MarkdownBody } from '@/components/MarkdownBody';
@@ -18,15 +18,18 @@ import { MdiIcon } from '@/components/ui/MdiIcon';
 import type { ReceivedItem } from '@/stores/appStore';
 
 /**
- * 便签卡片 —— 从 web-vue3/src/components/sticky/StickyNote.vue 移植。
+ * 便签卡片 + 阅读器（「大号便签纸」）—— 从 web-vue3/src/components/sticky/StickyNote.vue 移植。
  *
  * ⚠️ 正文（含任务列表打勾 + 落盘）走共享 hook；复制也用它返回的 `text`。
  * ⚠️ 卡片**本身就渲染 md**（任务列表 / 表格默认就是 md），所以卡片上的复选框也能直接勾。
  * ⚠️ 取文源必须分岔：文本便签在 `meta.content`，**文件的 FileReceive 没有 content 字段**，
  * 正文只能等 `loadPreview` 抓回来的文本。
- * ⚠️★ 配色 / 旋转 / 胶带条 / 悬停动作行**全部走 CSS 的 `.sticky-note*`**（styles/components.css），
- *    与 Vue 同名同值 —— 别在这里用 MUI 的 `sx` 再描一遍：两处一定会漂（这次就是这么漂的）。
+ * ⚠️★ 配色 / 旋转 / 胶带条 / 悬停动作行 / 阅读器**全部走 CSS 的 `.sticky-note*`**
+ *    （styles/components.css），与 Vue 同名同值 —— 别在这里用 MUI 的 `sx` 再描一遍：
+ *    两处一定会漂（这次就是这么漂的）。
  * ⚠️ 「文件 / 文本」的判据是 `isFileEntry`，**不是** `type === 'file'` —— 理由见 util.ts。
+ * ⚠️★ 判型统一用 `filePreviewKind`（全站唯一实现），**不要**再散着写扩展名正则 ——
+ *    Vue 那边在阅读器里又写了一组（还漏了 `.mov`），正是「同一判型多份实现必然漂」的样本。
  */
 export function StickyNote({ meta }: { meta: ReceivedItem }) {
     const { t } = useTranslation();
@@ -62,6 +65,11 @@ export function StickyNote({ meta }: { meta: ReceivedItem }) {
         ? (expired ? t('expired') : t('expiresAt', { time: formatTimestamp(meta.expire as number) }))
         : '';
 
+    const kind = isFile ? filePreviewKind(meta.name) : '';
+    // ⚠️★ 过期就不去取字节（与 Vue 的 `canPreview` 一致）：取了必然失败、白弹一个
+    // 「文件已过期」的气泡，而阅读器里本来就有一行「已过期」说明。
+    const canPreview = Boolean(isFile && kind && !expired);
+
     const isLink = !isFile && /^https?:\/\/[^\s]+$/i.test(decodedContent.trim());
     // ⚠️ 文件的标签恒为 `FILE`（Vue 也是）—— 别按扩展名换成「图片」，
     //    那是下面 `fileMetaLabel` 的活。
@@ -86,15 +94,14 @@ export function StickyNote({ meta }: { meta: ReceivedItem }) {
     };
 
     const loadPreview = async () => {
-        if (!isFile || loadingPreview) return;
+        if (!canPreview || loadingPreview) return;
         setLoadingPreview(true);
         try {
-            const name = String(meta.name || '');
-            if (/\.(png|jpe?g|gif|webp|svg|bmp|ico|avif|mp4|webm|ogv|mov|mp3|wav|ogg|opus|m4a|flac)$/i.test(name)) {
-                setPreviewSrc(await ensureRawUrl());
-            } else {
-                const response = await axios.get(`file/${meta.cache}/${encodeURIComponent(name)}`, { responseType: 'text' });
+            if (kind === 'text') {
+                const response = await axios.get(`file/${meta.cache}/${encodeURIComponent(String(meta.name || ''))}`, { responseType: 'text' });
                 setTextPreview(typeof response.data === 'string' ? response.data : String(response.data || ''));
+            } else {
+                setPreviewSrc(await ensureRawUrl());
             }
         } catch (error) {
             toast(errorMessage(error) || t('fileFetchFailed'));
@@ -105,7 +112,7 @@ export function StickyNote({ meta }: { meta: ReceivedItem }) {
 
     const openReader = () => {
         setExpanded(true);
-        if (isFile && !textPreview && !previewSrc) void loadPreview();
+        if (canPreview && !textPreview && !previewSrc) void loadPreview();
     };
 
     const copyText = async () => {
@@ -178,6 +185,10 @@ export function StickyNote({ meta }: { meta: ReceivedItem }) {
                     }
                 }}
             >
+                {/* ⚠️★ 过期角标（右上角）。过期是**状态**，要一直看得见 ——
+                    不能只靠文件名划掉，也不能靠一闪而过的气泡。
+                    悬停时动作行会下移让位（见 CSS 的 `.sticky-note--expired .sticky-note__ops`）。 */}
+                {isFile && expired && <span className="sticky-note__expired-badge">{t('expired')}</span>}
                 {isFile && (
                     <div className="sticky-note__file">
                         <span className="sticky-note__fic">{fileIcon}</span>
@@ -215,7 +226,7 @@ export function StickyNote({ meta }: { meta: ReceivedItem }) {
                                     else void copyText();
                                 }}
                             >
-                                <MdiIcon name={isFile ? 'mdi-download' : 'mdi-content-copy'} size={18} />
+                                <MdiIcon name={isFile ? (expired ? 'mdi-download-off' : 'mdi-download') : 'mdi-content-copy'} size={18} />
                             </IconButton>
                         </span>
                     </Tooltip>
@@ -237,69 +248,88 @@ export function StickyNote({ meta }: { meta: ReceivedItem }) {
                 </span>
             </div>
 
-            <Dialog open={expanded} onClose={() => setExpanded(false)} maxWidth="sm" fullWidth>
-                <DialogTitle sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                    <Typography variant="caption" sx={{ fontWeight: 700, letterSpacing: '0.06em', opacity: 0.55 }}>{noteLabel}</Typography>
-                    <Typography variant="caption" color="text.secondary" sx={{ flex: 1 }}>
-                        {readerTimeLabel}
-                    </Typography>
-                    <IconButton size="small" onClick={() => setExpanded(false)} aria-label={t('close')}>
-                        <MdiIcon name="mdi-close" size={16} />
-                    </IconButton>
-                </DialogTitle>
-                <DialogContent>
+            {/* 阅读器 = 「大号便签纸」。⚠️ 外壳仍用 MUI Dialog（背板 / Esc / 焦点陷阱都是它给的），
+                但把 Paper 的底色与阴影清掉，让下面这张 `--cN` 色的纸自己说话 ——
+                之前是直接拿 MUI 的白色对话框当正文，跟卡片完全不像一家人。 */}
+            <Dialog
+                open={expanded}
+                onClose={() => setExpanded(false)}
+                maxWidth={false}
+                slotProps={{ paper: { sx: { backgroundColor: 'transparent', backgroundImage: 'none', boxShadow: 'none', maxWidth: 520, width: '100%', m: 2 } } }}
+            >
+                <div className={`sticky-note__reader sticky-note__reader--c${colorIndex}`}>
+                    <div className="sticky-note__reader-head">
+                        <div className="sticky-note__label">{noteLabel}</div>
+                        {readerTimeLabel && <span className="sticky-note__reader-time">{readerTimeLabel}</span>}
+                        <IconButton size="small" className="sticky-note__op" onClick={() => setExpanded(false)} aria-label={t('close')}>
+                            <MdiIcon name="mdi-close" size={16} />
+                        </IconButton>
+                    </div>
+
                     {isFile ? (
                         <>
                             {/* ⚠️ 文件的名字 / 大小 / 过期**永远**显示。这几行曾经跟着预览一起被藏掉，
-                                .md 文件就变成「没有名字、没有大小、没有过期」的一张空对话框。
-                                过期信息**只在这里**（Vue 的卡片上也没有）—— 卡片太小，塞不下。 */}
-                            <Stack direction="row" alignItems="center" spacing={1} sx={{ mb: 0.5, flexWrap: 'wrap' }}>
+                                .md 文件就变成「没有名字、没有大小、没有过期」的一张空对话框。 */}
+                            <div className="sticky-note__reader-file">
                                 <span className="sticky-note__fic">{fileIcon}</span>
-                                <Typography variant="body2" fontWeight={700} sx={{ wordBreak: 'break-all' }}>{meta.name}</Typography>
-                                <Typography variant="caption" color="text.secondary">{fileMetaLabel}</Typography>
-                            </Stack>
+                                <span className="sticky-note__reader-name">{meta.name}</span>
+                                <span className="sticky-note__meta">{fileMetaLabel}</span>
+                            </div>
                             {isExpirable && (
-                                <Typography
-                                    variant="caption"
-                                    sx={{ display: 'inline-flex', alignItems: 'center', gap: 0.5, color: expired ? 'error.main' : 'text.secondary' }}
-                                >
+                                <div className={`sticky-note__reader-expire${expired ? ' sticky-note__reader-expire--past' : ''}`}>
                                     <MdiIcon name="mdi-clock-outline" size={12} />
                                     {expireLabel}
-                                </Typography>
+                                </div>
                             )}
-                            <Box sx={{ mt: 1 }}>
-                                {previewSrc && /\.(mp4|webm|ogv|mov)$/i.test(String(meta.name)) && (
-                                    <video src={previewSrc} controls style={{ maxWidth: '100%', maxHeight: '60vh', borderRadius: 8, display: 'block', margin: '0 auto' }} />
-                                )}
-                                {previewSrc && /\.(mp3|wav|ogg|opus|m4a|flac)$/i.test(String(meta.name)) && (
-                                    <audio src={previewSrc} controls style={{ width: '100%' }} />
-                                )}
-                                {previewSrc && /\.(png|jpe?g|gif|webp|svg|bmp|ico|avif)$/i.test(String(meta.name)) && (
-                                    <img src={previewSrc} alt={meta.name} style={{ maxWidth: '100%', maxHeight: '60vh', borderRadius: 8, display: 'block', margin: '0 auto' }} />
-                                )}
-                                {!previewSrc && (
-                                    <div className="md-preview" style={{ '--md-toggle-gutter': md.gutter } as React.CSSProperties}>
-                                        {md.available && <MarkdownToggle mode={md.mode} actions={md.actions} onModeChange={md.setMode} />}
-                                        {md.html ? <MarkdownBody html={md.html} /> : <pre className="code-block">{textPreview || (loadingPreview ? '…' : '')}</pre>}
-                                    </div>
-                                )}
-                            </Box>
                         </>
                     ) : (
-                        <div className="md-preview" style={{ '--md-toggle-gutter': md.gutter } as React.CSSProperties} onClick={onMdClick}>
+                        <div className="md-preview" onClick={onMdClick}>
                             {md.available && <MarkdownToggle mode={md.mode} actions={md.actions} onModeChange={md.setMode} />}
-                            {md.html ? <MarkdownBody html={md.html} /> : <div style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>{decodedContent}</div>}
+                            <div
+                                className={`sticky-note__reader-text${isLink ? ' sticky-note__text--link' : ''}${md.available ? ' sticky-note__reader-text--md' : ''}${md.leadsWithBlock ? ' sticky-note__reader-text--block' : ''}${md.html ? ' sticky-note__reader-text--rendered' : ''}`}
+                            >
+                                {md.html ? <MarkdownBody html={md.html} /> : decodedContent}
+                            </div>
                         </div>
                     )}
-                    <Divider sx={{ my: 2 }} />
-                    <Stack direction="row" spacing={0.5} sx={{ flexWrap: 'wrap', alignItems: 'center' }}>
+
+                    {/* 预览块：过期就整块不渲染（Vue 的 `canPreview` 也含 `!expired`）——
+                        否则会留一个「什么都没有」的灰盒子，看着像坏了。 */}
+                    {canPreview && (
+                        <div className="sticky-note__reader-preview">
+                            {loadingPreview ? (
+                                <div className="sticky-note__preview-loading">
+                                    <CircularProgress size={36} />
+                                </div>
+                            ) : kind === 'video' ? (
+                                <video src={previewSrc} controls preload="metadata" style={{ maxHeight: '60vh', maxWidth: '100%' }} />
+                            ) : kind === 'audio' ? (
+                                <audio src={previewSrc} controls preload="metadata" style={{ width: '100%' }} />
+                            ) : kind === 'text' ? (
+                                <div className="md-preview" style={{ '--md-toggle-gutter': md.gutter } as React.CSSProperties}>
+                                    {md.available && <MarkdownToggle mode={md.mode} actions={md.actions} onModeChange={md.setMode} />}
+                                    {md.html ? (
+                                        <div className={`sticky-note__preview-scroll${md.available ? ' sticky-note__preview-scroll--md' : ''}${md.leadsWithBlock ? ' sticky-note__preview-scroll--block' : ''}`}>
+                                            <MarkdownBody html={md.html} />
+                                        </div>
+                                    ) : (
+                                        <pre className={`sticky-note__preview-text${md.available ? ' sticky-note__preview-text--md' : ''}`}>{textPreview}</pre>
+                                    )}
+                                </div>
+                            ) : (
+                                <img src={previewSrc || String(meta.thumbnail || '')} alt={meta.name} style={{ maxHeight: '60vh', maxWidth: '100%' }} />
+                            )}
+                        </div>
+                    )}
+
+                    <div className="sticky-note__reader-actions">
                         {isFile ? (
                             <Button
                                 size="small"
                                 variant="contained"
-                                disabled={expired}
                                 loading={downloading}
-                                startIcon={<MdiIcon name="mdi-download" size={16} />}
+                                disabled={expired}
+                                startIcon={<MdiIcon name={expired ? 'mdi-download-off' : 'mdi-download'} size={16} />}
                                 onClick={downloadFile}
                             >
                                 {expired ? t('expired') : t('download')}
@@ -310,12 +340,18 @@ export function StickyNote({ meta }: { meta: ReceivedItem }) {
                             </Button>
                         )}
                         {!isFile && <ShareLinkButton meta={meta} iconOnly={false} />}
-                        <span style={{ flex: 1 }} />
-                        <Button size="small" variant="text" color="error" startIcon={<MdiIcon name="mdi-delete-outline" size={16} />} onClick={deleteItem}>
+                        <Button
+                            size="small"
+                            variant="text"
+                            color="error"
+                            className="sticky-note__reader-delete"
+                            startIcon={<MdiIcon name="mdi-delete-outline" size={16} />}
+                            onClick={deleteItem}
+                        >
                             {t('delete')}
                         </Button>
-                    </Stack>
-                </DialogContent>
+                    </div>
+                </div>
             </Dialog>
         </>
     );

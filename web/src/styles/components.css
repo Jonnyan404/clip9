@@ -280,6 +280,244 @@
     background: rgba(0, 0, 0, 0.06);
 }
 
+/* ── 过期角标（卡片右上角）──────────────────────────────────────────────
+   ⚠️★ 过期是**状态**，要一直看得见：只把文件名划掉太隐晦，而靠一闪而过的气泡
+   更是等于没说。所以固定一个角标在右上角。
+   ⚠️ 悬停时动作行也在右上角，所以过期时把它下移让位（下面那条）。 */
+.sticky-note__expired-badge {
+    position: absolute;
+    top: 6px;
+    right: 6px;
+    z-index: 2;
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    color: #c62828;
+    background: rgba(198, 40, 40, 0.12);
+    border-radius: 999px;
+    padding: 1px 7px;
+    white-space: nowrap;
+}
+
+.sticky-note--expired .sticky-note__ops {
+    top: 30px;
+}
+
+/* 角标是绝对定位的，会盖在文件名上面 —— 给文件行让出右侧空间，
+   让长文件名在角标之前就折行。
+   ⚠️ 宽度按**最长的那份文案**留（英文 "Expired" 比中文「已过期」宽得多），
+   所以这里给的是个够用的固定值，而不是按中文算的最小值。 */
+.sticky-note--expired .sticky-note__file {
+    padding-right: 64px;
+}
+
+/* ── 阅读器：「大号便签纸」（Vue 的 `.sticky-note__reader`）────────────────
+   ⚠️★ 底色跟着卡片那张纸（`--c0..--c4`），不是 MUI 对话框的白。 */
+.sticky-note__reader {
+    border-radius: 6px;
+    padding: 16px 18px;
+    box-shadow: 0 4px 2px rgba(0, 0, 0, 0.1), 0 14px 30px rgba(68, 64, 42, 0.28);
+    color: #444034;
+}
+
+.sticky-note__reader--c0 { background: #fff8c5; }
+.sticky-note__reader--c1 { background: #ffd8d8; }
+.sticky-note__reader--c2 { background: #d6f0d6; }
+.sticky-note__reader--c3 { background: #d9e6ff; }
+.sticky-note__reader--c4 { background: #e9d9ff; }
+
+.sticky-note__reader-head {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 8px;
+    row-gap: 4px;
+    margin-bottom: 10px;
+}
+
+.sticky-note__reader-head .sticky-note__label {
+    margin-bottom: 0;
+}
+
+.sticky-note__reader-time {
+    font-size: 11px;
+    opacity: 0.55;
+    margin-left: auto;
+}
+
+.sticky-note__reader-text {
+    font-size: 15px;
+    line-height: 1.7;
+    font-weight: 500;
+    word-break: break-word;
+    white-space: pre-wrap;
+    max-height: 55vh;
+    overflow-y: auto;
+}
+
+.sticky-note__reader-text--link {
+    word-break: break-all;
+}
+
+/* 渲染 markdown 时收掉 `white-space: pre-wrap` —— 它是给纯文本保留换行的，
+   套在 HTML 结构上会凭空多出空白。 */
+.sticky-note__reader-text--rendered {
+    white-space: normal;
+}
+
+.sticky-note__reader-file {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+    margin-bottom: 6px;
+}
+
+.sticky-note__reader-name {
+    font-weight: 700;
+    font-size: 15px;
+    word-break: break-all;
+}
+
+.sticky-note__reader-file .sticky-note__meta {
+    margin-top: 0;
+}
+
+.sticky-note__reader-expire {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    font-size: 11px;
+    color: rgba(68, 64, 42, 0.65);
+    background: rgba(0, 0, 0, 0.06);
+    border-radius: 6px;
+    padding: 3px 8px;
+    margin-top: 8px;
+}
+
+.sticky-note__reader-expire--past {
+    color: #c62828;
+    background: rgba(198, 40, 40, 0.1);
+}
+
+.sticky-note__reader-actions {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px;
+    margin-top: 16px;
+    padding-top: 14px;
+    border-top: 1px dashed rgba(68, 64, 42, 0.16);
+}
+
+.sticky-note__reader-delete {
+    margin-left: auto;
+    opacity: 0.72;
+}
+
+.sticky-note__reader-actions .MuiButton-root {
+    font-size: 12px;
+}
+
+.sticky-note__preview-loading {
+    display: flex;
+    justify-content: center;
+    padding: 48px 0;
+}
+
+.sticky-note__reader-preview {
+    margin: 4px 0 2px;
+}
+
+.sticky-note__reader-preview > video,
+.sticky-note__reader-preview > img {
+    display: block;
+    margin: 0 auto;
+    border-radius: 8px;
+}
+
+.sticky-note__reader-preview > audio {
+    display: block;
+}
+
+.sticky-note__preview-text {
+    white-space: pre-wrap;
+    word-break: break-word;
+    font-size: 13px;
+    line-height: 1.6;
+    background: rgba(0, 0, 0, 0.04);
+    border-radius: 8px;
+    padding: 12px;
+    max-height: 40vh;
+    overflow-y: auto;
+}
+
+/* 渲染态的滚动盒。原文态不用它：那边的 pre 自带 max-height + overflow。 */
+.sticky-note__preview-scroll {
+    max-height: 40vh;
+    overflow-y: auto;
+}
+
+/* ⚠️ 便签阅读器的浮动图标让位。**为什么不用通用的 `.md-preview--md`**：
+   那个 `::before` 挂在 `.md-preview` 上，而 `.md-preview` 是**不滚动**的外层
+   （滚动盒是里面的 `.sticky-note__reader-text`）。滚动条永远贴着滚动盒的右沿，
+   占位加在外层等于白加 —— 所以这里按 Vue 的写法挂在滚动盒自己身上。
+   数值来自 MarkdownToggle 的 `--md-toggle-*` 变量。 */
+.sticky-note__reader-text--md::before,
+.sticky-note__preview-text--md::before,
+.sticky-note__preview-scroll--md::before {
+    content: '';
+    float: right;
+    width: var(--md-toggle-gutter);
+    /* 22px 给不支持 lh 单位的浏览器兜底；下面一行才是准的（正好一个行高） */
+    height: 22px;
+    height: var(--md-toggle-height);
+}
+
+/* 正文以 <pre> 开头时浮动占位会把它挤成窄列，改成给 pre 留右边距。 */
+.sticky-note__reader-text--block::before,
+.sticky-note__preview-text--block::before,
+.sticky-note__preview-scroll--block::before {
+    float: none;
+    width: 0;
+    height: 0;
+}
+
+.sticky-note__reader-text--block pre:first-child,
+.sticky-note__preview-text--block pre:first-child,
+.sticky-note__preview-scroll--block pre:first-child {
+    padding-right: var(--md-toggle-gutter);
+}
+
+/* 滚动条跟着便签配色走：阅读器底色是固定的暖色，浏览器默认那条灰白滚动条压在上面很出戏。
+   ⚠️ 不要同时写标准的 scrollbar-color / scrollbar-width —— Chrome 一旦认了那两个，
+   就会忽略下面的 ::-webkit-scrollbar，宽度不再可控。 */
+.sticky-note__reader-text::-webkit-scrollbar,
+.sticky-note__preview-text::-webkit-scrollbar,
+.sticky-note__preview-scroll::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+}
+
+.sticky-note__reader-text::-webkit-scrollbar-track,
+.sticky-note__preview-text::-webkit-scrollbar-track,
+.sticky-note__preview-scroll::-webkit-scrollbar-track {
+    background: transparent;
+}
+
+.sticky-note__reader-text::-webkit-scrollbar-thumb,
+.sticky-note__preview-text::-webkit-scrollbar-thumb,
+.sticky-note__preview-scroll::-webkit-scrollbar-thumb {
+    background: rgba(68, 64, 42, 0.45);
+    border-radius: 4px;
+}
+
+.sticky-note__reader-text::-webkit-scrollbar-thumb:hover,
+.sticky-note__preview-text::-webkit-scrollbar-thumb:hover,
+.sticky-note__preview-scroll::-webkit-scrollbar-thumb:hover {
+    background: rgba(68, 64, 42, 0.62);
+}
+
 /* ── 非标准模式的输入区（web-vue3/src/components/sticky/StickyComposer.vue）──
    ⚠️★ 这一块是**裸 textarea + 自绘按钮**，不是 MUI 的 TextField/Button —— Vue 版就是
    这么写的，换成 MUI 之后输入框自带边框与底色，便签那张「纸」的观感就没了。
