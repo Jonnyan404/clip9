@@ -77,14 +77,14 @@ export function PageToolbar({ variant = 'default' }: { variant?: string }) {
                     <Stack direction="row" alignItems="center" spacing={0.5} sx={{ flex: 1, minWidth: 0 }}>
                         {room && (
                             <Tooltip title={t('backToDefaultRoom')}>
-                                <IconButton size="small" onClick={() => useWebSocketStore.getState().switchRoom('')}>
+                                <IconButton size="small" aria-label={t('backToDefaultRoom')} onClick={() => useWebSocketStore.getState().switchRoom('')}>
                                     <MdiIcon name="mdi-home-outline" size={22} />
                                 </IconButton>
                             </Tooltip>
                         )}
                         {!connected && (
                             <Tooltip title={connecting ? t('connecting') : t('disconnected')}>
-                                <IconButton size="small" onClick={actions.toggleConnection}>
+                                <IconButton size="small" aria-label={connecting ? t('connecting') : t('disconnected')} onClick={actions.toggleConnection}>
                                     <MdiIcon
                                         name={connecting ? 'mdi-lan-pending' : 'mdi-lan-disconnect'}
                                         size={22}
@@ -150,6 +150,7 @@ export function PageToolbar({ variant = 'default' }: { variant?: string }) {
                                 <Tooltip title={actions.roomBrowserVisible ? t('hideRoomBrowser') : t('showRoomBrowser')}>
                                     <IconButton
                                         size="small"
+                                        aria-label={actions.roomBrowserVisible ? t('hideRoomBrowser') : t('showRoomBrowser')}
                                         onClick={actions.openRoomBrowser}
                                         sx={actions.roomBrowserVisible ? { bgcolor: 'action.selected' } : undefined}
                                     >
@@ -160,7 +161,7 @@ export function PageToolbar({ variant = 'default' }: { variant?: string }) {
                                 </Tooltip>
                             )}
                             <Tooltip title={t('enterRoom')}>
-                                <IconButton size="small" onClick={actions.openRoomDialog}>
+                                <IconButton size="small" aria-label={t('enterRoom')} onClick={actions.openRoomDialog}>
                                     <MdiIcon name="mdi-door-open" size={22} />
                                 </IconButton>
                             </Tooltip>
@@ -168,7 +169,7 @@ export function PageToolbar({ variant = 'default' }: { variant?: string }) {
 
                         <Stack direction="row" alignItems="center" spacing={0.25}>
                             <Tooltip title={t('clearClipboard')}>
-                                <IconButton size="small" onClick={actions.openClearAll}>
+                                <IconButton size="small" aria-label={t('clearClipboard')} onClick={actions.openClearAll}>
                                     <MdiIcon name="mdi-broom" size={22} />
                                 </IconButton>
                             </Tooltip>
@@ -180,7 +181,7 @@ export function PageToolbar({ variant = 'default' }: { variant?: string }) {
                                 </Tooltip>
                             )}
                             <Tooltip title={t('settings')}>
-                                <IconButton size="small" onClick={actions.openSettings}>
+                                <IconButton size="small" aria-label={t('settings')} onClick={actions.openSettings}>
                                     <MdiIcon name="mdi-cog" size={22} />
                                 </IconButton>
                             </Tooltip>

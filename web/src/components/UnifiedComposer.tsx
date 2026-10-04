@@ -253,7 +253,7 @@ export const UnifiedComposer = forwardRef<UnifiedComposerHandle>(function Unifie
                     <Box sx={{ position: 'relative' }}>
                         {slashMenu && <ComposerSlashMenu items={SLASH_TEMPLATES as SlashTemplate[]} onPick={(item) => void insertSlashTemplate(item)} />}
                         <Tooltip title={t('enterTextToSend')}>
-                            <IconButton size="small" sx={{ position: 'absolute', top: 4, right: 4, zIndex: 1 }} onClick={() => setTextFullscreen(true)}>
+                            <IconButton size="small" aria-label={t('enterTextToSend')} sx={{ position: 'absolute', top: 4, right: 4, zIndex: 1 }} onClick={() => setTextFullscreen(true)}>
                                 <MdiIcon name="mdi-fullscreen" size={18} />
                             </IconButton>
                         </Tooltip>
@@ -281,7 +281,7 @@ export const UnifiedComposer = forwardRef<UnifiedComposerHandle>(function Unifie
                         <Box sx={{ width: 24, height: '1px', bgcolor: 'divider' }} />
                         {display.composerSwap && (
                             <Tooltip title={isFilePrimary ? t('textIsPrimaryTip') : t('fileIsPrimaryTip')}>
-                                <IconButton size="small" onClick={() => useAppStore.getState().toggleComposerPrimary()}>
+                                <IconButton size="small" aria-label={isFilePrimary ? t('textIsPrimaryTip') : t('fileIsPrimaryTip')} onClick={() => useAppStore.getState().toggleComposerPrimary()}>
                                     <MdiIcon name="mdi-swap-vertical" size={18} />
                                 </IconButton>
                             </Tooltip>
@@ -348,21 +348,21 @@ export const UnifiedComposer = forwardRef<UnifiedComposerHandle>(function Unifie
                     <Box sx={{ flex: 1 }} />
                     {display.composerReward && (
                         <Tooltip title={t('reward')}>
-                            <IconButton size="small" onClick={() => setRewardDialog(true)}>
+                            <IconButton size="small" aria-label={t('reward')} onClick={() => setRewardDialog(true)}>
                                 <MdiIcon name="mdi-currency-cny" size={18} />
                             </IconButton>
                         </Tooltip>
                     )}
                     {display.composerPalette && (
                         <Tooltip title={t('traditionalColors')}>
-                            <IconButton size="small" onClick={() => setColorDialog(true)}>
+                            <IconButton size="small" aria-label={t('traditionalColors')} onClick={() => setColorDialog(true)}>
                                 <MdiIcon name="mdi-palette-swatch" size={18} />
                             </IconButton>
                         </Tooltip>
                     )}
                     {display.composerShortcuts && (
                         <Tooltip title={t('shortcuts')}>
-                            <IconButton size="small" onClick={() => setShortcutsDialog(true)}>
+                            <IconButton size="small" aria-label={t('shortcuts')} onClick={() => setShortcutsDialog(true)}>
                                 <MdiIcon name="mdi-flash" size={18} />
                             </IconButton>
                         </Tooltip>
@@ -371,6 +371,7 @@ export const UnifiedComposer = forwardRef<UnifiedComposerHandle>(function Unifie
                         <Tooltip title={t('toggleDarkMode')}>
                             <IconButton
                                 size="small"
+                                aria-label={t('toggleDarkMode')}
                                 onClick={() => {
                                     const state = useAppStore.getState();
                                     useAppStore.setState({ dark: state.dark === 'enable' ? 'disable' : 'enable' });
@@ -405,7 +406,7 @@ export const UnifiedComposer = forwardRef<UnifiedComposerHandle>(function Unifie
                     <IconButton size="small" onClick={() => setTextFullscreen(false)}><MdiIcon name="mdi-arrow-left" size={18} /></IconButton>
                     <span style={{ flex: 1 }}>{t('enterTextToSend')}</span>
                     <Tooltip title={fullscreenSendClose ? t('fullscreenCloseAfterSendOn') : t('fullscreenCloseAfterSendOff')}>
-                        <IconButton size="small" onClick={() => useAppStore.getState().toggleFullscreenSendClose()}>
+                        <IconButton size="small" aria-label={t('enterTextToSend')} onClick={() => useAppStore.getState().toggleFullscreenSendClose()}>
                             <MdiIcon name={fullscreenSendClose ? 'mdi-chevron-down-circle' : 'mdi-window-restore'} size={18} />
                         </IconButton>
                     </Tooltip>
