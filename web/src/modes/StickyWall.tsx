@@ -69,6 +69,28 @@ export default function StickyWall() {
             }}
         >
             <PageToolbar variant="sticky" />
+            {/* 拖放高亮：整个页面都是落点，这块提示只在拖拽期间出现 */}
+            {dragover && (
+                <Box
+                    sx={{
+                        position: 'fixed',
+                        inset: 0,
+                        zIndex: 999,
+                        bgcolor: 'rgba(217,119,6,0.14)',
+                        backdropFilter: 'blur(2px)',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        pointerEvents: 'none',
+                        fontSize: 20,
+                        fontWeight: 700,
+                        color: '#d97706',
+                        border: '3px dashed #d97706',
+                    }}
+                >
+                    {t('stickyDropHere')}
+                </Box>
+            )}
             <Box sx={{ width: '100%', maxWidth: 1100, mx: 'auto', flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', px: 2, pb: 3 }}>
                 <Stack direction="row" alignItems="center" spacing={1} sx={{ pt: 2.25, pb: 1.25, flexShrink: 0 }}>
                     <span>📌</span>

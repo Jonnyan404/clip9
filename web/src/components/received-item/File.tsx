@@ -73,7 +73,8 @@ export function ReceivedFile({ meta }: { meta: ReceivedItem }) {
             anchor.click();
             document.body.removeChild(anchor);
         } catch (error) {
-            toast(errorMessage(error) || t('fileFetchFailed'));
+            const msg = errorMessage(error);
+            toast(msg ? t('fileFetchFailedMsg', { msg }) : t('fileFetchFailed'));
         } finally {
             setDownloading(false);
         }
@@ -109,7 +110,8 @@ export function ReceivedFile({ meta }: { meta: ReceivedItem }) {
                 setSrcPreview(URL.createObjectURL(new Blob([response.data])));
             }
         } catch (error) {
-            toast(errorMessage(error) || t('fileFetchFailed'));
+            const msg = errorMessage(error);
+            toast(msg ? t('fileFetchFailedMsg', { msg }) : t('fileFetchFailed'));
         } finally {
             setLoading(false);
         }

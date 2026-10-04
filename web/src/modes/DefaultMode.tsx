@@ -151,6 +151,11 @@ export default function DefaultMode() {
                                     {t('filterEmpty')}
                                 </Typography>
                             )}
+                            {filtered.length > 0 && (
+                                <Typography variant="caption" color="text.secondary" sx={{ display: 'block', textAlign: 'center', pt: 1 }}>
+                                    {t('alreadyAtBottom')}
+                                </Typography>
+                            )}
                         </Box>
                     )}
 

@@ -65,11 +65,12 @@ export function SettingsDialog({
     const currentLocale = i18n.resolvedLanguage || i18n.language || 'zh';
 
     const darkModeOptions = [
-        { value: 'time', title: t('switchByTime') },
-        { value: 'prefer', title: t('switchBySystem') },
-        { value: 'enable', title: t('keepEnabled') },
-        { value: 'disable', title: t('keepDisabled') },
+        { value: 'time', title: t('switchByTime'), desc: t('switchByTimeDesc') },
+        { value: 'prefer', title: t('switchBySystem'), desc: t('switchBySystemDesc') },
+        { value: 'enable', title: t('keepEnabled'), desc: '' },
+        { value: 'disable', title: t('keepDisabled'), desc: '' },
     ];
+    const darkModeDesc = darkModeOptions.find((option) => option.value === dark)?.desc || '';
 
     const togglesInGroup = (groupKey: string) =>
         togglesForMode(uiMode, groupKey) as Array<{ key: string; labelKey: string; icon: string }>;
@@ -129,7 +130,7 @@ export function SettingsDialog({
                                 }
                             >
                                 <MdiIcon name="mdi-brightness-4" style={iconStyle} />
-                                <ListItemText primary={t('darkMode')} />
+                                <ListItemText primary={t('darkMode')} secondary={darkModeDesc} />
                             </ListItem>
                             <ListItem disableGutters>
                                 <MdiIcon name="mdi-palette" style={iconStyle} />
@@ -140,6 +141,7 @@ export function SettingsDialog({
                                         value={currentPrimary}
                                         onChange={(e) => setPrimary(isDark ? 'dark' : 'light', e.target.value)}
                                         style={{ width: 36, height: 28, border: 'none', background: 'none', cursor: 'pointer' }}
+                                        title={t('selectThemeColor')}
                                         aria-label={t('colorPicker')}
                                     />
                                     <Button

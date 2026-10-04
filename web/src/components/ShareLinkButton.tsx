@@ -150,9 +150,13 @@ export function ShareLinkButton({
                             />
                         ))}
                     </Stack>
-                    <div style={{ height: 6, borderRadius: 999, background: 'color-mix(in srgb, currentColor 18%, transparent)', marginBottom: 16 }}>
+                    <div style={{ height: 6, borderRadius: 999, background: 'color-mix(in srgb, currentColor 18%, transparent)', marginBottom: 4 }}>
                         <div style={{ height: 6, borderRadius: 999, background: 'var(--mui-palette-primary-main)', width: `${shareTtlProgress(form.ttlMinutes)}%` }} />
                     </div>
+                    <Stack direction="row" justifyContent="space-between" sx={{ mb: 2 }}>
+                        <Typography variant="caption" color="text.secondary">{t('shareTtlMinLabel')}</Typography>
+                        <Typography variant="caption" color="text.secondary">{t('shareTtlMaxLabel')}</Typography>
+                    </Stack>
                     <TextField
                         fullWidth
                         size="small"
@@ -192,7 +196,10 @@ export function ShareLinkButton({
                         {t('shareOpenedTimes', { count: 0 })} · {t('shareOpenedHint')}
                     </Typography>
                     <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 0.5 }}>
-                        {formatTimestamp(Math.floor(Date.now() / 1000) + ttlSeconds)}
+                        {t('shareMetaSummary', {
+                            expiresAtText: formatTimestamp(Math.floor(Date.now() / 1000) + ttlSeconds),
+                            usesText: form.maxUses > 0 ? t('shareUsesLimited', { count: form.maxUses }) : t('shareUsesUnlimited'),
+                        })}
                     </Typography>
                 </DialogContent>
                 <DialogActions>

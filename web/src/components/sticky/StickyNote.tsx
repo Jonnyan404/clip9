@@ -7,7 +7,7 @@ import { toast } from '@/stores/toastStore';
 import { useDisplaySettings } from '@/hooks/useDisplaySettings';
 import { useMarkdown } from '@/hooks/useMarkdown';
 import { useTaskListToggle } from '@/hooks/useTaskListToggle';
-import { copyTextToClipboard, deviceLabel, errorMessage, formatTimestamp, prettyFileSize } from '@/lib/util';
+import { copyTextToClipboard, deviceLabel, errorMessage, formatTimestamp, isImageName, prettyFileSize } from '@/lib/util';
 import { MarkdownBody } from '@/components/MarkdownBody';
 import { MarkdownToggle } from '@/components/MarkdownToggle';
 import { ShareLinkButton } from '@/components/ShareLinkButton';
@@ -55,7 +55,7 @@ export function StickyNote({ meta }: { meta: ReceivedItem }) {
     const expired = Boolean(meta.expire && meta.expire > 0 && Date.now() / 1000 > meta.expire);
 
     const isLink = !isFile && /^https?:\/\/[^\s]+$/i.test(decodedContent.trim());
-    const noteLabel = isFile ? 'FILE' : isLink ? 'LINK' : 'TEXT';
+    const noteLabel = isFile ? (isImageName(meta.name) ? t('stickyImage') : 'FILE') : isLink ? 'LINK' : 'TEXT';
 
     const loadPreview = async () => {
         if (!isFile || loadingPreview) return;
@@ -103,7 +103,7 @@ export function StickyNote({ meta }: { meta: ReceivedItem }) {
 
     const timestampLabel = [
         meta.timestamp && display.timestamp ? formatTimestamp(meta.timestamp) : '',
-        display.device ? deviceLabel(meta.senderDevice) : '',
+        display.device && deviceLabel(meta.senderDevice) ? t('stickyFromDevice', { device: deviceLabel(meta.senderDevice) }) : '',
     ].filter(Boolean).join(' ');
 
     return (
@@ -129,7 +129,11 @@ export function StickyNote({ meta }: { meta: ReceivedItem }) {
                 <Stack direction="row" alignItems="center" spacing={0.5}>
                     <Typography variant="caption" sx={{ fontWeight: 700, letterSpacing: '0.06em', opacity: 0.55 }}>{noteLabel}</Typography>
                     <span style={{ flex: 1 }} />
-                    {expired && <Typography variant="caption" color="error">{t('expired')}</Typography>}
+                    {meta.expire && meta.expire > 0 && (
+                        <Typography variant="caption" color={expired ? 'error' : 'text.secondary'}>
+                            {expired ? t('expired') : t('expiresAt', { time: formatTimestamp(meta.expire) })}
+                        </Typography>
+                    )}
                     <MdiIcon name={isFile ? 'mdi-paperclip' : 'mdi-pin'} size={14} />
                 </Stack>
                 <Typography variant="body2" sx={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word', flex: 1 }}>

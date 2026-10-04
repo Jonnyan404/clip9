@@ -1,7 +1,7 @@
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import {
-    Box, Button, Chip, Dialog, DialogContent, DialogTitle, IconButton, Stack, TextField, Tooltip, Typography,
+    Box, Button, Chip, Dialog, DialogContent, DialogTitle, IconButton, Stack, TextField, Tooltip, Typography, useMediaQuery,
 } from '@mui/material';
 import axios from 'axios';
 import { useAppStore } from '@/stores/appStore';
@@ -54,6 +54,8 @@ export const UnifiedComposer = forwardRef<UnifiedComposerHandle>(function Unifie
     const slashElRef = useRef<HTMLTextAreaElement | null>(null);
 
     const isFilePrimary = composerPrimary === 'files';
+    // 窄屏用短文案（Vue 版同一处：`mobile ? 'addFilesShort' : 'addFiles'`）。
+    const mobile = useMediaQuery('(max-width:600px)');
     const canSend = Boolean(display.composerText || display.composerUpload);
     const fileSize = send.files.reduce((acc, cur) => acc + cur.size, 0);
     const uploadedSize = uploadedSizes.reduce((acc, cur) => acc + cur, 0);
@@ -218,6 +220,13 @@ export const UnifiedComposer = forwardRef<UnifiedComposerHandle>(function Unifie
         return { desktop, mobile, other: devices.length - desktop - mobile };
     }, [devices]);
 
+    // 设备没自报名字时的兜底标题（服务端对未声明的名字会 omitempty 掉，所以这条路径真的会走到）。
+    const deviceTypeLabel = (type?: string) => {
+        if (type === 'desktop') return t('desktopDevice');
+        if (type === 'smartphone' || type === 'mobile' || type === 'tablet') return t('mobileDevice');
+        return t('otherDevice');
+    };
+
     return (
         <>
             <Box
@@ -302,7 +311,7 @@ export const UnifiedComposer = forwardRef<UnifiedComposerHandle>(function Unifie
                             }}
                         >
                             <MdiIcon name="mdi-cloud-upload-outline" size={isFilePrimary ? 40 : 20} style={{ marginRight: 8 }} />
-                            <Typography variant="body2">{t('addFiles', { keys: pasteKey })}</Typography>
+                            <Typography variant="body2">{t(mobile ? 'addFilesShort' : 'addFiles', { keys: pasteKey })}</Typography>
                         </Box>
                         {send.files.length > 0 && (
                             <Stack direction="row" spacing={1} sx={{ flexWrap: 'wrap', pt: 1 }}>
@@ -425,11 +434,18 @@ export const UnifiedComposer = forwardRef<UnifiedComposerHandle>(function Unifie
                 <DialogContent>
                     {devices.length === 0
                         ? <Typography variant="body2" color="text.secondary">{connected ? t('noDevicesConnected') : t('notConnectedToServer')}</Typography>
-                        : devices.map((item) => (
-                            <Typography key={item.id} variant="body2">
-                                {item.name || item.type} — {item.os} ({item.browser})
-                            </Typography>
-                        ))}
+                        : (
+                            <>
+                                <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 1 }}>
+                                    {t('devicesConnected', { count: devices.length, desktop: deviceStats.desktop, mobile: deviceStats.mobile })}
+                                </Typography>
+                                {devices.map((item) => (
+                                    <Typography key={item.id} variant="body2">
+                                        {item.name || deviceTypeLabel(item.type)} — {item.os} ({item.browser})
+                                    </Typography>
+                                ))}
+                            </>
+                        )}
                 </DialogContent>
             </Dialog>
 

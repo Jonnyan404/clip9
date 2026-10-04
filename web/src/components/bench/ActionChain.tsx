@@ -167,9 +167,12 @@ export function ActionChain({ text, onSaveAsNew }: { text: string; onSaveAsNew: 
                 <Menu anchorEl={templateAnchor} open={Boolean(templateAnchor)} onClose={() => setTemplateAnchor(null)}>
                     {templates.map((tpl) => (
                         <Box key={tpl.id} sx={{ display: 'flex', alignItems: 'center', px: 1.5, py: 0.5 }}>
-                            <Typography variant="body2" sx={{ flex: 1 }} onClick={() => { applyTemplate(tpl.id); setTemplateAnchor(null); }}>
-                                {tpl.name}
-                            </Typography>
+                            <Box sx={{ flex: 1 }} onClick={() => { applyTemplate(tpl.id); setTemplateAnchor(null); }}>
+                                <Typography variant="body2">{tpl.name}</Typography>
+                                <Typography variant="caption" color="text.secondary">
+                                    {tpl.steps.length} {t('actionChainSteps')}
+                                </Typography>
+                            </Box>
                             <IconButton size="small" onClick={() => removeTemplate(tpl.id)} aria-label={t('delete')}>
                                 <MdiIcon name="mdi-close" size={14} />
                             </IconButton>

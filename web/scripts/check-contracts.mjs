@@ -11,8 +11,8 @@
 // 所以这里用脚本钉住，让「改坏了」变成**构建期可见**的失败。
 
 import { createHash } from 'node:crypto';
-import { existsSync, readFileSync } from 'node:fs';
-import { dirname, join, resolve } from 'node:path';
+import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
+import { dirname, extname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -85,10 +85,68 @@ if (!mineDenylist) {
     if (extra.length) problems.push(`PWA 放行表多出条目（web-vue3 没有）：${extra.join(', ')}`);
 }
 
+// ── E. i18n 卫生：4 个 locale 键集合一致 + 没有未被引用的死键 ──────────────
+// ⚠️ 死键是「删了功能但没删文案」的残留 —— 它不会报错，只会让下一个人以为那个功能还在。
+//    2026-10-04 清掉了 59 个（含四个已删除模式的整套文案）。
+const LOCALES = ['zh', 'zh-TW', 'en', 'ja'];
+const localeKeys = {};
+for (const locale of LOCALES) {
+    localeKeys[locale] = Object.keys(JSON.parse(readFileSync(join(WEB, 'src/i18n/locales', `${locale}.json`), 'utf8')));
+}
+const zhKeys = localeKeys.zh;
+for (const locale of LOCALES) {
+    const other = new Set(localeKeys[locale]);
+    const missing = zhKeys.filter((key) => !other.has(key));
+    const extra = localeKeys[locale].filter((key) => !zhKeys.includes(key));
+    if (missing.length) problems.push(`${locale}.json 缺 ${missing.length} 个 zh 有的键：${missing.slice(0, 5).join(', ')}`);
+    if (extra.length) problems.push(`${locale}.json 多出 ${extra.length} 个 zh 没有的键：${extra.slice(0, 5).join(', ')}`);
+}
+
+// 把 src 下除 locale 文件外的源码拼起来，判断「这个键被引用过吗」
+function walk(dir, out = []) {
+    for (const name of readdirSync(dir)) {
+        const full = join(dir, name);
+        if (statSync(full).isDirectory()) walk(full, out);
+        else if (['.ts', '.tsx', '.js', '.json'].includes(extname(name))) out.push(full);
+    }
+    return out;
+}
+const haystack = walk(join(WEB, 'src'))
+    .filter((file) => !file.includes('/i18n/locales/'))
+    .map((file) => readFileSync(file, 'utf8'))
+    .join('\n');
+const unusedKeys = zhKeys.filter((key) => !haystack.includes(`'${key}'`) && !haystack.includes(`"${key}"`));
+if (unusedKeys.length) {
+    problems.push(`i18n 有 ${unusedKeys.length} 个未被引用的死键：${unusedKeys.slice(0, 8).join(', ')}`);
+}
+
+// ── F. 已删除的模式不得复活 ───────────────────────────────────────────────
+// ⚠️ chat / mega / workbench / terminal 于 2026-09-26 真删，**没有退役映射表、没有兼容垫片**
+//    （这个项目没有老用户，兼容垫片是永久成本）。
+// ⚠️ 判据用**剥离行注释**后的源码：代码里明确写着「这几个模式已删除、别加回来」的说明性注释
+//    是**该保留的文档**（meta.ts / displayToggles.js 各有一处），不算残留引用。
+const codeOnly = haystack
+    .split('\n')
+    .filter((line) => {
+        const trimmed = line.trim();
+        return !trimmed.startsWith('//') && !trimmed.startsWith('*') && !trimmed.startsWith('/*');
+    })
+    .join('\n');
+const MODE_LEFTOVERS = [
+    [/key:\s*['"](chat|mega|terminal|workbench)['"]/, '模式注册表里出现了已删除的模式 key'],
+    [/uiMode(Mega|Terminal|Workbench|Chat)\b/, '引用了已删除模式的 i18n 键'],
+    [/(ChatWall|MegaWall|TerminalWall|WorkbenchWall)\b/, '引用了已删除模式的组件'],
+];
+for (const [pattern, why] of MODE_LEFTOVERS) {
+    if (pattern.test(codeOnly)) {
+        problems.push(`${why}（${pattern}）`);
+    }
+}
+
 // ── 结果 ────────────────────────────────────────────────────────────────
 if (problems.length) {
     console.error(`✗ 契约守卫失败（${problems.length} 处）：`);
     for (const line of problems) console.error(`    ${line}`);
     process.exit(1);
 }
-console.log('✓ 契约守卫通过：零依赖共享模块字节一致 · 外壳形状完整 · PWA 放行表一致');
+console.log('✓ 契约守卫通过：零依赖共享模块字节一致 · 外壳形状完整 · PWA 放行表一致 · i18n 无死键 · 已删模式未复活');

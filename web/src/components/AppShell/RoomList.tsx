@@ -73,7 +73,7 @@ export function RoomList({
                     secondary={[
                         room.deviceCount > 0 ? `${room.deviceCount} ${t('devices')}` : '',
                         room.messageCount > 0 ? `${t('messages')} ${room.messageCount}` : '',
-                        room.lastActive ? relativeTime(room.lastActive, t) : '',
+                        room.lastActive ? `${t('lastActive')} · ${relativeTime(room.lastActive, t)}` : '',
                     ].filter(Boolean).join(' · ')}
                     slotProps={{ primary: { noWrap: true }, secondary: { noWrap: true, variant: 'caption' } }}
                 />
@@ -121,7 +121,7 @@ export function RoomList({
                 <TextField
                     size="small"
                     fullWidth
-                    placeholder={t('searchPlaceholder')}
+                    placeholder={t('searchRooms')}
                     value={roomSearch}
                     onChange={(e) => setRoomSearch(e.target.value)}
                 />
@@ -140,8 +140,13 @@ export function RoomList({
 
                 {groups.length === 0 && (
                     <Stack alignItems="center" spacing={1} sx={{ py: 3 }}>
-                        {roomsLoading ? <CircularProgress size={20} /> : (
-                            <Typography variant="caption" color="text.secondary">{t('shareHistoryEmpty')}</Typography>
+                        {roomsLoading ? (
+                            <>
+                                <CircularProgress size={20} />
+                                <Typography variant="caption" color="text.secondary">{t('loadingRooms')}</Typography>
+                            </>
+                        ) : (
+                            <Typography variant="caption" color="text.secondary">{t('noRoomsFound')}</Typography>
                         )}
                     </Stack>
                 )}
