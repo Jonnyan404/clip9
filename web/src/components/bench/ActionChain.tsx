@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Box, Button, Divider, IconButton, Menu, Stack, TextField, Typography } from '@mui/material';
+import { Box, Button, Divider, Menu, MenuItem, Popover, TextField } from '@mui/material';
 import { runChain } from '@/lib/actions/index.js';
 import { selectChainSteps, useActionChainStore } from '@/stores/actionChainStore';
 import { copyTextToClipboard } from '@/lib/util';
@@ -15,7 +15,32 @@ import { ActionPicker } from './ActionPicker';
  * 够判断这一步有没有起作用；把每步结果都铺出来会让这一栏变成一坨日志。
  * ⚠️ 动作**不改数据** —— 产出的结果要落盘必须显式点「另存为新条目」。
  * ⚠️ 结果必须防竞态：在列表里快速点几条时，先发起的计算可能后回来。
+ * ⚠️★ 样式全部走 `.action-chain*`（styles/components.css），与 Vue 同名同值。
+ *    尤其**参数输入框是原生 `input` / `select`**，不是 MUI 的 TextField ——
+ *    TextField 自带的 padding/margin 会把每一步撑高一大截，紧凑列表就散了。
  */
+interface SelectOption {
+    value: string;
+    /** ⚠️★ 选项的**显示名**走这个键，别拿 `value` 当文案 —— `value` 是 `text`/`digits`
+     *  这类机器值，直接渲染出来就是一句英文（用户报的「查找模式还是英文」）。 */
+    labelKey?: string;
+}
+
+interface ParamSpec {
+    key: string;
+    labelKey?: string;
+    type?: string;
+    options?: SelectOption[];
+    visibleWhen?: { key: string; equals: string };
+}
+
+interface StepAction {
+    icon: string;
+    nameKey: string;
+    params?: ParamSpec[];
+    render?: string;
+}
+
 export function ActionChain({ text, onSaveAsNew }: { text: string; onSaveAsNew: (content: string) => void }) {
     const { t } = useTranslation();
     const chain = useActionChainStore((s) => s.chain);
@@ -51,15 +76,15 @@ export function ActionChain({ text, onSaveAsNew }: { text: string; onSaveAsNew: 
         : ((lastStep?.action as { render?: string } | undefined)?.render === 'html' ? lastStep?.output : '');
     const displayText = isEmptyChain ? text : hasError ? '' : result.output;
 
-    const paramValue = (step: typeof steps[number], p: { key: string; type?: string; options?: Array<{ value: string }> }) => {
+    const paramValue = (step: typeof steps[number], p: ParamSpec) => {
         const raw = step.params?.[p.key];
         if (raw !== undefined && raw !== '') return String(raw);
         if (p.type === 'select' && p.options?.length) return p.options[0].value;
         return '';
     };
 
-    const visibleParams = (step: typeof steps[number]) => {
-        const all = (step.action as { params?: Array<{ key: string; type?: string; options?: Array<{ value: string }>; visibleWhen?: { key: string; equals: string } }> } | undefined)?.params || [];
+    const visibleParams = (step: typeof steps[number]): ParamSpec[] => {
+        const all = (step.action as StepAction | undefined)?.params || [];
         return all.filter((p) => {
             if (!p.visibleWhen) return true;
             const dep = all.find((x) => x.key === p.visibleWhen!.key);
@@ -82,110 +107,178 @@ export function ActionChain({ text, onSaveAsNew }: { text: string; onSaveAsNew: 
         }
     };
 
+    const confirmSaveTemplate = () => {
+        if (saveTemplate(templateName)) {
+            setNaming(false);
+            setTemplateName('');
+            toast(t('actionTemplateSaved'));
+        }
+    };
+
     return (
-        <Box sx={{ display: 'flex', flexDirection: 'column', minHeight: 0, overflowY: 'auto' }}>
-            <Stack direction="row" alignItems="center" spacing={0.75} sx={{ mb: 0.75 }}>
-                <Typography variant="caption" sx={{ fontWeight: 700, letterSpacing: '0.04em', opacity: 0.75 }}>{t('actionChainTitle')}</Typography>
+        <div className="action-chain">
+            <div className="action-chain__head">
+                <span className="action-chain__title">{t('actionChainTitle')}</span>
                 <span style={{ flex: 1 }} />
                 {chain.length > 0 && (
                     <Button size="small" variant="text" onClick={clear}>{t('actionChainClear')}</Button>
                 )}
-            </Stack>
+            </div>
 
-            <Stack spacing={0.5}>
-                {isEmptyChain && <Typography variant="caption" sx={{ opacity: 0.7, py: 1 }}>{t('actionChainEmptyHint')}</Typography>}
-                {steps.map((step, index) => (
-                    <Box key={`${step.id}-${index}`}>
-                        <Stack
-                            direction="row"
-                            alignItems="center"
-                            spacing={0.75}
-                            sx={{ px: 1, py: 0.625, border: 1, borderColor: 'divider', borderRadius: 1 }}
-                        >
-                            <Box sx={{ width: 16, height: 16, flex: '0 0 auto', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', borderRadius: 0.75, background: 'linear-gradient(135deg,#0ea5e9,#14b8a6)', color: '#fff', fontSize: 10, fontWeight: 700 }}>
-                                {index + 1}
-                            </Box>
-                            <MdiIcon name={(step.action as { icon: string }).icon} size={14} />
-                            <Typography variant="caption" sx={{ flex: 1, minWidth: 0 }} noWrap>{t((step.action as { nameKey: string }).nameKey)}</Typography>
-                            <Typography variant="caption" sx={{ fontFamily: 'monospace', fontSize: 10, opacity: 0.7 }}>{stepDelta(result.steps[index])}</Typography>
-                            <Stack direction="row" spacing={0}>
-                                <IconButton size="small" disabled={index === 0} onClick={() => move(index, -1)} title={t('actionChainMoveUp')}>
-                                    <MdiIcon name="mdi-arrow-up" size={12} />
-                                </IconButton>
-                                <IconButton size="small" disabled={index === steps.length - 1} onClick={() => move(index, 1)} title={t('actionChainMoveDown')}>
-                                    <MdiIcon name="mdi-arrow-down" size={12} />
-                                </IconButton>
-                                <IconButton size="small" color="error" onClick={() => removeAt(index)} title={t('delete')}>
-                                    <MdiIcon name="mdi-close" size={12} />
-                                </IconButton>
-                            </Stack>
-                        </Stack>
+            <div className="action-chain__steps">
+                {isEmptyChain && <div className="action-chain__hint">{t('actionChainEmptyHint')}</div>}
+                {steps.map((step, index) => {
+                    const action = step.action as StepAction;
+                    return (
+                        <div key={`${step.id}-${index}`}>
+                            <div className="action-chain__step">
+                                <span className="action-chain__step-n">{index + 1}</span>
+                                <MdiIcon name={action.icon} size={14} />
+                                <span className="action-chain__step-name">{t(action.nameKey)}</span>
+                                <span className="action-chain__step-delta">{stepDelta(result.steps[index])}</span>
+                                <span className="action-chain__step-actions">
+                                    <button
+                                        type="button"
+                                        className="action-chain__mini"
+                                        disabled={index === 0}
+                                        title={t('actionChainMoveUp')}
+                                        onClick={() => move(index, -1)}
+                                    >
+                                        <MdiIcon name="mdi-arrow-up" size={12} />
+                                    </button>
+                                    <button
+                                        type="button"
+                                        className="action-chain__mini"
+                                        disabled={index === steps.length - 1}
+                                        title={t('actionChainMoveDown')}
+                                        onClick={() => move(index, 1)}
+                                    >
+                                        <MdiIcon name="mdi-arrow-down" size={12} />
+                                    </button>
+                                    <button
+                                        type="button"
+                                        className="action-chain__mini action-chain__mini--danger"
+                                        title={t('delete')}
+                                        onClick={() => removeAt(index)}
+                                    >
+                                        <MdiIcon name="mdi-close" size={12} />
+                                    </button>
+                                </span>
+                            </div>
 
-                        {visibleParams(step).length > 0 && (
-                            <Stack direction="row" spacing={1} sx={{ flexWrap: 'wrap', px: 1, pt: 0.5, pl: 3.75 }}>
-                                {visibleParams(step).map((p) => (
-                                    <Stack key={p.key} direction="row" alignItems="center" spacing={0.5} sx={{ flex: '1 1 130px', minWidth: 0 }}>
-                                        <Typography variant="caption" sx={{ opacity: 0.7, flex: '0 0 auto' }}>{t((p as unknown as { labelKey: string }).labelKey)}</Typography>
-                                        {p.type === 'select' ? (
-                                            <TextField
-                                                select
-                                                size="small"
-                                                value={paramValue(step, p)}
-                                                onChange={(e) => setParam(index, p.key, e.target.value)}
-                                                sx={{ flex: 1 }}
-                                            >
-                                                {(p.options || []).map((o) => (
-                                                    <option key={o.value} value={o.value}>{o.value}</option>
-                                                ))}
-                                            </TextField>
-                                        ) : (
-                                            <TextField size="small" value={paramValue(step, p)} onChange={(e) => setParam(index, p.key, e.target.value)} sx={{ flex: 1 }} />
-                                        )}
-                                    </Stack>
-                                ))}
-                            </Stack>
-                        )}
-                    </Box>
-                ))}
-            </Stack>
+                            {/* 带参数的动作：输入框**内联在步骤下面**，不弹窗 ——
+                                参数是「这一步」的一部分（同一个动作可以在链上出现两次、用不同参数），
+                                弹窗会让人分不清正在改哪一步。 */}
+                            {visibleParams(step).length > 0 && (
+                                <div className="action-chain__params">
+                                    {visibleParams(step).map((p) => (
+                                        <label key={p.key} className="action-chain__param">
+                                            <span className="action-chain__param-label">{t(p.labelKey || '')}</span>
+                                            {p.type === 'select' ? (
+                                                <select
+                                                    className="action-chain__param-input"
+                                                    value={paramValue(step, p)}
+                                                    onChange={(e) => setParam(index, p.key, e.target.value)}
+                                                >
+                                                    {(p.options || []).map((o) => (
+                                                        // ⚠️★ 显示的是 `t(labelKey)`，**不是** `o.value`
+                                                        //（value 是机器值，直接显示就是英文）。
+                                                        <option key={o.value} value={o.value}>{t(o.labelKey || o.value)}</option>
+                                                    ))}
+                                                </select>
+                                            ) : (
+                                                <input
+                                                    type="text"
+                                                    className="action-chain__param-input"
+                                                    value={paramValue(step, p)}
+                                                    onChange={(e) => setParam(index, p.key, e.target.value)}
+                                                />
+                                            )}
+                                        </label>
+                                    ))}
+                                </div>
+                            )}
+                        </div>
+                    );
+                })}
+            </div>
 
-            <Box sx={{ mt: 1 }}>
-                <Button size="small" variant="outlined" fullWidth startIcon={<MdiIcon name="mdi-plus" size={16} />} onClick={(e) => setPickerAnchor(e.currentTarget)}>
+            <div className="action-chain__add">
+                <button
+                    type="button"
+                    className="action-chain__add-btn"
+                    onClick={(e) => setPickerAnchor(e.currentTarget as unknown as HTMLElement)}
+                >
+                    <MdiIcon name="mdi-plus" size={16} />
                     {t('actionChainAdd')}
-                </Button>
-                <Menu anchorEl={pickerAnchor} open={Boolean(pickerAnchor)} onClose={() => setPickerAnchor(null)}>
-                    <Box sx={{ width: 340, maxHeight: 320, p: 1.25, overflow: 'hidden' }}>
+                </button>
+                {/* ⚠️★ 用 **Popover** 而不是 Menu：Menu 会把子节点包进 MenuList
+                    （自带 8px 上下内边距），而这里要的是一个「面板」，不是一串菜单项
+                    —— Vue 的 v-menu 内容就是那个 div 本身。
+                    ⚠️ 选完**不关**（`onPick` 里不 setAnchor）：连着叠三步不该每次重新打开。
+                    点外面才关 —— 这正是 Popover 的行为，对应 Vue 的
+                    `:close-on-content-click="false"`。 */}
+                <Popover
+                    open={Boolean(pickerAnchor)}
+                    anchorEl={pickerAnchor}
+                    onClose={() => setPickerAnchor(null)}
+                    anchorOrigin={{ vertical: 'bottom', horizontal: 'left' }}
+                    transformOrigin={{ vertical: 'top', horizontal: 'left' }}
+                    slotProps={{ paper: { sx: { mt: 0.75, overflow: 'visible' } } }}
+                >
+                    <div className="action-chain__picker">
                         <ActionPicker text={text} onPick={(id) => add(id)} />
-                    </Box>
-                </Menu>
-            </Box>
+                    </div>
+                </Popover>
+            </div>
 
-            <Stack direction="row" spacing={0.5} sx={{ mt: 0.75 }}>
-                <Button size="small" variant="text" startIcon={<MdiIcon name="mdi-bookmark-outline" size={14} />} disabled={!templates.length} onClick={(e) => setTemplateAnchor(e.currentTarget)}>
+            <div className="action-chain__templates">
+                <Button
+                    size="small"
+                    variant="text"
+                    startIcon={<MdiIcon name="mdi-bookmark-outline" size={14} />}
+                    disabled={!templates.length}
+                    onClick={(e) => setTemplateAnchor(e.currentTarget)}
+                >
                     {t('actionTemplateApply')}
                 </Button>
                 <Menu anchorEl={templateAnchor} open={Boolean(templateAnchor)} onClose={() => setTemplateAnchor(null)}>
                     {templates.map((tpl) => (
-                        <Box key={tpl.id} sx={{ display: 'flex', alignItems: 'center', px: 1.5, py: 0.5 }}>
-                            <Box sx={{ flex: 1 }} onClick={() => { applyTemplate(tpl.id); setTemplateAnchor(null); }}>
-                                <Typography variant="body2">{tpl.name}</Typography>
-                                <Typography variant="caption" color="text.secondary">
+                        <MenuItem
+                            key={tpl.id}
+                            onClick={() => { applyTemplate(tpl.id); setTemplateAnchor(null); }}
+                            sx={{ gap: 1.5 }}
+                        >
+                            <Box sx={{ flex: 1, minWidth: 0 }}>
+                                <div>{tpl.name}</div>
+                                <div style={{ fontSize: '0.6875rem', opacity: 0.7 }}>
                                     {tpl.steps.length} {t('actionChainSteps')}
-                                </Typography>
+                                </div>
                             </Box>
-                            <IconButton size="small" onClick={() => removeTemplate(tpl.id)} aria-label={t('delete')}>
+                            <Button
+                                size="small"
+                                variant="text"
+                                aria-label={t('delete')}
+                                onClick={(e) => { e.stopPropagation(); removeTemplate(tpl.id); }}
+                            >
                                 <MdiIcon name="mdi-close" size={14} />
-                            </IconButton>
-                        </Box>
+                            </Button>
+                        </MenuItem>
                     ))}
                 </Menu>
-                <Button size="small" variant="text" startIcon={<MdiIcon name="mdi-content-save-outline" size={14} />} disabled={!chain.length} onClick={() => setNaming((v) => !v)}>
+                <Button
+                    size="small"
+                    variant="text"
+                    startIcon={<MdiIcon name="mdi-content-save-outline" size={14} />}
+                    disabled={!chain.length}
+                    onClick={() => setNaming((v) => !v)}
+                >
                     {t('actionTemplateSave')}
                 </Button>
-            </Stack>
+            </div>
 
             {naming && (
-                <Stack direction="row" spacing={0.75} sx={{ mt: 0.75 }}>
+                <div className="action-chain__naming">
                     <TextField
                         size="small"
                         fullWidth
@@ -193,28 +286,19 @@ export function ActionChain({ text, onSaveAsNew }: { text: string; onSaveAsNew: 
                         placeholder={t('actionTemplateNamePlaceholder')}
                         onChange={(e) => setTemplateName(e.target.value)}
                         onKeyDown={(e) => {
-                            if (e.key === 'Enter') {
-                                if (saveTemplate(templateName)) { setNaming(false); setTemplateName(''); toast(t('actionTemplateSaved')); }
-                            }
+                            if (e.key === 'Enter') confirmSaveTemplate();
                         }}
                     />
-                    <Button
-                        size="small"
-                        variant="outlined"
-                        disabled={!templateName.trim()}
-                        onClick={() => {
-                            if (saveTemplate(templateName)) { setNaming(false); setTemplateName(''); toast(t('actionTemplateSaved')); }
-                        }}
-                    >
+                    <Button size="small" variant="contained" disabled={!templateName.trim()} onClick={confirmSaveTemplate}>
                         {t('confirm')}
                     </Button>
-                </Stack>
+                </div>
             )}
 
             <Divider sx={{ my: 1.5 }} />
 
-            <Stack direction="row" alignItems="center" spacing={0.75} sx={{ mb: 0.75 }}>
-                <Typography variant="caption" sx={{ fontWeight: 700, letterSpacing: '0.04em', opacity: 0.75 }}>{t('actionResultTitle')}</Typography>
+            <div className="action-chain__head">
+                <span className="action-chain__title">{t('actionResultTitle')}</span>
                 <span style={{ flex: 1 }} />
                 {!hasError && (
                     <Button size="small" variant="text" disabled={!displayText} onClick={copyResult}>{t('copyText')}</Button>
@@ -222,24 +306,22 @@ export function ActionChain({ text, onSaveAsNew }: { text: string; onSaveAsNew: 
                 {!hasError && !isEmptyChain && (
                     <Button size="small" variant="text" onClick={() => onSaveAsNew(displayText)}>{t('actionSaveAsNew')}</Button>
                 )}
-            </Stack>
+            </div>
 
-            <Box sx={{ minHeight: 140, border: 1, borderColor: 'divider', borderRadius: 1.5, p: 1.25 }}>
+            <div className="action-chain__result">
                 {hasError ? (
-                    <Stack direction="row" spacing={0.75} alignItems="flex-start">
-                        <MdiIcon name="mdi-alert-circle-outline" size={16} color="var(--mui-palette-error-main)" />
-                        <Typography variant="caption" color="error">{result.error}</Typography>
-                    </Stack>
+                    <div className="action-chain__error">
+                        <MdiIcon name="mdi-alert-circle-outline" size={16} />
+                        <span>{result.error}</span>
+                    </div>
                 ) : renderedHtml ? (
-                    <div style={{ fontSize: '0.8125rem', lineHeight: 1.7, wordBreak: 'break-word' }} dangerouslySetInnerHTML={{ __html: renderedHtml }} />
+                    <div className="action-chain__html" dangerouslySetInnerHTML={{ __html: renderedHtml }} />
                 ) : displayText ? (
-                    <pre style={{ margin: 0, fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace', fontSize: '0.75rem', lineHeight: 1.6, whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}>
-                        {displayText}
-                    </pre>
+                    <pre className="action-chain__pre">{displayText}</pre>
                 ) : (
-                    <Typography variant="caption" sx={{ opacity: 0.7 }}>{t('actionResultEmpty')}</Typography>
+                    <div className="action-chain__empty">{t('actionResultEmpty')}</div>
                 )}
-            </Box>
-        </Box>
+            </div>
+        </div>
     );
 }

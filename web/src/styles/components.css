@@ -842,3 +842,452 @@
 .md-preview--block pre:first-child {
     padding-right: var(--md-toggle-gutter);
 }
+
+/* ══ 动作台（web-vue3/src/views/modes/BenchWall.vue + components/bench/*.vue）══
+   ⚠️★ 整块**逐条照抄 Vue 的 scoped 样式**。之前 React 侧用 MUI 的 `sx` 与默认组件
+   另画了一套：divider 边框（rgba(0,0,0,.12)）、8px 圆角、透明底、每步一个
+   MUI TextField。结果是同一屏两版差得很明显 —— 边框色、圆角、底纹、每步的高度全不一样，
+   看着就是「没做细」。颜色沿用 Vue 那套 slate（`rgba(148,163,184,*)`）：
+   它在深浅两色主题下都读得出来，这正是 Vue 当初选它的原因。 */
+
+/* ── 外壳：左列表 / 右工作区 ───────────────────────────────────────── */
+.bench-wall {
+    display: flex;
+    flex-direction: column;
+    height: 100dvh;
+    overflow: hidden;
+}
+
+.bench-wall__body {
+    flex: 1;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    padding: 10px 12px 14px;
+}
+
+/* ⚠️ 两处 CSS 一起才能让内部真的滚起来：容器给 flex 项 `min-height: 0`，
+   **子项**也要再写一遍 —— 否则子项默认的 `min-height: auto` 会把它撑到内容高度，
+   滚动条永远不出现。 */
+.bench-wall__list {
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+    flex: 0 0 30%;
+    border: 1px solid rgba(148, 163, 184, 0.26);
+    border-radius: 16px;
+    background: rgba(255, 255, 255, 0.9);
+    overflow: hidden;
+}
+
+.bench-wall__panel {
+    flex: 1;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    border: 1px solid rgba(148, 163, 184, 0.26);
+    border-radius: 16px;
+    background: rgba(255, 255, 255, 0.9);
+    padding: 12px;
+    overflow: hidden;
+}
+
+/* 宽屏：左右两栏 */
+.bench-wall--wide .bench-wall__body { flex-direction: row; }
+.bench-wall--wide .bench-wall__list { flex: 0 0 320px; }
+
+.bench-wall__list-head {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 9px 12px;
+    border-bottom: 1px solid rgba(148, 163, 184, 0.26);
+    font-size: 0.6875rem;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    color: rgba(71, 85, 105, 0.75);
+    flex: 0 0 auto;
+}
+
+.bench-wall__count { margin-left: auto; font-weight: 500; }
+
+.bench-wall__items {
+    flex: 1;
+    min-height: 0;
+    overflow-y: auto;
+    padding: 6px;
+}
+
+.bench-wall__item {
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+    width: 100%;
+    text-align: left;
+    padding: 7px 9px;
+    border: 1px solid transparent;
+    border-radius: 9px;
+    background: transparent;
+    cursor: pointer;
+    font-size: 0.75rem;
+    /* ⚠️★ 原生 `<button>` **不继承** 父级的 `line-height`（UA 样式如此），
+       而 Vuetify 的 reset 会把它统一成 1.5 —— 所以 Vue 那边这一行高 34px、
+       我们这边只有 30px（实测），一排列表读起来更挤。
+       ⚠️ 写**无单位**的 1.5（不是 `inherit`）：inherit 会把 body 算好的 24px 原样传下来，
+       里面那个 10px 的时间戳就会撑出一个 24px 的行盒。 */
+    line-height: 1.5;
+    color: inherit;
+    transition: background-color 0.15s ease, border-color 0.15s ease;
+}
+
+.bench-wall__item:hover { background: rgba(14, 165, 233, 0.07); }
+
+/* 当前条目 —— 也是「输入框里那段文字来自哪一条」的指示。少了这个高亮，
+   用上下键切换时界面上看不出选中的是哪条。 */
+.bench-wall__item--active {
+    background: color-mix(in srgb, var(--mui-palette-primary-main) 12%, transparent);
+    border-color: color-mix(in srgb, var(--mui-palette-primary-main) 45%, transparent);
+}
+
+.bench-wall__item-time {
+    flex: 0 0 auto;
+    font-size: 0.625rem;
+    color: rgba(71, 85, 105, 0.7);
+    font-variant-numeric: tabular-nums;
+}
+
+.bench-wall__item-text {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.bench-wall__empty {
+    padding: 24px 8px;
+    text-align: center;
+    font-size: 0.75rem;
+    color: rgba(71, 85, 105, 0.7);
+}
+
+.bench-wall__empty--panel { margin: auto; }
+
+/* 手输的调试输入框。固定高度 + 允许纵向拖拽：长文本要能看全几行，
+   但不能把下面的动作链挤没。`color: inherit` 必须写 —— textarea 默认是黑的，
+   暗色主题下会看不见。 */
+.bench-wall__draft {
+    flex: 0 0 auto;
+    height: 88px;
+    min-height: 44px;
+    resize: vertical;
+    border: 1px solid rgba(148, 163, 184, 0.42);
+    border-radius: 10px;
+    background: transparent;
+    padding: 8px 10px;
+    margin-bottom: 10px;
+    font-family: inherit;
+    font-size: 0.75rem;
+    line-height: 1.55;
+    color: inherit;
+    outline: none;
+}
+
+.bench-wall__draft:focus { border-color: var(--mui-palette-primary-main); }
+.bench-wall__draft::placeholder { color: color-mix(in srgb, currentColor 40%, transparent); }
+
+/* 动作链占满输入框剩下的高度（它内部再分「链」和「结果」两块） */
+.bench-wall__chain { flex: 1; min-height: 0; }
+
+/* 暗色（对应 Vue 的 `.bench-wall--dark`） */
+.dark .bench-wall__list,
+.dark .bench-wall__panel {
+    background: rgba(15, 23, 42, 0.9);
+    border-color: rgba(71, 85, 105, 0.72);
+}
+
+.dark .bench-wall__list-head,
+.dark .bench-wall__empty { color: rgba(148, 163, 184, 0.8); }
+
+.dark .bench-wall__item-time { color: rgba(148, 163, 184, 0.7); }
+
+/* ── 动作链 ──────────────────────────────────────────────────────── */
+.action-chain {
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+    /* 兜底：链很长（或结果很长）时整块能滚 —— 否则窄屏上「添加动作」和结果区
+       会被父级的 overflow: hidden 直接裁掉，而界面上看不出发生了什么。 */
+    overflow-y: auto;
+}
+
+.action-chain__head {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin-bottom: 6px;
+}
+
+.action-chain__title {
+    font-size: 0.6875rem;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    opacity: 0.75;
+}
+
+.action-chain__steps { display: flex; flex-direction: column; gap: 4px; }
+
+.action-chain__hint { font-size: 0.75rem; opacity: 0.7; padding: 8px 0; }
+
+.action-chain__step {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 5px 8px;
+    border: 1px solid rgba(148, 163, 184, 0.42);
+    border-radius: 8px;
+    /* ⚠️★ 这个值是从 Vue 实测像素反推的：Vue 的 `rgba(var(--v-theme-surface-variant), 0.35)`
+       在浅色下渲染成 rgb(189,189,189)；写成 `color-mix(currentColor 5%)` 只有 243，
+       底纹几乎看不见 —— 「不够精致」很大一部分就是这些底纹太淡。 */
+    background: rgba(66, 66, 66, 0.35);
+    font-size: 0.75rem;
+}
+
+.action-chain__step-n {
+    width: 16px;
+    height: 16px;
+    flex: 0 0 auto;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 5px;
+    background: linear-gradient(135deg, #0ea5e9, #14b8a6);
+    color: #fff;
+    font-size: 0.625rem;
+    font-weight: 700;
+}
+
+.action-chain__step-name {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.action-chain__step-delta {
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 0.625rem;
+    opacity: 0.7;
+    flex: 0 0 auto;
+}
+
+.action-chain__step-actions { display: inline-flex; gap: 1px; flex: 0 0 auto; }
+
+/* 带参数的动作：输入框缩进对齐步骤名（左边 30px = 序号 16 + gap + padding），
+   让「这两行是同一件事」在视觉上成立。 */
+.action-chain__params {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px 8px;
+    padding: 4px 8px 2px 30px;
+}
+
+.action-chain__param {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    flex: 1 1 130px;
+    min-width: 0;
+}
+
+.action-chain__param-label { flex: 0 0 auto; font-size: 0.625rem; opacity: 0.7; }
+
+/* ⚠️★ 原生 input / select，**不是** MUI 的 TextField：这一行是紧凑列表，
+   输入框自带的 padding / margin 会把每一步撑高一大截（原来那版就是这么变形的）。
+   颜色一律 inherit —— 写死深灰在暗色下看不见。 */
+.action-chain__param-input {
+    flex: 1 1 auto;
+    min-width: 0;
+    padding: 2px 6px;
+    font: inherit;
+    font-size: 0.6875rem;
+    color: inherit;
+    background: transparent;
+    border: 1px solid rgba(148, 163, 184, 0.42);
+    border-radius: 6px;
+}
+
+.action-chain__param-input:focus {
+    outline: none;
+    border-color: var(--mui-palette-primary-main);
+}
+
+/* 原生 select 的下拉在部分浏览器里是白底深字 —— 给它一个跟主题走的底色 */
+.action-chain__param-input option {
+    background: var(--mui-palette-background-paper);
+    color: var(--mui-palette-text-primary, inherit);
+}
+
+.action-chain__mini {
+    width: 20px;
+    height: 20px;
+    border: none;
+    border-radius: 4px;
+    background: transparent;
+    /* inherit + opacity，不写死深灰 —— 暗色下写死的颜色直接看不见 */
+    color: inherit;
+    opacity: 0.7;
+    cursor: pointer;
+    font-size: 0.75rem;
+    line-height: 1;
+    padding: 0;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.action-chain__mini:hover:not(:disabled) {
+    background: color-mix(in srgb, var(--mui-palette-primary-main) 14%, transparent);
+    color: var(--mui-palette-primary-main);
+}
+
+.action-chain__mini:disabled { opacity: 0.3; cursor: default; }
+
+.action-chain__mini--danger:hover:not(:disabled) {
+    background: color-mix(in srgb, var(--mui-palette-error-main) 14%, transparent);
+    color: var(--mui-palette-error-main);
+}
+
+.action-chain__add { margin-top: 8px; }
+
+/* ⚠️★ 动作面板住在弹层里，**必须**给它一个有界的高度：
+   ActionPicker 内部是「搜索框 + 可滚动的分组区」，没有界高就滚不起来 ——
+   原来是 `maxHeight` + `overflow: hidden`（只裁不滚），于是「文本 / 中文 / 分析 / 日期」
+   四组**永远够不到**（用户报的「列表无法滚动」）。
+   ⚠️ `display: flex` + `flex-direction: column` 是那件事的关键，缺了它子元素拿不到界高。
+   ⚠️ 也要有实底 —— 弹层浮在内容之上，透明背景会和底下的文字糊在一起。 */
+.action-chain__picker {
+    display: flex;
+    flex-direction: column;
+    width: 340px;
+    max-width: calc(100vw - 32px);
+    max-height: 320px;
+    padding: 10px;
+    background: var(--mui-palette-background-paper);
+    border-radius: 4px;
+}
+
+.action-chain__templates { display: flex; gap: 4px; margin-top: 6px; }
+
+.action-chain__naming { display: flex; gap: 6px; align-items: center; margin-top: 6px; }
+
+/* ⚠️ 结果区**不自己滚**（没有 max-height / overflow）—— 滚动交给外层 `.action-chain`。
+   两层滚动容器在触屏上很糟：手指在里面滑只滚内层，滚到底外层不动，看着像卡住了。 */
+.action-chain__result {
+    min-height: 140px;
+    border: 1px solid rgba(148, 163, 184, 0.42);
+    border-radius: 10px;
+    padding: 10px;
+    /* 与步骤行同一块底纹（实测像素 rgb(189,189,189)） */
+    background: rgba(66, 66, 66, 0.35);
+}
+
+.action-chain__pre {
+    margin: 0;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 0.75rem;
+    line-height: 1.6;
+    white-space: pre-wrap;
+    word-break: break-all;
+}
+
+.action-chain__html { font-size: 0.8125rem; line-height: 1.7; word-break: break-word; }
+
+.action-chain__error {
+    display: flex;
+    align-items: flex-start;
+    gap: 6px;
+    font-size: 0.75rem;
+    color: var(--mui-palette-error-main);
+}
+
+/* ── 动作选择面板 ─────────────────────────────────────────────────── */
+.action-picker { display: flex; flex-direction: column; min-height: 0; }
+.action-picker__search { margin-bottom: 8px; }
+.action-picker__body { overflow-y: auto; min-height: 0; padding-right: 2px; }
+
+.action-picker__group {
+    font-size: 0.6875rem;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    opacity: 0.75;
+    margin: 10px 0 6px;
+}
+
+.action-picker__group:first-child { margin-top: 0; }
+
+.action-picker__grid { display: flex; flex-wrap: wrap; gap: 6px; }
+
+/* 原生 button 而不是 MUI Button：这里一次可能铺几十个，MUI 那套的密度/变体开销不必要，
+   而且我们只需要「小胶囊」这一种形态。 */
+.action-picker__item {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    /* 移动端点击区域：高度不小于 30px */
+    padding: 5px 10px;
+    border: 1px solid rgba(148, 163, 184, 0.5);
+    border-radius: 999px;
+    /* 主题变量而不是写死的白底深字 —— 这个面板住在弹层里（surface 底色），
+       暗色主题下写死的话就是一堆白胶囊浮在暗底上。 */
+    background: var(--mui-palette-background-paper);
+    color: inherit;
+    font-size: 0.75rem;
+    line-height: 1.4;
+    cursor: pointer;
+    transition: border-color 0.15s ease, color 0.15s ease;
+    max-width: 100%;
+}
+
+.action-picker__item:hover {
+    border-color: var(--mui-palette-primary-main);
+    color: var(--mui-palette-primary-main);
+}
+
+/* 不适用的置灰（仍可点 —— 点了会给出明确错误，不是「没反应」） */
+.action-picker__item--dim { opacity: 0.42; }
+
+.action-picker__label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+.action-picker__empty { font-size: 0.75rem; opacity: 0.7; padding: 14px 2px; text-align: center; }
+
+/* 「添加动作」= Vuetify 的 `variant="tonal"`。
+   ⚠️★ 关键：**不带 `color` 的 tonal 是中性灰底 + 正常字色**，不是主色蓝 ——
+   Vue 实测像素 rgb(203,204,204)、字色 rgba(0,0,0,0.87)、高 28px、圆角 4px。
+   原来那版是亮蓝描边（MUI `variant="outlined"`），在这一屏里比所有内容都抢眼，
+   正是「看着不精致」最明显的一处。 */
+.action-chain__add-btn {
+    width: 100%;
+    height: 28px;
+    padding: 0 12px;
+    border: none;
+    border-radius: 4px;
+    background: color-mix(in srgb, currentColor 24%, transparent);
+    color: inherit;
+    font: inherit;
+    font-size: 0.8125rem;
+    font-weight: 600;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+}
+
+.action-chain__add-btn:hover {
+    background: color-mix(in srgb, currentColor 34%, transparent);
+}
+
+.action-chain__empty { font-size: 0.75rem; opacity: 0.7; }
