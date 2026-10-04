@@ -5,8 +5,9 @@
     "type": "module",
     "scripts": {
         "dev": "node scripts/sync-shortcuts.mjs && vite",
-        "build": "node scripts/sync-shortcuts.mjs && tsc -p tsconfig.json && vite build && node after-build.mjs",
+        "build": "node scripts/sync-shortcuts.mjs && node scripts/check-contracts.mjs && tsc -p tsconfig.json && vite build && node after-build.mjs",
         "typecheck": "tsc -p tsconfig.json",
+        "check": "node scripts/check-contracts.mjs",
         "preview": "vite preview"
     },
     "dependencies": {
