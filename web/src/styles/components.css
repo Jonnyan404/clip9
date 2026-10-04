@@ -91,6 +91,37 @@
     margin: 12px 0;
 }
 
+/* ── 时间流：历史用量 chip（web-vue3 DefaultMode.vue 的 .timeline-panel__count-chip--overlay）──
+   ⚠️ 它压在卡片上方，必须**有半透明底色 + 模糊**，否则底下的正文会透上来跟它叠在一起。 */
+.timeline-count-chip {
+    height: 22px;
+    padding: 0 6px;
+    border-radius: 999px;
+    backdrop-filter: blur(8px);
+    background: rgba(255, 255, 255, 0.78);
+}
+
+.dark .timeline-count-chip {
+    background: rgba(15, 23, 42, 0.78);
+}
+
+/* ── 输入区：赞赏图标的金色闪动（web-vue3 UnifiedComposer.vue）────────────── */
+.unified-composer__reward-icon {
+    color: #f5b301;
+    animation: unified-composer-reward-shine 2s ease-in-out infinite;
+}
+
+@keyframes unified-composer-reward-shine {
+    0%, 100% {
+        filter: brightness(1);
+        text-shadow: 0 0 0 rgba(245, 179, 1, 0);
+    }
+    50% {
+        filter: brightness(1.45);
+        text-shadow: 0 0 6px rgba(245, 179, 1, 0.85);
+    }
+}
+
 /* ── MarkdownToggle（web-vue3/src/components/MarkdownToggle.vue）──────────
    ⚠️ 全局变量契约：消费方在**滚动盒**上写 `padding-right: var(--md-toggle-gutter)`。
    图标最多三个（原文 + 2 个针对性动作 + ⋯），所以只有两个值。 */

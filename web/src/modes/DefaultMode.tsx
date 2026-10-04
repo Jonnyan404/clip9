@@ -91,7 +91,19 @@ export default function DefaultMode() {
             <PageToolbar variant="default" />
             <Box sx={{ maxWidth: 980, mx: 'auto', px: { xs: 1.5, md: 3 }, pb: 4, pt: 1 }}>
                 {!composerFullyHidden && (
-                    <Card variant="outlined" sx={{ borderRadius: 4, p: { xs: 0.5, md: 1.5 }, mb: 1, position: 'sticky', top: 8, zIndex: 2 }}>
+                    <Card
+                        variant="outlined"
+                        sx={{
+                            borderRadius: 4,
+                            p: { xs: 0.5, md: 1.5 },
+                            mb: 1,
+                            position: 'sticky',
+                            // ⚠️ 吸顶位置要**让开工具栏的实际高度**（由 PageToolbar 写进这个 CSS 变量）。
+                            // 写死 8px 的话，向上滚动时输入区会滑到工具栏底下被遮住一部分。
+                            top: 'var(--page-toolbar-height, 0px)',
+                            zIndex: 2,
+                        }}
+                    >
                         <UnifiedComposer ref={composerRef} />
                     </Card>
                 )}
@@ -121,10 +133,20 @@ export default function DefaultMode() {
                                     key={option.key}
                                     size="small"
                                     icon={<MdiIcon name={option.icon} size={16} />}
-                                    label={t(option.labelKey)}
+                                    // ⚠️ 窄屏只留图标（六个带字的分类在手机上会折成两行，白占一条横条的高度）。
+                                    // 文案靠 chip 上的 aria-label 保住可访问性。
+                                    label={<Box component="span" className="timeline-filter-label">{t(option.labelKey)}</Box>}
+                                    aria-label={t(option.labelKey)}
                                     color={filter === option.key ? 'primary' : 'default'}
                                     variant={filter === option.key ? 'filled' : 'outlined'}
                                     onClick={() => setTimelineFilter(option.key)}
+                                    sx={{
+                                        '& .MuiChip-icon': { ml: 1, mr: 0.5 },
+                                        '@media (max-width: 768px)': {
+                                            '& .timeline-filter-label': { display: 'none' },
+                                            '& .MuiChip-icon': { ml: '7px', mr: '7px' },
+                                        },
+                                    }}
                                 />
                             ))}
                         </Stack>
@@ -137,6 +159,7 @@ export default function DefaultMode() {
                                     size="small"
                                     variant="outlined"
                                     color="primary"
+                                    className="timeline-count-chip"
                                     label={historyUsageLabel}
                                     sx={{ position: 'absolute', top: 0, left: '50%', transform: 'translateX(-50%)', zIndex: 1 }}
                                 />

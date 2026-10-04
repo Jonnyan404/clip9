@@ -230,6 +230,7 @@ export const UnifiedComposer = forwardRef<UnifiedComposerHandle>(function Unifie
     return (
         <>
             <Box
+                className="unified-composer"
                 onDragEnter={(e) => { e.preventDefault(); setDragover(true); }}
                 onDragOver={(e) => { e.preventDefault(); setDragover(true); }}
                 onDragLeave={(e) => { if (!e.currentTarget.contains(e.relatedTarget as Node)) setDragover(false); }}
@@ -250,7 +251,7 @@ export const UnifiedComposer = forwardRef<UnifiedComposerHandle>(function Unifie
                 }}
             >
                 {display.composerText && (
-                    <Box sx={{ position: 'relative' }}>
+                    <Box sx={{ position: 'relative', order: isFilePrimary ? 3 : 1 }}>
                         {slashMenu && <ComposerSlashMenu items={SLASH_TEMPLATES as SlashTemplate[]} onPick={(item) => void insertSlashTemplate(item)} />}
                         <Tooltip title={t('enterTextToSend')}>
                             <IconButton size="small" aria-label={t('enterTextToSend')} sx={{ position: 'absolute', top: 4, right: 4, zIndex: 1 }} onClick={() => setTextFullscreen(true)}>
@@ -273,7 +274,7 @@ export const UnifiedComposer = forwardRef<UnifiedComposerHandle>(function Unifie
                 )}
 
                 {display.composerText && display.composerUpload && (
-                    <Stack direction="row" alignItems="center" spacing={1} sx={{ py: 0.5 }}>
+                    <Stack direction="row" alignItems="center" spacing={1} sx={{ py: 0.5, order: 2 }}>
                         <Box sx={{ flex: 1, height: '1px', bgcolor: 'divider' }} />
                         <Typography variant="caption" color="text.secondary">
                             {t('composerTextLimit', { current: send.text.length, limit: config.text.limit })}
@@ -295,7 +296,7 @@ export const UnifiedComposer = forwardRef<UnifiedComposerHandle>(function Unifie
                 )}
 
                 {display.composerUpload && (
-                    <Box>
+                    <Box sx={{ order: isFilePrimary ? 1 : 3 }}>
                         <Box
                             onClick={() => selectFileRef.current?.click()}
                             sx={{
@@ -337,19 +338,34 @@ export const UnifiedComposer = forwardRef<UnifiedComposerHandle>(function Unifie
                     </Box>
                 )}
 
-                <Stack direction="row" alignItems="center" spacing={0.5} sx={{ pt: 1, borderTop: 1, borderColor: 'divider', mt: 1 }}>
+                {/* ⚠️ 页脚是**三列 grid**（对应 Vue 的 `minmax(0,1fr) auto minmax(0,1fr)`）：
+                    图标组占第 2 列 → 视觉居中；发送按钮占第 3 列 → 右对齐。
+                    用 flex + `flex:1` 撑开是做不到居中的（那样只会把图标推到右边）。 */}
+                <Box
+                    className="unified-composer__footer"
+                    sx={{
+                        display: 'grid',
+                        gridTemplateColumns: 'minmax(0, 1fr) auto minmax(0, 1fr)',
+                        alignItems: 'center',
+                        gap: 1.5,
+                        pt: 1,
+                        borderTop: 1,
+                        borderColor: 'divider',
+                        mt: 1,
+                    }}
+                >
+                    <Stack className="unified-composer__footer-icons" direction="row" alignItems="center" justifyContent="center" spacing={0.5} sx={{ gridColumn: 2, minWidth: 0 }}>
                     {display.composerDevice && (
                         <Tooltip title={t('connectedTotal', { count: devices.length })}>
-                            <Button size="small" startIcon={<MdiIcon name="mdi-laptop" size={16} />} onClick={() => setDeviceDialog(true)}>
+                            <Button className="unified-composer__device" size="small" startIcon={<MdiIcon name="mdi-laptop" size={16} />} onClick={() => setDeviceDialog(true)}>
                                 {deviceStats.desktop} / {deviceStats.mobile} / {deviceStats.other}
                             </Button>
                         </Tooltip>
                     )}
-                    <Box sx={{ flex: 1 }} />
                     {display.composerReward && (
                         <Tooltip title={t('reward')}>
                             <IconButton size="small" aria-label={t('reward')} onClick={() => setRewardDialog(true)}>
-                                <MdiIcon name="mdi-currency-cny" size={18} />
+                                <MdiIcon name="mdi-currency-cny" size={18} className="unified-composer__reward-icon" />
                             </IconButton>
                         </Tooltip>
                     )}
@@ -381,12 +397,17 @@ export const UnifiedComposer = forwardRef<UnifiedComposerHandle>(function Unifie
                             </IconButton>
                         </Tooltip>
                     )}
+                    </Stack>
+                    {/* ⚠️ 发送按钮必须是**页脚 grid 的直接子项**（第 3 列、右对齐）——
+                        之前它被写在了上面那个居中图标 Stack 的**内部**，于是 `gridColumn` 完全失效，
+                        它被当成 flex 子项挤在图标排末尾（实测 centerPct 从 94% 变成 ~70%）。
+                        Vue 版实测：图标组 centerPct=50（正中）、发送按钮 centerPct=94（最右）。 */}
                     {canSend && (
-                        <Button variant="contained" size="small" disabled={sendDisabled} onClick={sendAll} startIcon={<MdiIcon name="mdi-send" size={16} />}>
+                        <Button className="unified-composer__send" variant="contained" size="small" disabled={sendDisabled} onClick={sendAll} startIcon={<MdiIcon name="mdi-send" size={16} />} sx={{ gridColumn: 3, justifySelf: 'end' }}>
                             {t('send')}
                         </Button>
                     )}
-                </Stack>
+                </Box>
 
                 <input
                     ref={selectFileRef}

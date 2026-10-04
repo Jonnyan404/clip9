@@ -145,7 +145,7 @@ export function ReceivedFile({ meta }: { meta: ReceivedItem }) {
             <CardContent sx={{ '&:last-child': { pb: 2 } }}>
                 {showMeta && (
                     <Stack direction="row" alignItems="center" spacing={1.5} sx={{ mb: 1, flexWrap: 'nowrap', overflow: 'hidden' }}>
-                        <Chip size="small" label={t('fileMessage')} color="secondary" />
+                        <Chip size="small" label={t('fileMessage')} color="secondary" sx={{ height: 20, fontSize: 10, '& .MuiChip-label': { px: 1 } }} />
                         {display.timestamp && (
                             <Typography variant="caption" sx={{ whiteSpace: 'nowrap' }}>
                                 <MdiIcon name="mdi-clock-outline" size={12} /> {formatTimestamp(meta.timestamp)}

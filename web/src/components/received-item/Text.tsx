@@ -76,7 +76,7 @@ export function ReceivedText({ meta }: { meta: ReceivedItem }) {
             <CardContent sx={{ '&:last-child': { pb: 2 } }}>
                 {showMeta && (
                     <Stack direction="row" alignItems="center" spacing={1.5} sx={{ mb: 1, flexWrap: 'nowrap', overflow: 'hidden' }}>
-                        <Chip size="small" label={t('textMessage')} color="primary" />
+                        <Chip size="small" label={t('textMessage')} color="primary" sx={{ height: 20, fontSize: 10, '& .MuiChip-label': { px: 1 } }} />
                         {/* 定时消息的来源标记：**刻意不受** display 开关管 —— 那是「这条不是人发的」这个事实本身。 */}
                         {isAutomation && (
                             <Typography variant="caption" sx={{ whiteSpace: 'nowrap' }}>
