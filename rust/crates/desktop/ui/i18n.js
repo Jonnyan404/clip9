@@ -835,7 +835,6 @@
       '打开大号预览': 'Open the large preview',
       '↓ {n} 条新消息': '↓ {n} new messages',
       '取不到预览地址：{error}': 'Could not get a preview address: {error}',
-      '点开播放（原始大小）': 'Click to play it',
       '正在载入…': 'Loading…',
       '正在发送…': 'Sending…',
       // ⚠️ 键里带中文 → 判据 14 只要求 `en` 有（`zh` 回落到键本身）。

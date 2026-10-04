@@ -2744,6 +2744,22 @@ if (entryViewFiles.length !== 1) {
       problems.push('载入失败没有退回文件行 —— 屏幕上留一个破图图标，'
         + '用户分不清「这个文件坏了」还是「界面画错了」（而这两件事该去的地方完全不同）');
     }
+    // ⚠️★ 视频那条要**套一层** `.media`（2026-10-04 Jonny：「放大预览图标浮动在视频的
+    // 右上角」）：右上角那颗按钮需要一个贴着**画面**的锚点。
+    //   · 挂到卡片上 → 它跑到**卡片**的右上角，中间隔着 meta 那一行；
+    //   · 挂进 `<video>` 里 → 压根不渲染（替换元素的子节点不参与渲染）。
+    if (!/isVideo \? h\(\u0000?div\u0000?, \u0000?media\u0000?\) : media/.test(media)) {
+      problems.push('视频没有套一层 `.media` —— 右上角那颗「放大」没有贴着画面的锚点');
+    }
+    if (!/if \(isVideo\) node\.append\(media, mediaExpand\(entry\)\)/.test(media)) {
+      problems.push('那颗「放大」没有挂进 `.media` 那一层 —— 它会飘到卡片右上角去');
+    }
+    // ⚠️★ 失败时换掉的必须是**最外层那个节点**：视频那份是 `.media` 这一层。
+    // 只换里面的 `<video>`（`media.replaceWith`）会留下一层空壳 + 一颗悬空的「放大」。
+    if (!/node\.replaceWith\(fileRow\(entry\)\)/.test(media)) {
+      problems.push('载入失败换掉的是 `<video>` 而不是外面那一层 —— 屏幕上会留一个空壳'
+        + '和一颗悬空的「放大」');
+    }
     // ⚠️★ 2026-10-04 换过形状：**原来**钉的是「点开走 `open_entry_file` 那条壳命令」，
     // 而那条命令把用户**踢出应用**（交给系统默认程序 / 浏览器去看一张图）。
     // 现在点开走**壳内的灯箱** —— 判据跟着改成「不许再走系统 opener」。
@@ -2798,11 +2814,13 @@ if (entryViewFiles.length !== 1) {
     if (!/saveEntryFile\(entry\)/.test(actionsFn)) {
       problems.push('那颗下载没有接上 `saveEntryFile` —— 点了没反应');
     }
-    // ⚠️★ **视频**要有那颗「放大」：卡片里的视频保留播放条，所以「点一下开大屏」
-    // 那条手势在它身上会与播放条抢点击区（Jonny 2026-10-04 报的那个 bug）。
-    if (!/add\(\u0000?expand\u0000?[\s\S]{0,80}openLightbox\(entry\)/.test(actionsFn)) {
-      problems.push('视频条目没有那颗「放大」—— 那就只剩「点视频开大屏」那条手势了，'
-        + '而它与播放条冲突（按开始/暂停也会弹大屏）');
+    // ⚠️★ **视频**要有那颗「放大」，而且它**浮在画面上**（2026-10-04 Jonny 第二轮：
+    // 「视频的放大预览图标浮动在视频的右上角吧」）。
+    // ⚠️ 为什么不能留在卡片脚那一排：视频的播放条在那个元素自己身上，而那一排与画面隔着
+    // meta 一行 —— 「把这块画面放大」挨着画面才说得通。
+    if (/\badd\(\u0000?expand\u0000?/.test(actionsFn)) {
+      problems.push('「放大」还在卡片脚那一排 —— 它要浮在**画面**的右上角'
+        + '（那一排与画面隔着 meta 一行，而「放大这块画面」是针对画面的事）');
     }
     // ⚠️★ 下面两条是**位置性**的：光看「有没有」不够，要看它在**哪一支**里。
     const textBranch = bracedBlock(actionsFn, 'if (entry.kind === \u0000text\u0000)');
@@ -2823,6 +2841,24 @@ if (entryViewFiles.length !== 1) {
   if (!/if \(!isVideo\) media\.addEventListener\(\u0000?click/.test(media)) {
     problems.push('视频也挂了「点一下开大屏」—— 与播放条抢点击区'
       + '（症状：按开始/暂停也弹出大屏）');
+  }
+  // ⚠️★ 那颗「放大」（浮在画面右上角）自己要真的接上、且不许把这一下冒出去。
+  const expandFn = /function mediaExpand\(entry\)[\s\S]*?\n\}/.exec(bare)?.[0] ?? '';
+  if (!expandFn) {
+    problems.push('找不到 `mediaExpand` —— 视频就剩「点一下开大屏」那条手势了'
+      + '（而它与播放条冲突）');
+  } else {
+    if (!/openLightbox\(entry\)/.test(expandFn)) {
+      problems.push('画面右上角那颗「放大」没有接上 `openLightbox` —— 那是一颗点了没反应的按钮');
+    }
+    if (!/stopPropagation\(\)/.test(expandFn)) {
+      problems.push('那颗「放大」没有 `stopPropagation()` —— 这一下会继续冒上去，'
+        + '与卡片上别的可点区域抢同一下点击');
+    }
+  }
+  if (!/\.card \.media \.expand \{[\s\S]{0,160}position: absolute/.test(html)) {
+    problems.push('`.card .media .expand` 没有 `position: absolute` —— 那颗按钮会占着版面'
+      + '把下面的内容往下推（它应该是**浮**在画面上的）');
   }
   if (!/function saveEntryFile\(entry\)/.test(bare)) {
     problems.push('找不到 `saveEntryFile` —— 文件行与那颗下载应当**共用同一个**存盘入口'
@@ -3198,8 +3234,11 @@ if (entryViewFiles.length !== 1) {
   const loadFn = /function loadPreviewSrc\([\s\S]*?\n\}/.exec(bareJs)?.[0] ?? '';
   if (!mediaFn) {
     problems.push('找不到 `mediaPreview` —— 预览那套没了');
-  } else if (!/loadPreviewSrc\(media, entry\)/.test(mediaFn)) {
-    problems.push('`mediaPreview` 没有走 `loadPreviewSrc` —— 地址从哪来就没人管了');
+  } else if (!/loadPreviewSrc\(media, entry, node\)/.test(mediaFn)) {
+    // ⚠️ 第三个参数是「出了事要换掉的那个节点」（视频是外面那层 `.media`）—— 少了它，
+    // 视频加载失败会留下一层空壳 + 一颗悬空的「放大」。
+    problems.push('`mediaPreview` 没有走 `loadPreviewSrc(media, entry, node)` ——'
+      + '地址从哪来就没人管了（或者失败了只换掉 `<video>`，留下一层空壳）');
   }
   if (!srcFn) {
     problems.push('找不到 `previewSrc` —— 没有「要不要回头问壳」那一步');
@@ -3213,8 +3252,11 @@ if (entryViewFiles.length !== 1) {
     if (!/previewSrc\(entry\)/.test(loadFn)) {
       problems.push('`loadPreviewSrc` 没有走 `previewSrc`');
     }
-    if (!/replaceWith\(fileRow\(/.test(loadFn)) {
-      problems.push('`loadPreviewSrc` 取不到地址时没有退回文件行 —— 屏幕上会留一个空框');
+    if (!/swap\.replaceWith\(fileRow\(/.test(loadFn)) {
+      // ⚠️★ 换的必须是**最外层那个节点**（视频 = 外面那层 `.media`）：只换里面的
+      // `<video>` 会留下一层空壳 + 一颗悬空的「放大」。
+      problems.push('`loadPreviewSrc` 取不到地址时没有退回文件行（要换掉 `swap` 那个最外层节点）'
+        + '—— 屏幕上会留一个空框，或者一层空壳加一颗悬空的按钮');
     }
   }
   if (problems.length) {

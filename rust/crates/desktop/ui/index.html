@@ -922,6 +922,29 @@ body {
     max-width: 100%; max-height: 220px; border-radius: 6px; display: block;
     object-fit: contain; cursor: pointer; background: var(--bg);
 }
+
+/* ⚠️★ 视频外面那一层（`app.js` 的 `mediaPreview`）：它只干一件事 —— 给右上角那颗
+   「放大」当锚点（`position: relative`）。
+   ⚠️ `inline-block` 不是 `block`：这一层要**跟画面一样大**，不能占满整张卡片 ——
+   一个比画面窄的视频（竖屏手机录的）配上占满卡片的锚点，那颗按钮会飘在画面右边的
+   空白里，看着像界面画错了。`max-width: 100%` 兜住宽画幅。
+   ⚠️ 视频本身的 `max-width: 100%` 仍然是相对**这一层**算的，所以两级都收得住。 */
+.card .media { position: relative; display: inline-block; max-width: 100%; }
+
+/* 视频画面右上角那颗「放大」（Feather 的 `maximize-2`）。
+   ⚠️★ 深色半透明底 + 白字，与灯箱标题栏上那两颗是同一套观感：它要压在**任意**画面上
+   （亮的、暗的、花的都有），纯图标在亮画面上会看不见。
+   ⚠️ 只有 24px：画面本身是可点区域（播放条在它自己身上），这颗按钮不该抢走一块大地方。 */
+.card .media .expand {
+    position: absolute; top: 6px; right: 6px; z-index: 2;
+    width: 24px; height: 24px; padding: 0; border-radius: 6px; cursor: pointer;
+    border: 1px solid rgba(255, 255, 255, .35); background: rgba(15, 23, 42, .62);
+    color: #fff; display: grid; place-items: center;
+}
+
+.card .media .expand:hover { background: rgba(15, 23, 42, .85); }
+
+.card .media .expand svg { width: 13px; height: 13px; display: block; }
 /* ③b 壳内灯箱（点开预览看的那一层，`ui/app.js` 的 `openLightbox`）。
    ⚠️★ 为什么**不再**叫系统程序打开：那是 2026-10-04 之前的行为，把用户**踢出应用**
    去看一张图。图片 / 视频在壳里本来就看得全，犯不着为了少写一层浮层付这个代价。

@@ -976,27 +976,59 @@ function fileRow(entry) {
 function mediaPreview(entry) {
   const isVideo = VIDEO_SUFFIX.test(entry.fileName || '');
   const media = isVideo ? h('video', 'preview') : h('img', 'preview');
-  media.title = isVideo ? t('点开播放（原始大小）') : t('点开看大图（原始大小）');
   if (isVideo) {
     // ⚠️ `playsinline`：iOS 上不给它就是「一点播放就全屏」，而这里要的是**在卡片里**看。
     media.controls = true;
     media.preload = 'metadata';
     media.playsInline = true;
   } else {
+    // ⚠️ `title` 只给图片：视频那块点一下是**播放**，写着「点开看大图」就是一句假话
+    //（视频的「放大」在画面右上角那颗按钮上，它自己带着提示）。
+    media.title = t('点开看大图（原始大小）');
     media.loading = 'lazy';
     media.decoding = 'async';
     media.alt = entry.fileName || '';
   }
+  // ⚠️★ 视频外面**套一层**（`.media`）：右上角那颗「放大」需要一个贴着**画面**的锚点。
+  //   · 直接挂到卡片上 → 那颗按钮跑到**卡片**的右上角，与画面隔着 meta 那一行；
+  //   · 挂到 `<video>` **里面**更不行 —— 替换元素（replaced element）的子节点不参与渲染。
+  const node = isVideo ? h('div', 'media') : media;
+  if (isVideo) node.append(media, mediaExpand(entry));
   media.addEventListener('error', () => {
     // ⚠️★ 换成文件行，而不是留一个破图在那儿 —— 见上面那条注释。
-    media.replaceWith(fileRow(entry));
+    // ⚠️ 换掉的是**最外层那个节点**：视频那份是 `.media` 这一层，只换里面的 `<video>`
+    // 会留下一层空壳 + 一颗悬空的「放大」。
+    node.replaceWith(fileRow(entry));
   });
   // ⚠️★ 视频**不挂**这个点击（2026-10-04 Jonny：「开始/暂停按钮会触发大屏预览，
   // 导致操作冲突」）：那个元素自己带着**播放条**，整块点击区是**它的**；
-  // 视频的大号预览走卡片动作里那颗「放大」（`entryActions` 里的 `expand`）。
+  // 视频的大号预览走画面右上角那颗「放大」（见 `mediaExpand`）。
   if (!isVideo) media.addEventListener('click', () => openLightbox(entry));
-  loadPreviewSrc(media, entry);
-  return media;
+  loadPreviewSrc(media, entry, node);
+  return node;
+}
+
+/** 视频画面**右上角**那颗「放大」（浮在画面上，见 `.card .media` 的样式）。
+ *
+ * ⚠️★ 为什么让它浮在画面上，而不是留在卡片脚那一排（2026-10-04 Jonny 拍的）：
+ * 视频的**播放条**就在那个元素自己身上，而那一排按钮离画面隔着一段距离 ——
+ * 「把这块画面放大」是一件针对**画面**的事，挨着画面才说得通。
+ * ⚠️ 只给视频：图片没有播放条，点一下**整张图**就是放大（见 `mediaPreview` 里的分支），
+ * 再挂一颗按钮就是同一个动作有两个入口。
+ */
+function mediaExpand(entry) {
+  const button = h('button', 'expand');
+  button.type = 'button';
+  button.append(icon('expand'));
+  button.title = t('打开大号预览');
+  button.setAttribute('aria-label', t('打开大号预览'));
+  button.addEventListener('click', (event) => {
+    // ⚠️ 拦一下：这一下只管「开大号预览」，不该再冒到卡片那层去
+    //（卡片上可真点的地方各管各的事，见 `entryActions` 的 `add` 同一套做法）。
+    event.stopPropagation();
+    openLightbox(entry);
+  });
+  return button;
 }
 
 /** 已经向壳要到的预览地址（条目 id → 能直接塞进 `src` 的地址）。
@@ -1029,8 +1061,11 @@ async function previewSrc(entry) {
  *
  * ⚠️★ 不许静默：静默的表现是「一张永远空着的框」或者「一行 📄」，
  * 而真因（令牌签不出来 / 密码不对 / 这一条已经不在了）没人知道。
+ *
+ * ⚠️★ `swap` 是「出了事要换掉的那个节点」—— 图片就是 `<img>` 自己，视频是外面那层
+ * `.media`（只换里面的 `<video>` 会留下一层空壳 + 一颗悬空的「放大」）。
  */
-function loadPreviewSrc(media, entry) {
+function loadPreviewSrc(media, entry, swap) {
   const direct = entry.previewUrl || '';
   if (direct) {
     media.src = direct;
@@ -1044,14 +1079,14 @@ function loadPreviewSrc(media, entry) {
       .then((url) => {
         if (!url) {
           showNotice('error', t('previewTokenFailed'));
-          media.replaceWith(fileRow(entry));
+          swap.replaceWith(fileRow(entry));
           return;
         }
         media.src = url;
       })
       .catch((error) => {
         showNotice('error', t('取不到预览地址：{error}', { error: errorText(error) }));
-        media.replaceWith(fileRow(entry));
+        swap.replaceWith(fileRow(entry));
       });
   });
 }
@@ -1396,13 +1431,9 @@ function entryActions(entry) {
     add('download', t('存到下载目录，并在文件管理器里选中它'), (button) => {
       once(button, () => saveEntryFile(entry));
     });
-    // ⚠️★ **视频的大号预览走这一颗**（2026-10-04 Jonny 拍的）：
-    // 卡片里的视频**保留播放条**（点一下 = 播 / 停），而「点一下开大屏」那条手势在
-    // 视频上会与播放条**抢同一块点击区** —— 按「开始/暂停」也弹出大屏，两件事冲突。
-    // ⚠️ 图片不受影响（它没有播放条），照旧**点一下就放大**，所以这里只为视频加。
-    if (VIDEO_SUFFIX.test(entry.fileName || '')) {
-      add('expand', t('打开大号预览'), () => openLightbox(entry));
-    }
+    // ⚠️★ 视频的「放大」**不在这里**（2026-10-04 Jonny：「视频的放大预览图标浮动在
+    // 视频的右上角」）—— 它在画面右上角那颗浮着的按钮上，见 `mediaPreview` / `mediaExpand`。
+    // 那一排按钮与画面隔着 meta 一行，而「放大这块画面」挨着画面才说得通。
   }
 
   // ⚠️★ 以前这里是「点一下直接建一个默认链接」—— 网页那颗分享按钮有完整的配置画面
