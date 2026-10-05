@@ -1,9 +1,10 @@
 import axios from 'axios';
 import { marked } from 'marked';
 import DOMPurify from 'dompurify';
-// ⚠️ 这里用**相对路径**而不是 `@/base.js`：`scripts/check-display-semantics.mjs` 要在
-// 纯 Node 里直接 import 这个文件（没有 vite，也就没有 `@` 别名）—— 用别名那条路会让
-// 那个自检**当场 ERR_MODULE_NOT_FOUND 跑不起来**，而它跑不起来就等于没有牙。
+// ⚠️ 2026-10-05 之前这里必须写**相对路径**而不是 `@/base.js`：当时
+// `scripts/check-display-semantics.mjs` 要在纯 Node 里直接 import 这个文件。
+// 那份自检已搬到 `web/scripts/`（`web-vue3` 不再构建、CI 上也没有它的 node_modules），
+// 这里保持相对路径无害 —— 但**别为了它再给本目录加 npm 依赖**。
 import { APP_BASE_URL } from './base.js';
 // ⚠️★ 下面这几个**纯函数**现在住在 `data/actions/pure.js` —— 因为**桌面端也要用它们**：
 // 那边的界面没有构建步骤，加载不了这个文件（它 import 了 axios / marked / DOMPurify）。

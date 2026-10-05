@@ -45,7 +45,7 @@ cpSync(join(src, 'android', 'shortcuts.zip'), join(dest, 'android', 'shortcuts.z
 // `2026-09-17` 首发、`2026-09-22` 重建 —— 这份文件把它们继承了下来。）
 //
 // ⚠️ 必须「最新在前」：弹窗把数组第一条当作最近一次更新。
-// ⚠️ 格式与顺序由 `web-vue3/scripts/check-display-semantics.mjs` 钉着（写错就在门禁上红）。
+// ⚠️ 格式与顺序由 `web/scripts/check-display-semantics.mjs` 钉着（写错就在门禁上红）。
 //
 // 读不到这个文件（或某平台没有记录）就当作「没有更新记录」：弹窗不显示时间轴，
 // 下载与提醒都照常。

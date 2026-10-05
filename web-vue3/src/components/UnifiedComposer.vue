@@ -708,8 +708,8 @@ function handlePaste(event) {
         // 必须原样落进输入框，拦了就变成「粘贴没反应」。
         //
         // ⚠️ 便签模式（`sticky/StickyComposer.vue`）的同一个函数一直是带这一句的 ——
-        // 这里是漏掉的那一处，两处要对齐（`web-vue3/scripts/check-display-semantics.mjs`
-        // 第 4 节同时钉着这两处）。
+        // 这里是漏掉的那一处，两处要对齐（原先由 `web-vue3/scripts/check-display-semantics.mjs`
+        // 第 4 节钉着；那份自检已迁到 `web/scripts/`，盯的是 React 版那两个 composer）。
         event.preventDefault();
         handleSelectFiles(files);
     }

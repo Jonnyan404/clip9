@@ -7,7 +7,7 @@
 // 与前端源码漂移了（改了源码没重跑 `sync-web-assets.mjs`）。本机那天跑了「10 条 smoke +
 // cargo check + vite build」—— 全绿，而 CI 的 frontend 作业里还有两条本机那天**根本没跑**：
 //   · `tools/sync-web-assets.mjs --check`（唯一能提前发现这处漂移的地方）
-//   · `web-vue3/scripts/check-display-semantics.mjs`
+//   · `web/scripts/check-display-semantics.mjs`
 // rust 作业里也有本机没跑的：`cargo fmt --all --check`（真就挂在它上面一行超宽代码）。
 //
 // ⚠️★ 根因不是「忘了跑某一条」，是**「本机该跑哪几条」这件事只活在 ci.yml 和人的记性里**。
@@ -22,7 +22,7 @@
 //   node tools/ci-local.mjs --no-rust    # 只跑前端那一半
 //   node tools/ci-local.mjs --range A..B # 提交信息查这个范围（默认 origin/main..HEAD）
 //
-// ⚠️ `npm ci` 本机**故意不跑**（它会删掉重灌 `web-vue3/node_modules`：慢、且没必要 ——
+// ⚠️ `npm ci` 本机**故意不跑**（它会删掉重灌 `web/node_modules`：慢、且没必要 ——
 // 依赖没换过）。判据 C 只检查它装过了没有，缺了会提示。
 //
 // ── 判据 ─────────────────────────────────────────────────────────────────────
@@ -31,7 +31,7 @@
 //      `cargo …` / `npm …` 命令，本清单里都得有 → **漏一条就红**（这是它唯一有牙的地方）。
 //   B. ci.yml 里得有 `tools/ci-local.mjs` 这一步（本入口自己接进门禁没有）。
 //   C. 清单里每一步要跑的那个文件真的存在（改名 / 搬走会红，不是静默跳过）。
-//   D. `web-vue3/node_modules` 得在（缺了只提示 —— 那是「没装依赖」，不是「代码坏了」）。
+//   D. `web/node_modules` 得在（缺了只提示 —— 那是「没装依赖」，不是「代码坏了」）。
 
 import { spawnSync } from 'node:child_process';
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
@@ -60,9 +60,10 @@ const STEPS = [
   // frontend 作业
   { job: 'frontend', cwd: 'web', cmd: 'npm ci', skip: '本机不重装依赖（见抬头）' },
   { job: 'frontend', cwd: 'web', cmd: 'npm run build', slow: true },
-  // ⚠️ 2026-10-04 起生产前端是 `web/`（React）；`web-vue3`（Vue）只留作比对、**不再构建**，
-  // 但它的界面约定自检留着（只读源码文本、不需要 node_modules）。
-  { job: 'frontend', cwd: 'web-vue3', cmd: 'node scripts/check-display-semantics.mjs' },
+  // ⚠️ 2026-10-04 起生产前端是 `web/`（React）；`web-vue3`（Vue）只留作比对、**不再构建**。
+  // 界面语义自检也跟着搬到 `web/scripts/`（2026-10-05）：原来那份跑在 web-vue3 上，
+  // 既依赖 `web-vue3/node_modules`（CI 上没有），盯的又是不再发货的源码。
+  { job: 'frontend', cwd: 'web', cmd: 'node scripts/check-display-semantics.mjs' },
   { job: 'frontend', cmd: 'node tools/sync-web-assets.mjs --check' },
   { job: 'frontend', cmd: 'node tools/sync-action-catalog.mjs --check' },
   { job: 'frontend', cmd: 'node tools/action-catalog-smoke.mjs' },

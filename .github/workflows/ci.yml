@@ -13,8 +13,8 @@ name: CI
 # （`tools/sync-web-assets.mjs --check`），Rust 侧那条测试守的是另一半（`static/` 与同步清单）。
 #
 # ⚠️★ 2026-10-04 起**生产前端是 `web/`（React 版）**：这个 job 编的是 `web/`，
-# 入库的产物也由它同步。`web-vue3/`（Vue 版）只留作比对 —— 它的静态自检还留着
-# （`check-display-semantics.mjs` 只读源码文本、不需要 node_modules），但**不再构建**。
+# 入库的产物也由它同步。`web-vue3/`（Vue 版）只留作比对 —— **不再构建、不装依赖**
+# （所以那个目录里 `node_modules` 是不存在的，任何 import 第三方包的脚本在那儿都跑不起来）。
 
 on:
   push:
@@ -52,12 +52,17 @@ jobs:
         working-directory: web
         run: npm run build
 
-      # ⚠️★ 界面上的几条跨文件约定（输入框粘文件要拦默认粘贴、快捷指令时间轴的日期
-      # 清单、四份语言文件的键集合…）**两侧都没有测试运行器**。这个脚本一直存在，
-      # 但**根本跑不起来**（`util.js` 用了 `@/` 别名、还看着早已删掉的 `ChatWall.vue`）——
-      # 跑不起来的自检比没有更糟（看着像有保护）。修好之后接进门禁。
-      - name: 界面契约静态自检
-        working-directory: web-vue3
+      # ⚠️★ 界面上的几条跨文件约定（默认看原文还是渲染视图、动作图标那个开关的名字与
+      # 四份语言文件、输入框粘文件要拦默认粘贴、快捷指令时间轴的日期清单…）**没有测试运行器**，
+      # 改错一处都不报错，只会静默退化。
+      #
+      # ⚠️★ 2026-10-05：这一步原本跑的是 `web-vue3/scripts/check-display-semantics.mjs`，
+      # 而它 `import ../src/util.js`（→ axios）—— CI 上 `web-vue3/node_modules` 不存在，
+      # **那一步必挂**（本机有那个目录，所以本机一直是绿的：两边不一致的那种红）。
+      # 更根本的问题是它盯的是**不再发货的源码**：判据已经搬到 `web/scripts/` 下、
+      # 读 `web/src`（在跑的那份代码），Vue 那份脚本随之删除。
+      - name: 界面语义静态自检
+        working-directory: web
         run: node scripts/check-display-semantics.mjs
 
       # ⚠️★ 唯一能提前问「前端源码改了但没同步进服务端」的地方。
