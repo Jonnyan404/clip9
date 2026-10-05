@@ -3391,6 +3391,9 @@ function serverPatch() {
       key: el('cfg-key').value.trim(),
       history: numField('cfg-history', 50),
       roomCleanup: numField('cfg-cleanup', 3600),
+      // ⚠️★ 这个表单是**逐字段重建**服务端配置的：新加的服务端配置项如果这里不写，
+      // 用户点一次「保存」就会把它**悄悄冲回默认值**（而界面上看不出任何变化）。
+      fileCleanup: numField('cfg-filecleanup', 300),
       roomList: sqGet('cfg-roomlist'),
       dbPath: el('cfg-dbpath').value.trim() || 'clip9.redb',
       storageDir: el('cfg-storage').value.trim() || 'uploads',
@@ -3593,6 +3596,7 @@ async function openServerPanel() {
     el('cfg-key').value = server.key ?? '';
     el('cfg-history').value = server.history ?? 50;
     el('cfg-cleanup').value = server.roomCleanup ?? 3600;
+    el('cfg-filecleanup').value = server.fileCleanup ?? 300;
     sqSet('cfg-roomlist', server.roomList === true);
     el('cfg-dbpath').value = server.dbPath ?? 'clip9.redb';
     el('cfg-storage').value = server.storageDir ?? 'uploads';

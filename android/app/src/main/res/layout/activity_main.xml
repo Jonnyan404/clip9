@@ -964,6 +964,57 @@
                             android:gravity="center"
                             style="@style/Widget.Clip9.CfgInput" />
                     </LinearLayout>
+
+                    <LinearLayout
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:gravity="center_vertical"
+                        android:minHeight="56dp"
+                        android:orientation="horizontal"
+                        android:paddingStart="15dp"
+                        android:paddingTop="10dp"
+                        android:paddingEnd="15dp"
+                        android:paddingBottom="10dp">
+
+                        <ImageView
+                            android:layout_width="19dp"
+                            android:layout_height="19dp"
+                            android:contentDescription="@null"
+                            android:src="@drawable/ic_console_clock"
+                            app:tint="@color/console_text_faint" />
+
+                        <LinearLayout
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_marginStart="12dp"
+                            android:layout_weight="1"
+                            android:orientation="vertical">
+
+                            <TextView
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:text="@string/config_file_cleanup"
+                                style="@style/Text.Clip9.CfgTitle" />
+
+                            <TextView
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:layout_marginTop="2dp"
+                                android:text="@string/config_file_cleanup_hint"
+                                style="@style/Text.Clip9.CfgHint" />
+                        </LinearLayout>
+
+                        <EditText
+                            android:id="@+id/configFileCleanup"
+                            android:layout_width="96dp"
+                            android:layout_height="wrap_content"
+                            android:layout_marginStart="12dp"
+                            android:autofillHints=""
+                            android:inputType="numberSigned"
+                            android:maxLines="1"
+                            android:gravity="center"
+                            style="@style/Widget.Clip9.CfgInput" />
+                    </LinearLayout>
                 </LinearLayout>
 
                 <!-- ── 卡 4 · 内容限制 ────────────────────────────────────── -->

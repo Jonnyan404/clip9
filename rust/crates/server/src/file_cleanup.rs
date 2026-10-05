@@ -42,12 +42,11 @@ use std::time::Duration;
 use crate::files::remove_stored_file;
 use crate::state::{AppState, now_secs};
 
-/// 每轮检查的间隔。
+/// 兜底间隔：配置没给（`<= 0` 之外的情况不会发生，`ServerConfig::default` 是 300）时用它。
 ///
-/// ⚠️ 照 Go 的 5 分钟。**刻意不做成配置项**：配置项要一路通到桌面端的设置界面
-/// （`config.rs` + 设置页 + i18n），而这一项用户几乎不会想调。
-/// 真要调的时候把它加进 `server.*` 就行（照 `room_cleanup` 的样子）。
-const SWEEP_INTERVAL: Duration = Duration::from_secs(300);
+/// ⚠️ 间隔本身走配置 `server.fileCleanup`（默认 300 秒）—— 有个旋钮是**必须的**：
+/// 不然「验证后台清理真的会跑」就只能硬等 5 分钟，而那种测试没人愿意跑第二次。
+const FALLBACK_INTERVAL_SECS: u64 = 300;
 
 /// 每多少轮做一次全库对账（阶段 C）。
 ///
@@ -69,10 +68,19 @@ const ORPHAN_GRACE: i64 = 3600;
 /// 全局设成 0（永不过期）时某些房间照样会过期 —— 照 Go 那样直接不启动，
 /// 那些房间的过期文件就没人收了。空转一轮的代价只是扫一遍登记表。
 pub fn start(state: Arc<AppState>) {
-    tracing::info!(interval_secs = SWEEP_INTERVAL.as_secs(), "文件清理任务已启动");
+    let secs = state.config.server.file_cleanup;
+    // ⚠️ `<= 0` = 不跑，与 `roomCleanup` 同一个约定。
+    // 关掉它的代价写在 `ServerConfig::file_cleanup` 的注释里（磁盘会慢慢占满）。
+    if secs <= 0 {
+        tracing::info!("fileCleanup <= 0，不启动文件清理任务");
+        return;
+    }
+    let interval_secs = u64::try_from(secs).unwrap_or(FALLBACK_INTERVAL_SECS);
+
+    tracing::info!(interval_secs, "文件清理任务已启动");
 
     tokio::spawn(async move {
-        let mut interval = tokio::time::interval(SWEEP_INTERVAL);
+        let mut interval = tokio::time::interval(Duration::from_secs(interval_secs));
         // ⚠️ 第一个 tick 是**立刻**返回的（tokio 的 interval 语义），先吃掉它：
         // 刚启动时清不出什么东西，而且启动那一拍本来就忙。
         interval.tick().await;
@@ -156,8 +164,7 @@ pub async fn sweep_once(state: &AppState, reconcile: bool) -> anyhow::Result<Swe
 
         // ① 没人引用的登记 → 收掉（裁剪 / 撤销 / 放弃的上传留下的）。
         //    ⚠️ 宽限期见 `ORPHAN_GRACE` 的注释。
-        let live: std::collections::HashSet<&str> =
-            files.iter().map(|f| f.uuid.as_str()).collect();
+        let live: std::collections::HashSet<&str> = files.iter().map(|f| f.uuid.as_str()).collect();
         let mut orphan_uuids: Vec<String> = Vec::new();
         for file in &files {
             if referenced.contains(&file.uuid) {
@@ -221,7 +228,7 @@ pub(crate) fn drop_entries_for(state: &AppState, uuids: &[String]) -> anyhow::Re
 mod tests {
     use super::*;
     use clip9_core::Config;
-    use clip9_protocol::{File, ReceiveBase, FileReceive, ReceiveHolder};
+    use clip9_protocol::{File, FileReceive, ReceiveBase, ReceiveHolder};
     use clip9_store::Store;
     use std::path::PathBuf;
 
@@ -309,9 +316,16 @@ mod tests {
         assert_eq!(report.expired, 1, "一个过期文件");
         assert_eq!(report.entries, 1, "它那条时间线条目也要没");
         assert!(!blob_path(&state, uuid).exists(), "磁盘字节该被删");
-        assert!(state.store.get_file(uuid).expect("读登记").is_none(), "登记该被删");
         assert!(
-            state.store.recent_desc("default", 10).expect("读消息").is_empty(),
+            state.store.get_file(uuid).expect("读登记").is_none(),
+            "登记该被删"
+        );
+        assert!(
+            state
+                .store
+                .recent_desc("default", 10)
+                .expect("读消息")
+                .is_empty(),
             "条目该被删"
         );
     }
@@ -332,7 +346,10 @@ mod tests {
 
         assert_eq!(report.orphan_files, 0, "宽限期内不许收");
         assert!(blob_path(&state, uuid).exists(), "字节还在");
-        assert!(state.store.get_file(uuid).expect("读登记").is_some(), "登记还在");
+        assert!(
+            state.store.get_file(uuid).expect("读登记").is_some(),
+            "登记还在"
+        );
     }
 
     /// ★ 没人引用、而且**已经过了宽限期**的登记 = 孤儿（裁剪 / 撤销 / 放弃的上传留下的）→ 收掉。
@@ -348,7 +365,10 @@ mod tests {
 
         assert_eq!(report.orphan_files, 1, "过了宽限期的孤儿该收");
         assert!(!blob_path(&state, uuid).exists(), "字节该被删");
-        assert!(state.store.get_file(uuid).expect("读登记").is_none(), "登记该被删");
+        assert!(
+            state.store.get_file(uuid).expect("读登记").is_none(),
+            "登记该被删"
+        );
     }
 
     /// ★ 条目引用了一个**已经不存在的文件**（悬空引用）→ 条目收掉。
@@ -369,7 +389,11 @@ mod tests {
 
         assert_eq!(report.entries, 1, "悬空引用的条目该被收");
         assert!(
-            state.store.recent_desc("default", 10).expect("读消息").is_empty(),
+            state
+                .store
+                .recent_desc("default", 10)
+                .expect("读消息")
+                .is_empty(),
             "条目该没了"
         );
     }
@@ -399,7 +423,14 @@ mod tests {
         let report = sweep_once(&state, true).await.expect("对账应成功");
 
         assert_eq!(report.entries, 0, "文本条目不该被碰");
-        assert_eq!(state.store.recent_desc("default", 10).expect("读消息").len(), 1);
+        assert_eq!(
+            state
+                .store
+                .recent_desc("default", 10)
+                .expect("读消息")
+                .len(),
+            1
+        );
     }
 
     /// ★ 全库裁剪（`total` / `max_bytes`）**现在真的会跑**。
@@ -477,7 +508,11 @@ mod tests {
             "登记要还在"
         );
         assert_eq!(
-            state.store.recent_desc("default", 10).expect("读消息").len(),
+            state
+                .store
+                .recent_desc("default", 10)
+                .expect("读消息")
+                .len(),
             1,
             "条目要还在"
         );

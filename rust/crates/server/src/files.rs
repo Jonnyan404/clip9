@@ -448,7 +448,9 @@ pub async fn file(
             // ⚠️ 显式 DELETE 也把引用它的条目收掉 —— 否则界面上会留一条点不开的卡片。
             // （客户端通常自己会先 revoke 条目再删文件，但**别依赖调用方**：
             //  API 是公开的，谁都能只删文件。）
-            if let Err(e) = crate::file_cleanup::drop_entries_for(&state, std::slice::from_ref(&uuid)) {
+            if let Err(e) =
+                crate::file_cleanup::drop_entries_for(&state, std::slice::from_ref(&uuid))
+            {
                 tracing::warn!(error = %e, uuid = %uuid, "收已删文件的条目不成功（后台对账会再试）");
             }
             json_response(&json!({ "status": "文件删除成功" }))

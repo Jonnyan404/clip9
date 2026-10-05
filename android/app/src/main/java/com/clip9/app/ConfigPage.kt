@@ -79,6 +79,7 @@ class ConfigPage(
     private val fields: List<Field> = listOf(
         Field(R.id.configGlobalPassword, "server.auth", Kind.AUTH),
         Field(R.id.configRoomCleanup, "server.roomCleanup", Kind.INT),
+        Field(R.id.configFileCleanup, "server.fileCleanup", Kind.INT),
         Field(R.id.configHost, "server.host", Kind.HOST),
         Field(R.id.configPort, "server.port", Kind.INT),
         Field(R.id.configPrefix, "server.prefix", Kind.STRING),

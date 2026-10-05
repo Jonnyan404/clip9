@@ -526,6 +526,7 @@
       '房间与内务': 'Rooms & housekeeping',
       '启用房间列表': 'Enable the room list',
       '房间清理间隔（秒，0 = 不清理）': 'Room cleanup interval (s, 0 = never)',
+      '文件清理间隔（秒，0 = 不清理）': 'File cleanup interval (s, 0 = never)',
       '⚠️ 保存后': '⚠️ Takes effect only after ',
       '需要重启服务端才生效': 'the server is restarted',
       '（配置只在启动时读一次）': ' (the config is read once at startup)',

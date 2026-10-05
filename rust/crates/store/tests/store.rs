@@ -690,13 +690,23 @@ fn remove_entries_for_files_touches_only_that_file() {
     assert_eq!(removed[0].0, doomed.id(), "返回的 id 要能拿去广播 revoke");
     assert_eq!(removed[0].1, "default", "房间也要带回来");
 
-    let left: Vec<i32> = s.recent_desc("default", 10).expect("读").iter().map(|e| e.id()).collect();
+    let left: Vec<i32> = s
+        .recent_desc("default", 10)
+        .expect("读")
+        .iter()
+        .map(|e| e.id())
+        .collect();
     assert!(left.contains(&kept.id()), "别的文件条目要留着");
     assert!(left.contains(&text_entry.id()), "文本条目要留着");
     assert!(!left.contains(&doomed.id()), "被引用那条要没了");
 
     // ⚠️ 房间计数与总字节要跟着维护 —— 漏掉就是「数字慢慢漂掉」而不报错
     assert_eq!(s.stats().expect("统计").total_entries, 2, "总条数要减 1");
-    let room = s.rooms().expect("读房间").into_iter().find(|r| r.name == "default").expect("default 在");
+    let room = s
+        .rooms()
+        .expect("读房间")
+        .into_iter()
+        .find(|r| r.name == "default")
+        .expect("default 在");
     assert_eq!(room.message_count, 2, "房间计数要减 1");
 }
