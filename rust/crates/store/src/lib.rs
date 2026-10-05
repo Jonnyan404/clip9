@@ -48,7 +48,7 @@
 pub mod keys;
 pub mod limits;
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashSet};
 use std::path::Path;
 
 use clip9_core::task::AutomationTask;
@@ -824,6 +824,95 @@ impl Store {
             .into_iter()
             .filter(|f| f.expire_time > 0 && f.expire_time < now)
             .collect())
+    }
+
+    /// 扫一遍消息表，收集**被时间线条目引用**的文件 uuid（`FileReceive.cache`）。
+    ///
+    /// ⚠️★ 这是**全表扫**（每条都要反序列化一次）—— 只在后台对账任务里低频调用，
+    /// **别放进请求路径**。
+    ///
+    /// 用途：判定「孤儿 blob」。一个文件登记如果**没有任何条目引用它**，
+    /// 说明引用它的那条已经被裁剪 / 撤销 / 过期清掉了，字节和登记都可以收
+    /// （见 `server/src/file_cleanup.rs`）。
+    ///
+    /// ⚠️★ **遇到解析不了的行就整轮放弃**（返回 `Err`），不要「跳过继续」——
+    /// 跳过会让那条引用不算数，于是它引用的文件被当成孤儿**删掉**。
+    /// 宁可这轮不清理，也不能误删活文件。
+    pub fn referenced_file_uuids(&self) -> Result<HashSet<String>> {
+        let txn = self.db.begin_read()?;
+        let messages = txn.open_table(MESSAGES)?;
+        let mut out = HashSet::new();
+        for row in messages.iter()? {
+            let (_, value) = row?;
+            let holder: ReceiveHolder = serde_json::from_slice(value.value())?;
+            if let ReceiveHolder::File(f) = holder
+                && !f.cache.is_empty()
+            {
+                out.insert(f.cache);
+            }
+        }
+        Ok(out)
+    }
+
+    /// 删掉所有引用这些文件 uuid 的**文件条目**，返回 `(id, room)` —— 调用方拿它去广播 `revoke`。
+    ///
+    /// ⚠️ 只有调用方**确认那些文件已经不在登记表里**（或已过期）时才该调它；
+    /// 这个函数自己不做那个判断（它不认识文件登记表）。
+    ///
+    /// ⚠️ 与 `trim_*` 一样要把房间计数、`by_id`、`stored_bytes` 一起维护 ——
+    /// 漏掉任何一样都是「数字慢慢漂掉」而**不报错**的那类 bug。
+    pub fn remove_entries_for_files(&self, uuids: &[String]) -> Result<Vec<(i32, String)>> {
+        if uuids.is_empty() {
+            return Ok(Vec::new());
+        }
+        let wanted: HashSet<&str> = uuids.iter().map(String::as_str).collect();
+
+        let txn = self.db.begin_write()?;
+        let removed = {
+            let mut meta = txn.open_table(META)?;
+            let mut messages = txn.open_table(MESSAGES)?;
+            let mut by_id = txn.open_table(BY_ID)?;
+            let mut rooms = txn.open_table(ROOMS)?;
+
+            // 先收集、再删：不能一边迭代 messages 一边删它。
+            let mut doomed: Vec<(String, u64, u32, i32, u64)> = Vec::new();
+            for row in messages.iter()? {
+                let (key, value) = row?;
+                let holder: ReceiveHolder = serde_json::from_slice(value.value())?;
+                let ReceiveHolder::File(f) = holder else {
+                    continue;
+                };
+                if !wanted.contains(f.cache.as_str()) {
+                    continue;
+                }
+                let (r, ts, id_desc_v) = key.value();
+                doomed.push((
+                    r.to_owned(),
+                    ts,
+                    id_desc_v,
+                    id_from_desc(id_desc_v),
+                    value.value().len() as u64,
+                ));
+            }
+
+            let mut freed = 0u64;
+            for (r, ts, id_desc_v, id, len) in &doomed {
+                messages.remove((r.as_str(), *ts, *id_desc_v))?;
+                by_id.remove(*id)?;
+                bump_room(&mut rooms, r, -1, i64::MIN)?;
+                freed += len;
+            }
+            if !doomed.is_empty() {
+                let bytes = meta.get(K_STORED_BYTES)?.map_or(0, |g| g.value());
+                meta.insert(K_STORED_BYTES, bytes.saturating_sub(freed))?;
+            }
+            doomed
+                .into_iter()
+                .map(|(r, _, _, id, _)| (id, r))
+                .collect::<Vec<_>>()
+        };
+        txn.commit()?;
+        Ok(removed)
     }
 
     /// 按消息表**重算**房间统计。迁移工具和「怀疑计数漂了」时用。

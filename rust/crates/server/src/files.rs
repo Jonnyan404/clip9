@@ -64,6 +64,24 @@ fn stored_path(state: &AppState, uuid: &str) -> PathBuf {
     FsPath::new(&state.config.server.storage_dir).join(uuid)
 }
 
+/// 删掉一个文件的**磁盘字节**。
+///
+/// ⚠️ 幂等：文件本来就不在（`NotFound`）当成功 —— 清理路径上「已经没了」不是错误。
+/// ⚠️ 删字节**必须排在删登记之前**：反过来的话，中途失败会留下「登记没了、字节还在」
+/// 的孤儿字节，而那种状态在界面上完全看不出来（见 `file_cleanup.rs`）。
+///
+/// ⚠️ 返回 `Result` 而不是自己吞掉：**「删不掉」在两条路径上的含义完全不同** ——
+/// 后台清理只需记一条日志（下一轮再试），而用户点的 `DELETE /file/<uuid>`
+/// 必须回 500（他要求删、我们就得说清有没有删成）。把这件事收在调用方。
+pub(crate) async fn remove_stored_file(state: &AppState, uuid: &str) -> std::io::Result<()> {
+    let path = stored_path(state, uuid);
+    match tokio::fs::remove_file(&path).await {
+        Ok(()) => Ok(()),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(e) => Err(e),
+    }
+}
+
 /// 这个文件属于哪个房间。
 ///
 /// ⚠️★ 已登记的文件**以它自己记录的房间为准**，不看客户端传的 `?room=`。
@@ -391,11 +409,18 @@ pub async fn file(
         );
     };
 
-    // ⚠️ 双重检查过期（清理循环是异步的，中间有时间窗）。
+    // ⚠️ 双重检查过期。后台清理任务（`file_cleanup`，每 5 分钟一轮）是异步的，
+    // 中间有时间窗；这里兜住「后台还没跑到就被访问」的那一下。
     // `expire_time == 0` 是**永不过期**。
     if info.expire_time > 0 && info.expire_time < now_secs() {
+        // ⚠️★ 顺序：先删字节、再删登记、最后收条目。
+        // 条目也要在这里一起收掉（不能只等后台）—— 否则这 5 分钟里
+        // 各端界面上还挂着一条点不开的卡片。广播 `revoke` 让它们立刻消失。
+        let _ = remove_stored_file(&state, &uuid).await;
         let _ = state.store.remove_file(&uuid);
-        let _ = tokio::fs::remove_file(stored_path(&state, &uuid)).await;
+        if let Err(e) = crate::file_cleanup::drop_entries_for(&state, std::slice::from_ref(&uuid)) {
+            tracing::warn!(error = %e, uuid = %uuid, "收过期文件的条目不成功（后台对账会再试）");
+        }
         return write_error(
             StatusCode::NOT_FOUND,
             codes::FILE_EXPIRED,
@@ -407,11 +432,11 @@ pub async fn file(
     match method {
         Method::GET => serve_file(&state, &headers, &query, &info).await,
         Method::DELETE => {
-            let path = stored_path(&state, &uuid);
-            if let Err(e) = tokio::fs::remove_file(&path).await
-                && e.kind() != std::io::ErrorKind::NotFound
-            {
-                tracing::error!(error = %e, path = %path.display(), "删除文件失败");
+            // ⚠️ 这一路**不能吞错误**：用户明确要求删，删不成必须回 500
+            //（与 Go 的 `file_delete_failed` 一致），而且**不删登记** ——
+            // 留着让用户能重试，比「登记没了、字节还在」好查得多。
+            if let Err(e) = remove_stored_file(&state, &uuid).await {
+                tracing::error!(error = %e, uuid = %uuid, "删除文件失败");
                 return write_error(
                     StatusCode::INTERNAL_SERVER_ERROR,
                     "file_delete_failed",
@@ -420,6 +445,12 @@ pub async fn file(
                 );
             }
             let _ = state.store.remove_file(&uuid);
+            // ⚠️ 显式 DELETE 也把引用它的条目收掉 —— 否则界面上会留一条点不开的卡片。
+            // （客户端通常自己会先 revoke 条目再删文件，但**别依赖调用方**：
+            //  API 是公开的，谁都能只删文件。）
+            if let Err(e) = crate::file_cleanup::drop_entries_for(&state, std::slice::from_ref(&uuid)) {
+                tracing::warn!(error = %e, uuid = %uuid, "收已删文件的条目不成功（后台对账会再试）");
+            }
             json_response(&json!({ "status": "文件删除成功" }))
         }
         _ => write_error(
