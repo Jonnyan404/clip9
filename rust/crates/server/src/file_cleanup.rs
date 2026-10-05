@@ -446,4 +446,40 @@ mod tests {
             "全库上限要真的生效"
         );
     }
+
+    /// ★★ 「永不过期」在清理任务里必须成立 —— 用户最关心的那条。
+    ///
+    /// `expire_time == 0` 是**永不过期**。全局 `file.expire` 或房间
+    /// `roomAuth[x].fileExpire` 设成 0 时，这个房间的文件一个都不许被清掉。
+    ///
+    /// ⚠️ 写错的表现是「设了永不过期的文件，下一次后台清理时被**全部清光**」——
+    /// 也就是那个功能整个失效，而且不报任何错。所以这里连**对账那一轮**也一起跑
+    /// （`reconcile = true`），把三条清理路径全盖住。
+    #[tokio::test]
+    async fn never_expiring_file_survives_the_sweep() {
+        let (state, _dir) = setup();
+        let now = now_secs();
+        let uuid = "eeee-never";
+
+        register(&state, uuid, "default", now - 100_000, 0); // 0 = 永不过期
+        write_blob(&state, uuid, b"abc");
+        state
+            .store
+            .insert(file_entry("default", now - 100_000, uuid))
+            .expect("写条目");
+
+        let report = sweep_once(&state, true).await.expect("清理应成功");
+
+        assert!(report.is_empty(), "什么都不该动，实际 {report:?}");
+        assert!(blob_path(&state, uuid).exists(), "磁盘字节要还在");
+        assert!(
+            state.store.get_file(uuid).expect("读登记").is_some(),
+            "登记要还在"
+        );
+        assert_eq!(
+            state.store.recent_desc("default", 10).expect("读消息").len(),
+            1,
+            "条目要还在"
+        );
+    }
 }

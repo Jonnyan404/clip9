@@ -630,3 +630,73 @@ impl ContentOf for ReceiveHolder {
         }
     }
 }
+
+// ── 文件登记：过期判定与按文件收条目 ──────────────────────────────────
+
+fn put(s: &Store, uuid: &str, expire_time: i64) {
+    s.put_file(&clip9_protocol::File {
+        name: format!("{uuid}.bin"),
+        uuid: uuid.to_owned(),
+        size: 1,
+        upload_time: 0,
+        expire_time,
+        room: "default".to_owned(),
+    })
+    .expect("登记文件");
+}
+
+/// ★ `expire_time == 0` 是**永不过期**，不是「立刻过期」。
+///
+/// ⚠️ 这条以前**只在注释里写着、没有任何测试钉住**。而它写错的表现是：
+/// 所有设了 `fileExpire: 0` 的房间，文件会在下一次后台清理时被**全部清光** ——
+/// 也就是「永不过期」这个功能整个失效，而且不报任何错。
+#[test]
+fn expired_files_excludes_never_expiring_ones() {
+    let (s, _dir) = store_with(Limits::unlimited());
+    put(&s, "u-never", 0); // 永不过期
+    put(&s, "u-past", 100); // 早就过了
+    put(&s, "u-future", 10_000); // 还没到
+
+    let expired: Vec<String> = s
+        .expired_files(1_000)
+        .expect("查过期")
+        .into_iter()
+        .map(|f| f.uuid)
+        .collect();
+    assert_eq!(
+        expired,
+        vec!["u-past".to_owned()],
+        "只有真过期的那条：0（永不过期）与未来都不算"
+    );
+}
+
+/// ★ `remove_entries_for_files` 只收**引用那个文件**的条目，别的不碰。
+///
+/// ⚠️ 写错的表现是「用户的历史被莫名清掉」，而清理任务不报错。
+#[test]
+fn remove_entries_for_files_touches_only_that_file() {
+    let (s, _dir) = store_with(Limits::unlimited());
+
+    let doomed = s.insert(file("default", 1, "a")).expect("写 a");
+    let kept = s.insert(file("default", 2, "b")).expect("写 b");
+    let text_entry = s.insert(text("default", 3, "正文")).expect("写文本");
+
+    // `file("default", 1, "a")` 的 cache 是 `uuid-a`
+    let removed = s
+        .remove_entries_for_files(&["uuid-a".to_owned()])
+        .expect("收条目");
+
+    assert_eq!(removed.len(), 1, "只该收掉引用 uuid-a 的那一条");
+    assert_eq!(removed[0].0, doomed.id(), "返回的 id 要能拿去广播 revoke");
+    assert_eq!(removed[0].1, "default", "房间也要带回来");
+
+    let left: Vec<i32> = s.recent_desc("default", 10).expect("读").iter().map(|e| e.id()).collect();
+    assert!(left.contains(&kept.id()), "别的文件条目要留着");
+    assert!(left.contains(&text_entry.id()), "文本条目要留着");
+    assert!(!left.contains(&doomed.id()), "被引用那条要没了");
+
+    // ⚠️ 房间计数与总字节要跟着维护 —— 漏掉就是「数字慢慢漂掉」而不报错
+    assert_eq!(s.stats().expect("统计").total_entries, 2, "总条数要减 1");
+    let room = s.rooms().expect("读房间").into_iter().find(|r| r.name == "default").expect("default 在");
+    assert_eq!(room.message_count, 2, "房间计数要减 1");
+}
