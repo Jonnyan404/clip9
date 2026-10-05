@@ -1,21 +1,21 @@
 # clip9 前端产物的同步清单 —— 由 tools/sync-web-assets.mjs 生成，别手改。
-source fc446e6386889256ba4068543f8598f5ffd57afd5a0b0df6aca4a071285194fe
+source f5032bc8c05b7c0a9dc7b83661ac1073c94a5f7d82ce0465e819a67dd9cca9aa
 apple-touch-icon.png
-assets/SharePage-ThHVNM8I.js
-assets/SharePage-ThHVNM8I.js.br
-assets/SharePage-ThHVNM8I.js.gz
+assets/SharePage-D_NRr3iM.js
+assets/SharePage-D_NRr3iM.js.br
+assets/SharePage-D_NRr3iM.js.gz
 assets/highlight-langs-DK51xzQJ.js
 assets/highlight-langs-DK51xzQJ.js.br
 assets/highlight-langs-DK51xzQJ.js.gz
 assets/i18n-BE673QtD.js
 assets/i18n-BE673QtD.js.br
 assets/i18n-BE673QtD.js.gz
-assets/index-CZfMUIIp.js
-assets/index-CZfMUIIp.js.br
-assets/index-CZfMUIIp.js.gz
 assets/index-Di6mCljL.css
 assets/index-Di6mCljL.css.br
 assets/index-Di6mCljL.css.gz
+assets/index-eC9UZXmf.js
+assets/index-eC9UZXmf.js.br
+assets/index-eC9UZXmf.js.gz
 assets/materialdesignicons-webfont-B7mPwVP_.ttf
 assets/materialdesignicons-webfont-CSr8KVlo.eot
 assets/materialdesignicons-webfont-Dp5v-WZN.woff2
