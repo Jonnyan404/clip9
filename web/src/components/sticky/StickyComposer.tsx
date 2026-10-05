@@ -1,6 +1,6 @@
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Box, Button, Chip, Stack, TextField } from '@mui/material';
+import { TextField } from '@mui/material';
 import axios from 'axios';
 import { useAppStore } from '@/stores/appStore';
 import { useWebSocketStore } from '@/stores/wsStore';
@@ -211,46 +211,48 @@ export const StickyComposer = forwardRef<StickyComposerHandle, { variant?: strin
         );
     }
 
-    const isBoard = variant === 'board';
-
+    // ⚠️★ 结构与 class 名**逐一对齐 Vue 版**（`sticky-composer` / `__files` / `__row` /
+    // `__attach` / `__area` / `__go`）：那块「便签纸」的观感（米黄底 + 虚线边）靠的是
+    // **裸 textarea + 自绘按钮**。换成 MUI 的 TextField/Button 之后输入框自带边框与底色，
+    // 纸的观感就没了 —— 皮肤在 styles/components.css 的 `.sticky-composer*`。
     return (
-        <Box
-            sx={{
-                border: '1px dashed',
-                borderColor: 'divider',
-                borderRadius: isBoard ? 2 : 3,
-                p: isBoard ? '7px 11px' : '10px 13px',
-                bgcolor: 'background.paper',
-            }}
-        >
+        <div className={`sticky-composer sticky-composer--${variant}`}>
             {display.composerUpload && send.files.length > 0 && (
-                <Stack direction="row" spacing={0.75} sx={{ flexWrap: 'wrap', mb: 1 }}>
+                <div className="sticky-composer__files">
                     {send.files.map((file, index) => (
-                        <Chip
-                            key={`${file.name}-${index}`}
-                            size="small"
-                            label={`${file.name}${sending ? ` · ${Math.round(uploadProgress * 100)}%` : ''}`}
-                            onDelete={() => useAppStore.setState({ send: { ...useAppStore.getState().send, files: send.files.filter((_, i) => i !== index) } })}
-                        />
+                        <span key={`${file.name}-${index}`} className="sticky-composer__file">
+                            {file.name}
+                            <b
+                                className="sticky-composer__closer"
+                                onClick={() => useAppStore.setState({ send: { ...useAppStore.getState().send, files: send.files.filter((_, i) => i !== index) } })}
+                            >
+                                ✕
+                            </b>
+                        </span>
                     ))}
-                </Stack>
+                    {sending && <span className="sticky-composer__progress">{Math.round(uploadProgress * 100)}%</span>}
+                </div>
             )}
 
             {slashMenu && <ComposerSlashMenu items={SLASH_TEMPLATES as SlashTemplate[]} onPick={(item) => void insertSlashTemplate(item)} />}
 
-            <Stack direction="row" alignItems="center" spacing={1}>
+            <div className="sticky-composer__row">
                 {display.composerUpload && (
-                    <Button size="small" onClick={() => selectFileRef.current?.click()} aria-label={t('addFiles')}>
+                    <button
+                        type="button"
+                        className="sticky-composer__attach"
+                        title="📎"
+                        aria-label={t('addFiles')}
+                        onClick={() => selectFileRef.current?.click()}
+                    >
                         ➕
-                    </Button>
+                    </button>
                 )}
                 {display.composerText && (
-                    <TextField
-                        inputRef={textareaRef}
-                        fullWidth
-                        multiline
-                        minRows={isBoard ? 5 : 3}
-                        maxRows={isBoard ? 14 : 6}
+                    <textarea
+                        ref={textareaRef}
+                        className="sticky-composer__area"
+                        rows={1}
                         value={send.text}
                         placeholder={placeholder}
                         onChange={(e) => useAppStore.setState({ send: { ...useAppStore.getState().send, text: e.target.value } })}
@@ -260,21 +262,26 @@ export const StickyComposer = forwardRef<StickyComposerHandle, { variant?: strin
                     />
                 )}
                 {canSend && (
-                    <Button variant="contained" size="small" disabled={sendDisabled} onClick={sendAll}>
+                    <button
+                        type="button"
+                        className={`sticky-composer__go sticky-composer__go--${variant}`}
+                        disabled={sendDisabled}
+                        onClick={sendAll}
+                    >
                         {variant === 'sticky' ? t('stickyStick') : t('send')}
-                    </Button>
+                    </button>
                 )}
                 <input
                     ref={selectFileRef}
                     type="file"
                     multiple
-                    hidden
+                    style={{ display: 'none' }}
                     onChange={(e) => {
                         handleSelectFiles(Array.from(e.target.files || []));
                         e.target.value = '';
                     }}
                 />
-            </Stack>
-        </Box>
+            </div>
+        </div>
     );
 });

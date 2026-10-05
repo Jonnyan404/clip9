@@ -103,6 +103,9 @@ impl AppState {
         crate::scheduler::spawn(state.clone());
         // 房间清理：`roomList` 开着且 `roomCleanup > 0` 才起（判定在那边）。
         crate::room_cleanup::start(state.clone());
+        // 文件清理：过期文件 + 孤儿对账。**无条件起**（房间级 fileExpire 可以覆盖全局，
+        // 所以不能拿全局的 `file.expire` 当开关，见那边的注释）。
+        crate::file_cleanup::start(state.clone());
         state
     }
 

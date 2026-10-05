@@ -526,6 +526,7 @@
       '房间与内务': 'Rooms & housekeeping',
       '启用房间列表': 'Enable the room list',
       '房间清理间隔（秒，0 = 不清理）': 'Room cleanup interval (s, 0 = never)',
+      '文件清理间隔（秒，0 = 不清理）': 'File cleanup interval (s, 0 = never)',
       '⚠️ 保存后': '⚠️ Takes effect only after ',
       '需要重启服务端才生效': 'the server is restarted',
       '（配置只在启动时读一次）': ' (the config is read once at startup)',
@@ -832,6 +833,12 @@
       '已存到 {path}': 'Saved to {path}',
       '存不下来：{error}': 'Could not save it: {error}',
       '存到下载目录，并在文件管理器里选中它': 'Save it into the download folder and select it in the file manager',
+      // ── 文件过期（2026-10-04）─────────────────────────────────────
+      // ⚠️★ 过期**时间和状态**都要显示（Jonny：「显示文件的过期时间和状态，
+      // 并且过期文件的下载按钮置灰」）。三句分别对应：状态、时刻、禁用后的提示。
+      '已过期': 'Expired',
+      '{time} 过期': 'Expires {time}',
+      '已过期，存不下来了': 'Expired — it can no longer be saved',
       '打开大号预览': 'Open the large preview',
       '缩小': 'Zoom out',
       '放大': 'Zoom in',

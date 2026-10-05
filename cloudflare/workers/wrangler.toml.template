@@ -24,7 +24,7 @@ compatibility_flags = ["nodejs_compat"]
 workers_dev = true
 preview_urls = true
 
-# 托管 Vue3 前端静态资源（web-vue3/dist 的拷贝）
+# 托管前端静态资源（web/dist 的拷贝）
 #
 # 规则只有一条：命中静态资源就直接免费发出去，没命中就整包交给 Worker。
 # 所以这里必须是 "none" —— 不能用 "single-page-application"。

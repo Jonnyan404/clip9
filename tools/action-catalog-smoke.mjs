@@ -9,7 +9,7 @@
 //
 // # ⚠️ 为什么要有它
 //
-// 动作库拆成了四份文件（`web-vue3/src/data/actions/{catalog.json,pure.js,impl.js}` + 桌面侧那份
+// 动作库拆成了四份文件（`web/src/lib/actions/{catalog.json,pure.js,impl.js}` + 桌面侧那份
 // 逐字节拷贝），它们之间靠**字符串名字**连着：目录里的 `run: "runUpper"` 指的是另一份文件里的
 // 一个导出。没有任何编译器看着这条线 ——
 //
@@ -41,9 +41,9 @@ const HERE = dirname(fileURLToPath(import.meta.url));
 const ROOT = resolve(HERE, '..');
 
 const DEFAULTS = {
-  catalog: join(ROOT, 'web-vue3/src/data/actions/catalog.json'),
-  pure: join(ROOT, 'web-vue3/src/data/actions/pure.js'),
-  impl: join(ROOT, 'web-vue3/src/data/actions/impl.js'),
+  catalog: join(ROOT, 'web/src/lib/actions/catalog.json'),
+  pure: join(ROOT, 'web/src/lib/actions/pure.js'),
+  impl: join(ROOT, 'web/src/lib/actions/impl.js'),
   labels: join(ROOT, 'rust/crates/desktop/ui/actions-labels.json'),
   ui: join(ROOT, 'rust/crates/desktop/ui'),
   sync: join(ROOT, 'rust/crates/desktop/ui/actions.sync.json'),
@@ -58,17 +58,17 @@ const F = {
   labels: pick(3, DEFAULTS.labels),
   ui: pick(4, DEFAULTS.ui),
   sync: existsSync(argv[5] ?? '') ? argv[5] : DEFAULTS.sync,
-  // 「源」那一份永远在 web-vue3 下 —— 拷过去的那份要跟它逐字节比。
+  // 「源」那一份永远在 web 下 —— 拷过去的那份要跟它逐字节比。
   // ⚠️ `slash-template.js` 也在这条线上（2026-10-03 起桌面端那个输入框也用它），
   // 所以它与 pure.js 受**同一条**「零 import + 逐字节一致」的约束。位置参数没给它留位置：
   // 它与 `pure.js` 一样是「只有一份源」的东西，用默认值就够（要跑夹具就改 `ui`）。
   source: {
     catalog: DEFAULTS.catalog,
     pure: DEFAULTS.pure,
-    slash: join(ROOT, 'web-vue3/src/slash-template.js'),
+    slash: join(ROOT, 'web/src/lib/slash-template.js'),
     // ⚠️ `share-config.js` 不是动作库的一部分，但走的**是同一条搬运线**
     //（2026-10-03 起桌面端的分享面板也加载它），所以受同一条「零 import + 逐字节一致」约束。
-    share: join(ROOT, 'web-vue3/src/share-config.js'),
+    share: join(ROOT, 'web/src/lib/share-config.js'),
   },
 };
 
@@ -276,7 +276,7 @@ if (copied.length) {
 {
   const listPath = join(F.ui, 'actions-impl.json');
   const entryPath = join(F.ui, 'actions-impl.js');
-  const desktopEntry = join(ROOT, 'web-vue3/src/data/actions/desktop.js');
+  const desktopEntry = join(ROOT, 'web/src/lib/actions/desktop.js');
 
   if (!existsSync(listPath) || !existsSync(entryPath)) {
     bad('判据 9：ui/ 里没有实现包（actions-impl.json / actions-impl.js）—— 跑 node tools/sync-action-catalog.mjs');
@@ -296,7 +296,7 @@ if (copied.length) {
     }
 
     // ② html 动作必须走消毒那一条路。
-    const implSource = readFileSync(join(ROOT, 'web-vue3/src/data/actions/impl.js'), 'utf8');
+    const implSource = readFileSync(join(ROOT, 'web/src/lib/actions/impl.js'), 'utf8');
     const htmlActions = actions.filter((a) => a.render === 'html');
     const offRoad = htmlActions.filter((a) => {
       const body = new RegExp(`export (?:async )?function ${a.run}\\([\\s\\S]*?\\n\\}`).exec(implSource)?.[0] ?? '';
@@ -316,7 +316,7 @@ if (copied.length) {
     //    写成「夹具跳过」的话，变异验证里「手改 highlight.css」的三组会假绿
     //    （2026-10-03 实测：三组全红，红的却全是这一条误报）。
     const cssTo = join(F.ui, 'highlight.css');
-    const cssFrom = join(ROOT, 'web-vue3/src/styles/highlight.css');
+    const cssFrom = join(ROOT, 'web/src/styles/highlight.css');
     if (!existsSync(cssTo)) {
       bad('判据 9c：ui/ 里没有 highlight.css —— 代码块的令牌配色全丢');
     } else if (readFileSync(cssTo, 'utf8') !== readFileSync(cssFrom, 'utf8')) {

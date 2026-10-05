@@ -3,11 +3,11 @@
 //
 // 用法：
 //   node tools/no-undef-smoke.mjs                              # 默认扫真实源码
-//   node tools/no-undef-smoke.mjs <web-vue3/src> <desktop/ui>   # 用别的夹具跑（变异验证）
+//   node tools/no-undef-smoke.mjs <web/src> <desktop/ui>   # 用别的夹具跑（变异验证）
 //
 // # ⚠️ 为什么要有它
 //
-// `web-vue3` 与 `rust/crates/desktop/ui` **都没有测试运行器**（见 MEMORY.md）。于是
+// `web` 与 `rust/crates/desktop/ui` **都没有测试运行器**（见 MEMORY.md）。于是
 // 「标识符写错一个字」的表现是**那一段功能静默失效**：不报错、不 panic，
 // 只有真的走到那一行才抛 `ReferenceError` —— 而它多半藏在「点某个按钮」后面。
 //
@@ -27,7 +27,7 @@
 //
 // # 判据（三条都算失败）
 //
-// 1. `web-vue3/src/**/*.js` 里没有自由标识符既不是声明、也不是 import、也不是内建；
+// 1. `web/src/**/*.js` 里没有自由标识符既不是声明、也不是 import、也不是内建；
 // 2. `rust/crates/desktop/ui/*.js` 同上（那一侧是**多个 classic script 共用一个全局作用域**，
 //    所以「顶层 function/var」与「`window.X = …`」都算声明）；
 // 3. **`window.X` / `globalThis.X` 的读取，全树里必须有人写过它** ——
@@ -46,10 +46,10 @@ import { fileURLToPath } from 'node:url';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const ROOT = resolve(HERE, '..');
-const require = createRequire(join(ROOT, 'web-vue3/package.json'));
+const require = createRequire(join(ROOT, 'web/package.json'));
 const acorn = require('acorn');
 
-const WEB_SRC = process.argv[2] && process.argv[2] !== '-' ? process.argv[2] : join(ROOT, 'web-vue3/src');
+const WEB_SRC = process.argv[2] && process.argv[2] !== '-' ? process.argv[2] : join(ROOT, 'web/src');
 const UI_SRC = process.argv[3] && process.argv[3] !== '-' ? process.argv[3] : join(ROOT, 'rust/crates/desktop/ui');
 
 /** 宿主注入的全局 —— 不在源码里赋值，但运行时一定有。加名字必须写清是谁给的。 */
@@ -219,14 +219,14 @@ function scan(label, files, { shared = false, extra = new Set() } = {}) {
   return parsed.length;
 }
 
-const webCount = scan('web-vue3/src', jsFiles(WEB_SRC));
+const webCount = scan('web/src', jsFiles(WEB_SRC));
 const uiCount = scan('rust/crates/desktop/ui', jsFiles(UI_SRC), { shared: true, extra: UI_EXTRA });
 
 // ── 判据 3：`window.X` 的读取必须有人写过 ────────────────────────────────────
 // ⚠️ 前两条看不见属性名：`window.ActionLibary.ensure()` 少一个字母，自由标识符扫描毫无反应。
 // 而跨文件连的那几个全局（`window.I18N` / `window.ActionLibrary`）正是这一侧的地基。
 {
-  const trees = [['web-vue3/src', WEB_SRC], ['rust/crates/desktop/ui', UI_SRC]];
+  const trees = [['web/src', WEB_SRC], ['rust/crates/desktop/ui', UI_SRC]];
   const written = new Set();
   const read = new Map();
   for (const [, dir] of trees) {

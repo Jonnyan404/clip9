@@ -1,6 +1,6 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Badge, Box, Chip, Divider, IconButton, ListItemIcon, ListItemText, Menu, MenuItem, Stack, Tooltip, useTheme } from '@mui/material';
+import { Badge, Box, Chip, IconButton, ListItemIcon, ListItemText, Menu, MenuItem, Stack, Tooltip, useTheme } from '@mui/material';
 import { MODES_META } from '@/modes/meta';
 import { useAppStore } from '@/stores/appStore';
 import { useWebSocketStore } from '@/stores/wsStore';
@@ -36,6 +36,23 @@ export function PageToolbar({ variant = 'default' }: { variant?: string }) {
 
     const [collapsed, setCollapsed] = useState(() => localStorage.getItem('pageToolbarCollapsed') === 'true');
     const [modeMenuAnchor, setModeMenuAnchor] = useState<HTMLElement | null>(null);
+    const rootRef = useRef<HTMLDivElement | null>(null);
+
+    // ⚠️ 把工具栏**实际高度**写进 CSS 变量：标准模式里吸顶的输入区要拿它当 `top`，
+    // 否则向上滚动时输入区会被工具栏遮住一部分（工具栏是 sticky，输入区 top 写死 8px 就会滑到它下面）。
+    // 用 ResizeObserver 而不是写死数字：工具栏可折叠、模式不同、字号不同，高度都会变。
+    useEffect(() => {
+        const el = rootRef.current;
+        if (!el) return;
+        const apply = () => {
+            document.documentElement.style.setProperty('--page-toolbar-height', `${el.offsetHeight}px`);
+        };
+        apply();
+        if (typeof ResizeObserver === 'undefined') return;
+        const observer = new ResizeObserver(apply);
+        observer.observe(el);
+        return () => observer.disconnect();
+    }, [collapsed]);
 
     const currentMode = MODES_META.find((m) => m.key === uiMode) || MODES_META[0];
     const normalizedRoom = useWebSocketStore.getState().normalizeRoomName(room);
@@ -61,14 +78,16 @@ export function PageToolbar({ variant = 'default' }: { variant?: string }) {
 
     return (
         <Box
+            ref={rootRef}
             className={`page-toolbar page-toolbar--${variant}`}
             sx={{
                 position: 'sticky',
                 top: 0,
                 zIndex: 40,
-                bgcolor: 'background.paper',
-                borderBottom: 1,
-                borderColor: 'divider',
+                // ⚠️ 背景与下边框**不在这里**：它们按模式不同（见 styles/components.css 的
+                // `.page-toolbar--*`）—— Vue 里 default 是 #f5f7fa、sticky 是 #f3ead2，
+                // 而 glance / board **故意透明**（让模式自己的底色透上来）。
+                // 统一写 `background.paper` 会让这几个模式的顶栏变成一块白，跟 Vue 对不上。
             }}
         >
             {!collapsed && (
@@ -97,6 +116,10 @@ export function PageToolbar({ variant = 'default' }: { variant?: string }) {
                             <Chip
                                 size="small"
                                 variant="outlined"
+                                color="primary"
+                                // MUI 的 Chip 只有 filled / outlined（`tonal` 是 Vuetify 的），
+                                // 所以用主色的浅底补出那个观感 —— 房间名跟随主题色。
+                                sx={{ bgcolor: 'color-mix(in srgb, var(--mui-palette-primary-main) 12%, transparent)' }}
                                 onClick={actions.openPageQr}
                                 icon={<MdiIcon name={isProtected ? 'mdi-lock' : 'mdi-earth'} size={16} />}
                                 label={
@@ -189,17 +212,32 @@ export function PageToolbar({ variant = 'default' }: { variant?: string }) {
                     </Stack>
                 </Stack>
             )}
-            <Divider />
-            <Box sx={{ display: 'flex', justifyContent: 'center' }}>
-                <IconButton
-                    size="small"
-                    onClick={toggleToolbar}
-                    title={collapsed ? t('expandToolbar') : t('collapseToolbar')}
-                    sx={{ height: 10, width: 40, borderRadius: 999, opacity: 0.5 }}
-                >
-                    <MdiIcon name={collapsed ? 'mdi-chevron-double-down' : 'mdi-chevron-double-up'} size={16} />
-                </IconButton>
-            </Box>
+            {/* 折叠开关：一枚小胶囊，**嵌在那条分割线上**（Vue 用 `bottom:-2px` + 绝对定位）。
+                ⚠️ 它**不该自己占一行** —— 原来那样会把工具栏撑高一截，而且看起来不像「贴着边框」。 */}
+            <Box
+                component="button"
+                type="button"
+                onClick={toggleToolbar}
+                title={collapsed ? t('expandToolbar') : t('collapseToolbar')}
+                aria-label={collapsed ? t('expandToolbar') : t('collapseToolbar')}
+                sx={{
+                    position: 'absolute',
+                    left: '50%',
+                    bottom: -2,
+                    transform: 'translateX(-50%)',
+                    zIndex: 5,
+                    width: 26,
+                    height: 4,
+                    borderRadius: 999,
+                    border: 'none',
+                    p: 0,
+                    background: 'currentColor',
+                    opacity: 0.35,
+                    cursor: 'pointer',
+                    transition: 'opacity .15s, width .15s',
+                    '&:hover': { opacity: 0.8, width: 36 },
+                }}
+            />
         </Box>
     );
 }

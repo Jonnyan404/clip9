@@ -1,6 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Box, Stack, Typography } from '@mui/material';
 import { PageToolbar } from '@/components/AppShell/PageToolbar';
 import { ActionChain } from '@/components/bench/ActionChain';
 import { MdiIcon } from '@/components/ui/MdiIcon';
@@ -19,6 +18,8 @@ import { postText } from '@/services/send';
  * ⚠️ 只列**文本条目**（文件条目没有正文，取正文要另发请求，第一版不做）。
  * ⚠️ 这个模式**不改数据** —— 结果要落盘只能显式点「另存为新条目」（走现成的 `POST /text`）。
  * ⚠️ 上下键切换时，**焦点在输入框 / 可编辑元素里就不接管**（那里方向键是移光标）。
+ * ⚠️★ 样式全部走 `.bench-wall*`（styles/components.css），与 Vue 同名同值 ——
+ *    别在这里用 `sx` 再描一遍（原来是那样，边框色/圆角/底纹都和 Vue 对不上）。
  */
 export default function BenchWall() {
     const { t } = useTranslation();
@@ -92,106 +93,50 @@ export default function BenchWall() {
     const summary = (item: ReceivedItem) => decodeHtmlEntities(String(item.content || '')).replace(/\s+/g, ' ').trim() || t('shareHistoryText');
 
     return (
-        <Box sx={{ display: 'flex', flexDirection: 'column', height: '100dvh', overflow: 'hidden' }}>
+        <div className={isWide ? 'bench-wall bench-wall--wide' : 'bench-wall'}>
             <PageToolbar />
-            <Box sx={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: isWide ? 'row' : 'column', gap: 1.25, p: '10px 12px 14px' }}>
+            <div className="bench-wall__body">
                 {/* 左：输入源 */}
-                <Box
-                    component="aside"
-                    sx={{
-                        display: 'flex',
-                        flexDirection: 'column',
-                        minHeight: 0,
-                        flex: isWide ? '0 0 320px' : '0 0 30%',
-                        border: 1,
-                        borderColor: 'divider',
-                        borderRadius: 2,
-                        overflow: 'hidden',
-                    }}
-                >
-                    <Stack direction="row" alignItems="center" spacing={0.75} sx={{ px: 1.5, py: 1, borderBottom: 1, borderColor: 'divider', flexShrink: 0 }}>
+                <aside className="bench-wall__list">
+                    <div className="bench-wall__list-head">
                         <MdiIcon name="mdi-inbox-arrow-down-outline" size={14} />
-                        <Typography variant="caption" sx={{ fontWeight: 700, letterSpacing: '0.04em' }}>{t('benchSourceTitle')}</Typography>
-                        <span style={{ flex: 1 }} />
-                        <Typography variant="caption" color="text.secondary">{items.length}</Typography>
-                    </Stack>
-                    <Box ref={itemsRef} sx={{ flex: 1, minHeight: 0, overflowY: 'auto', p: 0.75 }}>
+                        <span>{t('benchSourceTitle')}</span>
+                        <span className="bench-wall__count">{items.length}</span>
+                    </div>
+                    <div ref={itemsRef} className="bench-wall__items">
                         {items.map((item, index) => (
-                            <Box
+                            <button
                                 key={item.id}
-                                component="button"
                                 type="button"
-                                className="bench-wall__item"
+                                className={index === activeIndex ? 'bench-wall__item bench-wall__item--active' : 'bench-wall__item'}
                                 onClick={() => selectIndex(index)}
-                                sx={{
-                                    display: 'flex',
-                                    alignItems: 'baseline',
-                                    gap: 1,
-                                    width: '100%',
-                                    textAlign: 'left',
-                                    px: 1.125,
-                                    py: 0.875,
-                                    border: 1,
-                                    borderColor: index === activeIndex ? 'primary.main' : 'transparent',
-                                    borderRadius: 1.25,
-                                    background: index === activeIndex ? 'action.selected' : 'none',
-                                    cursor: 'pointer',
-                                    fontSize: '0.75rem',
-                                    color: 'inherit',
-                                }}
                             >
-                                <Typography variant="caption" sx={{ flex: '0 0 auto', fontSize: '0.625rem', color: 'text.secondary' }}>
-                                    {formatTimestamp(item.timestamp)}
-                                </Typography>
-                                <Typography variant="caption" noWrap sx={{ flex: 1, minWidth: 0 }}>{summary(item)}</Typography>
-                            </Box>
+                                <span className="bench-wall__item-time">{formatTimestamp(item.timestamp)}</span>
+                                <span className="bench-wall__item-text">{summary(item)}</span>
+                            </button>
                         ))}
-                        {!items.length && (
-                            <Typography variant="caption" color="text.secondary" sx={{ display: 'block', textAlign: 'center', py: 3 }}>
-                                {t('benchEmpty')}
-                            </Typography>
-                        )}
-                    </Box>
-                </Box>
+                        {!items.length && <div className="bench-wall__empty">{t('benchEmpty')}</div>}
+                    </div>
+                </aside>
 
                 {/* 右：输入框 + 动作链 + 结果 */}
-                <Box
-                    component="section"
-                    sx={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', border: 1, borderColor: 'divider', borderRadius: 2, p: 1.5, overflow: 'hidden' }}
-                >
-                    <Box
-                        component="textarea"
+                <section className="bench-wall__panel">
+                    <textarea
+                        className="bench-wall__draft"
                         value={draft}
-                        onChange={(e: React.ChangeEvent<HTMLTextAreaElement>) => setDraft(e.target.value)}
+                        onChange={(e) => setDraft(e.target.value)}
                         placeholder={t('benchDraftPlaceholder')}
                         spellCheck={false}
-                        sx={{
-                            flex: '0 0 auto',
-                            height: 88,
-                            minHeight: 44,
-                            resize: 'vertical',
-                            border: 1,
-                            borderColor: 'divider',
-                            borderRadius: 1.25,
-                            background: 'transparent',
-                            p: '8px 10px',
-                            mb: 1.25,
-                            fontFamily: 'inherit',
-                            fontSize: '0.75rem',
-                            lineHeight: 1.55,
-                            color: 'inherit',
-                            outline: 'none',
-                        }}
                     />
                     {draft ? (
-                        <Box sx={{ flex: 1, minHeight: 0 }}>
+                        <div className="bench-wall__chain">
                             <ActionChain text={draft} onSaveAsNew={(content) => void saveAsNew(content)} />
-                        </Box>
+                        </div>
                     ) : (
-                        <Typography variant="caption" color="text.secondary" sx={{ m: 'auto' }}>{t('benchDraftEmpty')}</Typography>
+                        <div className="bench-wall__empty bench-wall__empty--panel">{t('benchDraftEmpty')}</div>
                     )}
-                </Box>
-            </Box>
-        </Box>
+                </section>
+            </div>
+        </div>
     );
 }

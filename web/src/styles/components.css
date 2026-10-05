@@ -91,6 +91,716 @@
     margin: 12px 0;
 }
 
+/* ── 便签卡片（web-vue3/src/components/sticky/StickyNote.vue 的 scoped 样式）──
+   ⚠️★ 整块**逐条照抄** Vue：配色、旋转、胶带条、悬停动作行都在这里。
+   之前 React 侧用 MUI 的 `sx` 另写了一套（更淡的配色、没有悬停动作行、
+   过期信息还挪到了卡片头部），于是同一张便签两版长得不一样。 */
+/* ── 便签墙：每张便签的**包装盒**（web-vue3/src/views/modes/StickyWall.vue 的 `.sticky-wall__item`）
+   ⚠️★ 第二条（`> *` 撑满）**不能省**：`.sticky-note` 自己是 `display:flex` 的容器，
+   在包装盒里默认按**内容宽**收缩，于是同一行里一张宽一张窄（实测 530px vs 225px）。
+   Vue 那边正是靠这一条把卡片拉齐的 —— 移植时漏了它，就是「宽度参差不齐」的全部原因。
+   ⚠️ 它用 `sx` 表达不出来（`sx` 只能作用在自己身上），所以包装盒必须走类名。 */
+.sticky-wall__item {
+    flex: 1 1 220px;
+    max-width: 100%;
+    min-width: 0;
+    display: flex;
+}
+
+.sticky-wall__item > * {
+    width: 100%;
+}
+
+.sticky-note {
+    position: relative;
+    border-radius: 4px;
+    padding: 12px 14px 10px;
+    box-shadow: 0 2px 1px rgba(0, 0, 0, 0.06), 0 6px 14px rgba(68, 64, 42, 0.12);
+    /* 旋转角由 JS 给的 `--rt` 决定（同一张便签每次都长一样） */
+    transform: rotate(var(--rt, 0deg));
+    font-family: 'Comic Sans MS', 'Kaiti', 'PingFang SC', sans-serif;
+    min-height: 92px;
+    height: 100%;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    /* 便签底色是**固定的浅色**（见下面 --c0..--c4），与主题无关。不写死文字色的话
+       会继承主题的 on-surface，深色主题下就成了浅色字配浅色底（几乎读不出来）。 */
+    color: #444034;
+    cursor: pointer;
+}
+
+/* 顶上那条「胶带」。⚠️ 卡片是 `overflow: hidden`，所以它其实被裁掉了 ——
+   与 Vue 一致（Vue 也这样）。照抄是为了两边逐字对齐，别当成 bug 去「修」。 */
+.sticky-note::before {
+    content: '';
+    position: absolute;
+    top: -8px;
+    left: 50%;
+    transform: translateX(-50%);
+    width: 40px;
+    height: 13px;
+    background: rgba(0, 0, 0, 0.08);
+    border-radius: 2px;
+    z-index: 2;
+}
+
+.sticky-note--c0 { background: #fff8c5; }
+.sticky-note--c1 { background: #ffd8d8; }
+.sticky-note--c2 { background: #d6f0d6; }
+.sticky-note--c3 { background: #d9e6ff; }
+.sticky-note--c4 { background: #e9d9ff; }
+
+/* 过期文件：文件名划掉（过期信息本身只出现在阅读器里，卡片上不放） */
+.sticky-note--expired .sticky-note__fname {
+    text-decoration: line-through;
+}
+
+.sticky-note__label {
+    font-size: 10px;
+    font-weight: 700;
+    opacity: 0.55;
+    margin-bottom: 6px;
+    letter-spacing: 0.06em;
+}
+
+.sticky-note__file {
+    display: flex;
+    align-items: baseline;
+    gap: 5px;
+    font-size: 12px;
+    line-height: 1.45;
+    word-break: break-all;
+}
+
+.sticky-note__fic {
+    flex-shrink: 0;
+    font-size: 13px;
+}
+
+.sticky-note__fname {
+    font-weight: 700;
+    font-size: 12px;
+    line-height: 1.45;
+    min-width: 0;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+}
+
+.sticky-note__meta {
+    font-size: 11px;
+    margin-top: 6px;
+    opacity: 0.7;
+}
+
+/* 卡片正文。⚠️ 卡片**本身就渲染 md**（任务列表 / 表格默认就是 md），
+   于是卡片上的复选框也能直接勾。纯文本按贴纸观感截断 4 行。 */
+.sticky-note__text {
+    font-size: 13px;
+    line-height: 1.5;
+    font-weight: 500;
+    word-break: break-word;
+    white-space: pre-wrap;
+    display: -webkit-box;
+    -webkit-line-clamp: 4;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+}
+
+/* 渲染态必须放开 clamp：否则一张表只露 4 行、复选框也点不到。改成限高 + 滚动。 */
+.sticky-note__text--rendered {
+    display: block;
+    -webkit-line-clamp: unset;
+    white-space: normal;
+    max-height: 46vh;
+    overflow: auto;
+}
+
+.sticky-note__text--rendered .markdown-body {
+    font-size: 12px;
+    /* 便签正文本身是 500，markdown 段落跟着变粗会很难看 */
+    font-weight: 400;
+}
+
+.sticky-note__text--rendered .markdown-body > :first-child {
+    margin-top: 0;
+}
+
+.sticky-note__text--rendered .markdown-body > :last-child {
+    margin-bottom: 0;
+}
+
+/* 卡片里的表格再收一档：便签卡片窄，12px 的表头会把列挤到换行。 */
+.sticky-note__text--rendered .markdown-body table {
+    font-size: 11px;
+}
+
+.sticky-note__text--link {
+    color: #1e6bb8;
+    text-decoration: underline;
+    font-size: 12.5px;
+    word-break: break-all;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+}
+
+/* `margin-top: auto` 把时间行顶到卡片底部（卡片是 flex 列）。 */
+.sticky-note__time {
+    font-size: 10px;
+    opacity: 0.55;
+    margin-top: auto;
+    padding-top: 8px;
+}
+
+/* 悬停才出现的动作行（下载/复制 + 删除）。 */
+.sticky-note__ops {
+    position: absolute;
+    top: 6px;
+    right: 6px;
+    display: none;
+    gap: 2px;
+    background: rgba(255, 255, 255, 0.55);
+    border-radius: 999px;
+    padding: 2px 3px;
+    box-shadow: 0 1px 4px rgba(0, 0, 0, 0.12);
+    z-index: 3;
+}
+
+.sticky-note:hover .sticky-note__ops {
+    display: flex;
+}
+
+/* 触摸设备没有悬停，动作行恒显 —— 否则手机上永远点不到下载/删除。 */
+@media (hover: none) {
+    .sticky-note__ops {
+        display: flex;
+    }
+}
+
+.sticky-note__op {
+    color: rgba(68, 64, 42, 0.72);
+}
+
+/* MUI 的 IconButton 自带 40px 的圆底与涟漪，会把那张小圆角条撑破 ——
+   这里要的是 Vue 里 `v-btn icon density=compact size=small variant=text` 那种朴素小图标。 */
+.sticky-note__ops .MuiIconButton-root {
+    padding: 2px;
+    background: transparent;
+}
+
+.sticky-note__ops .MuiIconButton-root:hover {
+    background: rgba(0, 0, 0, 0.06);
+}
+
+/* ── 过期角标（卡片右上角）──────────────────────────────────────────────
+   ⚠️★ 过期是**状态**，要一直看得见：只把文件名划掉太隐晦，而靠一闪而过的气泡
+   更是等于没说。所以固定一个角标在右上角。
+   ⚠️ 悬停时动作行也在右上角，所以过期时把它下移让位（下面那条）。 */
+.sticky-note__expired-badge {
+    position: absolute;
+    top: 6px;
+    right: 6px;
+    z-index: 2;
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    color: #c62828;
+    background: rgba(198, 40, 40, 0.12);
+    border-radius: 999px;
+    padding: 1px 7px;
+    white-space: nowrap;
+}
+
+.sticky-note--expired .sticky-note__ops {
+    top: 30px;
+}
+
+/* 角标是绝对定位的，会盖在文件名上面 —— 给文件行让出右侧空间，
+   让长文件名在角标之前就折行。
+   ⚠️ 宽度按**最长的那份文案**留（英文 "Expired" 比中文「已过期」宽得多），
+   所以这里给的是个够用的固定值，而不是按中文算的最小值。 */
+.sticky-note--expired .sticky-note__file {
+    padding-right: 64px;
+}
+
+/* ── 阅读器：「大号便签纸」（Vue 的 `.sticky-note__reader`）────────────────
+   ⚠️★ 底色跟着卡片那张纸（`--c0..--c4`），不是 MUI 对话框的白。 */
+.sticky-note__reader {
+    border-radius: 6px;
+    padding: 16px 18px;
+    box-shadow: 0 4px 2px rgba(0, 0, 0, 0.1), 0 14px 30px rgba(68, 64, 42, 0.28);
+    color: #444034;
+}
+
+.sticky-note__reader--c0 { background: #fff8c5; }
+.sticky-note__reader--c1 { background: #ffd8d8; }
+.sticky-note__reader--c2 { background: #d6f0d6; }
+.sticky-note__reader--c3 { background: #d9e6ff; }
+.sticky-note__reader--c4 { background: #e9d9ff; }
+
+.sticky-note__reader-head {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 8px;
+    row-gap: 4px;
+    margin-bottom: 10px;
+}
+
+.sticky-note__reader-head .sticky-note__label {
+    margin-bottom: 0;
+}
+
+.sticky-note__reader-time {
+    font-size: 11px;
+    opacity: 0.55;
+    margin-left: auto;
+}
+
+.sticky-note__reader-text {
+    font-size: 15px;
+    line-height: 1.7;
+    font-weight: 500;
+    word-break: break-word;
+    white-space: pre-wrap;
+    max-height: 55vh;
+    overflow-y: auto;
+}
+
+.sticky-note__reader-text--link {
+    word-break: break-all;
+}
+
+/* 渲染 markdown 时收掉 `white-space: pre-wrap` —— 它是给纯文本保留换行的，
+   套在 HTML 结构上会凭空多出空白。 */
+.sticky-note__reader-text--rendered {
+    white-space: normal;
+}
+
+.sticky-note__reader-file {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+    margin-bottom: 6px;
+}
+
+.sticky-note__reader-name {
+    font-weight: 700;
+    font-size: 15px;
+    word-break: break-all;
+}
+
+.sticky-note__reader-file .sticky-note__meta {
+    margin-top: 0;
+}
+
+.sticky-note__reader-expire {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    font-size: 11px;
+    color: rgba(68, 64, 42, 0.65);
+    background: rgba(0, 0, 0, 0.06);
+    border-radius: 6px;
+    padding: 3px 8px;
+    margin-top: 8px;
+}
+
+.sticky-note__reader-expire--past {
+    color: #c62828;
+    background: rgba(198, 40, 40, 0.1);
+}
+
+.sticky-note__reader-actions {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px;
+    margin-top: 16px;
+    padding-top: 14px;
+    border-top: 1px dashed rgba(68, 64, 42, 0.16);
+}
+
+.sticky-note__reader-delete {
+    margin-left: auto;
+    opacity: 0.72;
+}
+
+.sticky-note__reader-actions .MuiButton-root {
+    font-size: 12px;
+}
+
+.sticky-note__preview-loading {
+    display: flex;
+    justify-content: center;
+    padding: 48px 0;
+}
+
+.sticky-note__reader-preview {
+    margin: 4px 0 2px;
+}
+
+.sticky-note__reader-preview > video,
+.sticky-note__reader-preview > img {
+    display: block;
+    margin: 0 auto;
+    border-radius: 8px;
+}
+
+.sticky-note__reader-preview > audio {
+    display: block;
+}
+
+.sticky-note__preview-text {
+    white-space: pre-wrap;
+    word-break: break-word;
+    font-size: 13px;
+    line-height: 1.6;
+    background: rgba(0, 0, 0, 0.04);
+    border-radius: 8px;
+    padding: 12px;
+    max-height: 40vh;
+    overflow-y: auto;
+}
+
+/* 渲染态的滚动盒。原文态不用它：那边的 pre 自带 max-height + overflow。 */
+.sticky-note__preview-scroll {
+    max-height: 40vh;
+    overflow-y: auto;
+}
+
+/* ⚠️ 便签阅读器的浮动图标让位。**为什么不用通用的 `.md-preview--md`**：
+   那个 `::before` 挂在 `.md-preview` 上，而 `.md-preview` 是**不滚动**的外层
+   （滚动盒是里面的 `.sticky-note__reader-text`）。滚动条永远贴着滚动盒的右沿，
+   占位加在外层等于白加 —— 所以这里按 Vue 的写法挂在滚动盒自己身上。
+   数值来自 MarkdownToggle 的 `--md-toggle-*` 变量。 */
+.sticky-note__reader-text--md::before,
+.sticky-note__preview-text--md::before,
+.sticky-note__preview-scroll--md::before {
+    content: '';
+    float: right;
+    width: var(--md-toggle-gutter);
+    /* 22px 给不支持 lh 单位的浏览器兜底；下面一行才是准的（正好一个行高） */
+    height: 22px;
+    height: var(--md-toggle-height);
+}
+
+/* 正文以 <pre> 开头时浮动占位会把它挤成窄列，改成给 pre 留右边距。 */
+.sticky-note__reader-text--block::before,
+.sticky-note__preview-text--block::before,
+.sticky-note__preview-scroll--block::before {
+    float: none;
+    width: 0;
+    height: 0;
+}
+
+.sticky-note__reader-text--block pre:first-child,
+.sticky-note__preview-text--block pre:first-child,
+.sticky-note__preview-scroll--block pre:first-child {
+    padding-right: var(--md-toggle-gutter);
+}
+
+/* 滚动条跟着便签配色走：阅读器底色是固定的暖色，浏览器默认那条灰白滚动条压在上面很出戏。
+   ⚠️ 不要同时写标准的 scrollbar-color / scrollbar-width —— Chrome 一旦认了那两个，
+   就会忽略下面的 ::-webkit-scrollbar，宽度不再可控。 */
+.sticky-note__reader-text::-webkit-scrollbar,
+.sticky-note__preview-text::-webkit-scrollbar,
+.sticky-note__preview-scroll::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+}
+
+.sticky-note__reader-text::-webkit-scrollbar-track,
+.sticky-note__preview-text::-webkit-scrollbar-track,
+.sticky-note__preview-scroll::-webkit-scrollbar-track {
+    background: transparent;
+}
+
+.sticky-note__reader-text::-webkit-scrollbar-thumb,
+.sticky-note__preview-text::-webkit-scrollbar-thumb,
+.sticky-note__preview-scroll::-webkit-scrollbar-thumb {
+    background: rgba(68, 64, 42, 0.45);
+    border-radius: 4px;
+}
+
+.sticky-note__reader-text::-webkit-scrollbar-thumb:hover,
+.sticky-note__preview-text::-webkit-scrollbar-thumb:hover,
+.sticky-note__preview-scroll::-webkit-scrollbar-thumb:hover {
+    background: rgba(68, 64, 42, 0.62);
+}
+
+/* ── 非标准模式的输入区（web-vue3/src/components/sticky/StickyComposer.vue）──
+   ⚠️★ 这一块是**裸 textarea + 自绘按钮**，不是 MUI 的 TextField/Button —— Vue 版就是
+   这么写的，换成 MUI 之后输入框自带边框与底色，便签那张「纸」的观感就没了。
+   皮肤按模式给：默认（sticky，米黄虚线纸）、`--board`（看板：正文独占一行 + 动作另起一行）。 */
+.sticky-composer {
+    background: #fffbe8;
+    border: 1.5px dashed #d5c49a;
+    border-radius: 12px;
+    padding: 10px 13px;
+    box-shadow: 0 2px 6px rgba(68, 64, 42, 0.08);
+}
+
+.sticky-composer__files {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin-bottom: 8px;
+}
+
+.sticky-composer__file {
+    font-size: 11px;
+    background: rgba(213, 196, 154, 0.28);
+    color: #6f6548;
+    border-radius: 6px;
+    padding: 3px 8px;
+}
+
+.sticky-composer__closer {
+    font-weight: 700;
+    cursor: pointer;
+    margin-left: 4px;
+    opacity: 0.6;
+}
+
+.sticky-composer__progress {
+    font-size: 11px;
+    font-weight: 700;
+    color: #0a0d24;
+}
+
+.sticky-composer__row {
+    display: flex;
+    align-items: center;
+    gap: 9px;
+}
+
+.sticky-composer__attach {
+    font-size: 16px;
+    background: none;
+    border: none;
+    cursor: pointer;
+    padding: 0;
+    line-height: 1;
+    color: #b8ae9a;
+}
+
+.sticky-composer__area {
+    flex: 1;
+    min-width: 0;
+    resize: none;
+    border: none;
+    outline: none;
+    background: transparent;
+    font-size: 12px;
+    line-height: 1.5;
+    color: #444034;
+    font-family: inherit;
+    padding: 6px 0;
+    /* 三行起步：`/` 模板插进来的就是多行骨架（任务清单 / 表格），一行高的框只看得到第一行。
+       ⚠️ 刻意**只用 CSS 定高**（别改成 JS 按内容算高度）。 */
+    min-height: calc(3lh + 12px);
+}
+
+.sticky-composer__area::placeholder {
+    color: #b8ae9a;
+}
+
+.sticky-composer__go {
+    background: #d97706;
+    color: #fff;
+    border: none;
+    border-radius: 8px;
+    font-size: 12px;
+    padding: 6px 14px;
+    font-weight: 650;
+    cursor: pointer;
+    flex-shrink: 0;
+}
+
+.sticky-composer__go:disabled {
+    opacity: 0.55;
+    cursor: not-allowed;
+}
+
+/* 暗色（便签墙那套）—— 对应 Vue 的 `.sticky-wall--dark .sticky-wall__composer :deep(...)`。
+   ⚠️★ **必须挂在 `.sticky-wall` 下**：看板（`.board-wall`）不在便签墙里，它的暗色走
+   `--board-*` 变量。写成裸的 `.dark .sticky-composer` 会连看板一起改掉 —— 而且
+   `.dark .sticky-composer` 权重(0,2,0) 高于 `.sticky-composer--board`(0,1,0)，
+   看板的深色面板会被这张米黄纸顶掉。 */
+.dark .sticky-wall .sticky-composer {
+    background: rgba(255, 251, 232, 0.06);
+    border-color: #4a3f28;
+}
+
+.dark .sticky-wall .sticky-composer__area {
+    color: rgba(238, 232, 214, 0.95);
+}
+
+.dark .sticky-wall .sticky-composer__area::placeholder {
+    color: rgba(184, 174, 154, 0.7);
+}
+
+.dark .sticky-wall .sticky-composer__file {
+    background: rgba(154, 139, 98, 0.24);
+    color: #e6ddc3;
+}
+
+/* ── 看板皮肤 ────────────────────────────────────────────────────────────
+   ⚠️ 看板的发送区是「新建一张卡片」，不是聊天输入条，所以排布与另外几个模式不同：
+   **正文独占一整行**（要写得下任务清单和表格），动作另起一行（附件在左、发送在右）。
+   三样挤在一个 flex 行里的话，正文一长高，附件和发送就被甩到框底。 */
+.sticky-composer--board {
+    background: var(--board-panel-bg, #fff);
+    border: 1px solid var(--board-hairline, rgba(148, 163, 184, 0.32));
+    border-radius: 10px;
+    padding: 7px 11px;
+    box-shadow: none;
+    color: inherit;
+}
+
+.sticky-composer--board .sticky-composer__row {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr);
+    grid-template-rows: auto auto;
+    align-items: center;
+    gap: 6px 8px;
+}
+
+.sticky-composer--board .sticky-composer__area {
+    grid-column: 1 / -1;
+    grid-row: 1;
+    font-size: 12.5px;
+    /* 跟随容器（看板给的文字色），不然深色看板里输入的字是黑的 */
+    color: inherit;
+    padding: 2px 0;
+    /* 起步五行：一行的框写不出任务清单 / 表格 */
+    min-height: calc(5lh + 8px);
+    max-height: 38vh;
+    overflow-y: auto;
+}
+
+.sticky-composer--board .sticky-composer__attach {
+    grid-column: 1;
+    grid-row: 2;
+    justify-self: start;
+    /* 裸 ➕ 看着像误入的字符；给一个按钮的形状，读起来才是「可以点」 */
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 30px;
+    height: 30px;
+    border-radius: 8px;
+    background: rgba(148, 163, 184, 0.18);
+    font-size: 14px;
+    color: var(--board-hint, #a8b1bd);
+}
+
+.sticky-composer--board .sticky-composer__go {
+    grid-column: 2;
+    grid-row: 2;
+    justify-self: end;
+}
+
+.sticky-composer--board .sticky-composer__area::placeholder {
+    color: var(--board-hint, #a8b1bd);
+}
+
+/* 看板的附件小标签 / 进度：底色与文字都**跟着看板面板走**，不要沿用便签那套米黄。
+   （不覆盖的话，浅色看板上会出现一块米黄色的 chip，和面板格格不入。） */
+.sticky-composer--board .sticky-composer__file {
+    background: rgba(148, 163, 184, 0.18);
+    color: inherit;
+}
+
+.sticky-composer--board .sticky-composer__progress {
+    color: inherit;
+}
+
+.sticky-composer__go--board {
+    background: var(--mui-palette-primary-main);
+    color: #fff;
+    border-radius: 8px;
+    font-size: 12px;
+    padding: 6px 14px;
+    font-weight: 650;
+}
+
+/* 看板的面板色（Vue 的 `.board-wall` / `.board-wall--dark` 给这几个变量） */
+.board-wall {
+    --board-panel-bg: #fff;
+    --board-hairline: rgba(148, 163, 184, 0.32);
+    --board-hint: #a8b1bd;
+}
+
+.dark .board-wall {
+    --board-panel-bg: rgba(15, 23, 42, 0.9);
+    --board-hairline: rgba(71, 85, 105, 0.6);
+    --board-hint: #64748b;
+}
+
+/* ── 工具栏（web-vue3/src/components/PageToolbar.vue）────────────────────
+   ⚠️★ 背景色是**按模式**给的，不能统一成一种：
+     · `--default`（标准模式 / 动作台）→ #f5f7fa，暗色 #1e1e24
+     · `--sticky`（便签墙）→ #f3ead2，暗色 #211d12
+     · `--glance` / `--board` → Vue **故意不给背景**（透明），让模式自己的底色透上来。
+   统一写 `background.paper` 会让后两个模式的顶栏变成一块白，跟 Vue 对不上。 */
+.page-toolbar--default {
+    background: #f5f7fa;
+    border-bottom: 1px solid rgba(148, 163, 184, 0.18);
+}
+
+.page-toolbar--sticky {
+    background: #f3ead2;
+    border-bottom: 1px solid rgba(120, 90, 40, 0.16);
+}
+
+.dark .page-toolbar--default {
+    background: #1e1e24;
+    border-bottom-color: rgba(148, 163, 184, 0.22);
+}
+
+.dark .page-toolbar--sticky {
+    background: #211d12;
+    border-bottom-color: rgba(238, 232, 214, 0.12);
+}
+
+/* ── 时间流：历史用量 chip（web-vue3 DefaultMode.vue 的 .timeline-panel__count-chip--overlay）──
+   ⚠️ 它压在卡片上方，必须**有半透明底色 + 模糊**，否则底下的正文会透上来跟它叠在一起。 */
+.timeline-count-chip {
+    height: 22px;
+    padding: 0 6px;
+    border-radius: 999px;
+    backdrop-filter: blur(8px);
+    background: rgba(255, 255, 255, 0.78);
+}
+
+.dark .timeline-count-chip {
+    background: rgba(15, 23, 42, 0.78);
+}
+
+/* ── 输入区：赞赏图标的金色闪动（web-vue3 UnifiedComposer.vue）────────────── */
+.unified-composer__reward-icon {
+    color: #f5b301;
+    animation: unified-composer-reward-shine 2s ease-in-out infinite;
+}
+
+@keyframes unified-composer-reward-shine {
+    0%, 100% {
+        filter: brightness(1);
+        text-shadow: 0 0 0 rgba(245, 179, 1, 0);
+    }
+    50% {
+        filter: brightness(1.45);
+        text-shadow: 0 0 6px rgba(245, 179, 1, 0.85);
+    }
+}
+
 /* ── MarkdownToggle（web-vue3/src/components/MarkdownToggle.vue）──────────
    ⚠️ 全局变量契约：消费方在**滚动盒**上写 `padding-right: var(--md-toggle-gutter)`。
    图标最多三个（原文 + 2 个针对性动作 + ⋯），所以只有两个值。 */
@@ -147,4 +857,620 @@
 }
 .md-preview--block pre:first-child {
     padding-right: var(--md-toggle-gutter);
+}
+
+/* ══ 动作台（web-vue3/src/views/modes/BenchWall.vue + components/bench/*.vue）══
+   ⚠️★ 整块**逐条照抄 Vue 的 scoped 样式**。之前 React 侧用 MUI 的 `sx` 与默认组件
+   另画了一套：divider 边框（rgba(0,0,0,.12)）、8px 圆角、透明底、每步一个
+   MUI TextField。结果是同一屏两版差得很明显 —— 边框色、圆角、底纹、每步的高度全不一样，
+   看着就是「没做细」。颜色沿用 Vue 那套 slate（`rgba(148,163,184,*)`）：
+   它在深浅两色主题下都读得出来，这正是 Vue 当初选它的原因。 */
+
+/* ── 外壳：左列表 / 右工作区 ───────────────────────────────────────── */
+.bench-wall {
+    display: flex;
+    flex-direction: column;
+    height: 100dvh;
+    overflow: hidden;
+}
+
+.bench-wall__body {
+    flex: 1;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    padding: 10px 12px 14px;
+}
+
+/* ⚠️ 两处 CSS 一起才能让内部真的滚起来：容器给 flex 项 `min-height: 0`，
+   **子项**也要再写一遍 —— 否则子项默认的 `min-height: auto` 会把它撑到内容高度，
+   滚动条永远不出现。 */
+.bench-wall__list {
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+    flex: 0 0 30%;
+    border: 1px solid rgba(148, 163, 184, 0.26);
+    border-radius: 16px;
+    background: rgba(255, 255, 255, 0.9);
+    overflow: hidden;
+}
+
+.bench-wall__panel {
+    flex: 1;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    border: 1px solid rgba(148, 163, 184, 0.26);
+    border-radius: 16px;
+    background: rgba(255, 255, 255, 0.9);
+    padding: 12px;
+    overflow: hidden;
+}
+
+/* 宽屏：左右两栏 */
+.bench-wall--wide .bench-wall__body { flex-direction: row; }
+.bench-wall--wide .bench-wall__list { flex: 0 0 320px; }
+
+.bench-wall__list-head {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 9px 12px;
+    border-bottom: 1px solid rgba(148, 163, 184, 0.26);
+    font-size: 0.6875rem;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    color: rgba(71, 85, 105, 0.75);
+    flex: 0 0 auto;
+}
+
+.bench-wall__count { margin-left: auto; font-weight: 500; }
+
+.bench-wall__items {
+    flex: 1;
+    min-height: 0;
+    overflow-y: auto;
+    padding: 6px;
+}
+
+.bench-wall__item {
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+    width: 100%;
+    text-align: left;
+    padding: 7px 9px;
+    border: 1px solid transparent;
+    border-radius: 9px;
+    background: transparent;
+    cursor: pointer;
+    font-size: 0.75rem;
+    /* ⚠️★ 原生 `<button>` **不继承** 父级的 `line-height`（UA 样式如此），
+       而 Vuetify 的 reset 会把它统一成 1.5 —— 所以 Vue 那边这一行高 34px、
+       我们这边只有 30px（实测），一排列表读起来更挤。
+       ⚠️ 写**无单位**的 1.5（不是 `inherit`）：inherit 会把 body 算好的 24px 原样传下来，
+       里面那个 10px 的时间戳就会撑出一个 24px 的行盒。 */
+    line-height: 1.5;
+    color: inherit;
+    transition: background-color 0.15s ease, border-color 0.15s ease;
+}
+
+.bench-wall__item:hover { background: rgba(14, 165, 233, 0.07); }
+
+/* 当前条目 —— 也是「输入框里那段文字来自哪一条」的指示。少了这个高亮，
+   用上下键切换时界面上看不出选中的是哪条。 */
+.bench-wall__item--active {
+    background: color-mix(in srgb, var(--mui-palette-primary-main) 12%, transparent);
+    border-color: color-mix(in srgb, var(--mui-palette-primary-main) 45%, transparent);
+}
+
+.bench-wall__item-time {
+    flex: 0 0 auto;
+    font-size: 0.625rem;
+    color: rgba(71, 85, 105, 0.7);
+    font-variant-numeric: tabular-nums;
+}
+
+.bench-wall__item-text {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.bench-wall__empty {
+    padding: 24px 8px;
+    text-align: center;
+    font-size: 0.75rem;
+    color: rgba(71, 85, 105, 0.7);
+}
+
+.bench-wall__empty--panel { margin: auto; }
+
+/* 手输的调试输入框。固定高度 + 允许纵向拖拽：长文本要能看全几行，
+   但不能把下面的动作链挤没。`color: inherit` 必须写 —— textarea 默认是黑的，
+   暗色主题下会看不见。 */
+.bench-wall__draft {
+    flex: 0 0 auto;
+    height: 88px;
+    min-height: 44px;
+    resize: vertical;
+    border: 1px solid rgba(148, 163, 184, 0.42);
+    border-radius: 10px;
+    background: transparent;
+    padding: 8px 10px;
+    margin-bottom: 10px;
+    font-family: inherit;
+    font-size: 0.75rem;
+    line-height: 1.55;
+    color: inherit;
+    outline: none;
+}
+
+.bench-wall__draft:focus { border-color: var(--mui-palette-primary-main); }
+.bench-wall__draft::placeholder { color: color-mix(in srgb, currentColor 40%, transparent); }
+
+/* 动作链占满输入框剩下的高度（它内部再分「链」和「结果」两块） */
+.bench-wall__chain { flex: 1; min-height: 0; }
+
+/* 暗色（对应 Vue 的 `.bench-wall--dark`） */
+.dark .bench-wall__list,
+.dark .bench-wall__panel {
+    background: rgba(15, 23, 42, 0.9);
+    border-color: rgba(71, 85, 105, 0.72);
+}
+
+.dark .bench-wall__list-head,
+.dark .bench-wall__empty { color: rgba(148, 163, 184, 0.8); }
+
+.dark .bench-wall__item-time { color: rgba(148, 163, 184, 0.7); }
+
+/* ── 动作链 ──────────────────────────────────────────────────────── */
+.action-chain {
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+    /* 兜底：链很长（或结果很长）时整块能滚 —— 否则窄屏上「添加动作」和结果区
+       会被父级的 overflow: hidden 直接裁掉，而界面上看不出发生了什么。 */
+    overflow-y: auto;
+}
+
+.action-chain__head {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin-bottom: 6px;
+}
+
+.action-chain__title {
+    font-size: 0.6875rem;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    opacity: 0.75;
+}
+
+.action-chain__steps { display: flex; flex-direction: column; gap: 4px; }
+
+.action-chain__hint { font-size: 0.75rem; opacity: 0.7; padding: 8px 0; }
+
+.action-chain__step {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 5px 8px;
+    border: 1px solid rgba(148, 163, 184, 0.42);
+    border-radius: 8px;
+    /* ⚠️★ 这个值是从 Vue 实测像素反推的：Vue 的 `rgba(var(--v-theme-surface-variant), 0.35)`
+       在浅色下渲染成 rgb(189,189,189)；写成 `color-mix(currentColor 5%)` 只有 243，
+       底纹几乎看不见 —— 「不够精致」很大一部分就是这些底纹太淡。 */
+    background: rgba(66, 66, 66, 0.35);
+    font-size: 0.75rem;
+}
+
+.action-chain__step-n {
+    width: 16px;
+    height: 16px;
+    flex: 0 0 auto;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 5px;
+    background: linear-gradient(135deg, #0ea5e9, #14b8a6);
+    color: #fff;
+    font-size: 0.625rem;
+    font-weight: 700;
+}
+
+.action-chain__step-name {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.action-chain__step-delta {
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 0.625rem;
+    opacity: 0.7;
+    flex: 0 0 auto;
+}
+
+.action-chain__step-actions { display: inline-flex; gap: 1px; flex: 0 0 auto; }
+
+/* 带参数的动作：输入框缩进对齐步骤名（左边 30px = 序号 16 + gap + padding），
+   让「这两行是同一件事」在视觉上成立。 */
+.action-chain__params {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px 8px;
+    padding: 4px 8px 2px 30px;
+}
+
+.action-chain__param {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    flex: 1 1 130px;
+    min-width: 0;
+}
+
+.action-chain__param-label { flex: 0 0 auto; font-size: 0.625rem; opacity: 0.7; }
+
+/* ⚠️★ 原生 input / select，**不是** MUI 的 TextField：这一行是紧凑列表，
+   输入框自带的 padding / margin 会把每一步撑高一大截（原来那版就是这么变形的）。
+   颜色一律 inherit —— 写死深灰在暗色下看不见。 */
+.action-chain__param-input {
+    flex: 1 1 auto;
+    min-width: 0;
+    padding: 2px 6px;
+    font: inherit;
+    font-size: 0.6875rem;
+    color: inherit;
+    background: transparent;
+    border: 1px solid rgba(148, 163, 184, 0.42);
+    border-radius: 6px;
+}
+
+.action-chain__param-input:focus {
+    outline: none;
+    border-color: var(--mui-palette-primary-main);
+}
+
+/* 原生 select 的下拉在部分浏览器里是白底深字 —— 给它一个跟主题走的底色 */
+.action-chain__param-input option {
+    background: var(--mui-palette-background-paper);
+    color: var(--mui-palette-text-primary, inherit);
+}
+
+.action-chain__mini {
+    width: 20px;
+    height: 20px;
+    border: none;
+    border-radius: 4px;
+    background: transparent;
+    /* inherit + opacity，不写死深灰 —— 暗色下写死的颜色直接看不见 */
+    color: inherit;
+    opacity: 0.7;
+    cursor: pointer;
+    font-size: 0.75rem;
+    line-height: 1;
+    padding: 0;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.action-chain__mini:hover:not(:disabled) {
+    background: color-mix(in srgb, var(--mui-palette-primary-main) 14%, transparent);
+    color: var(--mui-palette-primary-main);
+}
+
+.action-chain__mini:disabled { opacity: 0.3; cursor: default; }
+
+.action-chain__mini--danger:hover:not(:disabled) {
+    background: color-mix(in srgb, var(--mui-palette-error-main) 14%, transparent);
+    color: var(--mui-palette-error-main);
+}
+
+.action-chain__add { margin-top: 8px; }
+
+/* ⚠️★ 动作面板住在弹层里，**必须**给它一个有界的高度：
+   ActionPicker 内部是「搜索框 + 可滚动的分组区」，没有界高就滚不起来 ——
+   原来是 `maxHeight` + `overflow: hidden`（只裁不滚），于是「文本 / 中文 / 分析 / 日期」
+   四组**永远够不到**（用户报的「列表无法滚动」）。
+   ⚠️ `display: flex` + `flex-direction: column` 是那件事的关键，缺了它子元素拿不到界高。
+   ⚠️ 也要有实底 —— 弹层浮在内容之上，透明背景会和底下的文字糊在一起。 */
+.action-chain__picker {
+    display: flex;
+    flex-direction: column;
+    width: 340px;
+    max-width: calc(100vw - 32px);
+    max-height: 320px;
+    padding: 10px;
+    background: var(--mui-palette-background-paper);
+    border-radius: 4px;
+}
+
+.action-chain__templates { display: flex; gap: 4px; margin-top: 6px; }
+
+.action-chain__naming { display: flex; gap: 6px; align-items: center; margin-top: 6px; }
+
+/* ⚠️ 结果区**不自己滚**（没有 max-height / overflow）—— 滚动交给外层 `.action-chain`。
+   两层滚动容器在触屏上很糟：手指在里面滑只滚内层，滚到底外层不动，看着像卡住了。 */
+.action-chain__result {
+    min-height: 140px;
+    border: 1px solid rgba(148, 163, 184, 0.42);
+    border-radius: 10px;
+    padding: 10px;
+    /* 与步骤行同一块底纹（实测像素 rgb(189,189,189)） */
+    background: rgba(66, 66, 66, 0.35);
+}
+
+.action-chain__pre {
+    margin: 0;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 0.75rem;
+    line-height: 1.6;
+    white-space: pre-wrap;
+    word-break: break-all;
+}
+
+.action-chain__html { font-size: 0.8125rem; line-height: 1.7; word-break: break-word; }
+
+.action-chain__error {
+    display: flex;
+    align-items: flex-start;
+    gap: 6px;
+    font-size: 0.75rem;
+    color: var(--mui-palette-error-main);
+}
+
+/* ── 动作选择面板 ─────────────────────────────────────────────────── */
+.action-picker { display: flex; flex-direction: column; min-height: 0; }
+.action-picker__search { margin-bottom: 8px; }
+.action-picker__body { overflow-y: auto; min-height: 0; padding-right: 2px; }
+
+.action-picker__group {
+    font-size: 0.6875rem;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    opacity: 0.75;
+    margin: 10px 0 6px;
+}
+
+.action-picker__group:first-child { margin-top: 0; }
+
+.action-picker__grid { display: flex; flex-wrap: wrap; gap: 6px; }
+
+/* 原生 button 而不是 MUI Button：这里一次可能铺几十个，MUI 那套的密度/变体开销不必要，
+   而且我们只需要「小胶囊」这一种形态。 */
+.action-picker__item {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    /* 移动端点击区域：高度不小于 30px */
+    padding: 5px 10px;
+    border: 1px solid rgba(148, 163, 184, 0.5);
+    border-radius: 999px;
+    /* 主题变量而不是写死的白底深字 —— 这个面板住在弹层里（surface 底色），
+       暗色主题下写死的话就是一堆白胶囊浮在暗底上。 */
+    background: var(--mui-palette-background-paper);
+    color: inherit;
+    font-size: 0.75rem;
+    line-height: 1.4;
+    cursor: pointer;
+    transition: border-color 0.15s ease, color 0.15s ease;
+    max-width: 100%;
+}
+
+.action-picker__item:hover {
+    border-color: var(--mui-palette-primary-main);
+    color: var(--mui-palette-primary-main);
+}
+
+/* 不适用的置灰（仍可点 —— 点了会给出明确错误，不是「没反应」） */
+.action-picker__item--dim { opacity: 0.42; }
+
+.action-picker__label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+.action-picker__empty { font-size: 0.75rem; opacity: 0.7; padding: 14px 2px; text-align: center; }
+
+/* 「添加动作」= Vuetify 的 `variant="tonal"`。
+   ⚠️★ 关键：**不带 `color` 的 tonal 是中性灰底 + 正常字色**，不是主色蓝 ——
+   Vue 实测像素 rgb(203,204,204)、字色 rgba(0,0,0,0.87)、高 28px、圆角 4px。
+   原来那版是亮蓝描边（MUI `variant="outlined"`），在这一屏里比所有内容都抢眼，
+   正是「看着不精致」最明显的一处。 */
+.action-chain__add-btn {
+    width: 100%;
+    height: 28px;
+    padding: 0 12px;
+    border: none;
+    border-radius: 4px;
+    background: color-mix(in srgb, currentColor 24%, transparent);
+    color: inherit;
+    font: inherit;
+    font-size: 0.8125rem;
+    font-weight: 600;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+}
+
+.action-chain__add-btn:hover {
+    background: color-mix(in srgb, currentColor 34%, transparent);
+}
+
+.action-chain__empty { font-size: 0.75rem; opacity: 0.7; }
+
+/* ── 时间线条目：跳过屏外卡片的布局与绘制 ───────────────────────────────
+   ⚠️★ `content-visibility: auto` 让浏览器**不渲染**视口外的子树 —— 相当于浏览器
+   自带的虚拟化，零 JS 成本。实测切到标准模式：中位 323→258ms，最长长任务 304→220ms。
+   ⚠️ `contain-intrinsic-size` **必须给**：不给的话屏外卡片的高度按 0 算，
+   滚动条会随着滚动不停跳动（`auto 140px` = 记住上次渲染出来的真实高度，
+   没渲染过就先用 140px 兜底）。
+   ⚠️ 只加在**竖直时间线**上：便签墙是 `flex-wrap` 布局，宽度也参与换行计算，
+   给它加这个会算错行 —— 别顺手推广过去。 */
+.timeline-item {
+    content-visibility: auto;
+    contain-intrinsic-size: auto 140px;
+}
+
+/* ── 标准模式的时间线条目卡片（components/received-item/Text.tsx / File.tsx）──
+   ⚠️★ 为什么不用 MUI 的 `sx`：`sx` 每次渲染都要走一遍 `styleFunctionSx` ——
+   解析主题值 → 序列化 → 哈希 → 交给 emotion。50 张卡片 × 十几个 `sx` ≈ 每渲染 750 次，
+   而卡片还有第二次渲染（markdown 算完 setHtml）。改成静态 class 之后这一整块开销归零。
+   ⚠️ 下面的数值全部是**从改动前的计算样式里量出来的**（不是按 spacing 倍数推的），
+   逐条对齐才不会在观感上悄悄变样。 */
+/* ⚠️★ 必须写成 `.text-card.MuiPaper-root`（两个类）：MUI 自己的 `.MuiPaper-rounded`
+   也声明了 `border-radius`，**权重相同**，而 emotion 的样式是运行时注入、排在静态 CSS 后面 ——
+   一个类的话会被它顶掉（实测圆角从 12px 变回 4px，肉眼能看出来但不报错）。
+   同理下面 `.text-card__content.MuiCardContent-root` / `.text-card__chip.MuiChip-root`
+   都是刻意写的两个类。 */
+.text-card.MuiPaper-root {
+    position: relative;
+    border-radius: 12px;
+    margin-bottom: 12px;
+    overflow: hidden;
+}
+
+/* 顶部那条渐变细带 */
+.text-card__bar {
+    height: 4px;
+    background: linear-gradient(90deg, #0ea5e9, #14b8a6);
+}
+
+/* 右上角的条目编号 */
+.text-card__id {
+    position: absolute;
+    top: 6px;
+    right: 20px;
+}
+
+/* ⚠️ 要盖住 MUI 自带的 `&:last-child { padding-bottom: 24px }` ——
+   原实现是 `sx={{ '&:last-child': { pb: 2 } }}`，量出来四边都是 16px。 */
+.text-card__content.MuiCardContent-root {
+    padding: 16px;
+}
+
+.text-card__content.MuiCardContent-root:last-child {
+    padding-bottom: 16px;
+}
+
+.text-card__meta {
+    margin-bottom: 8px;
+    flex-wrap: nowrap;
+    overflow: hidden;
+}
+
+.text-card__meta-item {
+    white-space: nowrap;
+}
+
+.text-card__chip.MuiChip-root {
+    height: 20px;
+    font-size: 10px;
+}
+
+.text-card__chip .MuiChip-label {
+    padding-left: 8px;
+    padding-right: 8px;
+}
+
+/* ⚠️★ `display: flex` 不能少：这里原来是一个 MUI 的 `Stack direction="row"`，
+   换成 div 之后忘了补，折叠箭头就会**独占一行**（用户报的）。
+   一条 `sx` → class 的搬运里最容易漏的就是这类「组件默认行为」——
+   `Stack` 自带 `display:flex`，而 `div` 不自带。 */
+.text-card__summary {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    flex: 1;
+    min-width: 0;
+    cursor: pointer;
+}
+
+.text-card__summary-text {
+    flex: 1;
+    min-width: 0;
+}
+
+.text-card__chevron {
+    transition: transform .2s;
+    transform: rotate(0deg);
+}
+
+.text-card__chevron--open {
+    transform: rotate(90deg);
+}
+
+.text-card__preview {
+    white-space: pre-wrap;
+    word-break: break-all;
+}
+
+/* 卡片里那几排 —— 原来是 MUI 的 `Stack`（`spacing` 走的是子元素 margin，
+   每次渲染都要过一遍 styled()）。这里都是 `nowrap`，换成 `gap` **完全等价**，
+   顺手把那份开销也去掉。 */
+.text-card__meta,
+.text-card__row,
+.text-card__actions {
+    display: flex;
+    align-items: center;
+}
+
+.text-card__meta {
+    gap: 12px;
+}
+
+.text-card__row {
+    gap: 4px;
+}
+
+.text-card__actions {
+    gap: 2px;
+}
+
+.text-card__divider {
+    margin: 8px 0;
+}
+
+/* ── 文件条目卡片（components/received-item/File.tsx）──
+   外壳与文本卡片共用 `.text-card*`，只有渐变带与几处结构不同。 */
+.text-card__bar--file {
+    background: linear-gradient(90deg, #10b981, #06b6d4);
+}
+
+.file-card__row {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+}
+
+.file-card__thumb {
+    width: 40px;
+    height: 40px;
+    border-radius: 3px;
+    object-fit: cover;
+}
+
+.file-card__info {
+    flex: 1;
+    min-width: 0;
+}
+
+.file-card__name--expired {
+    text-decoration: line-through;
+}
+
+.file-card__truncated {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-top: 8px;
 }

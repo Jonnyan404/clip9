@@ -1,10 +1,11 @@
-import { useMemo, useState } from 'react';
+import { memo, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Box, Button, Card, CardContent, Chip, Divider, IconButton, Stack, Tooltip, Typography } from '@mui/material';
+import { Box, Button, Card, CardContent, Chip, Divider, IconButton, Tooltip, Typography } from '@mui/material';
 import axios from 'axios';
 import { useWebSocketStore } from '@/stores/wsStore';
 import { toast } from '@/stores/toastStore';
 import { useDisplaySettings } from '@/hooks/useDisplaySettings';
+import { useInView } from '@/hooks/useInView';
 import { useMarkdown } from '@/hooks/useMarkdown';
 import {
     SHARE_DEFAULT_TTL, deviceLabel, errorMessage, filePreviewKind,
@@ -25,7 +26,13 @@ const TEXT_PREVIEW_LIMIT = 16 * 1024;
  * ⚠️ 判型（能不能就地预览、按哪一类渲染）用 `lib/util` 的 `filePreviewKind`（**全站唯一实现**）。
  * ⚠️ 下载/预览走**直连正文**的地址（服务端签发 token 时一起给出来的 `rawUrl`），不是分享页地址。
  */
-export function ReceivedFile({ meta }: { meta: ReceivedItem }) {
+/**
+ * ⚠️★ 包 `memo`：标准模式的时间线是**分批挂载**的（见 DefaultMode 的 `renderLimit`），
+ * 每加一批都会重跑一次 `map`。没有 `memo` 的话已经画好的卡片会跟着重渲染 ——
+ * 总工作量从 50 次变成 12+24+36+48+50=170 次，分批反而更慢。
+ * `meta` 是 store 数组里的稳定引用，所以这个比较是有意义的。
+ */
+export const ReceivedFile = memo(function ReceivedFile({ meta }: { meta: ReceivedItem }) {
     const { t } = useTranslation();
     const display = useDisplaySettings();
     const room = useWebSocketStore((s) => s.room);
@@ -47,9 +54,12 @@ export function ReceivedFile({ meta }: { meta: ReceivedItem }) {
     const hasTruncated = textPreview.length > TEXT_PREVIEW_LIMIT;
     const displayedText = hasTruncated && !showFullText ? `${textPreview.slice(0, TEXT_PREVIEW_LIMIT)}\n\n...` : textPreview;
 
+    // ⚠️★ 屏外就先不算 markdown（见 useMarkdown 的 enabled）。
+    const { ref: cardRef, inView } = useInView<HTMLDivElement>();
     const md = useMarkdown(
         () => displayedText,
         () => /\.(md|markdown|mdown|mkd)$/i.test(meta.name || ''),
+        inView,
     );
 
     const ensureRawUrl = async (): Promise<string> => {
@@ -135,43 +145,43 @@ export function ReceivedFile({ meta }: { meta: ReceivedItem }) {
     const showMeta = Boolean(meta.timestamp && (display.timestamp || display.device || display.ip));
 
     return (
-        <Card variant="outlined" sx={{ borderRadius: 3, mb: 1.5, position: 'relative', overflow: 'hidden' }}>
-            <Box sx={{ height: 4, background: 'linear-gradient(90deg, #10b981, #06b6d4)' }} />
+        <Card ref={cardRef} variant="outlined" className="text-card">
+            <Box className="text-card__bar text-card__bar--file" />
             {meta.id && (
-                <Typography variant="caption" color="text.secondary" sx={{ position: 'absolute', top: 6, right: 20 }}>
+                <Typography variant="caption" color="text.secondary" className="text-card__id">
                     <MdiIcon name="mdi-pound" size={12} /> {meta.id}
                 </Typography>
             )}
-            <CardContent sx={{ '&:last-child': { pb: 2 } }}>
+            <CardContent className="text-card__content">
                 {showMeta && (
-                    <Stack direction="row" alignItems="center" spacing={1.5} sx={{ mb: 1, flexWrap: 'nowrap', overflow: 'hidden' }}>
-                        <Chip size="small" label={t('fileMessage')} color="secondary" />
+                    <div className="text-card__meta">
+                        <Chip size="small" label={t('fileMessage')} color="secondary" className="text-card__chip" />
                         {display.timestamp && (
-                            <Typography variant="caption" sx={{ whiteSpace: 'nowrap' }}>
+                            <Typography variant="caption" className="text-card__meta-item">
                                 <MdiIcon name="mdi-clock-outline" size={12} /> {formatTimestamp(meta.timestamp)}
                             </Typography>
                         )}
                         {display.device && meta.senderDevice?.type && (
-                            <Typography variant="caption" sx={{ whiteSpace: 'nowrap' }}>
+                            <Typography variant="caption" className="text-card__meta-item">
                                 {deviceLabel(meta.senderDevice)}
                             </Typography>
                         )}
                         {display.ip && meta.senderIP && (
-                            <Typography variant="caption" sx={{ whiteSpace: 'nowrap' }}>
+                            <Typography variant="caption" className="text-card__meta-item">
                                 <MdiIcon name="mdi-ip-network-outline" size={12} /> {meta.senderIP}
                             </Typography>
                         )}
-                    </Stack>
+                    </div>
                 )}
 
-                <Stack direction="row" alignItems="center" spacing={1.5}>
+                <div className="file-card__row">
                     {meta.thumbnail && !isVideo && !isAudio ? (
-                        <img src={String(meta.thumbnail)} alt="" style={{ width: 40, height: 40, borderRadius: 3, objectFit: 'cover' }} />
+                        <img src={String(meta.thumbnail)} alt="" className="file-card__thumb" />
                     ) : (
                         <MdiIcon name={isAudio ? 'mdi-music-note' : isVideo ? 'mdi-movie' : isImageName(meta.name) ? 'mdi-image-outline' : 'mdi-file-outline'} size={40} />
                     )}
-                    <Box sx={{ flex: 1, minWidth: 0 }}>
-                        <Typography variant="subtitle1" noWrap sx={{ textDecoration: expired ? 'line-through' : 'none' }} title={meta.name}>
+                    <div className="file-card__info">
+                        <Typography variant="subtitle1" noWrap className={expired ? 'file-card__name--expired' : undefined} title={meta.name}>
                             {meta.name}
                         </Typography>
                         <Typography variant="caption" color="text.secondary">
@@ -181,8 +191,8 @@ export function ReceivedFile({ meta }: { meta: ReceivedItem }) {
                                 ? (expired ? t('expiredAt', { time: formatTimestamp(meta.expire) }) : t('willExpireAt', { time: formatTimestamp(meta.expire) }))
                                 : t('neverExpires')}
                         </Typography>
-                    </Box>
-                    <Stack direction="row" alignItems="center" spacing={0.25}>
+                    </div>
+                    <div className="text-card__actions">
                         {display.cardDownload && (
                             <Tooltip title={expired ? t('expired') : t('download')}>
                                 <span>
@@ -207,12 +217,12 @@ export function ReceivedFile({ meta }: { meta: ReceivedItem }) {
                                 </IconButton>
                             </Tooltip>
                         )}
-                    </Stack>
-                </Stack>
+                    </div>
+                </div>
 
                 {expand && (
                     <>
-                        <Divider sx={{ my: 1 }} />
+                        <Divider className="text-card__divider" />
                         {loading && (
                             <Typography variant="caption" color="text.secondary">
                                 {meta.size ? `${Math.round((loaded / Number(meta.size)) * 100)}%` : '…'}
@@ -232,14 +242,14 @@ export function ReceivedFile({ meta }: { meta: ReceivedItem }) {
                             <img src={srcPreview} alt={meta.name} style={{ maxHeight: 480, maxWidth: '100%', display: 'block', margin: '0 auto' }} />
                         )}
                         {isText && hasTruncated && (
-                            <Stack direction="row" justifyContent="space-between" alignItems="center" sx={{ mt: 1 }}>
+                            <div className="file-card__truncated">
                                 <Typography variant="caption" color="text.secondary">
                                     {t('textPreviewTruncated', { limit: prettyFileSize(TEXT_PREVIEW_LIMIT) })}
                                 </Typography>
                                 <Button size="small" onClick={() => setShowFullText((v) => !v)}>
                                     {showFullText ? t('collapseTextPreview') : t('expandTextPreview')}
                                 </Button>
-                            </Stack>
+                            </div>
                         )}
                     </>
                 )}
@@ -247,3 +257,4 @@ export function ReceivedFile({ meta }: { meta: ReceivedItem }) {
         </Card>
     );
 }
+);

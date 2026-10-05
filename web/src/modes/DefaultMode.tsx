@@ -8,9 +8,11 @@ import { ReceivedFile } from '@/components/received-item/File';
 import { MdiIcon } from '@/components/ui/MdiIcon';
 import { useAppStore, selectComposerDisabledEverywhere, selectComposerFullyHidden, selectVisibleReceived, type ReceivedItem } from '@/stores/appStore';
 import { useDisplaySettings } from '@/hooks/useDisplaySettings';
-import { isImageName, looksLikeTable, looksLikeTaskList } from '@/lib/util';
+import { isFileEntry, isImageName, looksLikeTable, looksLikeTaskList } from '@/lib/util';
 
 const TIMELINE_FILTER_KEY = 'timelineFilter';
+/** 每帧最多挂载多少条（见下面 `renderLimit` 那段注释）。 */
+const FIRST_CHUNK = 12;
 const TIMELINE_FILTER_KEYS = ['all', 'text', 'image', 'file', 'task', 'table'] as const;
 type TimelineFilter = (typeof TIMELINE_FILTER_KEYS)[number];
 
@@ -67,8 +69,31 @@ export default function DefaultMode() {
         if (filter === 'task') return visible.filter((item) => item.type === 'text' && looksLikeTaskList(String(item.content || '')));
         if (filter === 'table') return visible.filter((item) => item.type === 'text' && looksLikeTable(String(item.content || '')));
         const wantImage = filter === 'image';
-        return visible.filter((item) => item.type === 'file' && isImageName(item.name) === wantImage);
+        return visible.filter((item) => isFileEntry(item) && isImageName(item.name) === wantImage);
     }, [visible, display.timelineFilter, filter]);
+
+    // ⚠️★ 分批挂载：一帧只画 `FIRST_CHUNK` 条，剩下的用 rAF 一帧加一批。
+    //
+    // 为什么必须这么做：50 条卡片一次性渲染是**一个 ~250ms 的同步任务** ——
+    // 主线程被占满，滚动、悬停、点按全部卡住（实测 ScriptDuration 218ms）。
+    // 分成几帧之后总工作量不变（配 `memo` 之后也不重复），但**没有任何一帧是长的**，
+    // 而且首屏只要画十几条 —— 切过去的那一下从 240ms 降到几十毫秒。
+    // ⚠️ 只按 `filter` / `searchQuery` 重置，**不要按 `filtered` 的数组身份重置**：
+    //    来一条新消息就会重算数组，那样会把已经展开的列表打回 12 条、再重放一遍。
+    const [renderLimit, setRenderLimit] = useState(FIRST_CHUNK);
+    useEffect(() => {
+        setRenderLimit(FIRST_CHUNK);
+    }, [filter, searchQuery]);
+
+    useEffect(() => {
+        if (renderLimit >= filtered.length) {
+            return;
+        }
+        const id = requestAnimationFrame(() => {
+            setRenderLimit((n) => Math.min(n + FIRST_CHUNK, filtered.length));
+        });
+        return () => cancelAnimationFrame(id);
+    }, [renderLimit, filtered.length]);
 
     // 新消息到达时吸顶（读者在顶部附近才跟随）。
     const prevCountRef = useRef(received.length);
@@ -91,7 +116,19 @@ export default function DefaultMode() {
             <PageToolbar variant="default" />
             <Box sx={{ maxWidth: 980, mx: 'auto', px: { xs: 1.5, md: 3 }, pb: 4, pt: 1 }}>
                 {!composerFullyHidden && (
-                    <Card variant="outlined" sx={{ borderRadius: 4, p: { xs: 0.5, md: 1.5 }, mb: 1, position: 'sticky', top: 8, zIndex: 2 }}>
+                    <Card
+                        variant="outlined"
+                        sx={{
+                            borderRadius: 4,
+                            p: { xs: 0.5, md: 1.5 },
+                            mb: 1,
+                            position: 'sticky',
+                            // ⚠️ 吸顶位置要**让开工具栏的实际高度**（由 PageToolbar 写进这个 CSS 变量）。
+                            // 写死 8px 的话，向上滚动时输入区会滑到工具栏底下被遮住一部分。
+                            top: 'var(--page-toolbar-height, 0px)',
+                            zIndex: 2,
+                        }}
+                    >
                         <UnifiedComposer ref={composerRef} />
                     </Card>
                 )}
@@ -121,10 +158,20 @@ export default function DefaultMode() {
                                     key={option.key}
                                     size="small"
                                     icon={<MdiIcon name={option.icon} size={16} />}
-                                    label={t(option.labelKey)}
+                                    // ⚠️ 窄屏只留图标（六个带字的分类在手机上会折成两行，白占一条横条的高度）。
+                                    // 文案靠 chip 上的 aria-label 保住可访问性。
+                                    label={<Box component="span" className="timeline-filter-label">{t(option.labelKey)}</Box>}
+                                    aria-label={t(option.labelKey)}
                                     color={filter === option.key ? 'primary' : 'default'}
                                     variant={filter === option.key ? 'filled' : 'outlined'}
                                     onClick={() => setTimelineFilter(option.key)}
+                                    sx={{
+                                        '& .MuiChip-icon': { ml: 1, mr: 0.5 },
+                                        '@media (max-width: 768px)': {
+                                            '& .timeline-filter-label': { display: 'none' },
+                                            '& .MuiChip-icon': { ml: '7px', mr: '7px' },
+                                        },
+                                    }}
                                 />
                             ))}
                         </Stack>
@@ -137,12 +184,20 @@ export default function DefaultMode() {
                                     size="small"
                                     variant="outlined"
                                     color="primary"
+                                    className="timeline-count-chip"
                                     label={historyUsageLabel}
                                     sx={{ position: 'absolute', top: 0, left: '50%', transform: 'translateX(-50%)', zIndex: 1 }}
                                 />
                             )}
-                            {filtered.map((item: ReceivedItem) => (
-                                <Box key={item.id} sx={{ pt: item === filtered[0] ? 1.5 : 0 }}>
+                            {filtered.slice(0, renderLimit).map((item: ReceivedItem) => (
+                                // ⚠️★ `timeline-item` 带着 `content-visibility: auto` ——
+                                // 屏外卡片**不参与布局与绘制**，切换时省掉约 20%（实测中位 323→258ms）。
+                                // 详见 components.css 里那段注释。
+                                <Box
+                                    key={item.id}
+                                    className="timeline-item"
+                                    sx={{ pt: item === filtered[0] ? 1.5 : 0 }}
+                                >
                                     {item.type === 'text' ? <ReceivedText meta={item} /> : <ReceivedFile meta={item} />}
                                 </Box>
                             ))}

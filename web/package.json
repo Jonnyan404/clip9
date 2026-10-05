@@ -6,6 +6,7 @@
     "scripts": {
         "dev": "node scripts/sync-shortcuts.mjs && vite",
         "build": "node scripts/sync-shortcuts.mjs && node scripts/check-contracts.mjs && tsc -p tsconfig.json && vite build && node after-build.mjs",
+        "deploy": "DEPLOY_STATIC=1 npm run build",
         "typecheck": "tsc -p tsconfig.json",
         "check": "node scripts/check-contracts.mjs",
         "preview": "vite preview"

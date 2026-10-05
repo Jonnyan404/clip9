@@ -202,6 +202,8 @@
     <string name="config_room_list_hint">打开 /rooms 接口，别的客户端能列出房间。下面那条只在这个开着的时候才会跑。</string>
     <string name="config_room_cleanup">清理间隔（秒）</string>
     <string name="config_room_cleanup_hint">多久清一次空房间（没连接、没消息、空闲超过这个秒数）。填 0 或负数 = 不清理。</string>
+    <string name="config_file_cleanup">文件清理间隔（秒）</string>
+    <string name="config_file_cleanup_hint">多久扫一次过期文件（删字节、删记录，并把引用它的条目一起收掉）。填 0 或负数 = 不清理 —— 但关掉之后，没人再访问的过期文件会一直占着磁盘。</string>
 
     <!-- ── 配置页 · 内容限制 ──────────────────────────────────────────────── -->
     <string name="config_section_content">内容限制</string>

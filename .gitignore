@@ -93,14 +93,19 @@ config.json
 #
 #   clip9/
 #   ├── rust/        Cargo.toml / Cargo.lock / .cargo / rust-toolchain.toml / crates/ / target/
-#   ├── web-vue3/    前端源码（构建产物编进服务端二进制）
+#   ├── web/         ★ 生产前端源码（React；构建产物编进服务端二进制）
+#   ├── web-vue3/    旧的 Vue 版前端（只留作比对，不再构建 / 不再入库）
 #   ├── cloudflare/  Worker + D1 + R2
-#   ├── shortcuts/   快捷指令（web-vue3 构建的输入）
+#   ├── shortcuts/   快捷指令（web 构建的输入）
 #   └── cases/ tools/ dev-docs/
 #
 # ⚠️★ 所有 `cargo` 命令都要在 `rust/` 里跑 —— 仓库根没有 `Cargo.toml`。
 
 # ── web-vue3（2026-09-28 从父仓库 cloud-clipboard-go/ 复刻进来）──
+# ⚠️★ 2026-10-04：**它已不是生产前端** —— 生产换成 `web/`（React 版），
+#    构建与入库链路（`tools/sync-web-assets.mjs`）也已指向 `web/`。
+#    这些规则留着是因为目录还在、依赖与产物也还在本机（只作比对）。
+#    `web/` 自己的忽略规则在 `web/.gitignore` 里。
 # ⚠️ 规则**不带结尾斜杠**（带斜杠的只匹配目录，软链挡不住）
 /web-vue3/node_modules
 /web-vue3/dist

@@ -7,7 +7,7 @@ import { MdiIcon } from '@/components/ui/MdiIcon';
 import { useAppStore, selectVisibleReceived } from '@/stores/appStore';
 import { useWebSocketStore } from '@/stores/wsStore';
 import { useLocalRooms } from '@/hooks/useLocalRooms';
-import { isImageName, looksLikeTable, looksLikeTaskList } from '@/lib/util';
+import { isFileEntry, isImageName, looksLikeTable, looksLikeTaskList } from '@/lib/util';
 
 const WIDE_MIN = 500;
 const TIMELINE_FILTER_KEY = 'timelineFilter';
@@ -62,7 +62,7 @@ export default function GlanceWall() {
         if (filter === 'task') return visible.filter((item) => item.type === 'text' && looksLikeTaskList(String(item.content || '')));
         if (filter === 'table') return visible.filter((item) => item.type === 'text' && looksLikeTable(String(item.content || '')));
         const wantImage = filter === 'image';
-        return visible.filter((item) => item.type === 'file' && isImageName(item.name) === wantImage);
+        return visible.filter((item) => isFileEntry(item) && isImageName(item.name) === wantImage);
     }, [visible, filter]);
 
     // 一次遍历算完六个数（别对每个分类各 filter 一遍 —— 那是六趟）。
@@ -73,7 +73,7 @@ export default function GlanceWall() {
                 result.text += 1;
                 if (looksLikeTaskList(String(item.content || ''))) result.task += 1;
                 if (looksLikeTable(String(item.content || ''))) result.table += 1;
-            } else if (item.type === 'file') {
+            } else if (isFileEntry(item)) {
                 if (isImageName(item.name)) result.image += 1;
                 else result.file += 1;
             }
@@ -115,7 +115,7 @@ export default function GlanceWall() {
     });
 
     const rowText = (item: typeof filtered[number]) => {
-        if (item.type === 'file') return item.name || 'file';
+        if (isFileEntry(item)) return item.name || 'file';
         const text = String(item.content || '').replace(/\s+/g, ' ').trim();
         return text || t('emptyHere');
     };

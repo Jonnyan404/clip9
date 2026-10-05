@@ -420,6 +420,16 @@
 
     .filerow .fs { color: var(--text-2); font-size: 10.5px; }
 
+    /* ── 过期文件那一行（2026-10-04）────────────────────────────────
+       ⚠️★ 过期是**状态**，不是「出错了」—— 但它必须一眼看得出来：不说的话，
+       用户只会看到「点一下存不下来」，然后以为是网络坏了。
+       ⚠️ 光标那条要写成 `.card .filerow.expired`（三个类）：下面 `.card .filerow`
+       那条 `cursor: pointer` 与两类的写法**权重相同**，靠位置分胜负 ——
+       而它在这个文件里更靠后，两类写法会被它顶掉。 */
+    .filerow .fs.bad { color: var(--danger); font-weight: 600; }
+    .filerow.expired .fn { text-decoration: line-through; }
+    .card .filerow.expired { cursor: default; opacity: .72; }
+
 
     /* ── 输入区 ─────────────────────────────────────────────── */
     /* ⚠️★ 输入区的高度可拖（2026-09-29，Jonny：「允许自由调整桌面端发送窗口的高度」）。
@@ -1816,6 +1826,7 @@ table.ra td input[type='checkbox'] { margin: 0; }
                 <div class="st" data-i18n="房间与内务">房间与内务</div>
                 <div class="chk"><span class="sq" id="cfg-roomlist"></span><span data-i18n="启用房间列表">启用房间列表</span></div>
                 <div class="field" style="margin:8px 0 0"><label data-i18n="房间清理间隔（秒，0 = 不清理）">房间清理间隔（秒，0 = 不清理）</label><input class="inp" id="cfg-cleanup" type="number" min="0" /></div>
+                <div class="field" style="margin:8px 0 0"><label data-i18n="文件清理间隔（秒，0 = 不清理）">文件清理间隔（秒，0 = 不清理）</label><input class="inp" id="cfg-filecleanup" type="number" min="0" /></div>
             </div>
             <div id="server-state" style="font-size:11.5px;color:var(--text-2)"></div>
         </div>

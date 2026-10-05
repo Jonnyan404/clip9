@@ -22,7 +22,7 @@ fn main() {
     if !dir.join("index.html").is_file() {
         panic!(
             "{} 里没有 index.html —— 前端产物没同步进来，编不出带界面的服务端。\n\
-             修法：在仓库根跑 node tools/sync-web-assets.mjs（它从 web-vue3/dist 拷过来）。\n\
+             修法：在仓库根跑 node tools/sync-web-assets.mjs（它从 web/dist 拷过来）。\n\
              ⚠️ 别改成「警告 + 继续编译」：那样编出来的二进制能跑、能连、能同步，\n\
              只是浏览器打开一片空白，而没有任何东西会告诉你少了什么。",
             dir.display()

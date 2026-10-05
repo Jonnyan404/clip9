@@ -209,6 +209,21 @@ pub struct ServerConfig {
     /// ⚠️ `<= 0` 表示**不清理**，且只在 `roomList` 开启时才跑 —— 两条都是 Go 的规矩。
     #[serde(rename = "roomCleanup")]
     pub room_cleanup: i64,
+    /// 过期文件清理 + 孤儿对账的间隔（秒），默认 300（5 分钟，照 Go 的
+    /// `cleanExpiredFilesLoop`）。实现见 `server/src/file_cleanup.rs`。
+    ///
+    /// ⚠️ `<= 0` 表示**不跑**（与 `roomCleanup` 同一个约定）。默认是开的 ——
+    /// 关掉它，过期文件的字节就只能等「有人来访问」才被回收，
+    /// 而 `uploads/` 没有任何字节总量上限，磁盘会被慢慢占满。
+    ///
+    /// ⚠️ 它**刻意不跟 `file.expire` 联动**：房间可以用 `roomAuth[x].fileExpire`
+    /// 覆盖全局，全局设 0（永不过期）时那些房间照样会过期 —— 拿全局值当开关
+    /// 会让那些房间的文件没人收。
+    ///
+    /// ⚠️ 对账（阶段 C，要扫全表）是**每 12 个间隔**跑一次，所以调小这个值会
+    /// 一并把对账变频繁。测试时调到几秒很好用，生产别调到几秒。
+    #[serde(rename = "fileCleanup")]
+    pub file_cleanup: i64,
 }
 
 impl Default for ServerConfig {
@@ -226,6 +241,7 @@ impl Default for ServerConfig {
             key: String::new(),
             room_list: false,
             room_cleanup: 3600,
+            file_cleanup: 300,
         }
     }
 }
@@ -440,6 +456,25 @@ fn normalize_auth_json_value(v: &serde_json::Value) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// `fileCleanup` 缺省 300 秒；**老配置里没有这个键也要能读进来**。
+    ///
+    /// ⚠️ 老配置缺这个键就解析失败的话，升级会变成「服务端起不来」。
+    /// `#[serde(default)]` 挂在容器上，所以这里钉一下它确实生效。
+    /// ⚠️ 还要钉住「这个旋钮存在」这件事本身：没有它，「验证后台清理真的会跑」
+    /// 就只能硬等 5 分钟一轮 —— 那种测试没人愿意跑第二次，于是清理坏了也没人发现。
+    #[test]
+    fn file_cleanup_defaults_and_parses() {
+        assert_eq!(ServerConfig::default().file_cleanup, 300, "缺省 5 分钟");
+
+        let old: ServerConfig =
+            serde_json::from_str(r#"{"port": 9501}"#).expect("老配置（没有这个键）要能读");
+        assert_eq!(old.file_cleanup, 300, "缺键走默认值");
+
+        let custom: ServerConfig =
+            serde_json::from_str(r#"{"fileCleanup": 5}"#).expect("显式给值要能读");
+        assert_eq!(custom.file_cleanup, 5, "测试时调到几秒要能用");
+    }
 
     /// `text.limit` 能不能生效 —— 这个判定是**保存时的闸**，
     /// 判错的后果是「用户配了一个看起来更大、其实更坏的上限」（见 `TEXT_LIMIT_MAX` 的注释）。

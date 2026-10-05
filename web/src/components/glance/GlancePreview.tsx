@@ -6,7 +6,7 @@ import { useWebSocketStore } from '@/stores/wsStore';
 import { toast } from '@/stores/toastStore';
 import { useMarkdown } from '@/hooks/useMarkdown';
 import {
-    SHARE_DEFAULT_TTL, copyTextToClipboard, deviceLabel, errorMessage, filePreviewKind, formatTimestamp, prettyFileSize,
+    SHARE_DEFAULT_TTL, copyTextToClipboard, deviceLabel, errorMessage, filePreviewKind, formatTimestamp, isFileEntry, prettyFileSize,
 } from '@/lib/util';
 import { createShareLink } from '@/services/share';
 import { MarkdownBody } from '@/components/MarkdownBody';
@@ -31,9 +31,19 @@ export function GlancePreview({ item }: { item: ReceivedItem | null }) {
     const [loading, setLoading] = useState(false);
     const [downloading, setDownloading] = useState(false);
 
-    const isFile = item?.type === 'file';
+    const isFile = isFileEntry(item);
     const content = String(item?.content || '');
+    // 文件条目的**可预览类型**。判型收在 `lib/util.ts` 的 `filePreviewKind`（**全站唯一实现**）。
+    // ⚠️ 只看扩展名、不看内容 —— 服务端不嗅探、客户端也不嗅探，两边同一套标准。
     const kind = isFile ? filePreviewKind(item?.name) : '';
+    // ⚠️★ 过期文件**不去取预览**。取了必然失败（服务端回 `file_expired`），结果是
+    // 「页面上什么都没有 + 白弹一个『文件已过期』的气泡」—— 用户明确不要这个气泡：
+    // 过期状态应当**直接画在页面上**（见下面的兜底块）。
+    //
+    // ⚠️ 这一条**偏离**了 Vue（Vue 的 `canPreview` 不含过期判断，所以 Vue 会弹气泡）——
+    // 是用户看了实际效果之后**明确要求**改的，不是自作主张。
+    const expired = Boolean(item?.expire && Number(item.expire) > 0 && Date.now() / 1000 > Number(item.expire));
+    const canPreview = Boolean(isFile && kind && !expired);
     const md = useMarkdown(() => content);
 
     const ensureRawUrl = async (): Promise<string> => {
@@ -44,7 +54,9 @@ export function GlancePreview({ item }: { item: ReceivedItem | null }) {
     useEffect(() => {
         setPreviewSrc('');
         setTextPreview('');
-        if (!item || !isFile || !kind) {
+        // ⚠️ 不是文件 / 类型不支持预览 / 已过期：什么都不取（也就不会弹气泡），
+        // 直接落到下面的兜底块。
+        if (!item || !canPreview) {
             return;
         }
         let cancelled = false;
@@ -131,7 +143,21 @@ export function GlancePreview({ item }: { item: ReceivedItem | null }) {
                         {!loading && kind === 'video' && previewSrc && <video src={previewSrc} controls style={{ maxWidth: '100%', maxHeight: '46vh', borderRadius: 8 }} />}
                         {!loading && kind === 'audio' && previewSrc && <audio src={previewSrc} controls style={{ width: '100%' }} />}
                         {!loading && kind === 'text' && textPreview && <pre className="code-block" style={{ width: '100%', maxHeight: '46vh' }}>{textPreview}</pre>}
-                        {!loading && !kind && <MdiIcon name="mdi-file-outline" size={40} />}
+                        {/* ⚠️★ 兜底块 = Vue 那条 `v-if/v-else-if` 链最后的 `v-else`：
+                            **只要上面四路预览一路都没命中，就显示它**。
+                            以前这里写的是 `!kind`，于是「类型认得出、但字节取不到」的情况
+                            四路全空、图标也不显示 → 整块**空白**。
+                            因为 `filePreviewKind` 只返回 image/video/audio/text/'' 这几种，
+                            而 previewSrc / textPreview 又只在取数成功时才被赋值，
+                            所以 `!previewSrc && !textPreview` 与 Vue 的 `v-else` **逐字等价**。
+                            ⚠️ 过期的情况在这里**显式说明**（图标 + 「已过期」），
+                            而不是像以前那样弹一个气泡了事 —— 状态要看得见，不靠一闪而过的提示。 */}
+                        {!loading && !previewSrc && !textPreview && (
+                            <Stack alignItems="center" spacing={0.5} sx={{ color: expired ? 'error.main' : 'text.secondary' }}>
+                                <MdiIcon name={expired ? 'mdi-timer-off' : 'mdi-file-outline'} size={40} />
+                                {expired && <Typography variant="caption" color="error.main">{t('expired')}</Typography>}
+                            </Stack>
+                        )}
                     </Stack>
                     <Stack>
                         <Typography variant="body2" fontWeight={500} sx={{ wordBreak: 'break-all' }}>{item.name || 'file'}</Typography>
@@ -147,8 +173,19 @@ export function GlancePreview({ item }: { item: ReceivedItem | null }) {
 
             <Stack direction="row" alignItems="center" spacing={0.5} sx={{ borderTop: 1, borderColor: 'divider', pt: 1, flexWrap: 'wrap' }}>
                 {isFile ? (
-                    <Button size="small" variant="contained" loading={downloading} onClick={downloadFile} startIcon={<MdiIcon name="mdi-download" size={16} />}>
-                        {t('download')}
+                    // ⚠️★ 过期就**置灰**（与标准模式 `received-item/File.tsx` 同一套）：
+                    // 禁用 + 换成划掉的下载图标 + 文案改成「已过期」。
+                    // 不置灰的话点下去只会拿到一个「文件已过期」的气泡 ——
+                    // 那颗按钮**看起来能点**才是真正的问题。
+                    <Button
+                        size="small"
+                        variant="contained"
+                        loading={downloading}
+                        disabled={expired}
+                        onClick={downloadFile}
+                        startIcon={<MdiIcon name={expired ? 'mdi-download-off' : 'mdi-download'} size={16} />}
+                    >
+                        {expired ? t('expired') : t('download')}
                     </Button>
                 ) : (
                     <Button size="small" variant="text" onClick={copyContent} startIcon={<MdiIcon name="mdi-content-copy" size={16} />}>

@@ -22,7 +22,7 @@ const SHELL_TITLE_END = '</title>';
 
 // Worker 没有子路径部署的概念（Go 侧有 `-prefix`），基准目录恒为根。
 // ⚠️ 前端也依赖这个值：它把 `document.baseURI` 同时当作 axios 的 baseURL 和路由 base
-// （见 web-vue3/src/base.js、src/router/index.js）。改这里的形状要一并改那边。
+// （见 web/src/lib/base.ts、web/src/router/index.tsx）。改这里的形状要一并改那边。
 export const SHELL_BASE_HREF = '/';
 
 export function escapeHtml(value) {

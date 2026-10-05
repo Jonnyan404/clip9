@@ -56,7 +56,12 @@ export default function StickyWall() {
     const historyUsageLabel = `${received.length}/${historyLimit}`;
 
     return (
+        // ⚠️★ `sticky-wall` 这个类名**必须留着**：便签墙的暗色皮肤（米黄纸在暗色下的
+        // 替身色）就是按 `.dark .sticky-wall .sticky-composer*` 作用在发送区上的。
+        // 少了它，暗色下发送区会保持浅色米黄纸（等于整块「亮着」）。
+        // 它同时也是与 Vue 版对齐的锚点 —— Vue 的 StickyWall 根节点就是这个类。
         <Box
+            className="sticky-wall"
             onDragEnter={(e) => { e.preventDefault(); dragDepth.current += 1; setDragover(true); }}
             onDragOver={(e) => e.preventDefault()}
             onDragLeave={(e) => { e.preventDefault(); dragDepth.current = Math.max(0, dragDepth.current - 1); if (dragDepth.current === 0) setDragover(false); }}
@@ -105,7 +110,10 @@ export default function StickyWall() {
                         sx={{ flex: 1, minHeight: 0, overflowY: 'auto', overflowX: 'hidden', display: 'flex', flexWrap: 'wrap', gap: 1.75, py: 1.75, alignContent: 'flex-start' }}
                     >
                         {items.map((item) => (
-                            <Box key={item.id} sx={{ flex: '1 1 220px', maxWidth: '100%', minWidth: 0, display: 'flex' }}>
+                            // ⚠️★ 类名 `sticky-wall__item` 与 Vue 同名 —— 样式在 components.css 里。
+                            // **别**在这里用 `sx` 重写：`> *` 那条选择器（让卡片撑满包装盒）
+                            // 用 `sx` 表达不出来，漏掉它的后果就是卡片按内容宽收缩、一排里宽窄不一。
+                            <Box key={item.id} className="sticky-wall__item">
                                 <StickyNote meta={item} />
                             </Box>
                         ))}

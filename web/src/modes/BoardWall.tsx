@@ -11,7 +11,7 @@ import { useAppStore, type ReceivedItem } from '@/stores/appStore';
 import { useWebSocketStore } from '@/stores/wsStore';
 import { toast } from '@/stores/toastStore';
 import { useDisplaySettings } from '@/hooks/useDisplaySettings';
-import { copyTextToClipboard, deviceLabel, errorMessage, formatTimestamp, isImageName, prettyFileSize } from '@/lib/util';
+import { copyTextToClipboard, deviceLabel, errorMessage, formatTimestamp, isFileEntry, isImageName, prettyFileSize } from '@/lib/util';
 import { updateEntryColumn } from '@/services/share';
 
 const COLUMNS = [
@@ -72,7 +72,7 @@ export default function BoardWall() {
             if (device) parts.push(device);
         }
         if (display.ip && item.senderIP) parts.push(String(item.senderIP));
-        if (item.type === 'file' && item.size) parts.push(prettyFileSize(Number(item.size)));
+        if (isFileEntry(item) && item.size) parts.push(prettyFileSize(Number(item.size)));
         return parts.join(' · ');
     };
 
@@ -99,7 +99,12 @@ export default function BoardWall() {
     const historyUsageLabel = useMemo(() => `${received.length}/${historyLimit}`, [received.length, historyLimit]);
 
     return (
-        <Box sx={{ display: 'flex', flexDirection: 'column', height: '100dvh' }}>
+        // ⚠️★ `board-wall` 这个类名**必须留着**：看板那几个面板色（`--board-panel-bg` /
+        // `--board-hairline` / `--board-hint`）由它（以及 `.dark .board-wall`）提供，
+        // 而发送区（StickyComposer variant="board"）靠这几个变量取色。
+        // 它同时也是与 Vue 版对齐的锚点 —— Vue 的 BoardWall 根节点就是这个类。
+        // 少了它：浅色下靠 var() 兜底值看着还正常，**暗色下会白底配浅字**（等于看不见）。
+        <Box className="board-wall" sx={{ display: 'flex', flexDirection: 'column', height: '100dvh' }}>
             <PageToolbar variant="board" />
             <Box sx={{ flex: 1, minHeight: 0, width: '100%', maxWidth: 1200, mx: 'auto', px: 1.5, display: 'flex', flexDirection: 'column' }}>
                 <Stack direction="row" justifyContent="space-between" sx={{ py: 1 }}>
@@ -161,7 +166,7 @@ export default function BoardWall() {
                                         }}
                                     >
                                         <Stack direction="row" alignItems="flex-start" spacing={0.5}>
-                                            {item.type === 'file' ? (
+                                            {isFileEntry(item) ? (
                                                 <>
                                                     <MdiIcon name={isImageName(item.name) ? 'mdi-image-outline' : 'mdi-file-outline'} size={14} />
                                                     <Typography variant="caption" sx={{ wordBreak: 'break-all' }}>{item.name || 'file'}</Typography>
@@ -215,7 +220,7 @@ export default function BoardWall() {
             <Dialog open={Boolean(detailItem)} onClose={() => setDetailItem(null)} maxWidth="sm" fullWidth>
                 <DialogTitle sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
                     <Typography variant="caption" sx={{ letterSpacing: '0.04em' }}>
-                        {detailItem?.type === 'file' ? 'FILE' : 'TEXT'}
+                        {isFileEntry(detailItem) ? 'FILE' : 'TEXT'}
                     </Typography>
                     <Typography variant="caption" color="text.secondary" sx={{ flex: 1 }}>
                         {detailItem?.timestamp ? formatTimestamp(detailItem.timestamp) : ''}
@@ -225,7 +230,7 @@ export default function BoardWall() {
                     </IconButton>
                 </DialogTitle>
                 <DialogContent>
-                    {detailItem?.type === 'file' ? (
+                    {detailItem && isFileEntry(detailItem) ? (
                         <Stack direction="row" alignItems="center" spacing={1}>
                             <MdiIcon name={isImageName(detailItem.name) ? 'mdi-image-outline' : 'mdi-file-outline'} size={18} />
                             <Typography variant="body2" sx={{ wordBreak: 'break-all' }}>{detailItem.name || 'file'}</Typography>
@@ -235,7 +240,7 @@ export default function BoardWall() {
                         <BoardCardBody meta={detailItem} />
                     ) : null}
                     <Stack direction="row" alignItems="center" spacing={0.5} sx={{ mt: 2, flexWrap: 'wrap' }}>
-                        {detailItem && detailItem.type !== 'file' && (
+                        {detailItem && !isFileEntry(detailItem) && (
                             <Button size="small" variant="text" startIcon={<MdiIcon name="mdi-content-copy" size={16} />} onClick={() => copyItemText(detailItem)}>
                                 {t('copyText')}
                             </Button>

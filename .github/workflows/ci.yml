@@ -7,10 +7,14 @@ name: CI
 #   · `rust` 只管 cargo 那套（⚠️ `cargo` 只能在 `rust/` 里跑）。
 #
 # ⚠️★ 「入库的前端产物 vs 前端源码」**不能逐字节比构建产物**：
-# `web-vue3/vite.config.js` 每次构建都注入一个**随机** build id（故意的 —— 让 PWA 缓存失效、
-# 并能核对线上跑的是哪次构建），入口 chunk 又与 ShareView chunk 互相引用对方带 hash 的文件名，
+# `web/vite.config.ts` 每次构建都注入一个**随机** build id（故意的 —— 让 PWA 缓存失效、
+# 并能核对线上跑的是哪次构建），入口 chunk 又与 SharePage chunk 互相引用对方带 hash 的文件名，
 # 于是每次构建的文件名都不一样，逐字节比就是**每次必红**。所以那道判据比的是**源码指纹**
 # （`tools/sync-web-assets.mjs --check`），Rust 侧那条测试守的是另一半（`static/` 与同步清单）。
+#
+# ⚠️★ 2026-10-04 起**生产前端是 `web/`（React 版）**：这个 job 编的是 `web/`，
+# 入库的产物也由它同步。`web-vue3/`（Vue 版）只留作比对 —— 它的静态自检还留着
+# （`check-display-semantics.mjs` 只读源码文本、不需要 node_modules），但**不再构建**。
 
 on:
   push:
@@ -36,14 +40,16 @@ jobs:
         with:
           node-version: 22
           cache: npm
-          cache-dependency-path: web-vue3/package-lock.json
+          cache-dependency-path: web/package-lock.json
 
       - name: 装依赖（npm ci：按 lockfile 装）
-        working-directory: web-vue3
+        working-directory: web
         run: npm ci
 
-      - name: 构建前端（sync-shortcuts + vite build + after-build）
-        working-directory: web-vue3
+      # ⚠️ `npm run build` 里已经串了 `check-contracts.mjs`（零依赖模块字节一致 / 外壳形状 /
+      # PWA 放行表 / i18n 无死键 / 已删模式未复活）与 `tsc`，所以这里不用再单列一步。
+      - name: 构建前端（sync-shortcuts + 契约守卫 + tsc + vite build + after-build）
+        working-directory: web
         run: npm run build
 
       # ⚠️★ 界面上的几条跨文件约定（输入框粘文件要拦默认粘贴、快捷指令时间轴的日期

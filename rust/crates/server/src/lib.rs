@@ -53,6 +53,7 @@ pub mod automation_page;
 pub mod config_file;
 pub mod cors;
 pub mod error;
+pub mod file_cleanup;
 pub mod files;
 pub mod handlers;
 pub mod migrate;

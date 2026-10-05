@@ -223,16 +223,16 @@ deploy_worker() {
     echo "$WORKER_URL" > .worker_url
 }
 
-# 步骤 4: 构建 Vue3 前端并拷贝为 Worker 静态资源
+# 步骤 4: 构建 React 前端并拷贝为 Worker 静态资源
 build_frontend_assets() {
-    info "=== 步骤 4: 构建 Vue3 前端 (web-vue3) ==="
+    info "=== 步骤 4: 构建 React 前端 (web) ==="
 
-    if [ ! -d "../web-vue3" ]; then
-        error "未找到 web-vue3 目录，请确保在仓库根目录的 cloudflare/ 下执行本脚本"
+    if [ ! -d "../web" ]; then
+        error "未找到 web 目录，请确保在仓库根目录的 cloudflare/ 下执行本脚本"
         exit 1
     fi
 
-    cd ../web-vue3 || exit 1
+    cd ../web || exit 1
 
     if [ ! -d "node_modules" ]; then
         info "安装前端依赖..."

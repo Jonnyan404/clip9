@@ -86,7 +86,17 @@ export interface AppConfig {
 
 export interface ReceivedItem {
     id: string;
-    type: 'text' | 'file';
+    /**
+     * 条目类型。⚠️★ **别拿它做 `=== 'file'` 判定**，用 `lib/util.ts` 的 `isFileEntry`。
+     *
+     * 这个字段有**两种来源**、取值不一样：
+     *   · WS `receive` / `update` 事件 → 入库时的类型，只会是 `text` / `file`；
+     *   · 历史接口（`/content`、`/content/latest`）→ `content_entry()` 发的 **MIME 派生**类型，
+     *     可能是 `image` / `audio` / `video` / `document` / `archive` / `file`。
+     * 所以 `=== 'file'` 会把所有图片/音视频当成文本，且**刷新前后表现不同**。
+     * 唯一可靠的判据是「是不是 `text`」——收在 `isFileEntry` 里，别再各写一份。
+     */
+    type: string;
     content?: string;
     name?: string;
     size?: number;
