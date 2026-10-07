@@ -72,6 +72,9 @@ router.get('/push', WebSocketHandler.connect);
 
 // 健康检查
 router.get('/health', () => new Response('OK'));
+// ⚠️ 自建服务端那条叫 `/healthz`（`rust/crates/server/src/lib.rs`）—— 两边名字不一样的话，
+// 任何「先探活再连」的脚本/监控都要为两个后端各写一份。补一个别名，两边都认。
+router.get('/healthz', () => new Response('OK'));
 
 // 兜底路由：资源层没命中、上面也没命中时走这里。
 //
