@@ -320,7 +320,7 @@ fn main() {
     // 「关于」页的资源占用（CPU / 内存 / 磁盘）。
     // ⚠️ 采样线程**一直活着**，但只有页面切进「关于」那一页时才真的采
     //（见 `resources` 模块头：少了那条开关，客户端会永远每 2 秒醒一次）。
-    let resources = resources::Resources::new(args.data_dir.clone());
+    let resources = resources::Resources::new();
     resources.spawn_watcher(Arc::clone(&store), server.clone());
 
     let app = tauri::Builder::default()
@@ -404,7 +404,6 @@ fn main() {
             // 与上面那几条同一条规矩。
             // 「关于」页的资源占用（2026-10-07）。
             commands::resources_sample,
-            commands::resources_remeasure,
             commands::resources_watch,
             commands::update_status,
             commands::update_check,

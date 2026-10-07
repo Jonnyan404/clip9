@@ -783,12 +783,12 @@ pub async fn server_restart(server: State<'_, Option<Arc<ServerProcess>>>) -> Re
 // 不是意外：界面上要显示「为什么没成」（没网 / 签名不对 / 装不上），
 // 而抛异常的话页面只能看到一个字符串，分不出该说什么。
 
-// ── 「关于」页的资源占用（2026-10-07）──────────────────────────────────
+// ── 「本地服务端」那一页的资源占用（2026-10-07）──────────────────────────
 //
-// ⚠️★ 三个命令**都不返回错误**：读不到就是 `None`（界面上显示 `—`）。
+// ⚠️★ 两个命令**都不返回错误**：读不到就是 `None`（界面上显示 `—`）。
 // 「这台机器上读不到 CPU」不该是一次失败，更不该让那一页打不开。
 
-/// 采一拍（壳与内嵌服务端的 CPU / 内存，以及数据目录与磁盘）。
+/// 采一拍（壳与内嵌服务端的 CPU / 内存）。
 #[tauri::command]
 pub fn resources_sample(
     resources: State<'_, Arc<crate::resources::Resources>>,
@@ -800,18 +800,7 @@ pub fn resources_sample(
     resources.sample(pid)
 }
 
-/// 重新量一次数据目录（**手动触发**：它是个遍历，不跟着刷新跑）。
-#[tauri::command]
-pub fn resources_remeasure(
-    resources: State<'_, Arc<crate::resources::Resources>>,
-    server: State<'_, Option<Arc<crate::server_process::ServerProcess>>>,
-) -> ResourceSample {
-    resources.remeasure();
-    let pid = server.as_ref().and_then(|s| s.child_pid());
-    resources.sample(pid)
-}
-
-/// 页面切进 / 切出「关于」那一页。
+/// 页面切进 / 切出那一页。
 ///
 /// ⚠️★ **必须由页面告诉壳**：壳看不见 DOM，不知道那一页是不是正被看着。
 /// 少了它的症状很具体 —— 用户关掉设置窗口之后，这个客户端会**每 2 秒醒一次、永远醒着**，

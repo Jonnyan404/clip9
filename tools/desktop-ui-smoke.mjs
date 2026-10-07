@@ -3674,6 +3674,52 @@ if (entryViewFiles.length !== 1) {
   }
 }
 
+// ── 判据 41：资源占用「盯的那一页」必须是「画它的那一页」────────────────────
+// ⚠️★ 2026-10-07 把这块从「关于」页搬进「本地服务端」页时才看清的一条：
+//    `syncResourceWatch()` 里那个 `el('pane-…')` 决定**壳采不采样**，
+//    而画数字的 id（`srv-res-*`）住在 index.html 的**某一页**里。两边一旦不一致，
+//    症状是**设置开着、数字永远是 `—`** —— 一笔报错都没有（壳那头只是「页面没在看」），
+//    而且判据 1 只管「id 存不存在」、管不了「它在哪一页」。搬页面的人最容易漏这一处。
+{
+  const fn = js.match(/function syncResourceWatch\(\)[\s\S]*?\n\}/);
+  const pane = fn && fn[0].match(/\bel\(\s*'(pane-[a-z-]+)'\s*\)/);
+  const resourceIds = [...js.matchAll(/\bel\(\s*'(srv-res-[a-z-]+)'\s*\)/g)].map((m) => m[1]);
+  const problems = [];
+  if (!fn) {
+    problems.push('app.js 里找不到 `syncResourceWatch()` —— 那一页可见时没人告诉壳，采样永远不会跑');
+  } else if (!pane) {
+    problems.push("`syncResourceWatch()` 里没有 `el('pane-…')` —— 判不出那一页可不可见");
+  }
+  if (resourceIds.length === 0) {
+    problems.push('app.js 里没有 `srv-res-*` 的引用 —— 这条判据失去了参照物（改名了？）');
+  }
+  if (fn && pane && resourceIds.length) {
+    // 把 index.html 按 pane 切开：从这一页的 `<div class="pane" id="pane-x"` 到**下一个** pane 开头。
+    // ⚠️ 各 pane 是同级、按文档顺序排的，所以「下一个 pane 的位置」就是这一页的结尾。
+    const starts = [...html.matchAll(/<div class="pane" id="(pane-[a-z-]+)"/g)];
+    const at = starts.findIndex((m) => m[1] === pane[1]);
+    if (at < 0) {
+      problems.push(`index.html 里没有 ${pane[1]} 这一页`);
+    } else {
+      const from = starts[at].index;
+      const to = at + 1 < starts.length ? starts[at + 1].index : html.length;
+      const slice = html.slice(from, to);
+      for (const id of resourceIds) {
+        if (!slice.includes(`"${id}"`)) {
+          problems.push(`${id} 不在 ${pane[1]} 里 —— 壳会以为「没人在看这一页」，数字永远是 —`);
+        }
+      }
+    }
+  }
+  if (problems.length) {
+    failed = true;
+    console.error(`✗ 判据 41：资源占用盯的那一页与画它的那一页对不上（${problems.length} 处）：`);
+    for (const one of problems) console.error(`    · ${one}`);
+  } else {
+    console.log(`· 判据 41：资源占用盯的 ${pane[1]} 就是画它的那一页（${resourceIds.length} 个 id）。`);
+  }
+}
+
 if (cssOnly.length) {
   console.log(`· ${cssOnly.length} 个 id 只被选择器用（形如 #id { … }），正常：${cssOnly.join('、')}`);
 }if (dynamicPrefixes.size) {

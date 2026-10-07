@@ -650,14 +650,4 @@ pub struct ResourceSample {
     /// ⚠️★ **没在跑时是 `None`** —— 界面上显示 `—`，**不是 0%**。
     /// 0% 读起来像「它在跑但很闲」，那是两回事。
     pub server: Option<ProcSample>,
-    /// 数据目录占了多少（字节）。`None` = 还没算过。
-    pub dir_bytes: Option<u64>,
-    /// 上面那个数是**什么时候**算的（Unix 秒）。
-    ///
-    /// ⚠️★ 它是个**遍历**（`uploads/` 可能几百 MB），所以**不跟着 2 秒刷新跑** ——
-    /// 界面上要把它标出来（「3 分钟前」），否则用户会以为那是实时值。
-    pub dir_at: Option<i64>,
-    /// 数据目录所在盘的剩余 / 总量。
-    pub disk_free: Option<u64>,
-    pub disk_total: Option<u64>,
 }
