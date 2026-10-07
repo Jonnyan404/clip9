@@ -225,6 +225,12 @@ pub fn router(state: Arc<AppState>) -> Router {
             post(handlers::content_column).fallback(only_post),
         )
         .route("/rooms", get(handlers::rooms).fallback(only_get))
+        // ⚠️ 房间活跃度（热力图的数据源）。⚠️ `tz` **必须由客户端给** ——
+        // 服务端不知道看图的人在哪个时区，而「今天」是按**他的**本地日算的。
+        .route(
+            "/stats/daily",
+            get(handlers::stats_daily).fallback(only_get),
+        )
         // ── 文件 ──
         // ⚠️ `/upload/chunk`（初始化，body 是文件名）和 `/upload/chunk/{uuid}`（追加分片）
         // 是**两条不同的路由** —— Go 那边靠「路径后缀 + Content-Type 全等」在一个 handler 里

@@ -891,6 +891,96 @@ pub fn content_entry(entry: &ReceiveHolder) -> serde_json::Value {
 /// - 返回 **正序**（旧的在前）—— 客户端直接 append 渲染，拿 `messages[0].id` 当下一页游标；
 /// - **游标失效不报错**：`before` 指向一条已被撤销的消息是很正常的事，那不是客户端的错，
 ///   退化成「最近 `limit` 条」就好，5xx 只会让它卡住。
+// ── /stats/daily ──────────────────────────────────────────────────────
+
+/// `days` 的默认值：**53 周 × 7 天**（与 GitHub 那张图同构）。
+const STATS_DAYS_DEFAULT: usize = 371;
+/// `days` 的上限。⚠️ 不给上限的话，一个 `days=100000` 的请求会让服务端去分一个
+/// 十万格的数组 —— 而那张图根本画不下（宽度与天数成正比）。
+const STATS_DAYS_MAX: usize = 371;
+/// 一次扫描最多读多少条时间戳（防呆）。
+///
+/// ⚠️ 房间本身被 `per_room` 限着（默认 1 万），这里给 5 万是留出「有人把它调大了」的余量。
+/// 撞到这个上限时响应里 `truncated = true` —— **要说出来**，
+/// 否则用户看到的是「图上的数字比实际少」，而他没有任何办法知道。
+const STATS_SCAN_LIMIT: usize = 50_000;
+
+/// `days` 的取值规则（纯函数 —— 它就是有测试的那一处）。
+#[must_use]
+pub fn stats_days(raw: Option<&str>) -> usize {
+    raw.and_then(|v| v.trim().parse::<usize>().ok())
+        .filter(|&n| n > 0)
+        .map_or(STATS_DAYS_DEFAULT, |n| n.min(STATS_DAYS_MAX))
+}
+
+/// `GET /stats/daily` —— 房间的按天活跃度（热力图的数据源）。
+///
+/// 参数：`room`（默认房间）、`days`（默认 371）、`tz`（IANA 名字，默认 UTC）。
+///
+/// ⚠️★ `tz` **必须由客户端给**：服务端不知道看图的人在哪个时区，
+/// 而「今天」是按**他的**本地日算的。用 UTC 分桶的话，东八区晚上 8 点之后的活跃
+/// 会被算进第二天 —— 而这张图正是用来看「哪几天多」的。
+///
+/// ⚠️ 鉴权与 `/content` 同一套。⚠️ **受保护的房间仍然要凭据**：
+/// 「这个房间有多活跃」本身就是一个可探测的信号，不能因为「它不泄露正文」就放开。
+pub async fn stats_daily(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Query(query): Query<HashMap<String, String>>,
+) -> Response {
+    let room = normalize_room_name(query.get("room").map(String::as_str).unwrap_or(""));
+    let token = extract_auth_token(&headers, query.get("auth").map(String::as_str));
+    if !state.can_access_room(&room, &token) {
+        return shortcuts::room_forbidden();
+    }
+
+    let days = stats_days(query.get("days").map(String::as_str));
+    let requested_tz = query.get("tz").map(String::as_str).unwrap_or("");
+    let tz = clip9_core::stats::resolve_tz(requested_tz);
+    let last_day = clip9_core::stats::today_in(&tz, now_secs());
+
+    // ⚠️★ 缓存键里带**当天**：跨过午夜它自己就失效了，不需要任何定时清理。
+    let cache_key = format!("{room}|{tz}|{days}|{last_day}");
+    if let Some(hit) = state.stats_cache_get(&cache_key) {
+        return json_response(&hit);
+    }
+
+    let since = clip9_core::stats::local_day_start_utc(
+        clip9_core::stats::first_day_of(last_day, days),
+        &tz,
+    );
+    let stamps = match state
+        .store
+        .room_timestamps_since(&room, since, STATS_SCAN_LIMIT)
+    {
+        Ok(stamps) => stamps,
+        Err(e) => {
+            tracing::error!(error = %e, room = %room, "统计房间活跃度失败");
+            return write_error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "store_failed",
+                "Failed to read activity",
+                "读取活跃度失败",
+            );
+        }
+    };
+
+    let counts = clip9_core::stats::bucket_by_day(&stamps, last_day, days, &tz);
+    let activity = clip9_core::stats::summarize(&counts, last_day);
+    let body = json!({
+        "room": room,
+        // ⚠️ 回填**实际用的**时区：认不出来的名字会回落成 UTC，
+        // 而客户端得能看出这件事（否则它会以为图是按自己那个时区画的）。
+        "tz": tz.name(),
+        "requestedTz": requested_tz,
+        // ⚠️ 撞到扫描上限时要说出来（见 `STATS_SCAN_LIMIT`）。
+        "truncated": stamps.len() >= STATS_SCAN_LIMIT,
+        "activity": activity,
+    });
+    state.stats_cache_put(cache_key, body.clone());
+    json_response(&body)
+}
+
 pub async fn content_list(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
@@ -1373,6 +1463,23 @@ mod tests {
     /// 规则错了的表现是**静默的**：要么一次返回太多（把「一次推 2MB」从 WS 挪到 HTTP），
     /// 要么比配置少（SPA 突然少看一截历史）。纯函数，直接测。
     #[test]
+    /// ★ `days` 的取值规则：缺省 / 非数 / 0 / 超上限。
+    ///
+    /// ⚠️ 0 与负数**不是**「不画」，是「没给」—— 当成默认值。
+    /// 当成 0 的话返回一张空图，而用户会以为「这个房间一条都没有」。
+    #[test]
+    fn stats_days_clamps_and_defaults() {
+        assert_eq!(stats_days(None), STATS_DAYS_DEFAULT, "缺省 = 53 周");
+        assert_eq!(stats_days(Some("")), STATS_DAYS_DEFAULT);
+        assert_eq!(stats_days(Some("abc")), STATS_DAYS_DEFAULT);
+        assert_eq!(stats_days(Some("0")), STATS_DAYS_DEFAULT, "0 = 没给，不是空图");
+        assert_eq!(stats_days(Some("-5")), STATS_DAYS_DEFAULT, "负数同上");
+        assert_eq!(stats_days(Some("90")), 90);
+        assert_eq!(stats_days(Some(" 90 ")), 90, "首尾空白要忍");
+        assert_eq!(stats_days(Some("99999")), STATS_DAYS_MAX, "超上限夹住");
+        assert_eq!(stats_days(Some("371")), 371, "正好等于上限是合法的");
+    }
+
     fn content_list_limit_clamps_to_history_and_the_hard_cap() {
         // 缺省值 = 有效上限（同一根旋钮）
         assert_eq!(content_list_limit(None, 50), 50);

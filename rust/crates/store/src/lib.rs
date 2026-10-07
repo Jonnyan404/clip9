@@ -489,6 +489,40 @@ impl Store {
         Ok(Some(serde_json::from_slice(bytes.value())?))
     }
 
+    /// 某房间自 `since`（含）以来的消息**时间戳**，新的在前。
+    ///
+    /// ⚠️★ **只读 key，不碰 value。** 时间戳就在 key 里（`ts_desc` 是保序倒序编码），
+    /// 所以「按天统计活跃度」这件事**不需要反序列化任何一条消息的正文** ——
+    /// 这是它便宜的原因，也是这个查询敢放在请求路径上的理由。
+    /// 谁要是顺手改成 `serde_json::from_slice(value)`，成本立刻上一个量级。
+    ///
+    /// ⚠️ key 是**时间倒序**的（新的在前），所以一旦读到 `since` 之前就可以**停** ——
+    /// 老房间不会因为历史长而变慢。
+    ///
+    /// ⚠️ `limit` 是防呆：房间理论上被 `per_room` 限着，但统计是只读路径，
+    /// 不该因为某个房间把上限调大了就把内存吃光。
+    pub fn room_timestamps_since(&self, room: &str, since: i64, limit: usize) -> Result<Vec<i64>> {
+        let room = normalize_room_name(room);
+        let txn = self.db.begin_read()?;
+        let messages = txn.open_table(MESSAGES)?;
+        let (low, high) = keys::room_bounds(room.as_str());
+
+        let mut out = Vec::new();
+        for row in messages.range(low..=high)? {
+            let (key, _value) = row?;
+            let (_room, ts_desc_be, _id) = key.value();
+            let ts = ts_from_desc(ts_desc_be);
+            if ts < since {
+                break;
+            }
+            out.push(ts);
+            if out.len() >= limit {
+                break;
+            }
+        }
+        Ok(out)
+    }
+
     /// 某房间最近 `limit` 条，**新的在前**。
     pub fn recent_desc(&self, room: &str, limit: usize) -> Result<Vec<ReceiveHolder>> {
         let room = normalize_room_name(room);

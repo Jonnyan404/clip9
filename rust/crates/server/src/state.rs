@@ -72,6 +72,12 @@ pub struct AppState {
     /// ⚠️ 它是**内存态**，重启即空 —— 这是对的：去重窗口（10 分钟）本来就是「防手抖刷新」，
     /// 不是结算依据。持久化的计数在 store 的分享记录里。
     share_visits: Mutex<HashMap<String, i64>>,
+    /// 房间活跃度那一次的短缓存（见 [`AppState::stats_cache_get`]）。
+    ///
+    /// ⚠️★ 键里带**当天**，所以跨过午夜它自己就失效了 —— 不需要定时清理任务。
+    /// ⚠️ 只留最近几条：这是个「偶尔看一眼」的接口，缓存是为了挡住
+    /// 「反复开关那个弹窗」，**不是**为了当数据库用。
+    stats_cache: Mutex<Vec<(String, i64, serde_json::Value)>>,
 }
 
 impl std::fmt::Debug for AppState {
@@ -98,6 +104,7 @@ impl AppState {
             static_dir,
             share_key,
             share_visits: Mutex::new(HashMap::new()),
+            stats_cache: Mutex::new(Vec::new()),
         });
         // 定时自动化：启用了就起调度器 ticker。
         crate::scheduler::spawn(state.clone());
@@ -114,6 +121,34 @@ impl AppState {
     /// ⚠️ 它只是把**配置、签名密钥、当前时间**注入 `clip9_core::can_access_room` ——
     /// 判定逻辑一行都不在这儿（`CONTRIBUTING.md` §4：鉴权是 core 的职责，
     /// 在 server 里再写一份必然和 core 漂开）。
+    /// 取一次缓存住的统计结果（过期或没有就 `None`）。
+    ///
+    /// ⚠️ 过期时间给得很短（60 秒）：统计本身不贵，缓存只为挡「反复开关那个弹窗」。
+    /// 给长了会让「刚发了一条，图上没变」变成一个需要解释的现象。
+    pub fn stats_cache_get(&self, key: &str) -> Option<serde_json::Value> {
+        let now = now_secs();
+        let mut cache = self.stats_cache.lock();
+        // ⚠️ 顺手清过期的：不清的话一个长期开着的服务端会一直攒着（虽然键里带当天，
+        // 但「昨天那批」不会自己消失）。
+        cache.retain(|(_, expires, _)| *expires > now);
+        cache
+            .iter()
+            .find(|(k, _, _)| k == key)
+            .map(|(_, _, value)| value.clone())
+    }
+
+    /// 存一次统计结果。⚠️ 上限 8 条：它是缓存，不是存储。
+    pub fn stats_cache_put(&self, key: String, value: serde_json::Value) {
+        const TTL_SECS: i64 = 60;
+        const MAX_ENTRIES: usize = 8;
+        let mut cache = self.stats_cache.lock();
+        cache.retain(|(k, _, _)| k != &key);
+        cache.push((key, now_secs() + TTL_SECS, value));
+        while cache.len() > MAX_ENTRIES {
+            cache.remove(0);
+        }
+    }
+
     #[must_use]
     pub fn can_access_room(&self, room: &str, token: &str) -> bool {
         clip9_core::can_access_room(&self.config, &self.share_key, room, token, now_secs())

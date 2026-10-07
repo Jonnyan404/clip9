@@ -710,3 +710,29 @@ fn remove_entries_for_files_touches_only_that_file() {
         .expect("default 在");
     assert_eq!(room.message_count, 2, "房间计数要减 1");
 }
+
+/// ★ `room_timestamps_since`：只取那个房间、**到下界就停**、新的在前。
+///
+/// ⚠️ 它是热力图的数据源，而且**只读 key**（不反序列化 value）—— 这条测试钉住的是
+/// 「取哪些」；「只读 key」是性能上的事，靠 `lib.rs` 里那段注释守着。
+#[test]
+fn room_timestamps_since_is_bounded_and_room_scoped() {
+    let (s, _dir) = store_with(Limits::unlimited());
+    // default：ts 100 / 200 / 300；r1：ts 250（不该被取到）
+    for ts in [100, 200, 300] {
+        s.insert(text("default", ts, "x")).expect("写 default");
+    }
+    s.insert(text("r1", 250, "别的房间")).expect("写 r1");
+
+    let all = s.room_timestamps_since("default", 0, 100).expect("取时间戳");
+    assert_eq!(all, vec![300, 200, 100], "新的在前，且不含别的房间");
+
+    let recent = s.room_timestamps_since("default", 200, 100).expect("取时间戳");
+    assert_eq!(recent, vec![300, 200], "下界是**含**的（>= since）");
+
+    let none = s.room_timestamps_since("default", 1000, 100).expect("取时间戳");
+    assert!(none.is_empty(), "全都比下界旧 → 一条都不取");
+
+    let capped = s.room_timestamps_since("default", 0, 2).expect("取时间戳");
+    assert_eq!(capped, vec![300, 200], "limit 生效");
+}
