@@ -539,6 +539,16 @@ el('spa-blocked-project').addEventListener('click', () => {
   });
 });
 
+// 「关于」里的项目地址。**与上面那颗「去 clip9 项目」同一个命令、同一套理由** ——
+// 命令是窄的（只开那一个写死的地址），所以这里也不拼地址、不传参。
+// ⚠️ 失败同样只写控制台：那条命令只会去起系统 opener，真失败（这台机器没有默认浏览器）
+// 也没有「下一步」可以给用户。⚠️ 但要 catch —— 未处理的 reject 会留一条没人看的红字。
+el('dg-project').addEventListener('click', () => {
+  invoke('open_project_page').catch((error) => {
+    console.error('opening the project page failed:', error);
+  });
+});
+
 el('spa').addEventListener('load', () => {
   // 每次加载（首屏 / 换站点）都重新握一次手。
   spaReady = false;

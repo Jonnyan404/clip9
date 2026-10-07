@@ -674,6 +674,15 @@
 
     .kv .v { font-variant-numeric: tabular-nums; }
 
+    /* 「关于」里那一行项目地址。
+       ⚠️★ 刻意**不用 `<a href>`**：Tauri 的 webview 会**就地导航** ——
+       点一下整个客户端就被一个网页顶掉了（而这里要的是「交给系统浏览器」，
+       见 app.js 里那次 `invoke('open_project_page')`）。所以它是个 span + 点击处理。
+       ⚠️ `overflow-wrap: anywhere`：地址比那一列宽时不能把面板撑出去
+       （与 `.srv .kv .v` 同一条理由）。 */
+    .kv .v .lnk { color: var(--accent); cursor: pointer; text-decoration: underline; text-underline-offset: 2px; overflow-wrap: anywhere; }
+    .kv .v .lnk:hover { opacity: .75; }
+
     .mode { border: 1px solid var(--border); border-radius: 9px; padding: 10px 12px; margin-bottom: 9px; }
 
     .mode.on { border-color: var(--sidebar-active-border); background: var(--sidebar-active); }
@@ -1720,6 +1729,11 @@ table.ra td input[type='checkbox'] { margin: 0; }
                              （`tauri.conf.json` 里原来那个 `version`，2026-09-30 已删）
                              会被 CI 用 tag 的版本覆盖 —— 页面再抄一份，就会与实装的包各说各话。 -->
                         <span class="k" data-i18n="客户端版本">客户端版本</span><span class="v" id="dg-client-version">—</span>
+                        <!-- ⚠️ 紧跟版本号 —— 「关于」这一页上「这是什么、从哪来」是同一类信息；
+                             下面那几行（数据目录 / 配置 / 服务端 / 保留）才是排障用的机器状态。
+                             ⚠️ 地址**不在页面里拼**：`open_project_page` 只开那一个写死的地址、
+                             不从页面收 URL（见 commands.rs 那段注释），这里也就只挂一个 id。 -->
+                        <span class="k" data-i18n="项目地址">项目地址</span><span class="v"><span class="lnk" id="dg-project">https://github.com/Jonnyan404/clip9</span></span>
                         <span class="k" data-i18n="数据目录">数据目录</span><span class="v" id="dg-data">—</span>
                         <span class="k" data-i18n="客户端配置">客户端配置</span><span class="v" id="dg-config">—</span>
                         <span class="k" data-i18n="本地服务端">本地服务端</span><span class="v" id="dg-server">—</span>

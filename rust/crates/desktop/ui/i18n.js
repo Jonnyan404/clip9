@@ -445,6 +445,7 @@
       '本地服务端': 'Local server',
       '版本': 'Version',
       '客户端版本': 'Client version',
+      '项目地址': 'Project URL',
       '监听': 'Listening',
       '数据目录': 'Data dir',
       '房间 / 条目': 'Rooms / entries',
