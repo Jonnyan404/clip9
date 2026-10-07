@@ -242,7 +242,7 @@ export const StickyComposer = forwardRef<StickyComposerHandle, { variant?: strin
                         type="button"
                         className="sticky-composer__attach"
                         title="📎"
-                        aria-label={t('addFiles')}
+                        aria-label={t('addFilesShort')}
                         onClick={() => selectFileRef.current?.click()}
                     >
                         ➕

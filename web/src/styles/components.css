@@ -1474,3 +1474,152 @@
     align-items: center;
     margin-top: 8px;
 }
+
+/* ── 房间侧栏（RoomList） ──────────────────────────────────────────────────
+   移植自 web-vue3/src/components/RoomList.vue 的 `--rl-*` 皮肤。
+   ⚠️★ **变量名与 Vue 版逐字保留**（迁移计划 §「保留变量名可减少改动」）——
+   搬过来的 sx 直接引用这些名字，将来两边对照时不必做一次命名翻译。
+
+   ⚠️★ **只移植「在 Vue 里真的匹配得到」的那几套皮肤**：
+   Vue 的 `skinClass` 是 `rl--${uiMode}`，而 uiMode 只可能是
+   `default / glance / bench / sticky / board`（见 web-vue3/src/views/modes/registry.js）。
+   于是 Vue 里那六套里——
+     · `rl--terminal` / `rl--workbench` / `rl--chat` / `rl--mega`：**永远匹配不到**
+       （这四个模式 2026-09-26 已退役并真删，见 web/src/modes/meta.ts 的注释）；
+     · `rl--glance` / `rl--bench` / `rl--board`：Vue 里**压根没写**；
+     · 活的只有 base（default）+ `rl--sticky` + 暗色。
+   → 那四块死 CSS 是**刻意不搬**的：这个项目对退役模式的既有取舍是「真删、不留兼容垫片」，
+     把永远匹配不到的规则搬过来会让下一个人以为还有模式在用它们。
+     哪天真要把 terminal 那种语感当模式加回来，连皮肤一起写。
+
+   ⚠️ 交互态（hover / 选中底色）**不写在这里**，写在组件的 `sx` 里 ——
+   MUI 的 ListItemButton 自带 hover/selected 规则，靠 CSS 去压它要打权重官司，
+   用 `&:hover` / `&.Mui-selected` 才是它的正道。这里只放 MUI 表达不了的那些。 */
+
+.rl {
+    --rl-font: inherit;
+    --rl-radius: 10px;
+    --rl-row-h: 44px;
+    --rl-row-pad: 0 10px;
+    --rl-title-size: 15px;
+    --rl-name-size: 13.5px;
+    --rl-time-size: 11.5px;
+    --rl-label-size: 11px;
+    --rl-label-transform: uppercase;
+    --rl-surface-hover: rgba(148, 163, 184, 0.14);
+    --rl-current-bg: rgba(59, 130, 246, 0.1);
+    --rl-current-accent: #2563eb;
+    --rl-text: #0f172a;
+    --rl-muted: #64748b;
+    --rl-border: rgba(148, 163, 184, 0.24);
+    /* 侧栏自己的底色。Vue 那边是 `rgb(var(--v-theme-background))`，而 Vuetify 的
+       background 只有 sticky 那套被覆盖过 —— 其余模式就是主题默认值，
+       即浅色 #fff / 暗色 #121212（与 MUI 的 `background.paper` 同值）。 */
+    --rl-panel-bg: #ffffff;
+    font-family: var(--rl-font);
+    color: var(--rl-text);
+}
+
+/* 暗色挂在根元素的 `.dark` 上（MUI 的 colorSchemeSelector: 'class'）。
+   ⚠️ 用 `.dark .rl` 而不是 JS 算一个 `rl--dark` 类：抽屉/弹窗会被 teleport 到 body，
+   而 `.dark` 在 html 上，后代选择器在那种情形下照样命中（Vue 那边正是为此踩过两次）。 */
+.dark .rl {
+    --rl-surface-hover: rgba(148, 163, 184, 0.16);
+    --rl-current-bg: rgba(96, 165, 250, 0.16);
+    --rl-current-accent: #60a5fa;
+    --rl-text: #e2e8f0;
+    --rl-muted: #94a3b8;
+    --rl-border: rgba(71, 85, 105, 0.7);
+    --rl-panel-bg: #121212;
+}
+
+/* sticky：手写体、行高 52，当前房间整行马卡龙底（所以那一套里色条要藏掉） */
+.rl--sticky {
+    --rl-panel-bg: #fdf7e4;
+    --rl-font: 'Comic Sans MS', 'Kaiti', 'PingFang SC', sans-serif;
+    --rl-radius: 4px;
+    --rl-row-h: 52px;
+    --rl-name-size: 14px;
+    --rl-label-transform: none;
+    --rl-current-bg: #fdeaa8;
+    --rl-current-accent: #8a7f5c;
+    --rl-muted: #8a7f5c;
+    --rl-surface-hover: rgba(138, 127, 92, 0.12);
+}
+
+.dark .rl--sticky {
+    --rl-panel-bg: #211d12;
+    --rl-current-bg: #6b5a2a;
+    --rl-muted: #b9a97f;
+}
+
+/* 当前房间标记：默认是一条左侧色条。
+   ⚠️ 高度写成 `calc(--rl-row-h * 0.55)`，不照抄 Vue 的 `55%` ——
+   行的实际高度由 `min-height` 兜底（内容只有两行小字，撑不到 44px），
+   而百分比高度在这种「父高由 min-height 决定」的情形下会退化成 auto（= 0），
+   色条就整条看不见了。按名义行高算反而与目的一致，且可预测。 */
+.rl-row__mark {
+    flex: none;
+    align-self: center;
+    width: 3px;
+    height: calc(var(--rl-row-h) * 0.55);
+    border-radius: 2px;
+    background: transparent;
+}
+
+.rl-row--current .rl-row__mark {
+    background: var(--rl-current-accent);
+}
+
+/* sticky 的当前房间靠整行马卡龙底，再加色条就重复了 */
+.rl--sticky .rl-row__mark {
+    display: none;
+}
+
+/* 活跃点。只有活跃才有点 —— 原来每个房间都写「非活跃」，八个里写七个，纯噪音。 */
+.rl-row__dot {
+    flex: none;
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: #16a34a;
+}
+
+.dark .rl-row__dot {
+    background: #4ade80;
+}
+
+/* 需要密码的房间那把小锁。暖色，与活跃点（绿）分开表达两件事。 */
+.rl-row__lock {
+    flex: none;
+    display: inline-flex;
+    color: #b45309;
+}
+
+.dark .rl-row__lock {
+    color: #fbbf24;
+}
+
+/* 收藏按钮：默认隐形，hover / 聚焦 / 已收藏时出现。
+   ⚠️ 触屏没有 hover，所以 `@media (hover: none)` 里让它常驻半透明，否则点不到。 */
+.rl-row__fav {
+    flex: none;
+    opacity: 0;
+    transition: opacity 0.15s ease, color 0.15s ease;
+}
+
+.rl-row:hover .rl-row__fav,
+.rl-row__fav:focus-visible,
+.rl-row__fav--on {
+    opacity: 1;
+}
+
+.rl-row__fav--on {
+    color: #ff5252;
+}
+
+@media (hover: none) {
+    .rl-row__fav {
+        opacity: 0.75;
+    }
+}

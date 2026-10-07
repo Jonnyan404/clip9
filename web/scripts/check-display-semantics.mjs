@@ -33,8 +33,8 @@
 // 断言的是**语义**，不是实现：prefersRenderedView 里换一种写法、把几条正则合并，
 // 只要答案不变，这个脚本就该继续绿。
 
-import { readFileSync, existsSync, readdirSync } from 'node:fs';
-import { dirname, join, resolve } from 'node:path';
+import { readFileSync, existsSync, readdirSync, statSync } from 'node:fs';
+import { dirname, join, resolve, extname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -260,7 +260,139 @@ for (const locale of LOCALES) {
     ok(`locale ${locale}: 已不残留 scOutdatedNotice / scUpdatedAt`, !('scOutdatedNotice' in dict) && !('scUpdatedAt' in dict));
 }
 
-// ── 6. 已构建产物（有就查，没有就跳过）────────────────────────────────
+// ── 6. i18n 插值：`t('key', …)` 填的变量必须**覆盖**文案里的占位符 ──────────
+//
+// ⚠️★ 为什么必须有它：i18next 对「缺的变量」**不报错** —— 它把占位符原样吐出来，
+// 屏幕上就是「{minutes}分钟前」。而这一族的成因特别隐蔽：文案是 vue-i18n 的
+// 单花括号命名（`{minutes}` / `{keys}`），调用处却按 React 的习惯传了 `{ count }`
+// （i18next 的 `count` 只填 `{{count}}`，且它会去找 `key_one` / `key_other` 复数键）——
+// 两边单独看都「对」，只有把列表渲染出来才发现。
+//
+// 实测（2026-10-07）：一屏里两处 —— 房间侧栏的相对时间（`{minutes}` 被传成 `count`）、
+// 便签输入框附件按钮的 aria-label（`t('addFiles')` 少传了 `keys`）。
+// 两处都不会抛错，只有肉眼看界面 / 用读屏才知道。
+//
+// 判据的方向：**文案里要的 ⊆ 调用处给的**。（多给无害，i18next 会忽略多余的。）
+// 只判「第二个参数是对象字面量」和「没有第二个参数」两种可静态判定的写法；
+// 事件里/变量里传进来的（`t(key, opts)`）**不判** —— 宁漏勿误。
+function walkTsFiles(dir, out = []) {
+    for (const name of readdirSync(dir)) {
+        const full = join(dir, name);
+        if (statSync(full).isDirectory()) {
+            if (name !== 'locales') walkTsFiles(full, out);
+        } else if (['.ts', '.tsx'].includes(extname(name))) {
+            out.push(full);
+        }
+    }
+    return out;
+}
+
+/** 取 `(` 之后第一个顶层对象字面量的顶层键名；不是字面量 / 有展开 → null。 */
+function topLevelKeysAfter(src, start) {
+    let i = start;
+    while (i < src.length && /\s/.test(src[i])) i += 1;
+    if (src[i] !== '{') return null;
+    const keys = [];
+    let depth = 0;
+    let quote = null;
+    let pending = '';
+    let inValue = false;
+    const flush = () => {
+        const k = pending.trim().replace(/^['"]|['"]$/g, '');
+        if (k) keys.push(k);
+        pending = '';
+    };
+    for (; i < src.length; i += 1) {
+        const ch = src[i];
+        if (quote) {
+            if (ch === '\\') i += 1;
+            else if (ch === quote) quote = null;
+            continue;
+        }
+        if (ch === "'" || ch === '"' || ch === '`') { quote = ch; continue; }
+        if (ch === '(' || ch === '[') { depth += 1; continue; }
+        if (ch === ')' || ch === ']') { depth -= 1; continue; }
+        if (ch === '{') {
+            depth += 1;
+            if (depth === 1) { pending = ''; inValue = false; }
+            continue;
+        }
+        if (ch === '}') {
+            depth -= 1;
+            if (depth === 0) { if (!inValue) flush(); break; }
+            continue;
+        }
+        if (depth !== 1) continue;
+        if (ch === ':') {
+            if (pending.trim().startsWith('...')) return null;
+            if (!inValue) { keys.push(pending.trim()); pending = ''; }
+            inValue = true;
+            continue;
+        }
+        if (ch === ',') {
+            // ⚠️★ 简写属性（`{ total }`）没有冒号，但它**也是**一个真的插值变量。
+            // 漏掉这一支会误报 —— 2026-10-07 实测：`{ shown: n, total }` 被读成只有 shown。
+            // ⚠️ 不过那次误报的元凶是**收尾的 `}` 分支**（那个简写落在最后一位）。
+            // 这一支（非末位的简写）今天**没有调用点覆盖**，属于前瞻性的宽度 ——
+            // 只删它不会让判据变红（实测过）。别把它当成「已验证」。
+            if (!inValue) flush();
+            else pending = '';
+            inValue = false;
+            continue;
+        }
+        if (!inValue) pending += ch;
+    }
+    return keys
+        .map((k) => k.trim().replace(/^['"]|['"]$/g, ''))
+        .filter((k) => /^[A-Za-z_$][\w$]*$/.test(k) && k !== 'defaultValue');
+}
+
+const PLACEHOLDER = /\{([A-Za-z_$][\w$]*)\}/g;
+const I18N_CALL = /\bt\(\s*'([A-Za-z0-9_]+)'\s*([,)])/g;
+let i18nChecked = 0;
+const i18nProblems = [];
+for (const file of walkTsFiles(join(WEB, 'src'))) {
+    const src = readFileSync(file, 'utf8');
+    let m;
+    while ((m = I18N_CALL.exec(src)) !== null) {
+        const [, key, next] = m;
+        const template = allDicts.zh[key];
+        if (typeof template !== 'string') continue;
+        const wanted = new Set([...template.matchAll(PLACEHOLDER)].map((x) => x[1]));
+        if (wanted.size === 0) continue;
+
+        if (next === ')') {
+            i18nChecked += 1;
+            i18nProblems.push(
+                `${file.replace(`${WEB}/`, '')}  t('${key}') 没传变量，文案里的 ${[...wanted].map((w) => `{${w}}`).join('')} 会原样显示`,
+            );
+            continue;
+        }
+        // ⚠️★ 偏移量必须落在**逗号之后**：写成 `- 1` 会指向逗号本身，
+        //    `topLevelKeysAfter` 于是每次都返回 null → 一处都不判、判据**永远绿**。
+        //    （2026-10-07 实测踩到：屏幕上「检查了 0 处」但结论是全绿。）
+        const provided = topLevelKeysAfter(src, m.index + m[0].length);
+        if (!provided || provided.length === 0) continue;
+        i18nChecked += 1;
+        const missing = [...wanted].filter((w) => !provided.includes(w));
+        if (missing.length) {
+            i18nProblems.push(
+                `${file.replace(`${WEB}/`, '')}  t('${key}') 少传 ${missing.map((x) => `{${x}}`).join('')}（实际给了 ${provided.join(', ')}）`,
+            );
+        }
+    }
+}
+// ⚠️★ 光判「没有不一致」不够：**读不到东西也是「没有不一致」**。
+// 走查坏了 / 文件挪了 / 正则写歪了，都会让上面那个计数变成 0 —— 而结论仍然是绿。
+// 所以再钉一条数量下限（当前实测 50 处；留了余量，只拦「整片扫不到」）。
+const I18N_MIN_CHECKED = 30;
+ok(
+    `i18n 插值：扫到 ${i18nChecked} 处可静态判定的 t() 调用（少于 ${I18N_MIN_CHECKED} 说明判据自己坏了）`,
+    i18nChecked >= I18N_MIN_CHECKED && i18nProblems.length === 0,
+);
+for (const problem of i18nProblems) console.log(`      · ${problem}`);
+
+// ── 7. 已构建产物（有就查，没有就跳过）────────────────────────────────
 if (!process.argv.includes('--src')) {
     const assetsDir = join(WEB, 'dist/assets');
     const bundle = existsSync(assetsDir)
