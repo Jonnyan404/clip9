@@ -49,6 +49,12 @@ tauri-plugin-global-shortcut = "2"
 sysinfo = { workspace = true }
 tauri-plugin-updater = "2"
 tauri-plugin-process = "2"
+# ⚠️ 只为一件事：在启动时装**进程级默认 TLS provider**（见 `src/tls.rs` 的模块文档）。
+# 不装的话，第一次 `wss://` 连接会在 tokio 工作线程里 panic —— 而症状是
+# 「那个房间永久停在『正在连』」：任务死了、壳里没有谁负责重连它。
+# ⚠️ 它是**这个包**的依赖而不是 `clip9-client` 的：歧义正是 `tauri-plugin-updater`
+# 拉进来的 `rustls/ring` 造成的，`clip9-client` 单独编时只有一个 provider、没有这个问题。
+rustls = { workspace = true }
 # ⚠️ 服务端配置的**类型**（`Config`）从这里来 —— 桌面端的「配置可视化」用它**校验**。
 # 自己再写一份镜像就是「第二份定义」，而两份一定会漂（这个项目已经为这个付过几次代价）。
 clip9-core = { path = "../core" }

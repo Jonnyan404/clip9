@@ -116,6 +116,21 @@ reqwest = { version = "0.13", features = ["json", "multipart", "stream"] }
 tokio-tungstenite = { version = "0.29", features = ["connect", "url", "rustls-tls-native-roots"] }
 url = "2.5"
 
+# · `rustls` —— ⚠️ **直接依赖一个 TLS 实现，只为一件事**：在启动时装进程级默认 provider。
+#
+#   为什么要这么麻烦（2026-10-07 实测）：这个依赖图里 rustls 的**两个** provider feature
+#   都被拉了起来，而且**两处都调不掉** ——
+#     · `aws-lc-rs`：来自 `reqwest` 的 `default-tls`（0.13 起默认就是 rustls，见上面那条）；
+#     · `ring`：来自 `tauri-plugin-updater`，它自己写死 `rustls = { features = ["ring"] }`。
+#   两个同时在 ⇒ rustls **拒绝自动选择**，第一次做 TLS 时当场 panic（那句报错自己就写着
+#   「Call CryptoProvider::install_default() before this point」）。症状只在 `wss://` 上出现，
+#   本地 `http://127.0.0.1:9501` 那条明文一行 TLS 都不走 —— 所以「本地房间好好的、
+#   只有 Cloudflare 那个死掉」正是它的指纹。装 provider 的地方见 `crates/desktop/src/tls.rs`。
+#
+#   ⚠️ 这里的 feature 是**照抄当前已经解析出来的那一组**（`std` + `tls12` + `aws-lc-rs`），
+#   不是顺手打开 default：default 会额外带一个 `log`，而这次修 bug 不该改构建的依赖集合。
+rustls = { version = "0.23", default-features = false, features = ["std", "tls12", "aws-lc-rs"] }
+
 [profile.release]
 # OpenWrt / Android 上体积是真约束，这里按「小」而不是「最快」调。
 opt-level = "z"

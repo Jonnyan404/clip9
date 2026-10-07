@@ -782,6 +782,7 @@ dependencies = [
  "clip9-protocol",
  "futures-util",
  "reqwest",
+ "rustls",
  "serde",
  "serde_json",
  "sysinfo",

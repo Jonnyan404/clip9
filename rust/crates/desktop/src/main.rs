@@ -40,6 +40,7 @@ mod server_process;
 // 填参数规则，纯查表，所以它能被 `cargo test` 钉住（见那个模块的文档）。
 mod shell_text;
 mod store;
+mod tls;
 mod tray;
 mod update;
 mod window_state;
@@ -192,6 +193,12 @@ fn logical_size(
 }
 
 fn main() {
+    // ⚠️★ **第一句**，在任何东西碰 TLS 之前：装进程级默认 provider。
+    // 不装的话，第一次 `wss://` 连接会在 `tokio` 的工作线程里 panic ——
+    // 而症状是那个房间**永久停在「正在连 X…」**（任务死了、没有谁重连它）。
+    // 完整推导（为什么两个 provider 会同时开着、为什么只在 wss 上出现）见 `tls` 模块文档。
+    tls::install_crypto_provider();
+
     let args = match parse_args() {
         Ok(Some(args)) => args,
         // ⚠️ 参数写错要**打出来**再退：桌面上双击启动是没有终端的，
