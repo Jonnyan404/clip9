@@ -215,6 +215,7 @@
   "activityMore": "多",
   "activityCell": "{date} · {count} 條",
   "activityLoadFailed": "讀取活躍度失敗",
+  "activityUnsupported": "這個伺服器還沒有活躍度介面，需要更新伺服器",
   "activityTzFallback": "按 {tz} 統計",
   "activityDayGone": "那天（{date}）的訊息已經不在這段歷史裡了",
   "shareHistoryRefresh": "重新整理",

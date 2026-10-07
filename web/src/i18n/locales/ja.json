@@ -215,6 +215,7 @@
   "activityMore": "多",
   "activityCell": "{date} · {count} 件",
   "activityLoadFailed": "アクティビティを読み込めませんでした",
+  "activityUnsupported": "このサーバーにはアクティビティ API がまだありません。サーバーの更新が必要です",
   "activityTzFallback": "{tz} で集計",
   "activityDayGone": "その日（{date}）のメッセージは、この履歴にもう残っていません",
   "shareHistoryRefresh": "更新",

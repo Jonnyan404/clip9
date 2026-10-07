@@ -5,7 +5,7 @@ import {
 } from '@mui/material';
 import { errorMessage } from '@/lib/util';
 import {
-    HEATMAP_DAYS, fetchDailyActivity, legendLabels, levelOf,
+    ActivityUnsupported, HEATMAP_DAYS, fetchDailyActivity, legendLabels, levelOf,
     type DailyActivity, type DailyActivityResponse,
 } from '@/services/stats';
 import { useWebSocketStore } from '@/stores/wsStore';
@@ -75,7 +75,9 @@ export function ActivityHeatmapDialog({
         try {
             setData(await fetchDailyActivity({ room, days: HEATMAP_DAYS }));
         } catch (err) {
-            setError(errorMessage(err) || t('activityLoadFailed'));
+            // ⚠️★ 「后端还没有这个接口」要单独说：显示一句笼统的「读取失败」的话，
+            // 用户会以为前端坏了，而**实际要做的去更新那个服务端**。
+            setError(err instanceof ActivityUnsupported ? t('activityUnsupported') : errorMessage(err) || t('activityLoadFailed'));
             setData(null);
         } finally {
             setLoading(false);

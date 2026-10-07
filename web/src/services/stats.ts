@@ -51,19 +51,44 @@ export function localTimeZone(): string {
     }
 }
 
+/**
+ * ⚠️★ 这个服务端**根本没有这个接口**时抛的。
+ *
+ * 2026-10-07 加：用户报「热力图未生效」，而真机验下来前端与接口都是好的 ——
+ * 真正的情形是**那个房间背后的服务端是旧版 / 是 CF workers 那份**（后者一直没有
+ * `/stats/daily`）。原来那种情况只会显示一句笼统的「读取活跃度失败」，
+ * 看起来像前端坏了；而它其实是**要更新后端**。
+ */
+export class ActivityUnsupported extends Error {
+    constructor() {
+        super('activity endpoint missing');
+        this.name = 'ActivityUnsupported';
+    }
+}
+
 export async function fetchDailyActivity(params: {
     room: string;
     days?: number;
     tz?: string;
 }): Promise<DailyActivityResponse> {
-    const { data } = await axios.get('stats/daily', {
-        params: {
-            room: params.room,
-            days: params.days ?? HEATMAP_DAYS,
-            tz: params.tz ?? localTimeZone(),
-        },
-    });
-    return data as DailyActivityResponse;
+    try {
+        const { data } = await axios.get('stats/daily', {
+            params: {
+                room: params.room,
+                days: params.days ?? HEATMAP_DAYS,
+                tz: params.tz ?? localTimeZone(),
+            },
+        });
+        return data as DailyActivityResponse;
+    } catch (error) {
+        // ⚠️ 404 / 501 = 这个后端还没有这个接口 —— 与「网络断了」「凭据不对」是**两回事**，
+        // 要分开说（前者要去更新服务端，后者要去看设置）。
+        const status = (error as { response?: { status?: number } })?.response?.status;
+        if (status === 404 || status === 501) {
+            throw new ActivityUnsupported();
+        }
+        throw error;
+    }
 }
 
 /** 这个计数属于第几档（0 = 空，1–4 = 由浅到深）。 */
