@@ -61,6 +61,8 @@ pub enum Action {
     ToggleAutostart,
     /// 把主窗口叫出来（关掉窗口之后唯一的回头路）。
     Open,
+    /// 查一次更新（2026-10-07）。结果画在「设置 → 关于」那一格里。
+    CheckUpdate,
     /// 退出。
     Quit,
     /// 切到第 N 个房间（下标按配置里的顺序）。
@@ -81,6 +83,7 @@ pub fn action_for(id: &str) -> Option<Action> {
     match id {
         "autostart" => Some(Action::ToggleAutostart),
         "open" => Some(Action::Open),
+        "check-update" => Some(Action::CheckUpdate),
         "quit" => Some(Action::Quit),
         other => other
             .strip_prefix(ROOM_PREFIX)
@@ -120,6 +123,9 @@ fn build_menu(
         CheckMenuItemBuilder::with_id("autostart", shell.say(&Msg::key("trayAutostart")))
             .checked(crate::autostart::initial_checked(app))
             .build(app)?;
+    let check_update =
+        MenuItemBuilder::with_id("check-update", shell.say(&Msg::key("trayCheckUpdate")))
+            .build(app)?;
     let quit = MenuItemBuilder::with_id("quit", shell.say(&Msg::key("trayQuit"))).build(app)?;
 
     // 房间子菜单：下标就是配置里的下标（`Action::SelectRoom` 拿它去 `store.select`）。
@@ -142,6 +148,10 @@ fn build_menu(
         .items(&[&open, &autostart])
         .separator()
         .item(&rooms)
+        .separator()
+        // ⚠️ 「检查更新」放在退出**上面**、单独一段：它与上面那些「切房间 / 自启」
+        // 不是一类（那些是日常操作，这条是偶尔一次的内务）。
+        .item(&check_update)
         .separator()
         .item(&quit)
         .build()?;
@@ -230,6 +240,19 @@ pub fn install(
             };
             match action {
                 Action::Open => show_main_window(app),
+                Action::CheckUpdate => {
+                    // ⚠️★ 先把窗口叫出来：结果画在「设置 → 关于」那一格上，
+                    // 窗口不出来的话用户点完托盘**什么都看不到**（然后以为没反应）。
+                    show_main_window(app);
+                    // ⚠️ 查一次要发网络请求 —— 托盘回调在**主线程**上，
+                    // 同步等它会把界面冻住。丢给异步运行时。
+                    let state = app.state::<std::sync::Arc<crate::update::UpdateState>>();
+                    let state = std::sync::Arc::clone(&state);
+                    let handle = app.clone();
+                    tauri::async_runtime::spawn(async move {
+                        state.check(&handle).await;
+                    });
+                }
                 Action::Quit => {
                     stop_bundled_server(app);
                     app.exit(0);
@@ -337,6 +360,7 @@ mod tests {
         assert_eq!(action_for("open"), Some(Action::Open));
         assert_eq!(action_for("quit"), Some(Action::Quit));
         assert_eq!(action_for("autostart"), Some(Action::ToggleAutostart));
+        assert_eq!(action_for("check-update"), Some(Action::CheckUpdate));
         assert_ne!(Action::Open, Action::Quit);
         assert_ne!(Action::Open, Action::ToggleAutostart);
         assert_ne!(Action::Quit, Action::ToggleAutostart);

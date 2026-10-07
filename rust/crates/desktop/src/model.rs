@@ -16,7 +16,7 @@
 
 use clip9_client::{Msg, endpoint::download_url};
 use clip9_protocol::ReceiveHolder;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 /// 定时任务发出来的消息在 `source` 上的取值。
 ///
@@ -588,4 +588,42 @@ mod tests {
         assert_eq!(device_label(Some(&blank)), "");
         assert_eq!(device_label(None), "");
     }
+}
+
+/// 页面看到的**自动更新状态**。
+///
+/// ⚠️ 它是 `snapshot` 的一部分（页面每 500ms 拉一次），所以**必须**是纯数据 ——
+/// 里面不能有 `AppHandle` 那类东西（那会让 `Snapshot` 不能 `Serialize`，也不能跨线程）。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "phase", rename_all = "camelCase")]
+pub enum UpdatePhase {
+    /// 还没查过，或者查过、已是最新。
+    Idle,
+    /// 正在查（界面上要转个圈 —— 查一次要发一个网络请求）。
+    Checking,
+    /// 有新版可用，等用户点。
+    Available {
+        version: String,
+        /// 发布说明（`latest.json` 里的 `notes`）—— 直接来自 CHANGELOG 那一段。
+        #[serde(skip_serializing_if = "Option::is_none")]
+        notes: Option<String>,
+    },
+    /// 正在下载（`total` 为 `None` = 对面没给 `Content-Length`）。
+    Downloading {
+        version: String,
+        received: u64,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        total: Option<u64>,
+    },
+    /// 下完装完了，**重启就生效**（macOS/Linux 上到这一步还没重启）。
+    Ready { version: String },
+    /// 用户跳过过这一版。
+    Skipped { version: String },
+    /// 上一次更新失败了 —— 把原因说出来（静默失败是这里最不该有的行为）。
+    ///
+    /// ⚠️★ 走 [`Msg`]（键 + 参数），**不是成文的句子** —— 判据 16 盯着这件事：
+    /// 写死一句中文的话，切到英文时它一个字都不会变。
+    /// `reason` 是**技术细节**（插件给的英文原文），当参数传 —— 与
+    /// `serverSpawnFailed` 那条同一个形状。
+    Failed { msg: Msg },
 }

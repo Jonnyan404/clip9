@@ -1751,6 +1751,35 @@ table.ra td input[type='checkbox'] { margin: 0; }
                         <span class="k" data-i18n="本房间正文">本房间正文</span><span class="v" id="dg-roombytes">—</span>
                     </div>
                 </div>
+
+                <!-- ── 自动更新（2026-10-07）───────────────────────────────────
+                     ⚠️★ 单独一张卡、不塞进上面那张 `.kv`：上面那张是**只读的机器状态**，
+                     而这里有一排按钮（要动手的）。混在一起的话，「哪几行是看的、
+                     哪几个是点的」在视觉上就分不出来了。
+                     ⚠️ 状态文字与按钮的显隐**全由 app.js 的 renderUpdate 决定** ——
+                     这里只摆骨架，别在这儿写死任何状态（写死的那份一定会与壳漂）。 -->
+                <div class="subcard">
+                    <div class="kv" style="margin-bottom:9px">
+                        <span class="k" data-i18n="更新">更新</span><span class="v" id="dg-update-state">—</span>
+                    </div>
+                    <div style="display:flex;gap:8px;flex-wrap:wrap">
+                        <button class="btn" id="dg-update-check" data-i18n="检查更新">检查更新</button>
+                        <button class="btn primary" id="dg-update-install" hidden data-i18n="下载并重启">下载并重启</button>
+                        <button class="btn" id="dg-update-skip" hidden data-i18n="跳过这一版">跳过这一版</button>
+                        <!-- ⚠️★ 确认是**第二步**、而且就地换按钮，不用原生 `confirm()`：
+                             那个在 webview 里能不能弹、返回值是什么都取决于平台，
+                             而它一旦返回假值就是「点了没反应」—— 正是这个项目最忌讳的静默失败。
+                             ⚠️ 标签要把**后果**写出来（会重启），别只写「确定」。 -->
+                        <button class="btn danger" id="dg-update-confirm" hidden data-i18n="确认安装并重启">确认安装并重启</button>
+                        <button class="btn" id="dg-update-cancel" hidden data-i18n="取消">取消</button>
+                    </div>
+                    <!-- 发布说明摆在**按钮下面**（它来自 `latest.json` 的 `notes`，
+                         内容就是 CHANGELOG 那一段）—— 「要装的是什么」不该让用户去猜。
+                         ⚠️★ 顺序是**有意的**：它可能很长，放按钮上面会把「下载并重启」
+                         挤到折叠线以下 —— 而那是这一页上最该被看到的东西。 -->
+                    <p class="sub" id="dg-update-notes" hidden
+                       style="margin:9px 0 0;max-height:88px;overflow:auto;white-space:pre-wrap"></p>
+                </div>
             </div>
         </div>
         <div class="foot">

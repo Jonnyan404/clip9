@@ -40,6 +40,7 @@ mod server_process;
 mod shell_text;
 mod store;
 mod tray;
+mod update;
 mod window_state;
 
 use std::path::{Path, PathBuf};
@@ -354,6 +355,14 @@ fn main() {
                 })
                 .build(),
         )
+        // ⚠️★ 自动更新（`update` 那个模块）。**插件注册、但页面拿不到它的 JS API** ——
+        // `capabilities/default.json` 里故意没有 `updater:*`（判据 9 盯着），
+        // 与 `notification` / `global-shortcut` 同一条规矩：页面只跟 IPC 命令说话。
+        //
+        // ⚠️ 公钥与地址在 `tauri.conf.json` 的 `plugins.updater` 里，**不在这儿** ——
+        // 那是打包配置的一部分（`bundle.createUpdaterArtifacts` 与它配套），
+        // 分开写会变成两份定义。
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(Arc::clone(&store))
         .manage(Arc::clone(&runtime))
         // ⚠️★ 壳要说的那几句话的字典（页面推过来的那份）。
@@ -376,6 +385,12 @@ fn main() {
         )))
         .invoke_handler(tauri::generate_handler![
             commands::snapshot,
+            // 自动更新（2026-10-07）。⚠️ 少注册一个的表现是「点了没反应、不报错」——
+            // 与上面那几条同一条规矩。
+            commands::update_status,
+            commands::update_check,
+            commands::update_install,
+            commands::update_skip,
             commands::clear_notice,
             commands::select,
             commands::set_upload,
@@ -442,11 +457,42 @@ fn main() {
             let runtime = Arc::clone(&runtime);
             let shell = Arc::clone(&shell);
             let window_size_path = window_size_path.clone();
+            let update_dir = args.data_dir.clone();
             move |app| {
                 // ⚠️★ 把上次关窗时那个大小贴回去（读不出来就保持 `tauri.conf.json` 里那双）。
                 // ⚠️ 放在**通知器接线之前**：它要尽早，晚于第一次绘制的话用户会看到
                 // 窗口先按 760×520 画一次、再跳一下（理由见 `restore_window_size`）。
                 restore_window_size(app.handle(), &window_size_path);
+                // ── 自动更新的启动自检（2026-10-07）──────────────────────────
+                //
+                // ⚠️★ 它**必须在这一拍之前**：`note_start` 是「上一次启动没能善终」的
+                // 唯一证据来源，放晚了就可能被下面那些初始化里的一次 panic 抢在前面 ——
+                // 而那正是它要数的那类失败。
+                {
+                    let state = std::sync::Arc::new(update::UpdateState::load(
+                        &update_dir,
+                        Arc::clone(&store),
+                    ));
+                    if let clip9_core::update::StartupVerdict::RollBack { version, .. } =
+                        state.note_start()
+                    {
+                        // ⚠️ 判回滚要**说出来**：那时用户已经连开三次都没用成，
+                        // 而唯一的出路是去下载上一版 —— 不说的话他只会觉得「应用坏了」。
+                        store.notice(
+                            NoticeLevel::Error,
+                            clip9_client::Msg::key("updateRolledBack").param("version", version),
+                        );
+                    }
+                    // ⚠️★ 观察期到了就确认这一版能跑（见 `update::GRACE`）。
+                    // 用**线程**而不是 tokio：桌面端只开了 `tokio` 的 `sync` 特性，
+                    // 而这里要的就是「睡 30 秒再写一个文件」—— 不值得为它拉进整个 runtime。
+                    let grace_state = Arc::clone(&state);
+                    std::thread::spawn(move || {
+                        std::thread::sleep(update::GRACE);
+                        grace_state.confirm();
+                    });
+                    app.manage(state);
+                }
                 // ⚠️★ **第一件做的事**：把窗口句柄接给通知器（见上面 `notifier` 那段）。
                 // 接晚了不会错，但那段窗口里的通知会**被丢掉**并打一行日志 ——
                 // 而它可能正是「默认房间连不上」那张最该被看到的通知。

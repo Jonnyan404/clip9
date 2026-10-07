@@ -23,7 +23,7 @@ use clip9_client::{
 use clip9_protocol::ReceiveHolder;
 use serde::{Deserialize, Serialize};
 
-use crate::model::{EntryView, StatusView};
+use crate::model::{EntryView, StatusView, UpdatePhase};
 
 /// 「设置」里那些**不带房间**的项。`None` = **不改**。
 ///
@@ -309,6 +309,14 @@ pub struct Snapshot {
     /// 只会以为「消息丢了」（`MAX_BYTES_PER_ROOM` 的注释里点名了这条要求）。
     pub max_entries: usize,
     pub max_bytes: usize,
+    /// 自动更新的状态。
+    ///
+    /// ⚠️★ 它**不是 `Store` 自己算出来的** —— 真值在 `update::UpdateState` 里
+    ///（那边负责网络与安装），由它调 [`Store::set_update`] 推进来。
+    /// ⚠️ 页面每 500ms 拉一次 `snapshot`，所以下载进度**天然就在这条路上**，
+    /// 不需要另开一套事件通道 —— 但也正因为如此，推进它必须**先比再写**
+    ///（下载回调一秒能来几十次，每次都涨版本号会让整棵树跟着重画）。
+    pub update: UpdatePhase,
     /// 快照内容的**单调版本号** —— 界面**只用它**判断「要不要重画」。
     ///
     /// ⚠️★ 它把「哪些字段参与判定」从**页面**搬到了**这里**。原先的做法是页面拿
@@ -516,6 +524,8 @@ struct Inner {
     /// 快照内容的版本号 —— 见 [`Snapshot::version`] 与 [`Inner::touch`]。
     /// ⚠️ **只有 `touch` 改它**，别在别处直接写（那样就绕过了「前进规则」）。
     version: u64,
+    /// 自动更新的状态（真值在 `update::UpdateState`，见 [`Store::set_update`]）。
+    update: UpdatePhase,
     /// 「已经存到本地的那几条」：条目 id → 落盘路径。
     ///
     /// ⚠️★ 只为**同一条点第二下**服务（那时直接定位，不再下一次）—— 不判重的话，
@@ -580,6 +590,7 @@ impl Store {
         let rooms = config.channels.iter().map(|_| Room::default()).collect();
         Self {
             inner: Mutex::new(Inner {
+                update: UpdatePhase::Idle,
                 config,
                 rooms,
                 selected: 0,
@@ -669,6 +680,7 @@ impl Store {
             data_dir: self.data_dir.display().to_string(),
             max_entries: MAX_ENTRIES_PER_ROOM,
             max_bytes: MAX_BYTES_PER_ROOM,
+            update: inner.update.clone(),
             version: inner.version,
         }
     }
@@ -736,6 +748,27 @@ impl Store {
     /// ⚠️ 清**两格**：当前选中房间那一格 + 与房间无关那一格。
     /// 理由：界面一次只显示一条（房间那条优先），所以「另一条」本来就没显示出来；
     /// 留着它只会在下一次重绘时突然冒出来，而那时它已经过期了。
+    /// 当前更新状态（`update::UpdateState` 用它 —— 比整份快照便宜）。
+    #[must_use]
+    pub fn update_phase(&self) -> UpdatePhase {
+        self.lock().update.clone()
+    }
+
+    /// 推进自动更新的状态（由 `update::UpdateState` 调 —— 网络与安装都在那边）。
+    ///
+    /// ⚠️★ **先比再写**（[`Inner::touch`] 的「前进规则」里那条高频写入的规矩）：
+    /// 下载进度的回调一秒能来几十次，每次都涨版本号的话，页面每 500ms 拉一次快照
+    /// 就会看到版本一直在变 —— 于是**整棵树**跟着重画，而屏幕上真正变的只有
+    /// 「42% → 43%」那一格。相同就返回，什么都不动。
+    pub fn set_update(&self, phase: UpdatePhase) {
+        let mut inner = self.lock();
+        if inner.update == phase {
+            return;
+        }
+        inner.update = phase;
+        inner.touch();
+    }
+
     pub fn clear_notice(&self) {
         let mut inner = self.lock();
         let mut cleared = inner.app_notice.take().is_some();
@@ -2963,6 +2996,31 @@ mod tests {
     /// ⚠️★ 提示**必须**算在版本号里：§8.1 第 2 条就是「`shapeOf` 漏了 `notice` →
     /// 三类提示永远画不出来」（上传失败、因为开关关着而跳过…）——
     /// 那几条**不改动别的任何字段**，所以漏掉就是彻底看不见。
+    /// ★★ 更新那一格**必须**算在版本号里。
+    ///
+    /// ⚠️ 漏掉它的症状：页面上的「正在下载 42%」永远停在第一帧 —— 因为页面只按版本号
+    /// 判要不要重画，而版本号没动就不重画。它**不改动别的任何字段**，所以不会有
+    /// 任何东西顺手把它带出来（与 `notice` 那条是同一类，见上面那段）。
+    ///
+    /// ⚠️★ 另一半同样要紧：**相同**的状态**不该**涨版本号。下载进度的回调一秒能来
+    /// 几十次，每次都涨的话整棵树跟着重画，而屏幕上变的只有那一格数字
+    ///（所以 `set_update` 是先比再写）。
+    #[test]
+    fn the_update_phase_bumps_the_version() {
+        assert_bumps(
+            "update",
+            |_| {},
+            |store| {
+                store.set_update(UpdatePhase::Checking);
+            },
+        );
+        assert_quiet(
+            "update（同一个状态再来一次）",
+            |store| store.set_update(UpdatePhase::Checking),
+            |store| store.set_update(UpdatePhase::Checking),
+        );
+    }
+
     #[test]
     fn a_notice_bumps_the_version() {
         assert_bumps(

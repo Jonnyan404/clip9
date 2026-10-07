@@ -202,6 +202,16 @@
       'payloadText': '文本「{text}」',
       'payloadFile': '文件「{name}」（{bytes} 字节）',
       'trayOpen': '打开主窗口',
+      'trayCheckUpdate': '检查更新',
+      // ⚠️ 下面这几条是**更新**那一路的句子。`{reason}` 是插件给的英文原文（技术细节），
+      // 当参数传进来 —— 与 `serverSpawnFailed` 同一个形状。
+      'updateCheckFailed': '检查更新失败：{reason}',
+      'updateInstallFailed': '更新失败：{reason}',
+      // ⚠️ 这句是**崩溃循环**兜底：装完之后连开三次都没用成。
+      // 它要同时说清「哪一版」与「现在停在哪」—— 只说「更新失败」的话，
+      // 用户不知道该躲开哪一版，也不知道现在这一版还能不能用。
+      'updateRolledBack': '更新到 v{version} 之后连续启动失败，已停在上一版',
+      'updateNothingToInstall': '没有可安装的更新',
       'trayAutostart': '开机自动启动',
       'trayRooms': '切换房间',
       'trayQuit': '退出',
@@ -787,6 +797,11 @@
       'payloadText': 'text "{text}"',
       'payloadFile': 'file "{name}" ({bytes} bytes)',
       'trayOpen': 'Open the main window',
+      'trayCheckUpdate': 'Check for updates',
+      'updateCheckFailed': 'Could not check for updates: {reason}',
+      'updateInstallFailed': 'Update failed: {reason}',
+      'updateRolledBack': 'v{version} failed to start repeatedly — staying on the previous version',
+      'updateNothingToInstall': 'No update to install',
       'trayAutostart': 'Start at login',
       'trayRooms': 'Switch rooms',
       'trayQuit': 'Quit',
@@ -818,6 +833,21 @@
       // ⚠️★ 桌面端现在**有**参数表单了（`app.js` 的 `openActionForm`，照目录画的），
       // 所以「要先填参数」不再是「跑不了」的理由 —— 这条跟着一起删。
       '取消': 'Cancel',
+      '更新': 'Update',
+      '检查更新': 'Check for updates',
+      '下载并重启': 'Download and restart',
+      '跳过这一版': 'Skip this version',
+      '确认安装并重启': 'Install and restart',
+      '已是最新': 'Up to date',
+      '正在检查…': 'Checking…',
+      '发现新版本 {version}': 'Version {version} is available',
+      '正在下载 {percent}%': 'Downloading {percent}%',
+      '正在下载…': 'Downloading…',
+      '已下载 v{version}，重启后生效': 'v{version} downloaded — restart to apply',
+      '已跳过 v{version}': 'Skipped v{version}',
+      '检查更新失败：{error}': 'Could not check for updates: {error}',
+      '更新失败：{error}': 'Update failed: {error}',
+      '跳过失败：{error}': 'Could not skip this version: {error}',
       '跑': 'Run',
       '还原': 'Revert',
       '复制动作的结果': 'Copy the action result',

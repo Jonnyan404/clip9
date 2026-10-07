@@ -9,6 +9,7 @@ pub mod cron;
 pub mod share;
 pub mod task;
 pub mod template;
+pub mod update;
 
 pub use auth::{
     AutomationPolicy, RoomAuthRequirement, can_access_room, is_global_admin,

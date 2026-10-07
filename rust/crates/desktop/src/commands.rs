@@ -26,7 +26,7 @@ use clip9_client::Msg;
 // ⚠️ `Manager` 是为了 `app.state::<…>()`（`pick_files` 从 `app` 上取字典，见那条注释）。
 use tauri::{Manager, State};
 
-use crate::model::ShareLinkView;
+use crate::model::{ShareLinkView, UpdatePhase};
 use crate::runtime::{Ask, Runtime};
 use crate::server_config::ServerConfigFile;
 use crate::server_process::ServerProcess;
@@ -771,6 +771,55 @@ pub async fn server_restart(server: State<'_, Option<Arc<ServerProcess>>>) -> Re
         server.start()
     })
     .await
+}
+
+// ── 自动更新（2026-10-07）──────────────────────────────────────────────
+//
+// ⚠️★ 页面**拿不到 updater 插件的 JS API**（`capabilities/default.json` 里故意没有
+// `updater:*`，判据 9 盯着）—— 与 `notification` / `global-shortcut` 同一条规矩：
+// 页面只跟 IPC 命令说话。下面这几条就是**唯一**的入口。
+//
+// ⚠️ 失败**不当异常抛**，而是回一个 `UpdatePhase::Failed` —— 更新失败是**状态**，
+// 不是意外：界面上要显示「为什么没成」（没网 / 签名不对 / 装不上），
+// 而抛异常的话页面只能看到一个字符串，分不出该说什么。
+
+/// 查一次更新。**用户点「检查更新」时调，也可以在启动后自动调一次。**
+///
+/// ⚠️ 它要发一个网络请求，所以是 `async` —— 别在主线程上同步等它。
+#[tauri::command]
+pub async fn update_check(
+    app: tauri::AppHandle,
+    state: State<'_, Arc<crate::update::UpdateState>>,
+) -> Result<UpdatePhase, Msg> {
+    Ok(state.check(&app).await)
+}
+
+/// 下载 + 安装 + 重启。**只在用户确认之后调得到。**
+///
+/// ⚠️★ macOS / Linux 上它**不会返回**（装完直接重启）；Windows 上插件会自己退出进程、
+/// 由安装器负责重启。所以调用方不该在它返回之后做任何事。
+#[tauri::command]
+pub async fn update_install(
+    app: tauri::AppHandle,
+    state: State<'_, Arc<crate::update::UpdateState>>,
+) -> Result<UpdatePhase, Msg> {
+    Ok(state.install(&app).await)
+}
+
+/// 「跳过这一版」。⚠️ 只跳**这一个版本** —— 下一版照样提示（见 `clip9_core::update`）。
+#[tauri::command]
+pub fn update_skip(
+    state: State<'_, Arc<crate::update::UpdateState>>,
+    version: String,
+) -> UpdatePhase {
+    state.skip(&version);
+    state.phase()
+}
+
+/// 当前更新状态（页面首次画那一格时用；之后它跟着快照走）。
+#[tauri::command]
+pub fn update_status(state: State<'_, Arc<crate::update::UpdateState>>) -> UpdatePhase {
+    state.phase()
 }
 
 /// 界面上要渲染的那一份状态。

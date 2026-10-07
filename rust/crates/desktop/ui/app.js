@@ -2647,6 +2647,133 @@ function renderDevices(state) {
 }
 
 /** 整个界面。⚠️ 「有没有房间」也要画出来 —— 半个状态是骗人的。 */
+/* ── 自动更新（2026-10-07）───────────────────────────────────────────────
+ *
+ * ⚠️★ 状态**不是这里查出来的** —— 它在 `snapshot.update` 里（壳每 500ms 推一次），
+ * 与主界面走同一条路。所以这里只负责**画**，以及把按钮接上。
+ * ⚠️ 推进那一格的是**壳**（`Store::set_update` 会让快照版本号前进），
+ * 所以 `render` 被调用时这一格自然就是最新的。
+ *
+ * ⚠️ 页面**拿不到 updater 插件的 JS API**（`capabilities/default.json` 里故意没给，
+ * 判据 9 盯着这件事）—— 下面几个按钮调的都是壳自己的命令。
+ */
+
+/** 「下载并重启」按过第一下之后、等用户确认的那一步。
+ *  ⚠️ 它是**模块级**的，不是每次渲染重置的：`render` 会因为别的原因（来了一条消息、
+ *  下载进度变了）被调用，把确认状态重置掉的话，用户点完「下载并重启」会发现按钮
+ *  自己又变回去了 —— 看起来就是「点了没反应」。 */
+let updateConfirming = false;
+/** 上一次画出来的那份更新状态。
+ *  ⚠️★ 「下载并重启」按第一下之后要**就地重画一次**（把确认露出来），而那次重画
+ *  不该依赖 `lastState` 还在不在 —— 它是 tick 的产物，而按钮的点击与 tick 无关。
+ *  记住它自己那一份，重画就只依赖自己。 */
+let lastUpdate = null;
+
+function renderUpdate(update) {
+  lastUpdate = update || null;
+  const phase = (update && update.phase) || 'idle';
+  const text = el('dg-update-state');
+  const notes = el('dg-update-notes');
+  const check = el('dg-update-check');
+  const install = el('dg-update-install');
+  const skip = el('dg-update-skip');
+  const confirm = el('dg-update-confirm');
+  const cancel = el('dg-update-cancel');
+
+  let label = t('已是最新');
+  let busy = false;
+  let offer = null; // 有新版时那个版本号（下载 / 跳过都要用它）
+  let body = '';
+
+  switch (phase) {
+    case 'checking':
+      label = t('正在检查…');
+      busy = true;
+      break;
+    case 'available':
+      label = t('发现新版本 {version}', { version: 'v' + update.version });
+      offer = update.version;
+      body = update.notes || '';
+      break;
+    case 'downloading': {
+      // ⚠️ 对面没给 `Content-Length` 时**没有**百分比可比 —— 那就只说「正在下载」。
+      // 编一个假进度（或者一直显示 0%）比不显示更糟：用户会盯着一个不动的数字。
+      const total = update.total;
+      label = total
+        ? t('正在下载 {percent}%', { percent: Math.floor((update.received / total) * 100) })
+        : t('正在下载…');
+      busy = true;
+      break;
+    }
+    case 'ready':
+      label = t('已下载 v{version}，重启后生效', { version: update.version });
+      busy = true;
+      break;
+    case 'skipped':
+      label = t('已跳过 v{version}', { version: update.version });
+      break;
+    case 'failed':
+      // ⚠️★ 壳给的是 `{key, params}`（`Msg`），**不是成文的句子** —— 要走 `say` 渲染。
+      // 直接塞进 `textContent` 会印出 `[object Object]`（判据 16 要的就是这个形状）。
+      label = say(update.msg);
+      break;
+    default:
+      break;
+  }
+
+  text.textContent = label;
+  notes.hidden = body === '';
+  notes.textContent = body;
+  // ⚠️ 查的时候禁用「检查更新」：连点几下会并发发几个网络请求，而它们回来时
+  // 会互相覆盖状态（先回来的那个反而是旧的）。
+  check.disabled = busy;
+  // ⚠️★ 只有「有新版、且没在忙」时才露出那三个动作按钮。
+  // 下载中/装完/失败时露着它们，用户会以为还能再点一次。
+  const canAct = offer !== null && !busy;
+  install.hidden = !canAct || updateConfirming;
+  skip.hidden = !canAct || updateConfirming;
+  confirm.hidden = !canAct || !updateConfirming;
+  cancel.hidden = !canAct || !updateConfirming;
+  install.dataset.version = offer || '';
+  skip.dataset.version = offer || '';
+  // 状态不再是「有新版」时，把确认那一步收回去（比如用户点了跳过、或者查出来没新版）
+  if (!canAct) updateConfirming = false;
+}
+
+el('dg-update-check').addEventListener('click', () => {
+  updateConfirming = false;
+  invoke('update_check').catch((error) => {
+    showNotice('error', t('检查更新失败：{error}', { error: errorText(error) }));
+  });
+});
+
+el('dg-update-install').addEventListener('click', () => {
+  // 第一步：只把「确认」露出来，**不**开始下载。
+  updateConfirming = true;
+  renderUpdate(lastUpdate);
+});
+
+el('dg-update-cancel').addEventListener('click', () => {
+  updateConfirming = false;
+  renderUpdate(lastUpdate);
+});
+
+el('dg-update-confirm').addEventListener('click', () => {
+  // ⚠️★ 从这一刻起**壳会把应用关掉重装** —— 所以这里不做任何「等它回来」的事，
+  // 也不用管返回值（macOS/Linux 上这个命令不会返回）。
+  updateConfirming = false;
+  invoke('update_install').catch((error) => {
+    showNotice('error', t('更新失败：{error}', { error: errorText(error) }));
+  });
+});
+
+el('dg-update-skip').addEventListener('click', () => {
+  updateConfirming = false;
+  invoke('update_skip', { version: el('dg-update-skip').dataset.version }).catch((error) => {
+    showNotice('error', t('跳过失败：{error}', { error: errorText(error) }));
+  });
+});
+
 function render(state) {
   lastRooms = state.rooms;
   // ⚠️★ 换房间**必须**把「展开」那两份状态清掉：`entry.id` 是每个房间各自单调的，
@@ -2669,6 +2796,9 @@ function render(state) {
   }
   lastSelected = state.selected;
   lastLimits = state.limits;
+  // ⚠️ 更新那一格**每次重绘都要画**（它不在主界面上，但状态随时会变 ——
+  // 检查中 / 下载中 / 装完待重启）。设置窗口没开着时写它也无害。
+  renderUpdate(state.update);
   el('room-count').textContent = String(state.rooms.length);
   renderRooms(state);
   renderTimeline(state);
