@@ -934,9 +934,7 @@ async fn connect_once(
     // ⚠️ 这里**不要** `mut`：下一句 `split()` 会把它整个吃掉（`split` 取 `self`）。
     let (socket, _response) = tokio::time::timeout(HANDSHAKE_TIMEOUT, connect_async(request))
         .await
-        .map_err(|_| {
-            Msg::key("connectTimedOut").param("seconds", HANDSHAKE_TIMEOUT.as_secs())
-        })?
+        .map_err(|_| Msg::key("connectTimedOut").param("seconds", HANDSHAKE_TIMEOUT.as_secs()))?
         .map_err(handshake_error)?;
 
     // 历史取回来之前**一条都不写剪贴板** —— 所以这里先什么都不做，
