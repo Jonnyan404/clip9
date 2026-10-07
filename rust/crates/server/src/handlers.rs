@@ -1472,7 +1472,11 @@ mod tests {
         assert_eq!(stats_days(None), STATS_DAYS_DEFAULT, "缺省 = 53 周");
         assert_eq!(stats_days(Some("")), STATS_DAYS_DEFAULT);
         assert_eq!(stats_days(Some("abc")), STATS_DAYS_DEFAULT);
-        assert_eq!(stats_days(Some("0")), STATS_DAYS_DEFAULT, "0 = 没给，不是空图");
+        assert_eq!(
+            stats_days(Some("0")),
+            STATS_DAYS_DEFAULT,
+            "0 = 没给，不是空图"
+        );
         assert_eq!(stats_days(Some("-5")), STATS_DAYS_DEFAULT, "负数同上");
         assert_eq!(stats_days(Some("90")), 90);
         assert_eq!(stats_days(Some(" 90 ")), 90, "首尾空白要忍");

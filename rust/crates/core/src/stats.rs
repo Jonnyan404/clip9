@@ -69,12 +69,7 @@ pub struct DailyActivity {
 ///
 /// 返回的数组**旧的在前面**，长度恰好是 `days`。
 #[must_use]
-pub fn bucket_by_day(
-    stamps: &[i64],
-    last_day: NaiveDate,
-    days: usize,
-    tz: &Tz,
-) -> Vec<u32> {
+pub fn bucket_by_day(stamps: &[i64], last_day: NaiveDate, days: usize, tz: &Tz) -> Vec<u32> {
     let mut counts = vec![0u32; days];
     if days == 0 {
         return counts;

@@ -724,13 +724,19 @@ fn room_timestamps_since_is_bounded_and_room_scoped() {
     }
     s.insert(text("r1", 250, "别的房间")).expect("写 r1");
 
-    let all = s.room_timestamps_since("default", 0, 100).expect("取时间戳");
+    let all = s
+        .room_timestamps_since("default", 0, 100)
+        .expect("取时间戳");
     assert_eq!(all, vec![300, 200, 100], "新的在前，且不含别的房间");
 
-    let recent = s.room_timestamps_since("default", 200, 100).expect("取时间戳");
+    let recent = s
+        .room_timestamps_since("default", 200, 100)
+        .expect("取时间戳");
     assert_eq!(recent, vec![300, 200], "下界是**含**的（>= since）");
 
-    let none = s.room_timestamps_since("default", 1000, 100).expect("取时间戳");
+    let none = s
+        .room_timestamps_since("default", 1000, 100)
+        .expect("取时间戳");
     assert!(none.is_empty(), "全都比下界旧 → 一条都不取");
 
     let capped = s.room_timestamps_since("default", 0, 2).expect("取时间戳");
