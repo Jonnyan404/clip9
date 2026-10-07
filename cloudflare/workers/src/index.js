@@ -5,6 +5,7 @@ import { TextHandler } from './handlers/text';
 import { FileHandler } from './handlers/file';
 import { ContentHandler } from './handlers/content';
 import { RoomsHandler } from './handlers/rooms';
+import * as StatsHandler from './handlers/stats';
 import { WebSocketHandler } from './handlers/websocket';
 import { ShareHandler } from './share';
 import { handleShareLanding } from './share-landing';
@@ -29,6 +30,9 @@ router.get('/server', handleServer);
 router.post('/auth/token', handleAuthToken);
 router.post('/auth/token/refresh', handleAuthTokenRefresh);
 router.get('/rooms', RoomsHandler.list);
+// 房间活跃度（热力图的数据源）。⚠️★ 与自建服务端的 `/stats/daily` 同一条契约 ——
+// 少了它，CF 上的房间点开热力图只会显示「读取活跃度失败」。
+router.get('/stats/daily', StatsHandler.daily);
 router.post('/text', TextHandler.create);
 router.post('/share', ShareHandler.create);
 // 分享页在取正文之前先问一次：类型 / 文件名 / 大小 / 剩余有效期 / 是否需要密码。
