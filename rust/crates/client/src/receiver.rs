@@ -461,6 +461,20 @@ pub enum Latency {
 const IDLE_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// 重连退避：1s → 2s → 4s …… 封顶 30s。
+/// **握手**的超时。
+///
+/// ⚠️★ 没有它的话，一个「TCP 连上了、但 WebSocket 升级永远不回来」的对端会让这个房间
+/// **永久停在「连接中」** —— 而那是这个功能最难查的一种失败：
+/// 界面上既没有错、也没有原因，看起来只是「慢」。
+///
+/// ⚠️ 为什么真的会发生：Cloudflare 那边 `/push` 是转发给 Durable Object 的，
+/// DO 不响应时那个请求就**挂在那儿**（不返回、也不报错）。自建服务端上也可能
+/// 被中间的设备吞掉。2026-10-07 实测到过这个状态。
+///
+/// ⚠️ 它只包住**握手**，不包住连上之后的长连接 —— 那个由 [`IDLE_TIMEOUT`] 管
+///（30 秒没有任何帧就判死）。两个超时管的是两件事，别合并。
+const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(10);
+
 const RECONNECT_BASE: Duration = Duration::from_secs(1);
 const RECONNECT_MAX: Duration = Duration::from_secs(30);
 
@@ -914,8 +928,16 @@ async fn connect_once(
         channel.auth_token.as_deref(),
     )?;
 
+    // ⚠️★ **握手必须有超时**（见 [`HANDSHAKE_TIMEOUT`]）：没有它的话，
+    // 一个「连上了但不升级」的对端会让这个房间永久停在「连接中」，
+    // 而界面上既没有错、也没有原因。
     // ⚠️ 这里**不要** `mut`：下一句 `split()` 会把它整个吃掉（`split` 取 `self`）。
-    let (socket, _response) = connect_async(request).await.map_err(handshake_error)?;
+    let (socket, _response) = tokio::time::timeout(HANDSHAKE_TIMEOUT, connect_async(request))
+        .await
+        .map_err(|_| {
+            Msg::key("connectTimedOut").param("seconds", HANDSHAKE_TIMEOUT.as_secs())
+        })?
+        .map_err(handshake_error)?;
 
     // 历史取回来之前**一条都不写剪贴板** —— 所以这里先什么都不做，
     // 等 `config`（它带着边界）到了再说。

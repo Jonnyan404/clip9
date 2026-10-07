@@ -166,6 +166,9 @@
       'connectedButHistoryFailed': '已连接，但取不到历史：{reason}',
       'disconnectedWithReason': '已断开：{reason}',
       'connectFailed': '连不上：{reason}',
+      // ⚠️ 握手超时（2026-10-07）：对端「连上了但不升级」时，界面必须**说出原因**，
+      // 而不是永久停在「连接中」（见 `clip9_client::receiver` 的 `HANDSHAKE_TIMEOUT`）。
+      'connectTimedOut': '连接超时（{seconds} 秒没有完成握手）',
       'connectNeedsCredentials': '服务端要凭据，但配置里没有或者不对：{detail}',
       'connectRejected': '服务端拒绝了这条连接：{detail}',
       'httpClientFailed': '建 HTTP 客户端失败：{reason}',
@@ -765,6 +768,7 @@
       'connectedButHistoryFailed': 'Connected, but history could not be fetched: {reason}',
       'disconnectedWithReason': 'Disconnected: {reason}',
       'connectFailed': 'Could not connect: {reason}',
+      'connectTimedOut': 'Timed out connecting ({seconds}s without a handshake)',
       'connectNeedsCredentials': 'The server wants credentials, but none are set (or they are wrong): {detail}',
       'connectRejected': 'The server refused the connection: {detail}',
       'httpClientFailed': 'Could not create the HTTP client: {reason}',
