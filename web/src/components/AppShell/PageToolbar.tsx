@@ -110,8 +110,11 @@ export function PageToolbar({ variant = 'default' }: { variant?: string }) {
                         ? { height: '100%', py: 1.5, px: 0.5 }
                         : { maxWidth: 1100, mx: 'auto', px: 2, py: 1 }}
                 >
-                    {/* 左侧：回公共房间 / 连接态 / 房间 chip */}
-                    <Stack direction="row" alignItems="center" spacing={0.5} sx={{ flex: 1, minWidth: 0 }}>
+                    {/* 左侧：回公共房间 / 连接态 / 房间 chip
+                        ⚠️★ 侧栏模式下**这一组也要竖排** —— 只改外层是不够的：
+                        内层还是 `row` 的话，那枚最宽 180px 的房间 chip 会横着溢出 56px 的栏，
+                        被裁掉之后**按钮点不到**（2026-10-07 用户报的「侧栏完全没法用」）。 */}
+                    <Stack direction={isSide ? 'column' : 'row'} alignItems="center" spacing={isSide ? 0.5 : 0.5} sx={isSide ? undefined : { flex: 1, minWidth: 0 }}>
                         {room && (
                             <Tooltip title={t('backToDefaultRoom')}>
                                 <IconButton size="small" aria-label={t('backToDefaultRoom')} onClick={() => useWebSocketStore.getState().switchRoom('')}>
@@ -138,6 +141,21 @@ export function PageToolbar({ variant = 'default' }: { variant?: string }) {
                                 <MdiIcon name="mdi-chart-timeline-variant-shimmer" size={22} />
                             </IconButton>
                         </Tooltip>
+                        {/* ⚠️★ 侧栏模式下**收成一颗图标按钮**：带标签的 chip 最少也有几十像素宽，
+                            而栏只有 56px —— 溢出的部分会被裁掉，看起来就是「点不到」。
+                            ⚠️ 房间名没丢：它在 `title` 与 `aria-label` 里（悬停/读屏都能拿到）。 */}
+                        {isSide ? (
+                            <Tooltip title={`${room || t('publicRoom')} · ${t('showQrCode')}`}>
+                                <IconButton
+                                    size="small"
+                                    aria-label={`${room || t('publicRoom')} · ${t('showQrCode')}`}
+                                    onClick={actions.openPageQr}
+                                    sx={{ bgcolor: 'color-mix(in srgb, var(--mui-palette-primary-main) 12%, transparent)' }}
+                                >
+                                    <MdiIcon name={isProtected ? 'mdi-lock' : 'mdi-earth'} size={22} color="var(--mui-palette-primary-main)" />
+                                </IconButton>
+                            </Tooltip>
+                        ) : (
                         <Tooltip title={t('showQrCode')}>
                             <Chip
                                 size="small"
@@ -162,10 +180,27 @@ export function PageToolbar({ variant = 'default' }: { variant?: string }) {
                                 }
                             />
                         </Tooltip>
+                        )}
                     </Stack>
 
-                    {/* 右侧：模式 / 房间 / 系统 三组 */}
-                    <Stack direction="row" alignItems="center" spacing={1.5}>
+                    {/* 右侧：模式 / 房间 / 系统 三组
+                        ⚠️ 与左侧同理：侧栏模式下必须竖排，否则这一组也会横向溢出。 */}
+                    <Stack direction={isSide ? 'column' : 'row'} alignItems="center" spacing={1.5}>
+                        {/* ⚠️★ 模式切换：侧栏模式下也收成**图标按钮**（与房间那颗同理）——
+                            带标签的 chip 在 56px 的栏里会被裁掉，而「切模式」是这一栏里
+                            最常用的东西之一，点不到等于整条栏废了。
+                            ⚠️ 当前模式用 `title` / `aria-label` 说清楚（图标本身不表意）。 */}
+                        {isSide ? (
+                            <Tooltip title={`${t('uiMode')}：${t(currentMode.labelKey)}`}>
+                                <IconButton
+                                    size="small"
+                                    aria-label={`${t('uiMode')}：${t(currentMode.labelKey)}`}
+                                    onClick={(e) => setModeMenuAnchor(e.currentTarget)}
+                                >
+                                    <MdiIcon name={currentMode.icon} size={22} />
+                                </IconButton>
+                            </Tooltip>
+                        ) : (
                         <Chip
                             size="small"
                             variant="outlined"
@@ -178,6 +213,7 @@ export function PageToolbar({ variant = 'default' }: { variant?: string }) {
                             }
                             title={t('uiMode')}
                         />
+                        )}
                         <Menu anchorEl={modeMenuAnchor} open={Boolean(modeMenuAnchor)} onClose={() => setModeMenuAnchor(null)}>
                             {MODES_META.map((mode) => (
                                 <MenuItem
@@ -194,7 +230,7 @@ export function PageToolbar({ variant = 'default' }: { variant?: string }) {
                             ))}
                         </Menu>
 
-                        <Stack direction="row" alignItems="center" spacing={0.25}>
+                        <Stack direction={isSide ? 'column' : 'row'} alignItems="center" spacing={0.25}>
                             {actions.roomListEnabled && (
                                 <Tooltip title={actions.roomBrowserVisible ? t('hideRoomBrowser') : t('showRoomBrowser')}>
                                     <IconButton
@@ -216,7 +252,7 @@ export function PageToolbar({ variant = 'default' }: { variant?: string }) {
                             </Tooltip>
                         </Stack>
 
-                        <Stack direction="row" alignItems="center" spacing={0.25}>
+                        <Stack direction={isSide ? 'column' : 'row'} alignItems="center" spacing={0.25}>
                             <Tooltip title={t('clearClipboard')}>
                                 <IconButton size="small" aria-label={t('clearClipboard')} onClick={actions.openClearAll}>
                                     <MdiIcon name="mdi-broom" size={22} />
