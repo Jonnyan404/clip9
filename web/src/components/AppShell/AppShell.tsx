@@ -18,6 +18,7 @@ import { PageQrDialog } from './PageQrDialog';
 import { DonateDialog } from './DonateDialog';
 import { TraditionalColorDialog } from './TraditionalColorDialog';
 import { ShareHistoryDialog } from './ShareHistoryDialog';
+import { ActivityHeatmapDialog } from './ActivityHeatmapDialog';
 import { ToastHost } from './ToastHost';
 
 /**
@@ -40,6 +41,7 @@ export function AppShell({ children }: { children: ReactNode }) {
     const [donateOpen, setDonateOpen] = useState(false);
     const [traditionalColorsOpen, setTraditionalColorsOpen] = useState(false);
     const [shareHistoryOpen, setShareHistoryOpen] = useState(false);
+    const [activityOpen, setActivityOpen] = useState(false);
     const [clearedVisible, setClearedVisible] = useState(false);
 
     const uiMode = useAppStore((s) => s.uiMode);
@@ -131,6 +133,7 @@ export function AppShell({ children }: { children: ReactNode }) {
         },
         openRoomBrowser: () => useRoomsStore.getState().openRoomBrowser(desktopDockEnabled),
         openPageQr: () => setPageQrOpen(true),
+        openActivity: () => setActivityOpen(true),
         goHome: () => {
             if (router.state.location.pathname !== '/' || router.state.location.search) {
                 void router.navigate('/');
@@ -212,6 +215,13 @@ export function AppShell({ children }: { children: ReactNode }) {
                     onOpenDonate={() => setDonateOpen(true)}
                 />
                 <ShareHistoryDialog open={shareHistoryOpen} onClose={() => setShareHistoryOpen(false)} />
+                <ActivityHeatmapDialog
+                    open={activityOpen}
+                    onClose={() => setActivityOpen(false)}
+                    // ⚠️ 点某一格 → 把时间流滚到那天。**没有这一条这张图就只是装饰画**。
+                    // 信号走 store（`jumpToDay`），由 `DefaultMode` 消费并清掉。
+                    onJumpToDay={(date) => useAppStore.setState({ jumpToDay: date })}
+                />
                 <TraditionalColorDialog open={traditionalColorsOpen} onClose={() => setTraditionalColorsOpen(false)} />
                 <DonateDialog open={donateOpen} onClose={() => setDonateOpen(false)} />
                 <ClearAllDialog open={clearAllOpen} onClose={() => setClearAllOpen(false)} onCleared={setClearedVisible} />

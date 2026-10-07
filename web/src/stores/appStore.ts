@@ -117,6 +117,8 @@ export interface AppState {
     config: AppConfig;
     send: { text: string; files: File[] };
     received: ReceivedItem[];
+    /** 「把时间流跳到哪一天」（`YYYY-MM-DD`，本地日）。一次性信号 —— 用掉就清。 */
+    jumpToDay: string | null;
     roomMessagesCache: Record<string, ReceivedItem[]>;
     isRoomSyncing: boolean;
     device: Array<{ id: string; type?: string; os?: string; browser?: string; name?: string }>;
@@ -147,6 +149,14 @@ export const useAppStore = create<AppState>((set, get) => ({
     },
     send: { text: '', files: [] },
     received: [],
+    /**
+     * 「把时间流跳到哪一天」（`YYYY-MM-DD`，**本地日**）。
+     *
+     * ⚠️★ 它是一次性信号：`DefaultMode` 滚过去之后**自己清掉**。
+     * 留着不清的话，下一次因为别的原因重渲染会再跳一次 —— 表现是「页面自己乱跳」。
+     * ⚠️ 由热力图那一格写（见 `ActivityHeatmapDialog` 的 `onJumpToDay`）。
+     */
+    jumpToDay: null as string | null,
     roomMessagesCache: {},
     isRoomSyncing: false,
     device: [],

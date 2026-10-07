@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
+import { toast } from '@/stores/toastStore';
 import { Box, Card, Chip, Stack, TextField, Typography } from '@mui/material';
 import { PageToolbar } from '@/components/AppShell/PageToolbar';
 import { UnifiedComposer, type UnifiedComposerHandle } from '@/components/UnifiedComposer';
@@ -11,6 +12,20 @@ import { useDisplaySettings } from '@/hooks/useDisplaySettings';
 import { isFileEntry, isImageName, looksLikeTable, looksLikeTaskList } from '@/lib/util';
 
 const TIMELINE_FILTER_KEY = 'timelineFilter';
+/** `timestamp`（秒）→ **本地**的 `YYYY-MM-DD`。
+ *
+ * ⚠️★ 不用 `toISOString()`：那给的是 **UTC** 日，会把本地晚上的条目算到第二天 ——
+ * 而服务端是按**本地日**分桶的（见 `clip9-core::stats`），两边对不上就会「跳错一天」，
+ * 而且**不报错**。 */
+function localDateOf(timestamp?: number): string {
+    if (!timestamp) {
+        return '';
+    }
+    const d = new Date(timestamp * 1000);
+    const pad = (n: number) => String(n).padStart(2, '0');
+    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+}
+
 /** 每帧最多挂载多少条（见下面 `renderLimit` 那段注释）。 */
 const FIRST_CHUNK = 12;
 const TIMELINE_FILTER_KEYS = ['all', 'text', 'image', 'file', 'task', 'table'] as const;
@@ -94,6 +109,41 @@ export default function DefaultMode() {
         });
         return () => cancelAnimationFrame(id);
     }, [renderLimit, filtered.length]);
+
+    // ⚠️★ 热力图点了某一天 → 滚到那天的第一条（2026-10-07）。
+    //
+    // ⚠️ 信号走 store 而且**用掉就清**：留着的话下一次因为别的原因重渲染会再跳一次，
+    // 表现是「页面自己乱跳」。
+    const jumpToDay = useAppStore((s) => s.jumpToDay);
+    useEffect(() => {
+        if (!jumpToDay) {
+            return;
+        }
+        useAppStore.setState({ jumpToDay: null });
+        const index = filtered.findIndex((item) => localDateOf(item.timestamp) === jumpToDay);
+        if (index < 0) {
+            // ⚠️ 那一天可能已经被历史窗口裁掉了 —— 要**说清**，别静默跳到别的地方。
+            toast(t('activityDayGone', { date: jumpToDay }));
+            return;
+        }
+        // ⚠️★ 目标可能在**分批挂载**的后面（`renderLimit` 一帧只加 12 条）——
+        // 所以先把 limit 撑到它，再等它真的挂出来才滚。少了这一步，
+        // 对老房间（几百条）点最近一个月之外的那天会**什么都不发生**。
+        setRenderLimit((n) => Math.max(n, index + 1));
+        let tries = 0;
+        const tick = () => {
+            const node = document.querySelectorAll<HTMLElement>('.timeline-item')[index];
+            if (node) {
+                node.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                return;
+            }
+            if (tries < 60) {
+                tries += 1;
+                requestAnimationFrame(tick);
+            }
+        };
+        requestAnimationFrame(tick);
+    }, [jumpToDay, filtered, t]);
 
     // 新消息到达时吸顶（读者在顶部附近才跟随）。
     const prevCountRef = useRef(received.length);

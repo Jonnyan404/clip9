@@ -112,6 +112,14 @@ export function PageToolbar({ variant = 'default' }: { variant?: string }) {
                                 </IconButton>
                             </Tooltip>
                         )}
+                        {/* 房间活跃度（2026-10-07）。⚠️ 放在房间 chip **之前**：
+                            它与那颗 chip 是同一类（「看这个房间」），而与右边那排
+                            「切侧栏 / 进设置」不是一类。 */}
+                        <Tooltip title={t('roomActivity')}>
+                            <IconButton size="small" aria-label={t('roomActivity')} onClick={actions.openActivity}>
+                                <MdiIcon name="mdi-chart-timeline-variant-shimmer" size={22} />
+                            </IconButton>
+                        </Tooltip>
                         <Tooltip title={t('showQrCode')}>
                             <Chip
                                 size="small"

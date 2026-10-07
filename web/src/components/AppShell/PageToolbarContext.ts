@@ -14,6 +14,8 @@ export interface PageToolbarActions {
     toggleConnection: () => void;
     openRoomBrowser: () => void;
     openPageQr: () => void;
+    /** 房间活跃度热力图（2026-10-07）。 */
+    openActivity: () => void;
     goHome: () => void;
     roomBrowserVisible: boolean;
     roomCount: number;
@@ -30,6 +32,7 @@ export const PageToolbarContext = createContext<PageToolbarActions>({
     toggleConnection: noop,
     openRoomBrowser: noop,
     openPageQr: noop,
+    openActivity: noop,
     goHome: noop,
     roomBrowserVisible: false,
     roomCount: 0,
