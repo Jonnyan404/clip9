@@ -12,6 +12,7 @@ import { handleShareLanding } from './share-landing';
 import { SHELL_BASE_HREF, injectShellTags, readShellHtml } from './spa-shell';
 import { errorResponse } from './errors';
 import { historyLimit } from './utils';
+import { sweepExpiredFiles } from './file-cleanup';
 
 // 导入 Durable Objects
 export { WebSocketRoom } from './durable-objects/websocket-room';
@@ -246,6 +247,32 @@ export default {
         status: 500,
         headers: corsHeaders
       });
+    }
+  },
+
+  // ── 定时任务：回收过期文件 ────────────────────────────────────────────────
+  //
+  // 周期**不在代码里**，在 `wrangler.toml` 的 `[triggers] crons`（默认 `*/5 * * * *`）——
+  // 这是 Cloudflare 表达周期的唯一方式（没有运行时调度器，也**不需要** DO alarm：
+  // 那个是**每房间**一个实例、只在该房间有活动时才活着，做不了全局回收）。
+  //
+  // ⚠️★ **配置与这个导出缺一不可**，而两者的失败方式正好相反：
+  //   · 只加 cron 不导出 `scheduled` → `wrangler deploy` 当场报错（好，吵得出来）；
+  //   · 只导出 `scheduled` 不加 cron  → **永远不触发，一声不响**。
+  // 所以 `test/file-cleanup.test.mjs` 里有一条静态判据同时盯着这两半。
+  //
+  // 具体做什么见 `src/file-cleanup.js`（与 Rust `server/src/file_cleanup.rs` 同语义）。
+  async scheduled(event, env, ctx) {
+    try {
+      const report = await sweepExpiredFiles(env);
+      if (report.expired > 0 || report.failed > 0) {
+        console.log('过期文件清理完成', report);
+      }
+    } catch (error) {
+      // ⚠️★ 出错**不能把任务打死**（与 Rust 那边同一条取舍）：它是个内务任务，
+      // 偶发的一次失败不该让「过期文件从此不再被回收」。
+      // 抛出去只会让这次 cron 调用标红，下一轮照样会跑 —— 但日志里要留痕。
+      console.error('过期文件清理出错（下一轮再试）:', error);
     }
   }
 };

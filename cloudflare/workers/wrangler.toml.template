@@ -71,6 +71,13 @@ TEXT_LIMIT = "40960"
 FILE_LIMIT = "204857600"
 FILE_EXPIRE = "3600"
 
+# 过期文件清理的**开关**（秒。`<= 0` = 不跑，与自建服务端 `server.fileCleanup <= 0` 同约定）。
+#
+# ⚠️ 它**不管周期** —— 周期在那个 cron 表达式里（文件末尾的 `[triggers]`），
+#    Cloudflare 没有「运行时改周期」这一说。这里填 300 只是与 Rust 的缺省值对齐，
+#    代码只判正负（见 src/file-cleanup.js 的 isFileCleanupEnabled）。
+FILE_CLEANUP = "300"
+
 # D1 数据库绑定 (将被自动更新)
 [[d1_databases]]
 binding = "DB"
@@ -92,3 +99,23 @@ script_name = "clip9-worker"
 [[migrations]]
 tag = "v1"
 new_sqlite_classes = ["WebSocketRoom"]
+
+# ── 定时清理过期文件 ─────────────────────────────────────────────────────────
+#
+# 自建服务端（Rust `server/src/file_cleanup.rs`、Go `cleanExpiredFilesLoop`）是
+# **每 5 分钟**扫一遍：过期的文件 → 删字节 + 删文件登记 + 删时间线条目 + 广播 `revoke`。
+#
+# Worker 侧以前**只做请求路径上的惰性清理**：有人来 GET 一个已过期的 uuid 才顺手删。
+# 于是「再也没人访问的过期文件」永远留在 R2 里（R2 没有对象级 TTL，D1 那行也只有
+# 容量裁剪才会动）。这一段就是把后台那一半补上，语义与自建服务端一致。
+#
+# ⚠️★ **配了它还不够**：入口还得导出 `scheduled`（`src/index.js` 末尾）。
+#     少导出 → `wrangler deploy` 直接报错；少这段配置 → **永远不触发、一声不响**。
+#     两半都有静态判据盯着（`test/file-cleanup.test.mjs`）。
+#
+# ⚠️ 周期只能写在这里：换周期 = 改这一行再部署。`*/5 * * * *` 与 Rust 的
+#     `server.fileCleanup` 默认值（300 秒）对齐。免费版每个账号最多 5 个 cron 触发器。
+#
+# ⚠️ Cloudflare **不支持** cron 表达式里的「秒」字段 —— 最小粒度是分钟。
+[triggers]
+crons = ["*/5 * * * *"]

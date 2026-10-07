@@ -34,6 +34,7 @@
 | `TEXT_LIMIT` | ➖ | 文本最大字符数（默认 `40960`） |
 | `FILE_LIMIT` | ➖ | 单文件大小上限（字节，默认 `204857600` 即 200MB） |
 | `FILE_EXPIRE` | ➖ | 全局文件过期时间（秒，默认 `3600` 即 1 小时） |
+| `FILE_CLEANUP` | ➖ | 过期文件后台回收的**开关**（秒。`<= 0` = 关掉，默认 `300` = 开）。⚠️ 它**不管周期**，周期在模板的 `[triggers]` cron 里（默认每 5 分钟） |
 
 #### 2. 触发部署
 进入 GitHub 仓库 **Actions** 页面，找到 **Deploy Cloudflare Worker**，点击 **Run workflow** 即可一键完成构建与部署。
@@ -99,6 +100,12 @@ ROOM_AUTH_JSON = "{\"finance\":{\"password\":\"finance-pass\",\"fileExpire\":0},
 > **注意**：
 > - `fileExpire` 仅在文件上传瞬间生效，后续修改配置不会回溯已上传的文件。
 > - 房间消息总数超过 `HISTORY_LIMIT` 产生轮转清理时，最旧的文件仍会被清理。
+> - 到期的文件由后台任务**每 5 分钟**回收一次（Cloudflare cron 触发器 → `scheduled`），
+>   语义与自建服务端一致：删 R2 字节 + 删 D1 条目 + 向该房间广播 `revoke`。
+>   所以在「到期」与「下一次回收」之间，那条消息会短暂地以「已过期」形态留在历史里；
+>   被回收之后再请求同一个 id 会变成 `message_not_found`（不再是 `file_expired`）。
+>   ⚠️ 关掉它（`FILE_CLEANUP=0`）的代价是 R2 只涨不消 —— 没人再访问的过期文件不会自己消失
+>   （R2 没有对象级 TTL）。周期想改就改模板里的 cron 表达式，改了要重新部署。
 
 ---
 

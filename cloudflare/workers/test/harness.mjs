@@ -60,7 +60,16 @@ export function makeEnv() {
   const r2 = new Map();
   const R2_BUCKET = {
     async put(key, body, opts) { r2.set(key, { body, opts }); },
-    async delete(key) { r2.delete(key); },
+    // 真 R2 的 `delete()` **两种都收**：单个 key，或 key 数组（一次最多 1000 个）。
+    // 过期文件清理走的是**数组**那条（一轮一次调用，省子请求）——
+    // 桩不支持数组的话，那条路径在测试里就完全走不到，而线上跑的就是它。
+    async delete(key) {
+      if (Array.isArray(key)) {
+        for (const k of key) r2.delete(k);
+        return;
+      }
+      r2.delete(key);
+    },
     // 真 R2 的 get() 带 customMetadata / httpMetadata / size，这三样都被下载链路读：
     //   - customMetadata.room 决定 /file/ 按哪个房间鉴权（写侧 put 时就写进去了）
     //   - customMetadata.expireTime 决定过期拦截

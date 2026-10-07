@@ -294,6 +294,7 @@ show_results() {
     echo "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!"
     echo "  - 已支持 /content/latest、/content/:id 及对应 .json 路由（无 /api 前缀，与自托管 Go 对齐）"
     echo "  - 已支持分块上传 /upload/chunk、/upload/chunk/:uuid、/upload/finish/:uuid"
+    echo "  - 过期文件每 5 分钟后台自动回收（cron 触发器 + scheduled；与自建服务端同语义）"
     echo "  - 静态资源与 SPA 导航请求免费，仅 API 请求计费"
 }
 

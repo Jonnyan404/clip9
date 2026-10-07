@@ -9,6 +9,7 @@
 #   share-log-landing.test.mjs —— 分享记录与 OG 落地页（房间隔离 / 计数去重 / 外壳注入）
 #   deploy-subdomain.test.mjs —— 部署不该替操作者表态（workers.dev 的当前状态照原样写回配置）
 #   stats-daily.test.mjs  —— 房间活跃度（热力图的数据源），与自建服务端的 `/stats/daily` 同一条契约
+#   file-cleanup.test.mjs  —— 过期文件的后台回收（cron + scheduled 两半都要在；永不过期的文件不许碰）
 #
 # 端到端测试需要先打包处理器（Worker 源码用打包器风格的无后缀导入，Node 直接加载不了），
 # 并用 node:sqlite 充当 D1、Map 充当 R2，因此不需要 wrangler、不联网。
@@ -16,7 +17,7 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 echo "── 打包处理器（供端到端测试导入）"
-for entry in handlers/content handlers/file handlers/text handlers/stats durable-objects/websocket-room auth share share-landing index; do
+for entry in handlers/content handlers/file handlers/text handlers/stats durable-objects/websocket-room auth share share-landing file-cleanup index; do
   ./node_modules/.bin/esbuild "src/${entry}.js" \
     --bundle --format=esm --platform=neutral \
     --outfile="test/.build/$(basename "${entry}").mjs" --log-level=warning
@@ -73,3 +74,7 @@ node --no-warnings test/deploy-subdomain.test.mjs
 echo
 echo "── 房间活跃度（热力图数据源，与自建服务端同契约）"
 node --no-warnings test/stats-daily.test.mjs
+
+echo
+echo "── 过期文件的后台回收（cron → scheduled；永不过期的文件一条不许碰）"
+node --no-warnings test/file-cleanup.test.mjs
