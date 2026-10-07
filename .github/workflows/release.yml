@@ -484,7 +484,12 @@ jobs:
             "$version" "$code" "$wix" > "$RUNNER_TEMP/tauri-version.json"
           cat "$RUNNER_TEMP/tauri-version.json"
 
-      # ② 桌面端打包。⚠️ 不传任何 release 参数：发 Release 归下面那个唯一的 publish job。
+      # ② 桌面端打包 —— ⚠️★ **资产由它自己传上 Release**（2026-10-07 改，理由见本文件 §「桌面端」那段）。
+      #
+      # ⚠️★ 不传 `releaseBody` / `body_path`：正文归 `release.sh`（建 Release 时带上）与
+      #    `release-notes` 那个 job。tauri-action 在「按 tag 找到已有 Release」时**只认一下、
+      #    不碰正文**（`create-release.ts`：打印 `Found release with tag …` 之后就 return）。
+      # ⚠️ `prerelease` 必须跟着传：`-beta*` 那几版要标成预发布。
       - uses: tauri-apps/tauri-action@v1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -498,6 +503,20 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
           projectPath: rust/crates/desktop
+          # ⚠️★ 这三个是「让它自己发」的开关：**没有 `tagName` 它拿不到 `releaseId`，而资产上传
+          #    与 `latest.json` 都写在 `if (releaseId)` 里面**（`src/index.ts:127`）。
+          #    2026-10-07 那次就是这么红的：我们只让它构建、不让它发 → 那份 JSON 谁也没生成。
+          tagName: ${{ needs.info.outputs.tag }}
+          releaseName: ${{ needs.info.outputs.tag }}
+          prerelease: ${{ needs.info.outputs.prerelease == 'true' }}
+          # ⚠️★ 资产名 —— 与仓库那条约定（`clip9-desktop-<tag>-<平台>-<架构>.<ext>`）对齐。
+          #    ⚠️ 平台那一格**不取 `[platform]`**：上游对 macOS 给的是 `darwin`，而我们（以及
+          #    homebrew cask、`assets` 那条判据）认的是 `macos` —— 这里用矩阵的 `label`。
+          releaseAssetNamePattern: clip9-desktop-${{ needs.info.outputs.tag }}-${{ matrix.label }}[ext]
+          # ⚠️★ 签名文件**不让它传**：模板只到 `[ext]`，而 `.sig` 的 ext 就是 `.sig` —— 同一个平台
+          #    有好几份签名（`deb.sig` / `AppImage.tar.gz.sig`…），模板会把它们**撞成同一个名字**，
+          #    而它遇到重名是「先删后传」→ 会**静默少几份**。下面那一步自己传（名字带原包名，天然唯一）。
+          uploadUpdaterSignatures: false
           # ⚠️★ Windows 上 msi 与 nsis **都打了**，而 updater 要用哪一个必须明说：
           # 默认（`false`）会给 `.msi`，而 NSIS 那条路更适合静默安装
           #（插件直接跑 `*-setup.exe /S`，不用 msiexec）。
@@ -514,40 +533,35 @@ jobs:
       # ⚠️ 扩展名从文件名上取（`${f##*.}`），所以这里不写死 dmg/deb/AppImage 之外的清单，
       #    加一个平台只要往上面那个 for 里添一格。
       # ⚠️ `shell: bash`：Windows runner 上默认是 pwsh，这段是 bash（Git Bash 在 runner 上有）。
-      - name: 给产物带上 clip9-desktop 前缀
+      - name: 收好产物，并把签名传上去
         shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
           out="rust/target/desktop-release"
           mkdir -p "$out"
           base="rust/target/${{ matrix.target }}/release/bundle"
+          # ⚠️★ 这份 `out/` 现在**只喂 `assets` 那条「资产名对不对」的判据**（它按 tag 拼期望名、
+          #    再到 artifact 里找）——**不再由 publish job 传上 Release**：资产上一步已经由
+          #    tauri-action 按模板传过了，而「同名重传」会**换掉资产 id**，`latest.json` 里那些
+          #    `releases/assets/<id>` 地址就全 404 了。
           for f in "$base"/dmg/*.dmg "$base"/deb/*.deb "$base"/appimage/*.AppImage \
                    "$base"/msi/*.msi "$base"/nsis/*-setup.exe; do
             [ -e "$f" ] || continue
             # ⚠️★ `v<版本>` 紧跟 `clip9-desktop` 之后（与 cli / openwrt / android 同一条规则）。
             cp "$f" "$out/clip9-desktop-${{ needs.info.outputs.tag }}-${{ matrix.label }}.${f##*.}"
           done
-          # ── 更新用的那份 `latest.json` ────────────────────────────────────
-          # ⚠️★ 每个矩阵 job 各写一份、而那一份**只含本平台那一格**，所以按平台重命名
-          # 再传上去，由 publish job 合并成一份（见 `tools/merge-updater-json.mjs`
-          # 的抬头：不合并的话只有最后上传的那个平台能更新）。
-          # ⚠️ 路径**不写死**：`tauri-action` 把它写在 bundle 那棵树里，具体哪一层是它的事。
-          latest="$(find rust/target -name latest.json -print -quit)"
-          if [ -z "$latest" ]; then
-            echo "::error::找不到 latest.json —— 自动更新会静默失效（签名密钥配了吗？）"
-            exit 1
-          fi
-          # ⚠️★ 名字必须落在 `clip9-desktop-*` 里：publish job 有一条「待传清单里
-          # 不许有别的东西」的检查（`find artifacts ! -name 'clip9-cli-*' ! -name 'clip9-desktop-*'`）。
-          # 叫 `latest-<平台>.json` 的话它会被当成**中间产物**挡下来。
-          cp "$latest" "$out/clip9-desktop-${{ needs.info.outputs.tag }}-${{ matrix.label }}-latest.json"
 
-          # ⚠️ `.sig` 一并收上：签名值其实**内联在 `latest.json` 的 `signature` 字段里**，
-          # 所以少了它们不影响更新；但发出来的话，谁都能拿它对安装包独立验一次。
+          # ── 签名：自己传（名字带上原包名，天然唯一）────────────────────────
+          # ⚠️ 签名值其实**内联在 `latest.json` 的 `signature` 字段里**，少了它们不影响更新；
+          #    但发出来的话，谁都能拿它对安装包独立验一次。
+          # ⚠️ 用 `gh release upload`：Release 此时已经存在（上一步建的）。
           for f in "$base"/dmg/*.dmg.sig "$base"/deb/*.deb.sig "$base"/appimage/*.AppImage.sig \
                    "$base"/msi/*.msi.sig "$base"/nsis/*-setup.exe.sig; do
             [ -e "$f" ] || continue
-            cp "$f" "$out/clip9-desktop-${{ needs.info.outputs.tag }}-${{ matrix.label }}-$(basename "$f")"
+            name="clip9-desktop-${{ needs.info.outputs.tag }}-${{ matrix.label }}-$(basename "$f")"
+            gh release upload "${{ needs.info.outputs.tag }}" "$f#$name" --clobber
           done
 
           ls -l "$out"
@@ -689,15 +703,17 @@ jobs:
       #    v0.1.0-beta3 那次就真传上去了 7 个 `clip9-server-<版本>-<架构>`：它们本来只是
       #    给 ipk/apk 两个 job 用的，能不能被拖下来完全**取决于时序**（那两个 job 那会儿
       #    有没有跑完）。Jonny 2026-09-29：「去掉中间的 OpenWrt 中间产物，只要 ipk 和 apk」。
-      #    ⚠️ 写 `clip9-*` 而不是逐个列举：cli（7 个 label）与 desktop（4 个 label）都在这
-      #       个前缀下，而 `openwrt-*` / `android-apk` 都不在。
+      #    ⚠️★ 2026-10-07 起只取 `clip9-cli-*`：**桌面端的资产不归这一份传**了 —— tauri-action
+      #       在建 Release 时就传好了，而 `latest.json` 里的地址用的是**资产 id**；这里再传一次
+      #       同名文件会「先删后换」、把那些地址全弄成 404。
+      #       ⚠️ 这条错**没有任何症状**：Release 页面看着一切正常，只有用户的「检查更新」拿到 404。
       - uses: actions/download-artifact@v8
         with:
           path: artifacts
           merge-multiple: true
-          pattern: clip9-*
+          pattern: clip9-cli-*
 
-      - name: 待传清单（只该有 cli / desktop）
+      - name: 待传清单（只该有 cli）
         run: |
           set -euo pipefail
           ls -l artifacts
@@ -706,26 +722,13 @@ jobs:
           [ "$n" -gt 0 ] || { echo "::error::一个产物都没取到，别去动 Release"; exit 1; }
           # ⚠️★ 反向再判一次：`pattern` 要是被人删了（或写宽了），这里会红 ——
           #    而不是等它悄悄把中间产物传上去（那件事**没有别的症状**）。
-          stray="$(find artifacts -type f ! -name 'clip9-cli-*' ! -name 'clip9-desktop-*')"
+          stray="$(find artifacts -type f ! -name 'clip9-cli-*')"
           if [ -n "$stray" ]; then
             echo "::error::这些不该出现在待传清单里（中间产物 / 别人的包）："
             echo "$stray"
             exit 1
           fi
           echo "共 ${n} 个产物"
-
-      # ⚠️★ 把各平台那一份 `latest.json` 合成**一份**（2026-10-07）。
-      #
-      # 为什么必须合并：每个桌面端 job 各写一份，而那一份的 `platforms` **只含本平台**。
-      # updater 按当前平台去那张表里找自己那一格 —— 不合并的话最后上传的那份会覆盖
-      # 前面的，于是**只有最后那个平台能更新**，另外三个永远显示「已是最新」。
-      # 那种 bug 在 CI 上是绿的，只有用户会发现。
-      #
-      # ⚠️ 位置：**在那条「待传清单」检查之后**（分片带着 `clip9-desktop-` 前缀、能过），
-      # 而在上传之前 —— 合并出来的 `latest.json` 正是要传上去的那一个
-      #（updater 的地址就指向 `releases/latest/download/latest.json`）。
-      - name: 合并各平台的 latest.json
-        run: node tools/merge-updater-json.mjs artifacts
 
       - uses: softprops/action-gh-release@v3
         with:

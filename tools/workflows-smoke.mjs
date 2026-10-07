@@ -311,7 +311,7 @@ const pkgApk = read('openwrt/scripts/package-openwrt-apk.sh');
 //    ⚠️★ 它的症状是「**没有症状**」：多出来的资产要等有人去翻 Release 页面才看得到。
 //    ⚠️ 所以这里不只判「有没有 pattern」，还判那个 pattern **确实把中间产物排除在外**。
 {
-  const label = 'release.yml 的 publish 只取 cli / desktop（不带 pattern 会把中间产物一起传上去）';
+  const label = 'release.yml 的 publish 只取 cli（不带 pattern 会拖中间产物；带上 desktop 会让更新 404）';
   const problems = [];
   const pub = release === null ? null : jobBlock(release, 'publish');
   const sel = downloadSelector(pub);
@@ -325,7 +325,7 @@ const pkgApk = read('openwrt/scripts/package-openwrt-apk.sh');
         '**所有** artifact 都拖下来（含 `openwrt-binaries` 那种中间产物）。应当写 `clip9-*`。',
     );
   } else {
-    // ⚠️ 前缀得是 `clip9-`：cli（`clip9-cli-*`）与 desktop（`clip9-desktop-*`）都在它下面，
+    // ⚠️ 前缀得是 `clip9-`：cli（`clip9-cli-*`）在它下面，
     //    而中间产物 `openwrt-binaries` / `openwrt-pkg-*` 与 `android-apk` 都不在。
     for (const bad of ['openwrt', 'android']) {
       if (sel.value.includes(bad)) {
@@ -334,6 +334,23 @@ const pkgApk = read('openwrt/scripts/package-openwrt-apk.sh');
     }
     if (!sel.value.startsWith('clip9-')) {
       problems.push(`publish 的 pattern 是 ${JSON.stringify(sel.value)}，应当以 \`clip9-\` 开头`);
+    }
+    // ⚠️★ 2026-10-07 起**必须只取 cli**：桌面端的资产已经由 tauri-action 在建 Release 时传好，
+    //    而 `latest.json` 里每一格的 `url` 用的是**资产 id**（`releases/assets/<id>`）。
+    //    这里再传一次同名文件的话，`action-gh-release` 会**先删后换** —— 新 id、旧地址全 404。
+    //    ⚠️ 这条错**没有任何症状**：Release 页面一切正常，只有用户的「检查更新」拿到 404。
+    //
+    // ⚠️★ 判「它会不会匹配到桌面端」**不能搜 `desktop` 这个词**：`clip9-*` 是**前缀通配**，
+    //    文本里一个 `desktop` 都没有，却把 `clip9-desktop-*` 全匹配进来了 ——
+    //    第一版就是这么写的，变异验证（把 pattern 改回 `clip9-*`）**没抓住**（判据没牙）。
+    //    正确判法：把尾部通配去掉，看剩下的前缀**只可能**匹配 cli。
+    const globBase = sel.value.endsWith('*') ? sel.value.slice(0, -1) : sel.value;
+    if (!globBase.startsWith('clip9-cli')) {
+      problems.push(
+        `publish 的 pattern ${JSON.stringify(sel.value)} 不只匹配 cli（clip9-cli-*）—— ` +
+          '若它把桌面端的 artifact 也取走，那些资产会被**重传**（同名先删后换、换掉资产 id），' +
+          '而 `latest.json` 里的 url 正是按 id 写的 → 所有平台的「检查更新」404，页面看不出异常。',
+      );
     }
   }
   if (problems.length) fail(label, problems.join('\n    '));
