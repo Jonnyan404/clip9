@@ -54,6 +54,9 @@ export function PageToolbar({ variant = 'default' }: { variant?: string }) {
         return () => observer.disconnect();
     }, [collapsed]);
 
+    const menuLayout = useAppStore((s) => s.menuLayout);
+    const isSide = menuLayout === 'side';
+
     const currentMode = MODES_META.find((m) => m.key === uiMode) || MODES_META[0];
     const normalizedRoom = useWebSocketStore.getState().normalizeRoomName(room);
     // ⚠️ 三态：true / false / undefined（还没问过服务端）。这里按「未知先当公开」画 ——
@@ -81,9 +84,14 @@ export function PageToolbar({ variant = 'default' }: { variant?: string }) {
             ref={rootRef}
             className={`page-toolbar page-toolbar--${variant}`}
             sx={{
-                position: 'sticky',
-                top: 0,
-                zIndex: 40,
+                // ⚠️★ 侧栏模式（2026-10-07）：**固定**在左边，而不是 `sticky` 在顶部 ——
+                // 「竖排但还跟着内容滚」是没意义的（它会跟着滚出视野）。
+                // ⚠️ 宽度写死 `56px`，而**外壳那边要补同样宽度的左内边距**
+                //（`AppShell` 里那一句）—— 两处必须同一个数，否则内容会被压在栏下面。
+                ...(isSide
+                    ? { position: 'fixed', left: 0, top: 0, height: '100dvh', width: '56px', zIndex: 60 }
+                    : { position: 'sticky', top: 0 }),
+                zIndex: isSide ? 60 : 40,
                 // ⚠️ 背景与下边框**不在这里**：它们按模式不同（见 styles/components.css 的
                 // `.page-toolbar--*`）—— Vue 里 default 是 #f5f7fa、sticky 是 #f3ead2，
                 // 而 glance / board **故意透明**（让模式自己的底色透上来）。
@@ -91,7 +99,17 @@ export function PageToolbar({ variant = 'default' }: { variant?: string }) {
             }}
         >
             {!collapsed && (
-                <Stack direction="row" alignItems="center" spacing={1} sx={{ maxWidth: 1100, mx: 'auto', px: 2, py: 1 }}>
+                <Stack
+                    // ⚠️ 侧栏模式下竖排。⚠️ 两个 `flex: 1` 的间隔块在竖排里会把
+                    // 「右边那组」（设置 / 主题 / 快捷指令…）**推到栏底** —— 那正是想要的：
+                    // 日常动作在上、一次性入口在下。
+                    direction={isSide ? 'column' : 'row'}
+                    alignItems="center"
+                    spacing={1}
+                    sx={isSide
+                        ? { height: '100%', py: 1.5, px: 0.5 }
+                        : { maxWidth: 1100, mx: 'auto', px: 2, py: 1 }}
+                >
                     {/* 左侧：回公共房间 / 连接态 / 房间 chip */}
                     <Stack direction="row" alignItems="center" spacing={0.5} sx={{ flex: 1, minWidth: 0 }}>
                         {room && (

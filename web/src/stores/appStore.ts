@@ -119,6 +119,8 @@ export interface AppState {
     received: ReceivedItem[];
     /** 「把时间流跳到哪一天」（`YYYY-MM-DD`，本地日）。一次性信号 —— 用掉就清。 */
     jumpToDay: string | null;
+    /** 菜单布局：`top` = 顶部横条，`side` = 左侧竖栏。 */
+    menuLayout: 'top' | 'side';
     roomMessagesCache: Record<string, ReceivedItem[]>;
     isRoomSyncing: boolean;
     device: Array<{ id: string; type?: string; os?: string; browser?: string; name?: string }>;
@@ -157,6 +159,14 @@ export const useAppStore = create<AppState>((set, get) => ({
      * ⚠️ 由热力图那一格写（见 `ActivityHeatmapDialog` 的 `onJumpToDay`）。
      */
     jumpToDay: null as string | null,
+    /**
+     * 菜单布局（2026-10-07）：`top` = 顶部横条（原样），`side` = 左侧竖栏。
+     *
+     * ⚠️★ 为什么放在 store 里而不是组件 state：它要**即时生效**（切一下整个界面就换布局），
+     * 而工具栏是**每个模式各自渲染**的（`<PageToolbar/>`）—— 走 props 的话五个模式都要传一遍。
+     * ⚠️ 持久化到 localStorage（键 `menuLayout`），与 `darkmode` / `displayByMode` 同一套规矩。
+     */
+    menuLayout: (localStorage.getItem('menuLayout') === 'side' ? 'side' : 'top') as 'top' | 'side',
     roomMessagesCache: {},
     isRoomSyncing: false,
     device: [],
@@ -242,6 +252,15 @@ export function selectVisibleReceived(state: Pick<AppState, 'searchQuery' | 'rec
  * 但**允许手动打开**（用户在个性化里拨过的照旧算数）。为什么在源头改**默认值**而不是各模式
  * 各判一遍 `embedded`：发送区有两套实现，在源头改两边自动都吃到。
  */
+/**
+ * 换菜单布局。⚠️ 写 localStorage 与改 store **同一拍**（与 `setPrimary` 一致）：
+ * 界面立刻换，刷新之后还是这个选择。
+ */
+export function setMenuLayout(layout: 'top' | 'side'): void {
+    localStorage.setItem('menuLayout', layout);
+    useAppStore.setState({ menuLayout: layout });
+}
+
 export function selectDisplay(state: Pick<AppState, 'displayByMode' | 'uiMode' | 'embedded'>): Record<string, boolean> {
     const stored = state.displayByMode[state.uiMode] || {};
     const base: Record<string, boolean> = { ...INITIAL_DISPLAY, ...stored };

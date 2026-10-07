@@ -45,6 +45,8 @@ export function AppShell({ children }: { children: ReactNode }) {
     const [clearedVisible, setClearedVisible] = useState(false);
 
     const uiMode = useAppStore((s) => s.uiMode);
+    const menuLayout = useAppStore((s) => s.menuLayout);
+    const isSide = menuLayout === 'side';
     const roomListEnabled = useAppStore((s) => s.config?.server?.roomList === true);
 
     const roomDockVisible = useRoomsStore((s) => s.roomDockVisible);
@@ -146,7 +148,10 @@ export function AppShell({ children }: { children: ReactNode }) {
 
     return (
         <PageToolbarContext.Provider value={toolbarActions}>
-            <Box sx={{ minHeight: '100dvh', bgcolor: 'background.default' }}>
+            {/* ⚠️★ 侧栏模式下要**给左边留出那条固定栏的宽度**（56px）——
+                两处的数字必须一样（另一个在 `PageToolbar` 的注释里）。
+                不留的话内容会被压在栏下面，而且**看起来只是「左边少了一块」**。 */}
+            <Box sx={{ minHeight: '100dvh', bgcolor: 'background.default', pl: isSide ? '56px' : 0 }}>
                 {clearedVisible && (
                     <Alert severity="error" onClose={() => setClearedVisible(false)} sx={{ borderRadius: 0, justifyContent: 'center' }}>
                         {t('clipboardClearedRefresh')}
@@ -158,7 +163,12 @@ export function AppShell({ children }: { children: ReactNode }) {
                         display: 'flex',
                         alignItems: 'flex-start',
                         gap: desktopDockEnabled ? 0 : '20px',
-                        flexDirection: desktopDockEnabled && roomDockSide === 'left' ? 'row-reverse' : 'row',
+                        // ⚠️★ 侧栏模式下**强制房间列表在右边**（`row`）：左边那条固定栏
+                        // 与房间列表的「左右切换」按钮（`‹ / ›`）会叠在一起 ——
+                        // 用户点哪一下都说不清是切栏还是切房间。
+                        // ⚠️ 只是**显示**上强制，`roomDockSide` 这个偏好没被改掉 ——
+                        // 切回「顶部」之后它还是用户原来选的那一侧。
+                        flexDirection: desktopDockEnabled && roomDockSide === 'left' && !isSide ? 'row-reverse' : 'row',
                         minHeight: '100vh',
                     }}
                 >

@@ -7,7 +7,7 @@ import {
 } from '@mui/material';
 import { DISPLAY_GROUPS, togglesForMode } from '@/data/displayToggles.js';
 import { MODES } from '@/modes/registry';
-import { useAppStore } from '@/stores/appStore';
+import { setMenuLayout, useAppStore } from '@/stores/appStore';
 import { useDisplaySettings } from '@/hooks/useDisplaySettings';
 import { useThemeStore } from '@/stores/themeStore';
 import { buildId } from '@/services/swUpdate';
@@ -46,6 +46,7 @@ export function SettingsDialog({
     const { t } = useTranslation();
     const { mode } = useColorScheme();
     const [tab, setTab] = useState<'general' | 'personalization'>('general');
+    const menuLayout = useAppStore((s) => s.menuLayout);
 
     const config = useAppStore((s) => s.config);
     const dark = useAppStore((s) => s.dark);
@@ -131,6 +132,26 @@ export function SettingsDialog({
                             >
                                 <MdiIcon name="mdi-brightness-4" style={iconStyle} />
                                 <ListItemText primary={t('darkMode')} secondary={darkModeDesc} />
+                            </ListItem>
+                            {/* 菜单布局（2026-10-07）。⚠️ 与「暗色模式」并列：两者都是
+                                **外观**这一类的选择，而且都要求**即时生效 + 记住**。
+                                ⚠️ 它只影响工具栏排在哪 —— 不改任何功能的位置。 */}
+                            <ListItem
+                                disableGutters
+                                secondaryAction={
+                                    <ToggleButtonGroup
+                                        size="small"
+                                        exclusive
+                                        value={menuLayout}
+                                        onChange={(_e, v) => v && setMenuLayout(v)}
+                                    >
+                                        <ToggleButton value="top">{t('menuLayoutTop')}</ToggleButton>
+                                        <ToggleButton value="side">{t('menuLayoutSide')}</ToggleButton>
+                                    </ToggleButtonGroup>
+                                }
+                            >
+                                <MdiIcon name="mdi-view-column-outline" style={iconStyle} />
+                                <ListItemText primary={t('menuLayout')} secondary={t('menuLayoutHint')} />
                             </ListItem>
                             <ListItem disableGutters>
                                 <MdiIcon name="mdi-palette" style={iconStyle} />
