@@ -1165,10 +1165,7 @@ mod tests {
             "http://127.0.0.1:9502"
         ));
         // 协议名大小写不敏感（配置里手写 `Https://` 也认）。
-        assert!(same_endpoint(
-            "Https://example.com",
-            "https://example.com/"
-        ));
+        assert!(same_endpoint("Https://example.com", "https://example.com/"));
 
         // ⚠️ 路径前缀**是**差异：反代到子路径是两个不同的入口。
         assert!(!same_endpoint("http://h:9502/clip", "http://h:9502"));
