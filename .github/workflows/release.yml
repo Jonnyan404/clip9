@@ -488,8 +488,20 @@ jobs:
       - uses: tauri-apps/tauri-action@v1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # ⚠️★ 更新包的**签名私钥**（`tauri signer generate` 生成的那一对）。
+          # 缺了它的后果**不是报错**，而是 `createUpdaterArtifacts` 编不出 `.sig`
+          # → 也就没有 `latest.json` → **自动更新整条链子静默失效**（Releases 页面
+          # 看起来一切正常，只有用户的「检查更新」永远说已是最新）。
+          # ⚠️ 公钥在 `tauri.conf.json` 的 `plugins.updater.pubkey` 里 —— 那个是**公开**的，
+          # 这两个才是秘密。
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
           projectPath: rust/crates/desktop
+          # ⚠️★ Windows 上 msi 与 nsis **都打了**，而 updater 要用哪一个必须明说：
+          # 默认（`false`）会给 `.msi`，而 NSIS 那条路更适合静默安装
+          #（插件直接跑 `*-setup.exe /S`，不用 msiexec）。
+          updaterJsonPreferNsis: true
           # ⚠️ 末尾那份 `--config` 就是上面那一步写的文件（与 `tauri.windows.conf.json`
           #    是同一套 JSON Merge Patch 机制：只盖 `version`、macOS 的 `bundleVersion`
           #    与 Windows 的 `wix.version`，其余整份配置照旧）。
@@ -515,6 +527,29 @@ jobs:
             # ⚠️★ `v<版本>` 紧跟 `clip9-desktop` 之后（与 cli / openwrt / android 同一条规则）。
             cp "$f" "$out/clip9-desktop-${{ needs.info.outputs.tag }}-${{ matrix.label }}.${f##*.}"
           done
+          # ── 更新用的那份 `latest.json` ────────────────────────────────────
+          # ⚠️★ 每个矩阵 job 各写一份、而那一份**只含本平台那一格**，所以按平台重命名
+          # 再传上去，由 publish job 合并成一份（见 `tools/merge-updater-json.mjs`
+          # 的抬头：不合并的话只有最后上传的那个平台能更新）。
+          # ⚠️ 路径**不写死**：`tauri-action` 把它写在 bundle 那棵树里，具体哪一层是它的事。
+          latest="$(find rust/target -name latest.json -print -quit)"
+          if [ -z "$latest" ]; then
+            echo "::error::找不到 latest.json —— 自动更新会静默失效（签名密钥配了吗？）"
+            exit 1
+          fi
+          # ⚠️★ 名字必须落在 `clip9-desktop-*` 里：publish job 有一条「待传清单里
+          # 不许有别的东西」的检查（`find artifacts ! -name 'clip9-cli-*' ! -name 'clip9-desktop-*'`）。
+          # 叫 `latest-<平台>.json` 的话它会被当成**中间产物**挡下来。
+          cp "$latest" "$out/clip9-desktop-${{ needs.info.outputs.tag }}-${{ matrix.label }}-latest.json"
+
+          # ⚠️ `.sig` 一并收上：签名值其实**内联在 `latest.json` 的 `signature` 字段里**，
+          # 所以少了它们不影响更新；但发出来的话，谁都能拿它对安装包独立验一次。
+          for f in "$base"/dmg/*.dmg.sig "$base"/deb/*.deb.sig "$base"/appimage/*.AppImage.sig \
+                   "$base"/msi/*.msi.sig "$base"/nsis/*-setup.exe.sig; do
+            [ -e "$f" ] || continue
+            cp "$f" "$out/clip9-desktop-${{ needs.info.outputs.tag }}-${{ matrix.label }}-$(basename "$f")"
+          done
+
           ls -l "$out"
 
       - uses: actions/upload-artifact@v7
@@ -678,6 +713,19 @@ jobs:
             exit 1
           fi
           echo "共 ${n} 个产物"
+
+      # ⚠️★ 把各平台那一份 `latest.json` 合成**一份**（2026-10-07）。
+      #
+      # 为什么必须合并：每个桌面端 job 各写一份，而那一份的 `platforms` **只含本平台**。
+      # updater 按当前平台去那张表里找自己那一格 —— 不合并的话最后上传的那份会覆盖
+      # 前面的，于是**只有最后那个平台能更新**，另外三个永远显示「已是最新」。
+      # 那种 bug 在 CI 上是绿的，只有用户会发现。
+      #
+      # ⚠️ 位置：**在那条「待传清单」检查之后**（分片带着 `clip9-desktop-` 前缀、能过），
+      # 而在上传之前 —— 合并出来的 `latest.json` 正是要传上去的那一个
+      #（updater 的地址就指向 `releases/latest/download/latest.json`）。
+      - name: 合并各平台的 latest.json
+        run: node tools/merge-updater-json.mjs artifacts
 
       - uses: softprops/action-gh-release@v3
         with:
