@@ -891,6 +891,58 @@ pub fn content_entry(entry: &ReceiveHolder) -> serde_json::Value {
 /// - 返回 **正序**（旧的在前）—— 客户端直接 append 渲染，拿 `messages[0].id` 当下一页游标；
 /// - **游标失效不报错**：`before` 指向一条已被撤销的消息是很正常的事，那不是客户端的错，
 ///   退化成「最近 `limit` 条」就好，5xx 只会让它卡住。
+pub async fn content_list(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Query(query): Query<HashMap<String, String>>,
+) -> Response {
+    let room = normalize_room_name(query.get("room").map(String::as_str).unwrap_or(""));
+
+    // 鉴权与 `/content/latest` **同一套**（房间闸门 + 凭据），不是新写一份。
+    let token = extract_auth_token(&headers, query.get("auth").map(String::as_str));
+    if !state.can_access_room(&room, &token) {
+        return shortcuts::room_forbidden();
+    }
+
+    // ⚠️★ 有效上限 = `min(server.history, CONTENT_LIST_HARD_CAP)` —— 见常量的注释。
+    // 取值规则抽成了纯函数 `content_list_limit`（它就是有测试的那一处）。
+    let limit = content_list_limit(
+        query.get("limit").map(String::as_str),
+        state.config.server.history,
+    );
+
+    // ⚠️ `before` 认不出 / 不传 → 用 `0`：`page_before` 对「锚点不存在」的处理就是
+    // 退化成「取最近 limit 条」，正好是「从最新往回取」那个语义（见 store 的注释）。
+    let before: i32 = query
+        .get("before")
+        .and_then(|v| v.trim().parse().ok())
+        .unwrap_or(0);
+
+    let mut page = state
+        .store
+        .page_before(&room, before, limit)
+        .unwrap_or_default();
+    // ⚠️ store 给的是**新的在前**，而这个接口的契约是**正序**（旧的在前）——
+    // 反过来的话客户端 append 渲染会得到倒序的列表，而它不会报错、只是看着不对。
+    page.reverse();
+
+    // ⚠️★ 条数的界（上面那个 `limit`）**不等于**字节的界 —— 见 `CONTENT_PAGE_BYTES`。
+    // 上面那条 `limit` 夹的是「最多几条」，而「一条多大」由 `text.limit` 决定，
+    // 两者相乘才是这一页的大小。少任何一道闸，另一边都能把它顶破。
+    let sizes: Vec<usize> = page.iter().map(entry_payload_bytes).collect();
+    let dropped = page_bytes_to_drop(&sizes, CONTENT_PAGE_BYTES);
+    if dropped > 0 {
+        // ⚠️ 顺序要紧：`page` 此时已经 reverse 成**正序**（旧在前），
+        // 所以「从尾部丢」在切片上就是从**头部**丢 —— 丢掉的正是最旧的。
+        // 反过来写（`drain(len - dropped..)`）会让这一页变成「最旧的几条」，
+        // 而它不报错、只是看着不对（`a_page_that_does_not_fit_drops_the_oldest_end` 钉着这条）。
+        page.drain(..dropped);
+    }
+
+    let messages: Vec<serde_json::Value> = page.iter().map(content_entry).collect();
+    json_response(&json!({ "messages": messages }))
+}
+
 // ── /stats/daily ──────────────────────────────────────────────────────
 
 /// `days` 的默认值：**53 周 × 7 天**（与 GitHub 那张图同构）。
@@ -979,58 +1031,6 @@ pub async fn stats_daily(
     });
     state.stats_cache_put(cache_key, body.clone());
     json_response(&body)
-}
-
-pub async fn content_list(
-    State(state): State<Arc<AppState>>,
-    headers: HeaderMap,
-    Query(query): Query<HashMap<String, String>>,
-) -> Response {
-    let room = normalize_room_name(query.get("room").map(String::as_str).unwrap_or(""));
-
-    // 鉴权与 `/content/latest` **同一套**（房间闸门 + 凭据），不是新写一份。
-    let token = extract_auth_token(&headers, query.get("auth").map(String::as_str));
-    if !state.can_access_room(&room, &token) {
-        return shortcuts::room_forbidden();
-    }
-
-    // ⚠️★ 有效上限 = `min(server.history, CONTENT_LIST_HARD_CAP)` —— 见常量的注释。
-    // 取值规则抽成了纯函数 `content_list_limit`（它就是有测试的那一处）。
-    let limit = content_list_limit(
-        query.get("limit").map(String::as_str),
-        state.config.server.history,
-    );
-
-    // ⚠️ `before` 认不出 / 不传 → 用 `0`：`page_before` 对「锚点不存在」的处理就是
-    // 退化成「取最近 limit 条」，正好是「从最新往回取」那个语义（见 store 的注释）。
-    let before: i32 = query
-        .get("before")
-        .and_then(|v| v.trim().parse().ok())
-        .unwrap_or(0);
-
-    let mut page = state
-        .store
-        .page_before(&room, before, limit)
-        .unwrap_or_default();
-    // ⚠️ store 给的是**新的在前**，而这个接口的契约是**正序**（旧的在前）——
-    // 反过来的话客户端 append 渲染会得到倒序的列表，而它不会报错、只是看着不对。
-    page.reverse();
-
-    // ⚠️★ 条数的界（上面那个 `limit`）**不等于**字节的界 —— 见 `CONTENT_PAGE_BYTES`。
-    // 上面那条 `limit` 夹的是「最多几条」，而「一条多大」由 `text.limit` 决定，
-    // 两者相乘才是这一页的大小。少任何一道闸，另一边都能把它顶破。
-    let sizes: Vec<usize> = page.iter().map(entry_payload_bytes).collect();
-    let dropped = page_bytes_to_drop(&sizes, CONTENT_PAGE_BYTES);
-    if dropped > 0 {
-        // ⚠️ 顺序要紧：`page` 此时已经 reverse 成**正序**（旧在前），
-        // 所以「从尾部丢」在切片上就是从**头部**丢 —— 丢掉的正是最旧的。
-        // 反过来写（`drain(len - dropped..)`）会让这一页变成「最旧的几条」，
-        // 而它不报错、只是看着不对（`a_page_that_does_not_fit_drops_the_oldest_end` 钉着这条）。
-        page.drain(..dropped);
-    }
-
-    let messages: Vec<serde_json::Value> = page.iter().map(content_entry).collect();
-    json_response(&json!({ "messages": messages }))
 }
 
 /// `GET /content/latest`。
@@ -1462,7 +1462,6 @@ mod tests {
     ///
     /// 规则错了的表现是**静默的**：要么一次返回太多（把「一次推 2MB」从 WS 挪到 HTTP），
     /// 要么比配置少（SPA 突然少看一截历史）。纯函数，直接测。
-    #[test]
     /// ★ `days` 的取值规则：缺省 / 非数 / 0 / 超上限。
     ///
     /// ⚠️ 0 与负数**不是**「不画」，是「没给」—— 当成默认值。
@@ -1484,6 +1483,7 @@ mod tests {
         assert_eq!(stats_days(Some("371")), 371, "正好等于上限是合法的");
     }
 
+    #[test]
     fn content_list_limit_clamps_to_history_and_the_hard_cap() {
         // 缺省值 = 有效上限（同一根旋钮）
         assert_eq!(content_list_limit(None, 50), 50);

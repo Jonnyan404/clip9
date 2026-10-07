@@ -394,7 +394,7 @@ mod tests {
     #[test]
     fn the_window_start_maps_to_the_right_utc_instant() {
         let tz = resolve_tz("Asia/Shanghai");
-        let start = local_day_start_utc(day(2026, 10, 07), &tz);
+        let start = local_day_start_utc(day(2026, 10, 7), &tz);
         // 东八区的 10-07 00:00 = UTC 10-06 16:00
         let utc = DateTime::<Utc>::from_timestamp(start, 0).expect("合法");
         assert_eq!(utc.format("%Y-%m-%d %H:%M").to_string(), "2026-10-06 16:00");
