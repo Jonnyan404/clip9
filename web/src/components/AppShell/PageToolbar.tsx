@@ -55,6 +55,11 @@ export function PageToolbar({ variant = 'default' }: { variant?: string }) {
             // ⚠️ 竖栏占的是**横向**空间，那个由 `AppShell` 的 `padding-left` 让开，不是这里。
             const height = isSide ? 0 : el.offsetHeight;
             document.documentElement.style.setProperty('--page-toolbar-height', `${height}px`);
+            // ⚠️★ 侧栏模式下还要写**它自己占多宽**（2026-10-07）：收起时这条栏是**空的**，
+            // 而 `AppShell` 还给左边留着 56px —— 用户报的「点了隐藏只隐藏了图标」就是这个
+            //（图标没了，那一整条空位还在）。两处读**同一个变量**，就不会再各写一个数。
+            const width = isSide && !collapsed ? 56 : 0;
+            document.documentElement.style.setProperty('--page-sidebar-width', `${width}px`);
         };
         apply();
         if (typeof ResizeObserver === 'undefined') return;
@@ -95,7 +100,7 @@ export function PageToolbar({ variant = 'default' }: { variant?: string }) {
                 // ⚠️ 宽度写死 `56px`，而**外壳那边要补同样宽度的左内边距**
                 //（`AppShell` 里那一句）—— 两处必须同一个数，否则内容会被压在栏下面。
                 ...(isSide
-                    ? { position: 'fixed', left: 0, top: 0, height: '100dvh', width: '56px', zIndex: 60 }
+                    ? { position: 'fixed', left: 0, top: 0, height: '100dvh', width: 'var(--page-sidebar-width, 56px)', zIndex: 60 }
                     : { position: 'sticky', top: 0 }),
                 zIndex: isSide ? 60 : 40,
                 // ⚠️ 背景与下边框**不在这里**：它们按模式不同（见 styles/components.css 的
@@ -158,7 +163,18 @@ export function PageToolbar({ variant = 'default' }: { variant?: string }) {
                                     onClick={actions.openPageQr}
                                     sx={{ bgcolor: 'color-mix(in srgb, var(--mui-palette-primary-main) 12%, transparent)' }}
                                 >
-                                    <MdiIcon name={isProtected ? 'mdi-lock' : 'mdi-earth'} size={22} color="var(--mui-palette-primary-main)" />
+                                    {/* ⚠️★ 侧栏里这一格原来只画一颗地球/锁，而 56px 的栏里最该看的是
+                                        **延迟**（Jonny 2026-10-07：「侧栏房间地球图标改成显示 ping 值」）。
+                                        量到了就显示它（三档颜色与上面那条 chip 同一套），量不到
+                                        （没连上 / 第一拍还没回来）才退回原来那颗图标 —— 于是
+                                        「受保护」这个信息也不会凭空消失（延迟未知时才画 `mdi-lock`）。 */}
+                                    {connected && latency !== null ? (
+                                        <Box component="span" sx={{ color: latencyColor, fontWeight: 700, fontSize: 12 }}>
+                                            {`${Math.round(latency)} ms`}
+                                        </Box>
+                                    ) : (
+                                        <MdiIcon name={isProtected ? 'mdi-lock' : 'mdi-earth'} size={22} color="var(--mui-palette-primary-main)" />
+                                    )}
                                 </IconButton>
                             </Tooltip>
                         ) : (
@@ -295,7 +311,7 @@ export function PageToolbar({ variant = 'default' }: { variant?: string }) {
                     // 现在是：贴**右边缘**、竖直居中、4×26 的竖条。
                     position: 'absolute',
                     ...(isSide
-                        ? { left: 'auto', right: -2, top: '50%', bottom: 'auto', transform: 'translateY(-50%)', width: 4, height: 26 }
+                        ? { left: 'auto', right: collapsed ? -10 : -2, top: '50%', bottom: 'auto', transform: 'translateY(-50%)', width: 4, height: 26 }
                         : { left: '50%', bottom: -2, transform: 'translateX(-50%)', width: 26, height: 4 }),
                     zIndex: 5,
                     borderRadius: 999,

@@ -216,6 +216,7 @@
   "activityCell": "{date} · {count} 件",
   "activityLoadFailed": "アクティビティを読み込めませんでした",
   "activityUnsupported": "このサーバーにはアクティビティ API がまだありません。サーバーの更新が必要です",
+  "activityBadResponse": "受け取ったのはアクティビティのデータではありません —— このリクエストはサーバーに届いていない可能性が高いです（dev 環境では vite の proxy に /stats がありません）",
   "activityTzFallback": "{tz} で集計",
   "activityDayGone": "その日（{date}）のメッセージは、この履歴にもう残っていません",
   "shareHistoryRefresh": "更新",

@@ -5,7 +5,7 @@ import {
 } from '@mui/material';
 import { errorMessage } from '@/lib/util';
 import {
-    ActivityUnsupported, HEATMAP_DAYS, fetchDailyActivity, legendLabels, levelOf,
+    ActivityUnsupported, ActivityBadResponse, HEATMAP_DAYS, fetchDailyActivity, legendLabels, levelOf,
     type DailyActivity, type DailyActivityResponse,
 } from '@/services/stats';
 import { useWebSocketStore } from '@/stores/wsStore';
@@ -77,7 +77,15 @@ export function ActivityHeatmapDialog({
         } catch (err) {
             // ⚠️★ 「后端还没有这个接口」要单独说：显示一句笼统的「读取失败」的话，
             // 用户会以为前端坏了，而**实际要做的去更新那个服务端**。
-            setError(err instanceof ActivityUnsupported ? t('activityUnsupported') : errorMessage(err) || t('activityLoadFailed'));
+            // ⚠️★ 三类分开说（2026-10-07）：接口没有（去更新服务端）/ 回来的不是数据
+            //（请求没打到服务端 —— dev 下 vite 的代理漏了 `/stats` 就是这个）/ 其它（网络、凭据）。
+            setError(
+                err instanceof ActivityUnsupported
+                    ? t('activityUnsupported')
+                    : err instanceof ActivityBadResponse
+                        ? t('activityBadResponse')
+                        : errorMessage(err) || t('activityLoadFailed'),
+            );
             setData(null);
         } finally {
             setLoading(false);

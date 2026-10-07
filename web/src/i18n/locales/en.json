@@ -223,6 +223,7 @@
   "activityCell": "{date} · {count} messages",
   "activityLoadFailed": "Failed to load activity",
   "activityUnsupported": "This server does not have the activity endpoint yet — it needs updating",
+  "activityBadResponse": "That was not activity data -- the request probably never reached the server (in dev: the vite proxy is missing /stats)",
   "activityTzFallback": "Counted in {tz}",
   "activityDayGone": "That day ({date}) is no longer in this history",
   "shareHistoryRefresh": "Refresh",

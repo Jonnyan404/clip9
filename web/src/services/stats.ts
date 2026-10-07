@@ -66,6 +66,22 @@ export class ActivityUnsupported extends Error {
     }
 }
 
+/**
+ * ⚠️★ 回来的**不是活跃度数据**时抛的（2026-10-07 加）。
+ *
+ * 最典型的来路是 **dev 下 vite 的 SPA 兜底**：请求没被代理转发（`vite.config.ts` 的
+ * `server.proxy` 里少了 `/stats`），于是它用 **200 + 一份 `index.html`** 接住 ——
+ * axios 一点不报错，而对话框拿到的 `data.activity` 是 `undefined`，画出来就是**一片空白**。
+ * 用户报的「热力图不出图」正是这个：没出错、也没图、更没有任何提示。
+ * ⚠️ 打包版没有这条路（相对路径直接打到服务端）—— 所以「真机验下来都是好的」验的是另一边。
+ */
+export class ActivityBadResponse extends Error {
+    constructor() {
+        super('activity response is not activity data');
+        this.name = 'ActivityBadResponse';
+    }
+}
+
 export async function fetchDailyActivity(params: {
     room: string;
     days?: number;
@@ -79,6 +95,11 @@ export async function fetchDailyActivity(params: {
                 tz: params.tz ?? localTimeZone(),
             },
         });
+        // ⚠️★ 形状不对就**说出来**（见 `ActivityBadResponse` 的注释）：把「不是数据」的东西
+        // 当数据用，结果是对话框画成一片空白 —— 而那既不是加载中、也不是错误，用户没得猜。
+        if (!data || !data.activity || !Array.isArray(data.activity.days)) {
+            throw new ActivityBadResponse();
+        }
         return data as DailyActivityResponse;
     } catch (error) {
         // ⚠️ 404 / 501 = 这个后端还没有这个接口 —— 与「网络断了」「凭据不对」是**两回事**，

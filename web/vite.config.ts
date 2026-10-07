@@ -141,6 +141,11 @@ export default defineConfig(({ command }) => {
                 '/upload': { target: 'http://localhost:9501/', changeOrigin: true },
                 '/revoke': { target: 'http://localhost:9501/', changeOrigin: true },
                 '/content': { target: 'http://localhost:9501/', changeOrigin: true },
+                // 房间活跃度（`GET /stats/daily`，热力图用的）。⚠️★ 漏了它的症状**只在 dev 下出现**：
+                // 请求打到 vite 自己（没有这条路由）→ 被 SPA 兜底用 **200 + 一份 index.html** 接住
+                // → 前端拿不到 `activity`，对话框画成一片空白（2026-10-07 用户报的「热力图不出图」）。
+                // ⚠️ 打包版没这条路（相对路径直接打到服务端）—— 两边的表现不一样，别只验一边。
+                '/stats': { target: 'http://localhost:9501/', changeOrigin: true },
                 // 定时自动化：管理页 `/automation` 与它调的接口 `/tasks`（服务端渲染的独立页面，
                 // 不代理的话会被 vite 的 SPA 回退接住、回到首页）。
                 '/automation': { target: 'http://localhost:9501/', changeOrigin: true },

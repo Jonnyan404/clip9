@@ -148,10 +148,11 @@ export function AppShell({ children }: { children: ReactNode }) {
 
     return (
         <PageToolbarContext.Provider value={toolbarActions}>
-            {/* ⚠️★ 侧栏模式下要**给左边留出那条固定栏的宽度**（56px）——
-                两处的数字必须一样（另一个在 `PageToolbar` 的注释里）。
+            {/* ⚠️★ 侧栏模式下要**给左边留出那条固定栏的宽度**（56px，收起时是 0）——
+                这个数**由 `PageToolbar` 写进 `--page-sidebar-width`**（两处各写一个数字的画，
+                「点了隐藏只隐藏了图标」就是那个漂：图标没了、这条空位还在）。
                 不留的话内容会被压在栏下面，而且**看起来只是「左边少了一块」**。 */}
-            <Box sx={{ minHeight: '100dvh', bgcolor: 'background.default', pl: isSide ? '56px' : 0 }}>
+            <Box sx={{ minHeight: '100dvh', bgcolor: 'background.default', pl: isSide ? 'var(--page-sidebar-width, 56px)' : 0 }}>
                 {clearedVisible && (
                     <Alert severity="error" onClose={() => setClearedVisible(false)} sx={{ borderRadius: 0, justifyContent: 'center' }}>
                         {t('clipboardClearedRefresh')}

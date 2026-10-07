@@ -223,6 +223,7 @@
   "activityCell": "{date} · {count} 条",
   "activityLoadFailed": "读取活跃度失败",
   "activityUnsupported": "这个服务端还没有活跃度接口，需要更新服务端",
+  "activityBadResponse": "读到的不是活跃度数据 —— 这次请求多半没打到服务端（dev 环境：vite 的代理里少了 /stats）",
   "activityTzFallback": "按 {tz} 统计",
   "activityDayGone": "那天（{date}）的消息已经不在这段历史里了",
   "shareHistoryRefresh": "刷新",
