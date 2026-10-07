@@ -57,13 +57,23 @@ import { broadcastMessage } from './utils';
 
 // 一轮最多处理多少个过期文件。
 //
-// ⚠️★ 这个数不是随便取的，它是按**子请求预算**倒推的：一轮的子请求数约为
-//     1（SELECT）+ 1（R2 批量删）+ 1（D1 删）+ N（逐条广播）= N + 3，
-// 而 Cloudflare **免费版每次调用只有 50 个子请求**（付费版 1000）。
-// 取 40 时最坏 43 个，留在免费版的预算之内。
-// ⚠️ 想调大它，先确认这个账号是付费版、且愿意接受「一轮跑不完就下一轮继续」
-//     —— 这不影响正确性（幂等），只影响清空积压的速度。
+// ⚠️★ 双重上限都要看，取**更紧**的那个：
+//
+// **① 子请求（免费档 50/次调用）** —— 一轮的子请求 ≈
+//     1（SELECT）+ 1（R2 批量删）+ 1（D1 删）+ N（逐条广播）= N + 3。
+//     取 40 → 最坏 43，落在 50 之内。
+//
+// **② CPU（免费档 cron 10 ms/次调用）** —— 实测（2026-10-07，Node + 立即 resolve 的桩 I/O，
+//     只量真正计入 CPU 的那部分）：
+//       空扫（没有过期文件）            0.005 ms
+//       满批 10 / 20 / 40 条+广播   ≈ 1.2 ms（三者几乎一样，单条边际成本很小）
+//     —— 纯逻辑便宜到可以忽略。**真正吃 CPU 的是日志**：`console.log` 在 Cloudflare
+//     是计 CPU 的，而 `broadcastMessage` 每调一次打一行；40 条带日志时整轮 ≈ 6.8 ms。
+//     所以这里传了 `quiet: true`（见下面步骤 4），把那一项消掉。
+//
 // 40 个 / 5 分钟 = 每小时 480 个，对剪贴板这种量级远超实际水位。
+// ⚠️ 想调大：先确认是付费版（子请求 1000、cron CPU 30s），否则 ① 会先炸。
+// ⚠️ 一轮跑不完不影响正确性（幂等），只是积压清得慢一点，下一轮继续。
 export const FILE_CLEANUP_BATCH = 40;
 
 // 一条 `DELETE ... WHERE id IN (…)` 里最多绑几个 id。
@@ -138,6 +148,14 @@ export async function sweepExpiredFiles(env, options = {}) {
   //    若历史上有行写成了毫秒（13 位），它会大于 now（10 位）而**永不被选中** ——
   //    方向是「漏清」而不是「误删」，安全。`handlers/content.js:normalizeExpire` 是
   //    读取侧的同类防御，两处不冲突。
+  //
+  // ⚠️★ 三个条件各自的角色（别以为它们互相冗余 —— 实测删掉哪个都有用例红）：
+  //    · `type = 'file'`        —— 挡住文本行（**它是唯一挡住文本的那条**）；
+  //    · `uuid IS NOT NULL AND uuid != ''` —— **窄化自己的作用域**：不去删
+  //      「认不出来的行」（没有 uuid 的文件行本来也没法下载、点了也没用），
+  //      也避免发一次 `files/null` 这种无意义（虽然无害）的 R2 删除。
+  //      它是**刻意的窄化**，不是错误；真要连带回收畸形行，那是另一次决定。
+  //    · `expireTime > 0 AND expireTime < ?` —— 见文件头的边界 1。
   let rows;
   try {
     const result = await env.DB.prepare(
@@ -202,12 +220,17 @@ export async function sweepExpiredFiles(env, options = {}) {
   // ⚠️ 广播到**条目自己记录的** room（与 `handle_revoke` 同一条规矩）——
   //    绝不能用「当前房间」或调用方传进来的房间（这个任务根本没有「当前房间」）。
   // ⚠️ `broadcastMessage` 自己吞掉异常（广播失败不该让清理半途而废）。
+  // ⚠️★ 传 `quiet: true`：那一行 `Broadcast message to room: …` 在满批时会变成
+  //    **40 行**，而 Cloudflare 的 `console.log` 是**计 CPU** 的。实测（见 `utils.js`
+  //    里 `broadcastMessage` 的注释）：40 条**带日志** ≈ 6.8ms/轮、**不带** ≈ 1.2ms/轮，
+  //    而免费档 cron 的 CPU 上限只有 10ms —— 那 5.5ms 就是这 40 行的账。
+  //    这一轮的结论由 `scheduled` 打**一行**汇总，比 40 行同义日志有用。
   for (const row of rows) {
     const id = Number(row.id);
     if (!removed.has(id)) {
       continue;
     }
-    await broadcastMessage(env, row.room || 'default', { event: 'revoke', data: { id } });
+    await broadcastMessage(env, row.room || 'default', { event: 'revoke', data: { id } }, { quiet: true });
   }
 
   return report;

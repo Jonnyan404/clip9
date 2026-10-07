@@ -293,7 +293,17 @@ export async function cleanupOldMessages(db, room = 'default', env) { // 修复�
   return cleanupOldMessagesBeforeSave(db, room, env);
 }
 
-export async function broadcastMessage(env, room, message) {
+// 广播一条事件给某个房间的所有 WebSocket 会话。
+//
+// ⚠️★ `quiet` 是给**批量调用方**用的（目前只有 `file-cleanup.js` 的过期回收）：
+// 后台那一轮在满批时会对同一个房间广播**几十次**，每次打一行
+// `Broadcast message to room: …` —— 而 **Cloudflare 的 console.log 是计 CPU 的**。
+// 实测（2026-10-07，Node + 桩 I/O，只量计入 CPU 的那部分）：
+//   满批 40 条、**带日志** ≈ 6.8 ms/轮；同样 40 条、**不带日志** ≈ 1.2 ms/轮。
+// 免费档 cron 的 CPU 上限是 **10 ms**，那 5.5 ms 的差就是「打不打这 40 行」。
+// ⚠️ 别把这条改回默认：一次用户消息只广播一次，日志有价值；一轮回收广播几十次，
+// 日志既刷屏又吃 CPU —— 那种场景的结论应该由调用方打**一行**汇总。
+export async function broadcastMessage(env, room, message, options = {}) {
   try {
     if (!env.WEBSOCKET_ROOM) {
       console.log('WEBSOCKET_ROOM binding not available, skipping broadcast');
@@ -310,7 +320,9 @@ export async function broadcastMessage(env, room, message) {
     });
 
     await durableObject.fetch(broadcastRequest);
-    console.log(`Broadcast message to room: ${normalizeRoomName(room)}`);
+    if (!options.quiet) {
+      console.log(`Broadcast message to room: ${normalizeRoomName(room)}`);
+    }
   } catch (error) {
     console.error('Broadcast error:', error);
   }

@@ -126,6 +126,10 @@ check('worker.scheduled 是函数（cron 的那半边接上了）', typeof worke
   const text = seedText(db, { expireTime: now - 1 });
   const textWithUuid = seedText(db, { expireTime: now - 1 });
   db.prepare('UPDATE messages SET uuid = ? WHERE id = ?').run('t-with-uuid', textWithUuid);
+  // 第三条：`type='file'` 但**没有 uuid** 的行 —— 只有 `uuid IS NOT NULL` 挡得住它。
+  // ⚠️ 这条钉的是**刻意的窄化**：清理器只回收「认得出、能下载」的文件，
+  //    不去顺手删畸形行（那种行点了也没用）。要改这个决定，先改这条判据。
+  const malformed = seedFile(db, { uuid: null, expireTime: now - 1 });
 
   seedBlob(r2, 'gone');
   seedBlob(r2, 'live');
@@ -139,7 +143,8 @@ check('worker.scheduled 是函数（cron 的那半边接上了）', typeof worke
   check('★ 永不过期的还在（字节 + 条目）', [hasRow(db, never), blobThere(r2, 'never')], [true, true]);
   check('★ 文本行不受影响（uuid 为 NULL 那条）', hasRow(db, text), true);
   check('★ 文本行不受影响（带 uuid 那条 —— 只有 type 条件挡得住）', hasRow(db, textWithUuid), true);
-  check('  总共只少了 1 行', db.prepare('SELECT COUNT(*) AS c FROM messages').get().c, 4);
+  check('★ 认不出来的文件行不动（type=file 但没有 uuid）', hasRow(db, malformed), true);
+  check('  总共只少了 1 行', db.prepare('SELECT COUNT(*) AS c FROM messages').get().c, 5);
 }
 
 // ── ④ 边界：正好等于「现在」不算过期（与读取路径同一条判据）────────────
@@ -206,10 +211,39 @@ check('worker.scheduled 是函数（cron 的那半边接上了）', typeof worke
   const second = await sweepExpiredFiles(env, { limit: 3 });
   check('★ 第二轮把剩下的收干净（不会漏）', [second.expired, second.entries], [2, 2]);
   check('  一条不剩', db.prepare('SELECT COUNT(*) AS c FROM messages').get().c, 0);
-  check('缺省上限是 40（按免费版 50 个子请求倒推的）', FILE_CLEANUP_BATCH, 40);
+  check('缺省上限是 40（子请求 43≤50 与 cron CPU 10ms 双预算倒推）', FILE_CLEANUP_BATCH, 40);
 }
 
-// ── ⑧ 出错不能把任务打死（下一轮还会跑）────────────────────────────────
+// ── ⑨ ★ 日志条数**不随条数增长**（Cloudflare 的 console.log 计 CPU）────────
+{
+  const countLogs = async (rowCount) => {
+    const { env, db, r2 } = makeEnv();
+    recordBroadcasts(env);
+    for (let i = 0; i < rowCount; i += 1) {
+      seedFile(db, { uuid: `log${i}`, expireTime: nowSecs() - 1 });
+      seedBlob(r2, `log${i}`);
+    }
+    const realLog = console.log;
+    let lines = 0;
+    console.log = () => { lines += 1; };
+    try {
+      await sweepExpiredFiles(env);
+    } finally {
+      console.log = realLog;
+    }
+    return lines;
+  };
+
+  const one = await countLogs(1);
+  const five = await countLogs(5);
+  // ⚠️★ 这条不是风格问题，是 **CPU 预算**问题：`broadcastMessage` 每调一次打一行
+  //    `Broadcast message to room: …`，满批 40 条就是 40 行。实测同样 40 条：
+  //    **带日志 ≈ 6.8ms/轮、不带 ≈ 1.2ms/轮**，而免费档 cron 的 CPU 上限只有 **10ms**
+  //    —— 那 5.5ms 的差就是这 40 行的账。去掉 `quiet: true` 会让这条红。
+  check('★ 一轮回收不打逐条日志（1 条与 5 条都不打）', [one, five], [0, 0]);
+}
+
+// ── ⑩ 出错不能把任务打死（下一轮还会跑）────────────────────────────────
 {
   const { env } = makeEnv();
   env.DB = { prepare() { throw new Error('D1 挂了'); } };
