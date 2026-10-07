@@ -1,18 +1,18 @@
 # clip9 前端产物的同步清单 —— 由 tools/sync-web-assets.mjs 生成，别手改。
-source 2a01413ccdb0d6c27ea1395228c7b4b9faa4c98d62d485f54ea2dff7db4e0b4d
+source b8becef0c90dc4d845b4da461a5fdade99d8fc6cfafa4b32d746f90e15159f3c
 apple-touch-icon.png
-assets/SharePage-Cfq0c8wB.js
-assets/SharePage-Cfq0c8wB.js.br
-assets/SharePage-Cfq0c8wB.js.gz
+assets/SharePage-dZC1qi1p.js
+assets/SharePage-dZC1qi1p.js.br
+assets/SharePage-dZC1qi1p.js.gz
 assets/highlight-langs-DK51xzQJ.js
 assets/highlight-langs-DK51xzQJ.js.br
 assets/highlight-langs-DK51xzQJ.js.gz
 assets/i18n-BE673QtD.js
 assets/i18n-BE673QtD.js.br
 assets/i18n-BE673QtD.js.gz
-assets/index-BcXCsmH5.js
-assets/index-BcXCsmH5.js.br
-assets/index-BcXCsmH5.js.gz
+assets/index-CElgjUVF.js
+assets/index-CElgjUVF.js.br
+assets/index-CElgjUVF.js.gz
 assets/index-Di6mCljL.css
 assets/index-Di6mCljL.css.br
 assets/index-Di6mCljL.css.gz
