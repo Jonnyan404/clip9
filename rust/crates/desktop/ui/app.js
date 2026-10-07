@@ -938,7 +938,12 @@ function sizeLabel(bytes) {
   if (!bytes || bytes < 0) return '';
   if (bytes < 1024) return `${bytes} B`;
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-  return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
+  if (bytes < 1024 * 1024 * 1024) return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
+  // ⚠️★ GB / TB 这两档是 2026-10-07 补的：原来到 MB 就停了，
+  // 于是一块 460 GB 的盘显示成 `471040.0 MB`（「关于」页要显示磁盘剩余，一眼就看出来了）。
+  // ⚠️ 同一个 bug 在**别的调用点**也一直存在（比如一个 2GB 的上传），只是没人报过。
+  if (bytes < 1024 * 1024 * 1024 * 1024) return `${(bytes / 1024 / 1024 / 1024).toFixed(1)} GB`;
+  return `${(bytes / 1024 / 1024 / 1024 / 1024).toFixed(1)} TB`;
 }
 
 /** 带**日期**的时刻 —— 过期时间用它。
@@ -2647,6 +2652,80 @@ function renderDevices(state) {
 }
 
 /** 整个界面。⚠️ 「有没有房间」也要画出来 —— 半个状态是骗人的。 */
+/* ── 「关于」页的资源占用（2026-10-07）───────────────────────────────────
+ *
+ * ⚠️★ 它**不是页面自己去查的**：壳每 2 秒采一拍、推进快照，页面只负责画 ——
+ * 与更新那一格同一条路（所以不用另开轮询）。
+ *
+ * ⚠️★ 采样**只在「关于」这一页可见时跑**：见下面的 `syncResourceWatch`。
+ * 少了它，用户关掉设置窗口之后这个客户端会**每 2 秒醒一次、永远醒着** ——
+ * 电池上表现为「待机也在耗电」，而**界面上完全看不出原因**。
+ */
+
+/** 把「这一页现在是不是正被看着」告诉壳。⚠️ 壳看不见 DOM，只能由页面说。 */
+function syncResourceWatch() {
+  const overlay = el('settings-overlay');
+  const pane = el('pane-diag');
+  if (!overlay || !pane) {
+    return;
+  }
+  const watching = !overlay.hidden && !pane.hidden;
+  invoke('resources_watch', { on: watching }).catch(() => {});
+}
+
+/** 把「多久之前量的」写成人话。⚠️ 目录大小是个遍历，**不跟着 2 秒刷新跑**，
+ *  所以必须把它的年龄说出来，否则用户会以为那是实时值。 */
+function dirAgeLabel(at) {
+  if (!at) {
+    return '';
+  }
+  const seconds = Math.max(0, Math.floor(Date.now() / 1000) - at);
+  if (seconds < 45) {
+    return t('（刚刚）');
+  }
+  if (seconds < 3600) {
+    return t('（{n} 分钟前）', { n: Math.round(seconds / 60) });
+  }
+  return t('（{n} 小时前）', { n: Math.round(seconds / 3600) });
+}
+
+function renderResources(sample) {
+  const data = sample || {};
+  // ⚠️★ `null` 与 `0` 要分得开：CPU 读不出来时是 `null`（显示 `—`），
+  // 而 0.0% 是「量出来了，它确实闲着」。把它们画成一样会让用户以为读不到。
+  const cpu = (proc) => (proc && typeof proc.cpu === 'number' ? `${proc.cpu.toFixed(1)}%` : '—');
+  const rss = (proc) => (proc && proc.rss ? sizeLabel(proc.rss) : '—');
+  el('dg-res-client-cpu').textContent = cpu(data.client);
+  el('dg-res-client-rss').textContent = rss(data.client);
+  el('dg-res-server-cpu').textContent = cpu(data.server);
+  el('dg-res-server-rss').textContent = rss(data.server);
+  el('dg-res-dir').textContent =
+    typeof data.dirBytes === 'number' ? sizeLabel(data.dirBytes) : '—';
+  el('dg-res-dir-age').textContent = dirAgeLabel(data.dirAt);
+  el('dg-res-disk').textContent =
+    typeof data.diskFree === 'number' && typeof data.diskTotal === 'number'
+      ? t('{free} / {total}', { free: sizeLabel(data.diskFree), total: sizeLabel(data.diskTotal) })
+      : '—';
+}
+
+el('dg-res-remeasure').addEventListener('click', async () => {
+  // ⚠️ 遍历可能很慢（`uploads/` 里可能是几百 MB）—— 先把「正在算」说出来，
+  // 别让按钮点了没反应。⚠️ 计算期间**不显示 0**：0 的意思是「算完了，确实是 0」。
+  const button = el('dg-res-remeasure');
+  const before = el('dg-res-dir').textContent;
+  button.disabled = true;
+  el('dg-res-dir').textContent = t('正在计算…');
+  try {
+    const sample = await invoke('resources_remeasure');
+    renderResources(sample);
+  } catch (error) {
+    el('dg-res-dir').textContent = before;
+    showNotice('error', t('计算数据目录失败：{error}', { error: errorText(error) }));
+  } finally {
+    button.disabled = false;
+  }
+});
+
 /* ── 自动更新（2026-10-07）───────────────────────────────────────────────
  *
  * ⚠️★ 状态**不是这里查出来的** —— 它在 `snapshot.update` 里（壳每 500ms 推一次），
@@ -2799,6 +2878,8 @@ function render(state) {
   // ⚠️ 更新那一格**每次重绘都要画**（它不在主界面上，但状态随时会变 ——
   // 检查中 / 下载中 / 装完待重启）。设置窗口没开着时写它也无害。
   renderUpdate(state.update);
+  // ⚠️ 资源那一格同理：只在「关于」页可见时才有值（否则是一份空样本）。
+  renderResources(state.resources);
   el('room-count').textContent = String(state.rooms.length);
   renderRooms(state);
   renderTimeline(state);
@@ -4113,6 +4194,9 @@ function showPane(name) {
   for (const pane of el('settings-overlay').querySelectorAll('.pane')) {
     pane.hidden = pane.id !== `pane-${name}`;
   }
+  // ⚠️★ 切页之后要重新告诉壳「这一页现在看没看着」—— 资源采样的开关就挂在这儿
+  //（见 `syncResourceWatch`）。
+  syncResourceWatch();
 }
 
 /** 那条全局快捷键**现在到底占上了没有**（问系统，不是问配置）。
@@ -4202,6 +4286,7 @@ async function openSettings() {
 el('btn-settings').addEventListener('click', openSettings);
 el('settings-close').addEventListener('click', () => {
   el('settings-overlay').hidden = true;
+  syncResourceWatch();
 });
 el('settings-nav').addEventListener('click', (event) => {
   const item = event.target.closest('.it');
@@ -4213,6 +4298,7 @@ el('settings-nav').addEventListener('click', (event) => {
   // 而不是把两层一起关掉（2026-09-27 修 —— 用户报的就是「点进去再关，两层都没了」）。
   if (item.dataset.open) {
     el('settings-overlay').hidden = true;
+    syncResourceWatch();
     serverPanelFromSettings = true;
     openServerPanel();
     return;

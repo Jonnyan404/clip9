@@ -32,6 +32,7 @@ mod commands;
 mod hotkeys;
 mod model;
 mod notify;
+mod resources;
 mod runtime;
 mod server_config;
 mod server_process;
@@ -309,6 +310,12 @@ fn main() {
     // 用户看到的是「默认房间连不上」，而服务端其实一秒后就起来了。
     runtime.start();
 
+    // 「关于」页的资源占用（CPU / 内存 / 磁盘）。
+    // ⚠️ 采样线程**一直活着**，但只有页面切进「关于」那一页时才真的采
+    //（见 `resources` 模块头：少了那条开关，客户端会永远每 2 秒醒一次）。
+    let resources = resources::Resources::new(args.data_dir.clone());
+    resources.spawn_watcher(Arc::clone(&store), server.clone());
+
     let app = tauri::Builder::default()
         // ⚠️★ **单实例必须是第一个注册的插件**（官方文档明写：它要在别的插件有机会插手之前
         // 处理掉「已经有一个实例在跑」）。
@@ -363,6 +370,7 @@ fn main() {
         // 那是打包配置的一部分（`bundle.createUpdaterArtifacts` 与它配套），
         // 分开写会变成两份定义。
         .plugin(tauri_plugin_updater::Builder::new().build())
+        .manage(Arc::clone(&resources))
         .manage(Arc::clone(&store))
         .manage(Arc::clone(&runtime))
         // ⚠️★ 壳要说的那几句话的字典（页面推过来的那份）。
@@ -387,6 +395,10 @@ fn main() {
             commands::snapshot,
             // 自动更新（2026-10-07）。⚠️ 少注册一个的表现是「点了没反应、不报错」——
             // 与上面那几条同一条规矩。
+            // 「关于」页的资源占用（2026-10-07）。
+            commands::resources_sample,
+            commands::resources_remeasure,
+            commands::resources_watch,
             commands::update_status,
             commands::update_check,
             commands::update_install,

@@ -339,6 +339,24 @@ impl ServerProcess {
         }
     }
 
+    /// 我们起的那个服务端的 PID（没起过 / 已经收走了 → `None`）。
+    ///
+    /// ⚠️★ 给「关于」页的资源占用用（`resources` 模块按 PID 采它的 CPU 与内存）。
+    /// ⚠️ **不是**把 `child` 那把锁暴露出去 —— 调用方只需要一个号码，
+    /// 拿到 `Child` 就能 `kill` 它，那是另一件事。
+    ///
+    /// ⚠️ PID 会**回收**：这个号码只在「我们确实还持有那个 `Child`」时有意义
+    ///（`owns_live_child` 为真）。采样的调用方要先问它，别拿一个陈旧的 PID 去查 ——
+    /// 那可能查到一个完全无关的进程，然后把它的内存算到这个应用头上。
+    #[must_use]
+    pub fn child_pid(&self) -> Option<u32> {
+        if !self.owns_live_child() {
+            return None;
+        }
+        let mut guard = self.child.lock().unwrap_or_else(|e| e.into_inner());
+        guard.as_mut().map(|child| child.id())
+    }
+
     /// 停掉**我们起的那个**。
     ///
     /// ⚠️ 只管自己起的：**不碰**用户自己在别处跑的服务端（那个可能正连着他的手机）。

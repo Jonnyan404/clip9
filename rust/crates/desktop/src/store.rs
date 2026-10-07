@@ -23,7 +23,7 @@ use clip9_client::{
 use clip9_protocol::ReceiveHolder;
 use serde::{Deserialize, Serialize};
 
-use crate::model::{EntryView, StatusView, UpdatePhase};
+use crate::model::{EntryView, ResourceSample, StatusView, UpdatePhase};
 
 /// 「设置」里那些**不带房间**的项。`None` = **不改**。
 ///
@@ -317,6 +317,11 @@ pub struct Snapshot {
     /// 不需要另开一套事件通道 —— 但也正因为如此，推进它必须**先比再写**
     ///（下载回调一秒能来几十次，每次都涨版本号会让整棵树跟着重画）。
     pub update: UpdatePhase,
+    /// 壳与内嵌服务端的 CPU / 内存，以及数据目录与磁盘。
+    ///
+    /// ⚠️★ **只在「设置 → 关于」那一页可见时才有值**（见 `resources` 模块头）——
+    /// 它是这个应用唯一会「白耗电」的地方，所以那半边的开关由页面控制。
+    pub resources: ResourceSample,
     /// 快照内容的**单调版本号** —— 界面**只用它**判断「要不要重画」。
     ///
     /// ⚠️★ 它把「哪些字段参与判定」从**页面**搬到了**这里**。原先的做法是页面拿
@@ -526,6 +531,8 @@ struct Inner {
     version: u64,
     /// 自动更新的状态（真值在 `update::UpdateState`，见 [`Store::set_update`]）。
     update: UpdatePhase,
+    /// 资源占用（真值在 `resources::Resources` 的采样线程里，见 [`Store::set_resources`]）。
+    resources: ResourceSample,
     /// 「已经存到本地的那几条」：条目 id → 落盘路径。
     ///
     /// ⚠️★ 只为**同一条点第二下**服务（那时直接定位，不再下一次）—— 不判重的话，
@@ -591,6 +598,7 @@ impl Store {
         Self {
             inner: Mutex::new(Inner {
                 update: UpdatePhase::Idle,
+                resources: ResourceSample::default(),
                 config,
                 rooms,
                 selected: 0,
@@ -681,6 +689,7 @@ impl Store {
             max_entries: MAX_ENTRIES_PER_ROOM,
             max_bytes: MAX_BYTES_PER_ROOM,
             update: inner.update.clone(),
+            resources: inner.resources.clone(),
             version: inner.version,
         }
     }
@@ -752,6 +761,21 @@ impl Store {
     #[must_use]
     pub fn update_phase(&self) -> UpdatePhase {
         self.lock().update.clone()
+    }
+
+    /// 推进资源占用（由 `resources` 的采样线程调）。
+    ///
+    /// ⚠️★ 与 [`Store::set_update`] 同一条规矩：**先比再写**。
+    /// 采样每 2 秒来一次，而这两个数（CPU 是浮点）几乎每拍都在变 ——
+    /// 每次都涨版本号的话，整棵树会跟着每 2 秒重画一遍，而屏幕上看起来一模一样。
+    /// （采样那一侧已经做过量化，这里是第二道闸。）
+    pub fn set_resources(&self, sample: ResourceSample) {
+        let mut inner = self.lock();
+        if inner.resources == sample {
+            return;
+        }
+        inner.resources = sample;
+        inner.touch();
     }
 
     /// 推进自动更新的状态（由 `update::UpdateState` 调 —— 网络与安装都在那边）。
@@ -2996,6 +3020,28 @@ mod tests {
     /// ⚠️★ 提示**必须**算在版本号里：§8.1 第 2 条就是「`shapeOf` 漏了 `notice` →
     /// 三类提示永远画不出来」（上传失败、因为开关关着而跳过…）——
     /// 那几条**不改动别的任何字段**，所以漏掉就是彻底看不见。
+    /// ★ 资源占用也要算在版本号里（不然那一页永远停在第一帧）。
+    #[test]
+    fn the_resource_sample_bumps_the_version() {
+        let sample = |rss: u64| ResourceSample {
+            client: Some(crate::model::ProcSample {
+                cpu: Some(1.0),
+                rss,
+            }),
+            ..ResourceSample::default()
+        };
+        assert_bumps(
+            "resources",
+            |_| {},
+            |store| store.set_resources(sample(1024)),
+        );
+        assert_quiet(
+            "resources（同一份再来一次）",
+            |store| store.set_resources(sample(1024)),
+            |store| store.set_resources(sample(1024)),
+        );
+    }
+
     /// ★★ 更新那一格**必须**算在版本号里。
     ///
     /// ⚠️ 漏掉它的症状：页面上的「正在下载 42%」永远停在第一帧 —— 因为页面只按版本号

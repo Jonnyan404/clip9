@@ -54,6 +54,12 @@ tower-http = { version = "0.7", features = ["fs", "trace", "compression-gzip", "
 hyper = "1"
 
 redb = "4.3"
+# 「关于」页里那两个进程的 CPU / 内存，以及数据目录所在盘的剩余空间。
+# ⚠️ 自己写要三套（macOS `task_info` / Linux 读 `/proc` / Windows `GetProcessMemoryInfo`）——
+# 与 `tauri-plugin-*` 那几条同一个判据：跨平台且细节会变，用现成的是划算的。
+# ⚠️ **裁掉默认特性**：只要 `system` 与 `disk`，`component` / `network` / `user` 用不上，
+# 而它们各自会拉进平台相关的代码。
+sysinfo = { version = "0.39", default-features = false, features = ["system", "disk"] }
 # ⚠️ 用 postcard 而不是 bincode —— **bincode 已经停止维护**：
 # 它的最后一个版本 3.0.0 里 `lib.rs` 全文只有 `compile_error!("https://xkcd.com/2347/")`，
 # README 标题就是「Bincode is now unmaintained」（作者因被人肉骚扰而终止开发）。

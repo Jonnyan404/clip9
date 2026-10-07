@@ -203,6 +203,10 @@
       'payloadFile': '文件「{name}」（{bytes} 字节）',
       'trayOpen': '打开主窗口',
       'trayCheckUpdate': '检查更新',
+      // ⚠️ 「资源占用」那一块的两个**符号键**（表头与磁盘那一行）。
+      // 它们在两种语种里都得有，否则屏幕上直接印 `CPU` 这样的键名。
+      'CPU': 'CPU',
+      '{free} / {total}': '{free} / {total}',
       // ⚠️ 下面这几条是**更新**那一路的句子。`{reason}` 是插件给的英文原文（技术细节），
       // 当参数传进来 —— 与 `serverSpawnFailed` 同一个形状。
       'updateCheckFailed': '检查更新失败：{reason}',
@@ -798,6 +802,8 @@
       'payloadFile': 'file "{name}" ({bytes} bytes)',
       'trayOpen': 'Open the main window',
       'trayCheckUpdate': 'Check for updates',
+      'CPU': 'CPU',
+      '{free} / {total}': '{free} / {total}',
       'updateCheckFailed': 'Could not check for updates: {reason}',
       'updateInstallFailed': 'Update failed: {reason}',
       'updateRolledBack': 'v{version} failed to start repeatedly — staying on the previous version',
@@ -848,6 +854,17 @@
       '检查更新失败：{error}': 'Could not check for updates: {error}',
       '更新失败：{error}': 'Update failed: {error}',
       '跳过失败：{error}': 'Could not skip this version: {error}',
+      // 「关于」页的资源占用（2026-10-07）。
+      '资源占用': 'Resource usage',
+      '重新计算': 'Recalculate',
+      '内存': 'Memory',
+      '客户端': 'Client',
+      '磁盘剩余': 'Disk free',
+      '（刚刚）': ' (just now)',
+      '（{n} 分钟前）': ' ({n} min ago)',
+      '（{n} 小时前）': ' ({n} h ago)',
+      '正在计算…': 'Calculating…',
+      '计算数据目录失败：{error}': 'Could not measure the data directory: {error}',
       '跑': 'Run',
       '还原': 'Revert',
       '复制动作的结果': 'Copy the action result',

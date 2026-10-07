@@ -26,7 +26,7 @@ use clip9_client::Msg;
 // ⚠️ `Manager` 是为了 `app.state::<…>()`（`pick_files` 从 `app` 上取字典，见那条注释）。
 use tauri::{Manager, State};
 
-use crate::model::{ShareLinkView, UpdatePhase};
+use crate::model::{ResourceSample, ShareLinkView, UpdatePhase};
 use crate::runtime::{Ask, Runtime};
 use crate::server_config::ServerConfigFile;
 use crate::server_process::ServerProcess;
@@ -782,6 +782,45 @@ pub async fn server_restart(server: State<'_, Option<Arc<ServerProcess>>>) -> Re
 // ⚠️ 失败**不当异常抛**，而是回一个 `UpdatePhase::Failed` —— 更新失败是**状态**，
 // 不是意外：界面上要显示「为什么没成」（没网 / 签名不对 / 装不上），
 // 而抛异常的话页面只能看到一个字符串，分不出该说什么。
+
+// ── 「关于」页的资源占用（2026-10-07）──────────────────────────────────
+//
+// ⚠️★ 三个命令**都不返回错误**：读不到就是 `None`（界面上显示 `—`）。
+// 「这台机器上读不到 CPU」不该是一次失败，更不该让那一页打不开。
+
+/// 采一拍（壳与内嵌服务端的 CPU / 内存，以及数据目录与磁盘）。
+#[tauri::command]
+pub fn resources_sample(
+    resources: State<'_, Arc<crate::resources::Resources>>,
+    server: State<'_, Option<Arc<crate::server_process::ServerProcess>>>,
+) -> ResourceSample {
+    // ⚠️ 服务端的 PID 要**先问它自己**：拿一个陈旧的 PID 去查，可能查到一个
+    // 完全无关的进程，然后把它的内存算到这个应用头上（PID 会被回收）。
+    let pid = server.as_ref().and_then(|s| s.child_pid());
+    resources.sample(pid)
+}
+
+/// 重新量一次数据目录（**手动触发**：它是个遍历，不跟着刷新跑）。
+#[tauri::command]
+pub fn resources_remeasure(
+    resources: State<'_, Arc<crate::resources::Resources>>,
+    server: State<'_, Option<Arc<crate::server_process::ServerProcess>>>,
+) -> ResourceSample {
+    resources.remeasure();
+    let pid = server.as_ref().and_then(|s| s.child_pid());
+    resources.sample(pid)
+}
+
+/// 页面切进 / 切出「关于」那一页。
+///
+/// ⚠️★ **必须由页面告诉壳**：壳看不见 DOM，不知道那一页是不是正被看着。
+/// 少了它的症状很具体 —— 用户关掉设置窗口之后，这个客户端会**每 2 秒醒一次、永远醒着**，
+/// 电池上表现为「待机也在耗电」，而**界面上完全看不出原因**。
+#[tauri::command]
+pub fn resources_watch(resources: State<'_, Arc<crate::resources::Resources>>, on: bool) -> bool {
+    resources.set_watching(on);
+    resources.is_watching()
+}
 
 /// 查一次更新。**用户点「检查更新」时调，也可以在启动后自动调一次。**
 ///

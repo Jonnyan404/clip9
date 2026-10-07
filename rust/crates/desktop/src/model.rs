@@ -627,3 +627,37 @@ pub enum UpdatePhase {
     /// `serverSpawnFailed` 那条同一个形状。
     Failed { msg: Msg },
 }
+
+/// 一个进程的一拍。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ProcSample {
+    /// CPU 占用（**百分比**）。`None` = 这一拍还量不出来（第一拍一定是）。
+    ///
+    /// ⚠️ 多核机器上可能 **> 100%**（一个进程吃满两个核就是 200）——
+    /// 别在界面上按 0–100 去画进度条。
+    pub cpu: Option<f32>,
+    /// 常驻内存（字节）。
+    pub rss: u64,
+}
+
+/// 页面看到的那一份。
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct ResourceSample {
+    /// 壳自己。
+    pub client: Option<ProcSample>,
+    /// 内嵌的服务端。
+    ///
+    /// ⚠️★ **没在跑时是 `None`** —— 界面上显示 `—`，**不是 0%**。
+    /// 0% 读起来像「它在跑但很闲」，那是两回事。
+    pub server: Option<ProcSample>,
+    /// 数据目录占了多少（字节）。`None` = 还没算过。
+    pub dir_bytes: Option<u64>,
+    /// 上面那个数是**什么时候**算的（Unix 秒）。
+    ///
+    /// ⚠️★ 它是个**遍历**（`uploads/` 可能几百 MB），所以**不跟着 2 秒刷新跑** ——
+    /// 界面上要把它标出来（「3 分钟前」），否则用户会以为那是实时值。
+    pub dir_at: Option<i64>,
+    /// 数据目录所在盘的剩余 / 总量。
+    pub disk_free: Option<u64>,
+    pub disk_total: Option<u64>,
+}
