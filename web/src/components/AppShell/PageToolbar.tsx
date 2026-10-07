@@ -38,6 +38,9 @@ export function PageToolbar({ variant = 'default' }: { variant?: string }) {
     const [modeMenuAnchor, setModeMenuAnchor] = useState<HTMLElement | null>(null);
     const rootRef = useRef<HTMLDivElement | null>(null);
 
+    const menuLayout = useAppStore((s) => s.menuLayout);
+    const isSide = menuLayout === 'side';
+
     // ⚠️ 把工具栏**实际高度**写进 CSS 变量：标准模式里吸顶的输入区要拿它当 `top`，
     // 否则向上滚动时输入区会被工具栏遮住一部分（工具栏是 sticky，输入区 top 写死 8px 就会滑到它下面）。
     // 用 ResizeObserver 而不是写死数字：工具栏可折叠、模式不同、字号不同，高度都会变。
@@ -45,17 +48,20 @@ export function PageToolbar({ variant = 'default' }: { variant?: string }) {
         const el = rootRef.current;
         if (!el) return;
         const apply = () => {
-            document.documentElement.style.setProperty('--page-toolbar-height', `${el.offsetHeight}px`);
+            // ⚠️★ 侧栏模式下必须写 **0**：那条栏是 `position: fixed` 的**竖**栏，
+            // 高度就是整屏（100dvh）。照实写进去的话，标准模式里那句
+            // `top: var(--page-toolbar-height)` 会把输入区推到**整整一屏之下** ——
+            // 用户看到的就是「切到侧栏之后输入区不见了」（2026-10-07 报的）。
+            // ⚠️ 竖栏占的是**横向**空间，那个由 `AppShell` 的 `padding-left` 让开，不是这里。
+            const height = isSide ? 0 : el.offsetHeight;
+            document.documentElement.style.setProperty('--page-toolbar-height', `${height}px`);
         };
         apply();
         if (typeof ResizeObserver === 'undefined') return;
         const observer = new ResizeObserver(apply);
         observer.observe(el);
         return () => observer.disconnect();
-    }, [collapsed]);
-
-    const menuLayout = useAppStore((s) => s.menuLayout);
-    const isSide = menuLayout === 'side';
+    }, [collapsed, isSide]);
 
     const currentMode = MODES_META.find((m) => m.key === uiMode) || MODES_META[0];
     const normalizedRoom = useWebSocketStore.getState().normalizeRoomName(room);
@@ -283,13 +289,15 @@ export function PageToolbar({ variant = 'default' }: { variant?: string }) {
                 title={collapsed ? t('expandToolbar') : t('collapseToolbar')}
                 aria-label={collapsed ? t('expandToolbar') : t('collapseToolbar')}
                 sx={{
+                    // ⚠️★ 侧栏模式下这枚胶囊要**转 90°**：它原本是「贴在横条下边缘中间」的
+                    // 一小段横线（26×4）。竖栏里照原样放的话，它会贴在**栏底中间**、
+                    // 而且仍然是一横条 —— 既看不出是「收起这一栏」，也不在栏的边缘上。
+                    // 现在是：贴**右边缘**、竖直居中、4×26 的竖条。
                     position: 'absolute',
-                    left: '50%',
-                    bottom: -2,
-                    transform: 'translateX(-50%)',
+                    ...(isSide
+                        ? { left: 'auto', right: -2, top: '50%', bottom: 'auto', transform: 'translateY(-50%)', width: 4, height: 26 }
+                        : { left: '50%', bottom: -2, transform: 'translateX(-50%)', width: 26, height: 4 }),
                     zIndex: 5,
-                    width: 26,
-                    height: 4,
                     borderRadius: 999,
                     border: 'none',
                     p: 0,
@@ -297,7 +305,7 @@ export function PageToolbar({ variant = 'default' }: { variant?: string }) {
                     opacity: 0.35,
                     cursor: 'pointer',
                     transition: 'opacity .15s, width .15s',
-                    '&:hover': { opacity: 0.8, width: 36 },
+                    '&:hover': isSide ? { opacity: 0.8, height: 36 } : { opacity: 0.8, width: 36 },
                 }}
             />
         </Box>
