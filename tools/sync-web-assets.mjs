@@ -52,8 +52,13 @@ const MANIFEST_HEADER = '# clip9 前端产物的同步清单 —— 由 tools/sy
 // ⚠️ 跳过 `web/public/shortcuts`：它是 `sync-shortcuts.mjs` 从 `shortcuts/` 生成的派生物，
 // 而 `shortcuts/` 本身已经在指纹里 —— 两头都算等于同一件事算两遍。
 const FE = join(ROOT, 'web');
+// ⚠️★ `config.json` 也跳过 —— 它被仓库根的 `.gitignore` 忽略（第 74 行那条裸规则），
+// **从没入库过**，是本机自己放的一份（内容通常就是根 `config.json` 的副本，且 `web/` 里
+// 没有任何东西读它）。算进指纹的后果是：**同一份源码在不同机器上指纹不同** ——
+// `--check` 会报「前端源码变过了而这份没同步」，而源码一个字都没动，纯属白跑一趟。
+// 2026-10-07 实测：不含它 = `f5032bc8c05b`（正是清单里记的），含它 = `273b8e89976a`。
 const SOURCES = [
-  { label: 'web', dir: FE, skip: ['node_modules', 'dist', '.vite', 'public/shortcuts'] },
+  { label: 'web', dir: FE, skip: ['node_modules', 'dist', '.vite', 'public/shortcuts', 'config.json'] },
   { label: 'shortcuts', dir: join(ROOT, 'shortcuts'), skip: [] },
 ];
 
