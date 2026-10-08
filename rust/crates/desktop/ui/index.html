@@ -727,14 +727,29 @@
 
     .kv .v { font-variant-numeric: tabular-nums; }
 
-    /* 「关于」里那一行项目地址。
+    /* 「关于与更新」里那两处可点的话（一行项目地址、一行「去发布页下载」）。
        ⚠️★ 刻意**不用 `<a href>`**：Tauri 的 webview 会**就地导航** ——
        点一下整个客户端就被一个网页顶掉了（而这里要的是「交给系统浏览器」，
-       见 app.js 里那次 `invoke('open_project_page')`）。所以它是个 span + 点击处理。
+       见 app.js 里那两次 `invoke('open_project_page' / 'open_release_page')`）。
+       所以它们都是 span + 点击处理。
        ⚠️ `overflow-wrap: anywhere`：地址比那一列宽时不能把面板撑出去
-       （与 `.srv .kv .v` 同一条理由）。 */
-    .kv .v .lnk { color: var(--accent); cursor: pointer; text-decoration: underline; text-underline-offset: 2px; overflow-wrap: anywhere; }
-    .kv .v .lnk:hover { opacity: .75; }
+       （与 `.srv .kv .v` 同一条理由）。
+       ⚠️ 2026-10-08：选择器加上 `.pane .sub .lnk` —— 「去发布页下载」长在一句话里
+       （不在 `.kv .v` 里），同一个观感复用同一条规则，不另写一份。 */
+    .kv .v .lnk, .pane .sub .lnk { color: var(--accent); cursor: pointer; text-decoration: underline; text-underline-offset: 2px; overflow-wrap: anywhere; }
+    .kv .v .lnk:hover, .pane .sub .lnk:hover { opacity: .75; }
+
+    /* 「关于与更新」页顶上的那个**大版本号**（2026-10-08）。
+       ⚠️★ 这一页要回答的第一个问题就是「我装的是哪一版」，而报版本号的人会照着
+       屏幕上那串念 —— 所以它得是这一屏里**最大**的一行，而不是夹在 `.kv` 里
+       与「数据目录」长得一模一样。
+       ⚠️ 等宽数字（`tabular-nums`）：版本号里数字多（`0.1.3`），不等宽的话
+       数字一变那一行就左右跳一下。 */
+    .ver { display: flex; align-items: baseline; gap: 8px; }
+
+    .ver .nm { font-size: 21px; font-weight: 600; line-height: 1.2; font-variant-numeric: tabular-nums; }
+
+    .ver .k { color: var(--text-2); font-size: 11.5px; }
 
     .mode { border: 1px solid var(--border); border-radius: 9px; padding: 10px 12px; margin-bottom: 9px; }
 
@@ -1594,9 +1609,19 @@ table.ra td input[type='checkbox'] { margin: 0; }
                 <div class="grp" data-i18n="本机">本机</div>
                 <div class="it" data-pane="server" data-i18n="🗄 本地服务端">🗄 本地服务端</div>
                 <div class="it" data-open="server" data-i18n="⚙ 服务端配置">⚙ 服务端配置</div>
+                <!-- ⚠️★ 这一项是 2026-10-08 新加的。改之前版本号与「检查更新」挤在
+                     「ⓘ 关于」那一页的最下面，而那一页整页都是**只读的机器状态**
+                     （数据目录 / 配置路径 / 保留条数）—— 而这一块里有**按钮**。
+                     拆开之后：**要动手的**在这儿，**要读的**在「排障信息」。
+                     ⚠️ 放在「本机」这一组的末尾（不是「其它」）：它问的是
+                     「我这台机器上装的这个客户端是哪一版」。 -->
+                <div class="it" data-pane="about" data-i18n="⬆ 关于与更新">⬆ 关于与更新</div>
                 <div class="grp" data-i18n="其它">其它</div>
                 <div class="it" data-pane="log" data-i18n="≡ 日志">≡ 日志</div>
-                <div class="it" data-pane="diag" data-i18n="ⓘ 关于">ⓘ 关于</div>
+                <!-- ⚠️★ 2026-10-08 改名（原来是「ⓘ 关于」）：版本号与更新搬去
+                     「关于与更新」之后，这一页剩下的**全是只读的机器状态** ——
+                     再叫「关于」会让人跑来这里找版本号，而它已经不在这儿了。 -->
+                <div class="it" data-pane="diag" data-i18n="ⓘ 排障信息">ⓘ 排障信息</div>
             </div>
 
             <div class="pane" id="pane-rooms">
@@ -1797,6 +1822,73 @@ table.ra td input[type='checkbox'] { margin: 0; }
                 </div>
             </div>
 
+            <div class="pane" id="pane-about" hidden>
+                <h3 data-i18n="关于与更新">关于与更新</h3>
+                <p class="sub" data-i18n="看看现在装的是哪一版，以及要不要换一版。">看看现在装的是哪一版，以及要不要换一版。</p>
+
+                <!-- ── 版本号（2026-10-08 从「关于」页搬来并改成大字）────────────
+                     ⚠️★ 这一页要回答的**第一个**问题就是「我装的是哪一版」——
+                     报版本号的人会照着屏幕上那串念，所以它得是这一屏里最大的一行，
+                     而不是夹在一堆 `.kv` 里与「数据目录」长得一样。
+                     ⚠️ 值**必须**由壳给（`view.clientVersion`），页面里不许写死：
+                     发布时那个值会被 CI 用 tag 的版本覆盖 —— 页面再抄一份，
+                     就会与实装的包各说各话（`tauri.conf.json` 里那个写死的 `version`
+                     2026-09-30 已经删掉过一次了）。 -->
+                <div class="subcard" style="margin-bottom:13px">
+                    <div class="ver">
+                        <span class="nm" id="ab-version">—</span>
+                        <span class="k" data-i18n="客户端版本">客户端版本</span>
+                    </div>
+                    <!-- ⚠️ 地址**不在页面里拼**：`open_project_page` 只开那一个写死的地址、
+                         不从页面收 URL（见 commands.rs 那段注释），这里也就只挂一个 id。 -->
+                    <div class="kv" style="margin:9px 0 0">
+                        <span class="k" data-i18n="项目地址">项目地址</span>
+                        <span class="v"><span class="lnk" id="ab-project">https://github.com/Jonnyan404/clip9</span></span>
+                    </div>
+                </div>
+
+                <!-- ── 更新（2026-10-07 建的，2026-10-08 搬到这里）─────────────────
+                     ⚠️★ 单独一张卡、不塞进上面那张 `.kv`：上面那张是**只读的**
+                     （版本号 / 项目地址），而这里有一排按钮（要动手的）。
+                     混在一起的话，「哪几行是看的、哪几个是点的」在视觉上就分不出来了。
+                     ⚠️ 状态文字与按钮的显隐**全由 app.js 的 renderUpdate 决定** ——
+                     这里只摆骨架，别在这儿写死任何状态（写死的那份一定会与壳漂）。
+                     ⚠️★ 状态一开始是「**还没检查过**」，不是「已是最新」——
+                     那个请求只有用户点了才会发（见 `UpdatePhase` 的注释）。 -->
+                <div class="subcard">
+                    <div class="kv" style="margin-bottom:9px">
+                        <span class="k" data-i18n="更新">更新</span><span class="v" id="ab-update-state">—</span>
+                    </div>
+                    <div style="display:flex;gap:8px;flex-wrap:wrap">
+                        <button class="btn" id="ab-update-check" data-i18n="检查更新">检查更新</button>
+                        <button class="btn primary" id="ab-update-install" hidden data-i18n="下载并重启">下载并重启</button>
+                        <button class="btn" id="ab-update-skip" hidden data-i18n="跳过这一版">跳过这一版</button>
+                        <!-- ⚠️★ 确认是**第二步**、而且就地换按钮，不用原生 `confirm()`：
+                             那个在 webview 里能不能弹、返回值是什么都取决于平台，
+                             而它一旦返回假值就是「点了没反应」—— 正是这个项目最忌讳的静默失败。
+                             ⚠️ 标签要把**后果**写出来（会重启），别只写「确定」。 -->
+                        <button class="btn danger" id="ab-update-confirm" hidden data-i18n="确认安装并重启">确认安装并重启</button>
+                        <button class="btn" id="ab-update-cancel" hidden data-i18n="取消">取消</button>
+                    </div>
+                    <!-- 发布说明摆在**按钮下面**（它来自 `latest.json` 的 `notes`，
+                         内容就是 CHANGELOG 那一段）—— 「要装的是什么」不该让用户去猜。
+                         ⚠️★ 顺序是**有意的**：它可能很长，放按钮上面会把「下载并重启」
+                         挤到折叠线以下 —— 而那是这一页上最该被看到的东西。 -->
+                    <p class="sub" id="ab-update-notes" hidden
+                       style="margin:9px 0 0;max-height:88px;overflow:auto;white-space:pre-wrap"></p>
+                    <!-- ⚠️★ **手动下载入口**（2026-10-08 加）。它解决的是两件真事：
+                         ① `cargo run` 起来的开发版**装不了**（应用内更新只对装好的包生效）；
+                         ② 前面那条链任何一步失败时（`Phase::Failed`），
+                            屏幕上只剩一句原因，用户**没有下一步可走**。
+                         ⚠️ 所以它是**常驻**的，不跟着「有没有新版」露隐 —— 它就是那个兜底。
+                         ⚠️ 与 `ab-project` 一样，走壳里写死的命令，页面不收 URL。 -->
+                    <p class="sub" style="margin:9px 0 0">
+                        <span data-i18n="装不上，或者想自己挑一个包？">装不上，或者想自己挑一个包？</span>
+                        <span class="lnk" id="ab-release" data-i18n="去发布页下载">去发布页下载</span>
+                    </p>
+                </div>
+            </div>
+
             <div class="pane" id="pane-log" hidden>
                 <h3 data-i18n="日志">日志</h3>
                 <p class="sub"><span data-i18n="内嵌服务端的日志。客户端自己的提示在">内嵌服务端的日志。客户端自己的提示在</span><b data-i18n="主界面顶部">主界面顶部</b><span data-i18n="闪一次，不在这儿。">闪一次，不在这儿。</span></p>
@@ -1809,22 +1901,14 @@ table.ra td input[type='checkbox'] { margin: 0; }
             </div>
 
             <div class="pane" id="pane-diag" hidden>
-                <h3 data-i18n="关于">关于</h3>
+                <!-- ⚠️★ 标题 2026-10-08 从「关于」改成「排障信息」：版本号与更新搬去
+                     「关于与更新」之后，这一页剩下的**全是只读的机器状态**
+                     （数据目录 / 配置 / 服务端 / 保留 / 正文）——
+                     再叫「关于」就会让人跑来这里找版本号，而它已经不在这儿了。 -->
+                <h3 data-i18n="排障信息">排障信息</h3>
                 <p class="sub" data-i18n="出问题时先看这里。">出问题时先看这里。</p>
                 <div class="subcard">
                     <div class="kv">
-                        <!-- ⚠️★ 「客户端版本」放第一行 —— 报版本时它是要说的第一个数。
-                             ⚠️ 值与「本地服务端」那一页的「版本」**不是同一个东西**：
-                             那一行问的是内嵌服务端二进制（`clip9-server -v`），这一行是壳自己。
-                             ⚠️ 它**必须**是壳给的那个值，页面里不许写死：发布时那份写死的
-                             （`tauri.conf.json` 里原来那个 `version`，2026-09-30 已删）
-                             会被 CI 用 tag 的版本覆盖 —— 页面再抄一份，就会与实装的包各说各话。 -->
-                        <span class="k" data-i18n="客户端版本">客户端版本</span><span class="v" id="dg-client-version">—</span>
-                        <!-- ⚠️ 紧跟版本号 —— 「关于」这一页上「这是什么、从哪来」是同一类信息；
-                             下面那几行（数据目录 / 配置 / 服务端 / 保留）才是排障用的机器状态。
-                             ⚠️ 地址**不在页面里拼**：`open_project_page` 只开那一个写死的地址、
-                             不从页面收 URL（见 commands.rs 那段注释），这里也就只挂一个 id。 -->
-                        <span class="k" data-i18n="项目地址">项目地址</span><span class="v"><span class="lnk" id="dg-project">https://github.com/Jonnyan404/clip9</span></span>
                         <span class="k" data-i18n="数据目录">数据目录</span><span class="v" id="dg-data">—</span>
                         <span class="k" data-i18n="客户端配置">客户端配置</span><span class="v" id="dg-config">—</span>
                         <span class="k" data-i18n="本地服务端">本地服务端</span><span class="v" id="dg-server">—</span>
@@ -1841,35 +1925,6 @@ table.ra td input[type='checkbox'] { margin: 0; }
                              ⚠️ 数的是**选中那个房间**的条目正文（不是盘上文件的字节）。 -->
                         <span class="k" data-i18n="本房间正文">本房间正文</span><span class="v" id="dg-roombytes">—</span>
                     </div>
-                </div>
-
-                <!-- ── 自动更新（2026-10-07）───────────────────────────────────
-                     ⚠️★ 单独一张卡、不塞进上面那张 `.kv`：上面那张是**只读的机器状态**，
-                     而这里有一排按钮（要动手的）。混在一起的话，「哪几行是看的、
-                     哪几个是点的」在视觉上就分不出来了。
-                     ⚠️ 状态文字与按钮的显隐**全由 app.js 的 renderUpdate 决定** ——
-                     这里只摆骨架，别在这儿写死任何状态（写死的那份一定会与壳漂）。 -->
-                <div class="subcard">
-                    <div class="kv" style="margin-bottom:9px">
-                        <span class="k" data-i18n="更新">更新</span><span class="v" id="dg-update-state">—</span>
-                    </div>
-                    <div style="display:flex;gap:8px;flex-wrap:wrap">
-                        <button class="btn" id="dg-update-check" data-i18n="检查更新">检查更新</button>
-                        <button class="btn primary" id="dg-update-install" hidden data-i18n="下载并重启">下载并重启</button>
-                        <button class="btn" id="dg-update-skip" hidden data-i18n="跳过这一版">跳过这一版</button>
-                        <!-- ⚠️★ 确认是**第二步**、而且就地换按钮，不用原生 `confirm()`：
-                             那个在 webview 里能不能弹、返回值是什么都取决于平台，
-                             而它一旦返回假值就是「点了没反应」—— 正是这个项目最忌讳的静默失败。
-                             ⚠️ 标签要把**后果**写出来（会重启），别只写「确定」。 -->
-                        <button class="btn danger" id="dg-update-confirm" hidden data-i18n="确认安装并重启">确认安装并重启</button>
-                        <button class="btn" id="dg-update-cancel" hidden data-i18n="取消">取消</button>
-                    </div>
-                    <!-- 发布说明摆在**按钮下面**（它来自 `latest.json` 的 `notes`，
-                         内容就是 CHANGELOG 那一段）—— 「要装的是什么」不该让用户去猜。
-                         ⚠️★ 顺序是**有意的**：它可能很长，放按钮上面会把「下载并重启」
-                         挤到折叠线以下 —— 而那是这一页上最该被看到的东西。 -->
-                    <p class="sub" id="dg-update-notes" hidden
-                       style="margin:9px 0 0;max-height:88px;overflow:auto;white-space:pre-wrap"></p>
                 </div>
 
             </div>

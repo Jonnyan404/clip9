@@ -3785,6 +3785,113 @@ if (entryViewFiles.length !== 1) {
   }
 }
 
+// ── 判据 43：版本号与「检查更新」住在同一页，且「没查过」不许说成「已是最新」──────
+// ⚠️★ 2026-10-08 拆出「⬆ 关于与更新」这一页时带出来的两类**静默**失败：
+//   ① **页面归属**：那一块的 id 一个不少，只是搬到了别的页 —— 判据 1 照绿（它只管
+//      「id 在不在」），而那块 UI 就跟着去了用户找不到的地方。与判据 41 同族，
+//      只是那次盯的是「资源占用」，这次是「版本号 + 更新」。
+//   ② **「没查过」被说成「已是最新」**：原来 `UpdatePhase` 把这两种合在一个 `Idle` 里，
+//      于是**一次都没查过**的时候屏幕上也写着「已是最新」—— 那是客户端替用户下的结论。
+//      ⚠️★ 它**不报错、也没有别的判据管得着**（那句话在字典里、id 也在、渲染也跑得通），
+//      所以只有这里能拦：这是「界面替用户撒了一个没人核对过的谎」。
+{
+  const problems = [];
+  // ── ① 页面归属：所有 `ab-*` 都得住在这一页里 ────────────────────────────────
+  const paneStarts = [...html.matchAll(/<div class="pane" id="(pane-[a-z-]+)"/g)];
+  const atAbout = paneStarts.findIndex((m) => m[1] === 'pane-about');
+  const abIds = [...html.matchAll(/\bid="(ab-[a-z-]+)"/g)].map((m) => m[1]);
+  // ⚠️★ 下限：前缀一改名，下面的循环就空转、然后**结论照绿**（这在这个文件里踩过好几次）。
+  const MIN_AB = 8;
+  if (atAbout < 0) {
+    problems.push('index.html 里没有 `pane-about` 这一页 —— 版本号与更新没地方放');
+  }
+  if (abIds.length < MIN_AB) {
+    problems.push(`index.html 里只有 ${abIds.length} 个 \`ab-*\` id（少于 ${MIN_AB}）`
+      + ' —— 前缀改名了？那样这条判据就是在对着空气判');
+  }
+  if (atAbout >= 0) {
+    const from = paneStarts[atAbout].index;
+    const to = atAbout + 1 < paneStarts.length ? paneStarts[atAbout + 1].index : html.length;
+    const slice = html.slice(from, to);
+    for (const id of abIds) {
+      if (!slice.includes(`id="${id}"`)) {
+        problems.push(`${id} 不在 \`pane-about\` 里 —— 用户会跑到「排障信息」那页去找版本号`);
+      }
+      // ⚠️ 顺带钉「有人画它」：id 留在页面里而没人画，那一块永远是骨架上那个占位。
+      if (!new RegExp(`el\\('${id}'\\)`).test(js)) {
+        problems.push(`app.js 里没有 \`el('${id}')\` —— 那一块没人画`);
+      }
+    }
+  }
+  // ⚠️★ 手动下载入口**必须常驻**（不跟着「有没有新版」露隐）：开发版装不了应用内更新，
+  // 而那条链任何一步失败时，它是用户**唯一的下一步**。
+  if (!/\bid="ab-release"/.test(html)) {
+    problems.push('`ab-release`（去发布页下载）不在了 —— 更新失败时用户没有下一步可走');
+  }
+  if (!/invoke\(\s*'open_release_page'\s*\)/.test(js)) {
+    problems.push("app.js 里没有 `invoke('open_release_page')` —— 那个链接点了没反应");
+  }
+  // 版本号**由壳给**：发布时 CI 用 tag 覆盖它，页面再写死一份就会与实装的包各说各话。
+  if (!/el\('ab-version'\)\.textContent\s*=\s*'v'\s*\+\s*view\.clientVersion/.test(js)) {
+    problems.push("`ab-version` 不是壳给的 `'v' + view.clientVersion` —— 写死的那份"
+      + '会与用户装的包各说各话');
+  }
+  // ── ② 「没查过」与「已是最新」是两句 ─────────────────────────────────────────
+  const renderFn = bracedBlock(js, 'function renderUpdate(update)');
+  if (!renderFn) {
+    problems.push('app.js 里找不到 `renderUpdate` —— 这条判据要跟着代码改');
+  } else {
+    if (!/let label = t\('还没检查过'\)/.test(renderFn)) {
+      problems.push('`renderUpdate` 的默认文案不是「还没检查过」 —— 一次都没查过就写'
+        + '「已是最新」，那是替用户下结论（见 `UpdatePhase::Unchecked` 的注释）');
+    }
+    for (const branch of ['unchecked', 'upToDate']) {
+      if (!new RegExp(`case '${branch}':`).test(renderFn)) {
+        problems.push(`\`renderUpdate\` 的 switch 里少了 \`case '${branch}':\` —— `
+          + '两种「没有新版」会落进同一句里');
+      }
+    }
+    if (!/label = t\('已是最新'\)/.test(renderFn)) {
+      problems.push('没有「已是最新」那句 —— 查过之后就没话可说了');
+    }
+    // ⚠️★ 兜底：读不到阶段时也得说「没查过」（`'idle'` 正是原来那个双义态的名字）。
+    if (!/\|\|\s*'unchecked'/.test(renderFn)) {
+      problems.push("兜底不再是 `'unchecked'` —— 读不到阶段时会落到默认那句上，"
+        + '而默认那句必须是「还没检查过」');
+    }
+    if (/\|\|\s*'idle'/.test(renderFn)) {
+      problems.push("兜底回落到 `'idle'` 了 —— 壳那头已经没有这个阶段（它拆成了 "
+        + '`unchecked` / `upToDate`），界面这一侧会永远卡在那一支');
+    }
+  }
+  // ── ③ 壳那头两个变体都在（界面分两句的前提是壳先分开）─────────────────────
+  const modelPath = join(root, 'rust/crates/desktop/src/model.rs');
+  const model = existsSync(modelPath) ? readFileSync(modelPath, 'utf8') : '';
+  const enumBody = /pub enum UpdatePhase \{[\s\S]*?\n\}/.exec(model)?.[0] ?? '';
+  if (!enumBody) {
+    problems.push('读不到 `UpdatePhase` 这个枚举 —— 这条判据要跟着代码改');
+  } else {
+    for (const variant of ['Unchecked', 'UpToDate']) {
+      if (!new RegExp(`^\\s{4}${variant},`, 'm').test(enumBody)) {
+        problems.push(`\`UpdatePhase\` 里没有 \`${variant}\` —— 壳分不开这两种，`
+          + '界面那两句就有一句是空的');
+      }
+    }
+    if (/^\s{4}Idle,/m.test(enumBody)) {
+      problems.push('`UpdatePhase::Idle` 又回来了 —— 它就是那个「没查过 == 已是最新」'
+        + '的双义态（理由见 model.rs 里那段注释）');
+    }
+  }
+  if (problems.length) {
+    failed = true;
+    console.error(`✗ 判据 43：「关于与更新」这一页没落实（${problems.length} 处）：`);
+    for (const one of problems) console.error(`    · ${one}`);
+  } else {
+    console.log(`· 判据 43：版本号与更新都在 pane-about 里（${abIds.length} 个 id），`
+      + '且「没查过」与「已是最新」是两句。');
+  }
+}
+
 if (cssOnly.length) {
   console.log(`· ${cssOnly.length} 个 id 只被选择器用（形如 #id { … }），正常：${cssOnly.join('、')}`);
 }if (dynamicPrefixes.size) {

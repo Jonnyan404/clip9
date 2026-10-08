@@ -265,6 +265,10 @@
       'serverUrlEmpty': '地址是空的',
       'serverUrlNotHttp': '只支持 http/https：{url}',
       'openWebTaskFailed': '打开网页版失败：{reason}',
+      // ⚠️★ 两条**窄命令**（打开项目主页 / 打开发布页）共用的这句。
+      // 它们原来借用上面那句「打开网页版失败」—— 那是**错的话**：
+      // 失败的根本不是网页版。不换一句的话，日志里那条线索会把查的人往错方向指。
+      'openLinkFailed': '打不开链接：{reason}',
       'openBrowserFailed': '用系统浏览器打开 {url} 失败：{reason}',
       'noBundledServer': '这个客户端没有自带服务端（找不到 clip9-server）',
       // ⚠️ 点卡片上的图片 / 视频预览时（2026-10-04）。「没有预览地址」有两种：这条不是文件，
@@ -348,9 +352,12 @@
       '本机': 'This machine',
       '🗄 本地服务端': '🗄 Local server',
       '⚙ 服务端配置': '⚙ Server config',
+      // ⚠️ 2026-10-08 新增的那一项（版本号 + 检查更新）。
+      '⬆ 关于与更新': '⬆ About & updates',
       '其它': 'Other',
       '≡ 日志': '≡ Log',
-      'ⓘ 关于': 'ⓘ About',
+      // ⚠️ 原来叫「ⓘ 关于」—— 版本号与更新搬走之后这一页只剩只读的机器状态。
+      'ⓘ 排障信息': 'ⓘ Troubleshooting',
       '关闭': 'Close',
       '保存': 'Save',
 
@@ -486,8 +493,13 @@
       '文件': 'File',
       '刷新': 'Refresh',
 
-      // ── 页：关于 ────────────────────────────────────────────────
-      '关于': 'About',
+      // ── 页：关于与更新（2026-10-08 从「关于」拆出来）─────────────────
+      '关于与更新': 'About & updates',
+      '看看现在装的是哪一版，以及要不要换一版。':
+        'See which version you are running, and whether there is a newer one.',
+
+      // ── 页：排障信息（原「关于」，2026-10-08 改名）───────────────────
+      '排障信息': 'Troubleshooting',
       '出问题时先看这里。': 'Look here first when something breaks.',
       '客户端配置': 'Client config',
       '本机保留': 'Kept on this machine',
@@ -842,6 +854,11 @@
       // 所以「要先填参数」不再是「跑不了」的理由 —— 这条跟着一起删。
       '取消': 'Cancel',
       '更新': 'Update',
+      // ⚠️★ 与「已是最新」**不是一句**（2026-10-08）：这一态是**一次都没查过**，
+      // 那是客户端替用户下结论 —— 见 `UpdatePhase` 的注释。
+      '还没检查过': 'Not checked yet',
+      '装不上，或者想自己挑一个包？': 'Cannot install, or want to pick a package yourself?',
+      '去发布页下载': 'Download from the release page',
       '检查更新': 'Check for updates',
       '下载并重启': 'Download and restart',
       '跳过这一版': 'Skip this version',
@@ -907,6 +924,7 @@
       'serverUrlEmpty': 'The address is empty',
       'serverUrlNotHttp': 'Only http/https is supported: {url}',
       'openWebTaskFailed': 'Could not open the web UI: {reason}',
+      'openLinkFailed': 'Could not open the link: {reason}',
       'openBrowserFailed': 'Could not open {url} in the system browser: {reason}',
       'noBundledServer': 'This client has no bundled server (clip9-server not found)',
       'entryPreviewUnavailable': 'There is no original file to open for this one (it left the list, or there is no server address)',

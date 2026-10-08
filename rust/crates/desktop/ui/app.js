@@ -539,13 +539,24 @@ el('spa-blocked-project').addEventListener('click', () => {
   });
 });
 
-// 「关于」里的项目地址。**与上面那颗「去 clip9 项目」同一个命令、同一套理由** ——
+// 「关于与更新」里的项目地址。**与上面那颗「去 clip9 项目」同一个命令、同一套理由** ——
 // 命令是窄的（只开那一个写死的地址），所以这里也不拼地址、不传参。
 // ⚠️ 失败同样只写控制台：那条命令只会去起系统 opener，真失败（这台机器没有默认浏览器）
 // 也没有「下一步」可以给用户。⚠️ 但要 catch —— 未处理的 reject 会留一条没人看的红字。
-el('dg-project').addEventListener('click', () => {
+el('ab-project').addEventListener('click', () => {
   invoke('open_project_page').catch((error) => {
     console.error('opening the project page failed:', error);
+  });
+});
+
+// 「去发布页下载」（2026-10-08）。与上面那条**同一个形状**：窄命令、写死的地址、
+// 失败只写控制台。
+// ⚠️★ 为什么非要有它：`cargo run` 起来的开发版**装不了**应用内更新，
+// 而那条链任何一步失败时（`Phase::Failed`）屏幕上只剩一句原因、用户没有下一步 ——
+// 这一个链接就是那个兜底（见 index.html 里那张卡的注释）。
+el('ab-release').addEventListener('click', () => {
+  invoke('open_release_page').catch((error) => {
+    console.error('opening the release page failed:', error);
   });
 });
 
@@ -2714,21 +2725,30 @@ let lastUpdate = null;
 
 function renderUpdate(update) {
   lastUpdate = update || null;
-  const phase = (update && update.phase) || 'idle';
-  const text = el('dg-update-state');
-  const notes = el('dg-update-notes');
-  const check = el('dg-update-check');
-  const install = el('dg-update-install');
-  const skip = el('dg-update-skip');
-  const confirm = el('dg-update-confirm');
-  const cancel = el('dg-update-cancel');
+  // ⚠️★ 读不到阶段时的兜底**不能是「已是最新」**（2026-10-08）：那是替用户下了一个
+  // 没人核对过的结论。兜底给 `unchecked` —— 屏幕上就写「还没检查过」，
+  // 而旁边那颗「检查更新」正是它该做的事。
+  const phase = (update && update.phase) || 'unchecked';
+  const text = el('ab-update-state');
+  const notes = el('ab-update-notes');
+  const check = el('ab-update-check');
+  const install = el('ab-update-install');
+  const skip = el('ab-update-skip');
+  const confirm = el('ab-update-confirm');
+  const cancel = el('ab-update-cancel');
 
-  let label = t('已是最新');
+  let label = t('还没检查过');
   let busy = false;
   let offer = null; // 有新版时那个版本号（下载 / 跳过都要用它）
   let body = '';
 
   switch (phase) {
+    case 'unchecked':
+      // 一次都没查过。⚠️ 与 `upToDate`（查过、确实最新）分开说 —— 见 `UpdatePhase`。
+      break;
+    case 'upToDate':
+      label = t('已是最新');
+      break;
     case 'checking':
       label = t('正在检查…');
       busy = true;
@@ -2783,25 +2803,25 @@ function renderUpdate(update) {
   if (!canAct) updateConfirming = false;
 }
 
-el('dg-update-check').addEventListener('click', () => {
+el('ab-update-check').addEventListener('click', () => {
   updateConfirming = false;
   invoke('update_check').catch((error) => {
     showNotice('error', t('检查更新失败：{error}', { error: errorText(error) }));
   });
 });
 
-el('dg-update-install').addEventListener('click', () => {
+el('ab-update-install').addEventListener('click', () => {
   // 第一步：只把「确认」露出来，**不**开始下载。
   updateConfirming = true;
   renderUpdate(lastUpdate);
 });
 
-el('dg-update-cancel').addEventListener('click', () => {
+el('ab-update-cancel').addEventListener('click', () => {
   updateConfirming = false;
   renderUpdate(lastUpdate);
 });
 
-el('dg-update-confirm').addEventListener('click', () => {
+el('ab-update-confirm').addEventListener('click', () => {
   // ⚠️★ 从这一刻起**壳会把应用关掉重装** —— 所以这里不做任何「等它回来」的事，
   // 也不用管返回值（macOS/Linux 上这个命令不会返回）。
   updateConfirming = false;
@@ -2810,9 +2830,9 @@ el('dg-update-confirm').addEventListener('click', () => {
   });
 });
 
-el('dg-update-skip').addEventListener('click', () => {
+el('ab-update-skip').addEventListener('click', () => {
   updateConfirming = false;
-  invoke('update_skip', { version: el('dg-update-skip').dataset.version }).catch((error) => {
+  invoke('update_skip', { version: el('ab-update-skip').dataset.version }).catch((error) => {
     showNotice('error', t('跳过失败：{error}', { error: errorText(error) }));
   });
 });
@@ -2842,7 +2862,7 @@ function render(state) {
   // ⚠️ 更新那一格**每次重绘都要画**（它不在主界面上，但状态随时会变 ——
   // 检查中 / 下载中 / 装完待重启）。设置窗口没开着时写它也无害。
   renderUpdate(state.update);
-  // ⚠️ 资源那一格同理：只在「关于」页可见时才有值（否则是一份空样本）。
+  // ⚠️ 资源那一格同理：只在「本地服务端」页可见时才有值（否则是一份空样本）。
   renderResources(state.resources);
   el('room-count').textContent = String(state.rooms.length);
   renderRooms(state);
@@ -2866,7 +2886,7 @@ function render(state) {
   // （服务端的 `text.limit` 被调大之后，200 条那一格永远填不满）。
   // 这不是历史长度 —— 历史长度是服务端的 `server.history`，两件事别混。
   // ⚠️ 它原来在**侧栏底部**（`#max-entries`，跟着那行 ↑↓ 说明一起），2026-09-26 那行说明
-  // 被 Jonny 要求删掉，于是这一句搬到了「设置 → 关于」那一页（`#dg-max`）——
+  // 被 Jonny 要求删掉，于是这一句搬到了「设置 → 排障信息」那一页（`#dg-max`）——
   // 搬而不是删：这一句是「列表为什么停在这儿」的唯一解释。
   // ⚠️ 在 `render` 里写它（而不是 `openSettings` 里）是有意的：这两个上限在
   // **快照**里、不在 `settings_view` 里，而这一页随时可能开着 —— 在 `render` 里写，
@@ -4235,7 +4255,7 @@ async function openSettings() {
     // 发布时那份真值来自 tag（CI 用 `tauri build --config …` 注进构建），
     // 页面再抄一份就会与用户装的包各说各话。
     // ⚠️ 前缀 `v` 是照 Release 上的写法（`v0.1.1-beta1`）—— 用户报版本时念的就是那个。
-    el('dg-client-version').textContent = 'v' + view.clientVersion;
+    el('ab-version').textContent = 'v' + view.clientVersion;
     el('dg-data').textContent = view.dataDir;
     el('dg-config').textContent = view.configPath;
   } catch (error) {

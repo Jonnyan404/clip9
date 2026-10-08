@@ -1237,6 +1237,12 @@ pub async fn open_web(
     .map_err(|reason| Msg::key("openWebTaskFailed").param("reason", reason))?
 }
 
+/// clip9 的仓库地址。**全仓只写这一次** —— 项目主页与发布页都由它拼出来。
+///
+/// ⚠️★ 为什么不能在两处各写一遍：改了仓库名（或者换到别的托管）时，漏掉的那一处
+/// 会留下一个指向旧地址的按钮 —— **它看起来一切正常**，点下去是一个 404 页面。
+const REPO_URL: &str = "https://github.com/Jonnyan404/clip9";
+
 /// 打开 clip9 的项目主页 —— 「你这个站点的网页版太老了，去更新」那个按钮。
 ///
 /// ⚠️★ 刻意**不从页面收 URL**：收了就等于给页面一个「用系统浏览器打开任意地址」的能力，
@@ -1247,12 +1253,27 @@ pub async fn open_web(
 /// 最后一道闸」—— 因为「这次是常量」而破例，破掉的就是下次漏掉的那次。
 #[tauri::command]
 pub async fn open_project_page() -> Result<(), Msg> {
-    const PROJECT: &str = "https://github.com/Jonnyan404/clip9";
-    let url = openable_url(PROJECT)?;
+    let url = openable_url(REPO_URL)?;
     // ⚠️ 与 `open_web` 同一条理由丢进线程池：起那个 opener 进程是阻塞的，而这是一次点击。
     tauri::async_runtime::spawn_blocking(move || open_in_system_browser(&url))
         .await
-        .map_err(|reason| Msg::key("openWebTaskFailed").param("reason", reason))?
+        .map_err(|reason| Msg::key("openLinkFailed").param("reason", reason))?
+}
+
+/// 打开 clip9 的**发布页** —— 「关于与更新」里那个「去发布页下载」（2026-10-08）。
+///
+/// ⚠️★ 为什么非要有它：两条路都会走到「应用内更新帮不上忙」——
+/// ① `cargo run` 起来的开发版**装不了**更新（那条链只对装好的包生效）；
+/// ② 应用内更新任何一步失败时（`UpdatePhase::Failed`），屏幕上只剩一句原因，
+///    用户**没有下一步可走**。这个按钮就是那个兜底，所以它在界面上是常驻的。
+///
+/// ⚠️ 与 [`open_project_page`] 同一条规矩：**不给页面收 URL 的能力**（窄命令）。
+#[tauri::command]
+pub async fn open_release_page() -> Result<(), Msg> {
+    let url = openable_url(&format!("{REPO_URL}/releases"))?;
+    tauri::async_runtime::spawn_blocking(move || open_in_system_browser(&url))
+        .await
+        .map_err(|reason| Msg::key("openLinkFailed").param("reason", reason))?
 }
 
 /// 交给系统 opener 之前的**最后一道**校验：只放行 `http(s)`。

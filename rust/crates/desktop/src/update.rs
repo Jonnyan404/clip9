@@ -146,8 +146,11 @@ impl UpdateState {
             Err(error) => return self.fail(check_failed(error.to_string())),
         };
         let Some(found) = found else {
-            self.set(Phase::Idle);
-            return Phase::Idle;
+            // ⚠️★ 这里给的是 `UpToDate`（**查过**、确实最新），不是 `Unchecked` ——
+            //    这一支是「请求发出去、对面说没有新版」；两态的差别正是
+            //    「这一句话有没有人核对过」，见 `UpdatePhase` 的注释。
+            self.set(Phase::UpToDate);
+            return Phase::UpToDate;
         };
         let version = found.version.clone();
         let phase = if update::should_offer(&self.lock().policy, &version) == Decision::Skipped {

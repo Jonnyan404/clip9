@@ -597,7 +597,7 @@ impl Store {
         let rooms = config.channels.iter().map(|_| Room::default()).collect();
         Self {
             inner: Mutex::new(Inner {
-                update: UpdatePhase::Idle,
+                update: UpdatePhase::Unchecked,
                 resources: ResourceSample::default(),
                 config,
                 rooms,
@@ -3065,6 +3065,40 @@ mod tests {
             |store| store.set_update(UpdatePhase::Checking),
             |store| store.set_update(UpdatePhase::Checking),
         );
+    }
+
+    /// ★★ 「**还没检查过**」与「**已是最新**」是**两个**阶段，不许并回一个。
+    ///
+    /// ⚠️★ 2026-10-08：它们原来合在一个 `Idle` 里，于是**一次都没查过**的时候
+    /// 界面上也写着「已是最新」—— 那是客户端替用户下的结论（那次请求根本没发过，
+    /// 见 `UpdatePhase::Unchecked` 的注释）。
+    /// ⚠️★ 这一条钉两头：
+    ///   ① 刚起来的那个 store **必须**是 `Unchecked`；
+    ///   ② 两个变体出去的 **JSON 标签**是 `unchecked` / `upToDate`。
+    ///
+    /// ⚠️ ② 是**界面那一侧的实际契约**（`app.js` 的 `switch (phase)` 就按这两个字符串
+    /// 分岔）—— 只判「枚举变体在不在」，管不到「改个名字两边就对不上」这一种：
+    /// 那**不报错**，只是那一格永远停在默认那句上（而默认那句正是「还没检查过」）。
+    #[test]
+    fn an_unchecked_client_does_not_claim_it_is_up_to_date() {
+        let (_dir, store) = temp_store();
+        assert_eq!(
+            store.update_phase(),
+            UpdatePhase::Unchecked,
+            "刚起来的 store 是「没查过」，不是「已是最新」—— 后者是一句没人核对过的话"
+        );
+        // 查过、对面说没有新版 → 才可以说「已是最新」（那一支在 `update.rs` 里）。
+        store.set_update(UpdatePhase::UpToDate);
+        assert_eq!(store.update_phase(), UpdatePhase::UpToDate);
+
+        let tag = |phase: &UpdatePhase| {
+            serde_json::to_value(phase).expect("阶段要能序列化出去")["phase"]
+                .as_str()
+                .expect("标签是个字符串")
+                .to_owned()
+        };
+        assert_eq!(tag(&UpdatePhase::Unchecked), "unchecked");
+        assert_eq!(tag(&UpdatePhase::UpToDate), "upToDate");
     }
 
     #[test]
