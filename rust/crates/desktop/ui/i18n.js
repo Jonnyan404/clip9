@@ -860,6 +860,8 @@
       '装不上，或者想自己挑一个包？': 'Cannot install, or want to pick a package yourself?',
       '去发布页下载': 'Download from the release page',
       '检查更新': 'Check for updates',
+      // 侧栏那一行在有新版时的 `title`（2026-10-08）。
+      '有新版可用': 'An update is available',
       '下载并重启': 'Download and restart',
       '跳过这一版': 'Skip this version',
       '确认安装并重启': 'Install and restart',

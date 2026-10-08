@@ -2725,6 +2725,16 @@ let lastUpdate = null;
 
 function renderUpdate(update) {
   lastUpdate = update || null;
+  // ⚠️★ 侧栏那一行也要跟着变：只在设置页里显示「有新版」的话，用户不点进去就永远不知道 ——
+  // 那把这颗按钮放到侧栏的意义就没有了。
+  // ⚠️ 只认**确实有新版**那几态（`available` / `downloading` / `ready`）：
+  // `unchecked` 与 `failed` 都**不算**（前者没人核对过、后者是没查成），
+  // 拿它们点亮会变成「一直亮着」，而一直亮着等于不亮。
+  const sb = el('sb-update');
+  const phaseNow = (update && update.phase) || 'unchecked';
+  const actionable = phaseNow === 'available' || phaseNow === 'downloading' || phaseNow === 'ready';
+  sb.classList.toggle('has-update', actionable);
+  sb.title = actionable ? t('有新版可用') : t('检查更新');
   // ⚠️★ 读不到阶段时的兜底**不能是「已是最新」**（2026-10-08）：那是替用户下了一个
   // 没人核对过的结论。兜底给 `unchecked` —— 屏幕上就写「还没检查过」，
   // 而旁边那颗「检查更新」正是它该做的事。
@@ -2805,6 +2815,19 @@ function renderUpdate(update) {
 
 el('ab-update-check').addEventListener('click', () => {
   updateConfirming = false;
+  invoke('update_check').catch((error) => {
+    showNotice('error', t('检查更新失败：{error}', { error: errorText(error) }));
+  });
+});
+
+// 侧栏那颗「检查更新」：与关于页那颗**同一个命令**（`update_check`）——
+// 两处各发一个不同的命令，就会出现「一处能查、另一处查不动」。
+el('sb-update').addEventListener('click', () => {
+  updateConfirming = false;
+  // 点了就切到「正在查」那一页，用户能看到结果（否则侧栏点一下什么都没发生）。
+  openSettings();
+  // ⚠️ 更新那一块在「关于」页（面板 id 是 `pane-about`，没有 `pane-update`）。
+  showPane('about');
   invoke('update_check').catch((error) => {
     showNotice('error', t('检查更新失败：{error}', { error: errorText(error) }));
   });
@@ -4256,6 +4279,9 @@ async function openSettings() {
     // 页面再抄一份就会与用户装的包各说各话。
     // ⚠️ 前缀 `v` 是照 Release 上的写法（`v0.1.1-beta1`）—— 用户报版本时念的就是那个。
     el('ab-version').textContent = 'v' + view.clientVersion;
+    // 侧栏那一行也写同一份版本号（⚠️ 同一个来源 `view.clientVersion` ——
+    // 两处各算各的必然会漂，而「关于页写 1.9.0、侧栏写 1.8.0」是最难解释的一种 bug）。
+    el('sb-version').textContent = 'v' + view.clientVersion;
     el('dg-data').textContent = view.dataDir;
     el('dg-config').textContent = view.configPath;
   } catch (error) {

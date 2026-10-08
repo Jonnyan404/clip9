@@ -166,6 +166,15 @@
 
     .sidebar-foot button:hover { background: var(--sidebar-hover); }
 
+    /* 侧栏那一行里的版本号：**靠右**、等宽数字（它每位数宽度一样，换版本时不会左右跳）。 */
+    .sidebar-foot .sb-ver {
+        margin-left: auto; font-size: 11px; color: var(--text-2);
+        font-variant-numeric: tabular-nums;
+    }
+
+    /* 有新版：版本号变成强调色 + 加粗 —— 一眼能看出「这一行有事要做」。 */
+    .sidebar-foot #sb-update.has-update .sb-ver { color: var(--accent); font-weight: 600; }
+
 
     /* ── 主区 ───────────────────────────────────────────────── */
     .main { flex: 1; display: flex; flex-direction: column; min-width: 0; }
@@ -1493,6 +1502,19 @@ table.ra td input[type='checkbox'] { margin: 0; }
             <div class="sidebar-foot">
                 <button id="btn-room-add"><span class="gl">＋</span><span class="lbl" data-i18n="添加房间">添加房间</span></button>
                 <button id="btn-settings"><span class="gl">⚙</span><span class="lbl" data-i18n="全局设置">全局设置</span></button>
+                <!-- 版本 + 检查更新（2026-10-08）。
+                     ⚠️★ 原来它俩只在「设置 → 关于与更新」里 —— 要看到「这个客户端是几版、
+                     有没有新版」得先开设置、再切页。而它是**与房间无关的**客户端自身状态，
+                     正该待在侧栏这种「一直在」的地方。
+                     ⚠️ 版本号**靠右**（`margin-left: auto`）：它在同一行里是次要信息，
+                     而「检查更新」是那一行的动作。
+                     ⚠️ 有新版时给这一行加 `has-update`（`app.js` 的 `renderUpdate`）——
+                     否则用户得点进去才知道有新版，那就等于没放出来。 -->
+                <button id="sb-update">
+                    <span class="gl">⭯</span>
+                    <span class="lbl" data-i18n="检查更新">检查更新</span>
+                    <span class="sb-ver" id="sb-version">v—</span>
+                </button>
             </div>
         </div>
 
