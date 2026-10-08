@@ -879,12 +879,18 @@ body {
 
 .view-switch .btn.on { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 500; }
 
-/* ⚠️ 「桌面输入框」那行：一个 `.sq` 方块 + 一句字。整行可点（点击处理在 app.js）。
-   ⚠️ 方块与文字之间用 `8px`：`.sq` 是同一个方块，设置页里 `.chk` 给的就是 8px ——
-   同一个「方块 + 一句话」不该在两个地方有两个间距。 */
-.view-switch .vs-chk {
-    cursor: default; font-size: 11.5px; color: var(--sidebar-fg);
-    padding: 2px 0; gap: 8px; align-items: center;
+/* ⚠️ 「桌面输入框」那颗按钮里的图标与文字。⚠️ `.gl` 与 `.sidebar-foot` 用的是同一个类名，
+   所以图标大小 / 与文字的距离天然一致 —— 这两块在同一栏里，不该各有一套。 */
+.view-switch .btn { display: flex; align-items: center; justify-content: center; gap: 6px; }
+
+/* ⚠️★ 「桌面输入框」的**开**态要**安静**（2026-10-08 实测改出来的）。
+   它是个**开关**，不是「列表 / 网页」那种互斥选项 —— 给它同一块实心强调色，
+   这一块里就同时亮着两个蓝按钮，比原来那个小方块**更**抢眼。
+   浅底 + 强调色文字：一眼看得出是开着的，但不去跟上面那颗争。 */
+.view-switch #composer-toggle.on {
+    background: color-mix(in srgb, var(--accent) 12%, transparent);
+    border-color: color-mix(in srgb, var(--accent) 45%, var(--sidebar-line));
+    color: var(--accent); font-weight: 500;
 }
 
 /* ⚠️★ 收起侧栏（56px）时两颗按钮改成上下叠；这行字藏掉，悬停提示顶上（`data-i18n-title`）。
@@ -893,7 +899,15 @@ body {
 
 :root[data-sidebar='narrow'] .view-switch .vs-row { flex-direction: column; }
 
-:root[data-sidebar='narrow'] .view-switch .vs-chk .vs-lbl { display: none; }
+:root[data-sidebar='narrow'] .view-switch .vs-lbl { display: none; }
+
+/* ⚠️★ 收窄时**版本号要藏掉**（2026-10-08 用户报的）：那一行只有 56px 宽，
+   图标 + 「检查更新」四个字 + 版本号挤在一起，版本号会被压成一小撮 —— 又丑又读不出。
+   收窄时留图标就够（悬停有 `title` 说全）。
+   ⚠️ 同时把它居中：`.sidebar-foot button` 是左对齐的，窄栏里左对齐会让图标贴着左边。 */
+:root[data-sidebar='narrow'] .sidebar-foot .sb-ver { display: none; }
+
+:root[data-sidebar='narrow'] .sidebar-foot button { justify-content: center; }
 
 /* ⚠️★ 「桌面输入框」关掉 = 整条输入区不画。属性由 `boot.js` 在**第一次绘制之前**贴
    （跟 `data-sidebar` 同一个道理：晚一步就是先画一条输入区再跳没），`app.js` 点按时写。
@@ -1482,8 +1496,17 @@ table.ra td input[type='checkbox'] { margin: 0; }
                      两边各关各的 —— 用户自己挑用哪边的）。⚠️ 与「列表 / 网页」放同一块：
                      都是「内容区长什么样」的开关，散到设置页里反而找不到。
                      ⚠️ `title` 给收起侧栏时用（那时文字藏掉，只剩一个方块）。 -->
-                <div class="vs-row vs-chk" id="composer-toggle" data-i18n-title="桌面输入框">
-                    <span class="sq" id="sq-composer"></span><span class="vs-lbl" data-i18n="桌面输入框">桌面输入框</span>
+                <!-- ⚠️★ 2026-10-08：原来这里是一个**勾选框**（`.sq` 实心方块 + 一句话）。
+                     它和上面两颗按钮**不是同一种东西**：按钮是描边 + 透明底，方块是一块
+                     亮蓝的实心色 —— 在整条很平的侧栏里，那一小块是最扎眼的东西，
+                     而它表达的信息（「桌面输入框开没开」）远没有那个视觉重量重要。
+                     现在换成与「列表 / 网页」**同款的一颗按钮**（同一套 `.btn` + `.on`）：
+                     整块变成两行等宽控件，重量一致，也不再需要一个新的视觉元素。
+                     ⚠️ 它是**开关**不是互斥选项 —— 与上面那颗「网页」可以同时亮着（互不相干）。 -->
+                <div class="vs-row">
+                    <button class="btn" id="composer-toggle" type="button" data-i18n-title="桌面输入框">
+                        <span class="gl">⌨</span><span class="vs-lbl" data-i18n="桌面输入框">桌面输入框</span>
+                    </button>
                 </div>
             </div>
             <!-- ⚠️★ 收起侧栏时这一块只画一个 `⚠`（56px 放不下那句话），全文挂在它的

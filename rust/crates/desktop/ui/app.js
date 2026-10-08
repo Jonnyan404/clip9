@@ -3297,12 +3297,14 @@ function setComposerHidden(hidden) {
   } catch (error) {
     // 存不上**照样生效**，只是下次启动记不住 —— 界面偏好不值得打断用户。
   }
-  sqSet('sq-composer', !hidden);
+  // ⚠️ 2026-10-08：那颗开关从**勾选框**换成了与「列表 / 网页」同款的一颗按钮 ——
+  // 所以这里改的是 `.on`（按钮的选中态），不再走 `sqSet`（那是给设置页的方块用的）。
+  el('composer-toggle').classList.toggle('on', !hidden);
 }
 
 // 启动对一次：`boot.js` 贴的是存储里的值，方块要跟它一致（不一致的表现是
 // 「输入区藏了、方块却亮着」）。
-sqSet('sq-composer', !composerHidden());
+el('composer-toggle').classList.toggle('on', !composerHidden());
 el('composer-toggle').addEventListener('click', () => {
   setComposerHidden(!composerHidden());
 });
