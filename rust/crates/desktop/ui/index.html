@@ -170,8 +170,36 @@
     /* ── 主区 ───────────────────────────────────────────────── */
     .main { flex: 1; display: flex; flex-direction: column; min-width: 0; }
 
+    /* ──★ 「列表 / 网页 / 桌面输入框」三处共用的一条左右基线（2026-10-08）───────
+       这三块、加上它们头顶的状态栏与提示条，**左边缘必须是同一条线** ——
+       在这一屏里，「对不齐」就是这几样东西一上一下摆着时最先被看见的毛病。
+
+       ⚠️★ 改之前是：状态栏 / 提示条 / 列表都是 `14px`，而**输入区是 `12px`** ——
+       输入框比上面的消息卡片各宽出 2px，左边缘差着一条缝；切到「网页」时
+       iframe 的上下两条边与输入框的左右两条边更是各走各的。
+       现在收敛成一个变量：改一处就是这几块一起改。
+
+       ⚠️★ **例外（有意）：`.spa` —— 嵌进来的那个网页满幅，不带这条基线。**
+       那 iframe 里是**别人的文档**（SPA 自己的头部与输入区各有一条自己的边），
+       给它加内边距只会让它看起来像一张卡片，而且会和它自己的布局打架。
+       「网页」这一处与另两处共享的是**上下两条边界**（状态栏之下、输入区之上），
+       不是左右。而 `.spa-blocked`（我们自己画的那个「这个站点嵌不了」的占位）
+       **是我们的界面**，所以它跟其余几处一样走这条基线。
+
+       ⚠️ 纵向**故意不是一条线**，各有各的角色：状态栏 `10px`（它是标题行）、
+       提示条 `5px`（它是一条窄带）、滚动内容 `12px`（`--pane-pad-y`，上下留白）、
+       输入区 `9 / 11`（下面那条边是**窗口边缘**，多给 2px 才不至于看着贴地）。
+       强行拉平只会让提示条变胖、或者让输入区看着被顶起来。
+
+       ⚠️ 判据 42 钉着「这几处都用它、且都不许再写死横向内边距」——
+       否则下次有人只改一处，另外几处就悄悄错开，而这种错**不报错、只是看着不对**。 */
+    :root {
+        --pane-pad-x: 14px;
+        --pane-pad-y: 12px;
+    }
+
     .main-head {
-        flex: none; padding: 10px 14px; border-bottom: 1px solid var(--border);
+        flex: none; padding: 10px var(--pane-pad-x); border-bottom: 1px solid var(--border);
         display: flex; align-items: center; gap: 10px;
     }
 
@@ -194,12 +222,15 @@
     .devices .d.me { border-color: var(--accent); color: var(--accent); }
 
 
-    .tl { flex: 1; overflow-y: auto; padding: 12px 14px; display: flex; flex-direction: column; gap: 9px; }
+    .tl { flex: 1; overflow-y: auto; padding: var(--pane-pad-y) var(--pane-pad-x); display: flex; flex-direction: column; gap: 9px; }
 
     /* ── 内容区的第二个视图：嵌进来的 SPA（2026-09-29 的实验）──────────────
        ⚠️ 与 `.tl` 同一个位置、同一个 `flex: 1` —— 它俩就是 `.main` 里**二选一**的那一块。
        ⚠️★ 背景给 `--bg`（不是浏览器默认的白）：服务端没起、或者地址还没拿到时
-       iframe 是一片空白，深色主题下那块白会很扎眼。 */
+       iframe 是一片空白，深色主题下那块白会很扎眼。
+       ⚠️★ **它不带主区那条左右基线**（见 `.main` 上面那段）：里面是别人的文档，
+       给它加内边距只会让它看起来像一张卡片、并与它自己的布局打架。
+       它与「列表」共享的是**上下两条边界** —— 所以切视图时输入区不会跳。 */
     .spa { flex: 1; border: 0; width: 100%; background: var(--bg); }
 
     /* 「这一格现在没法嵌网页」那块（2026-09-30）。
@@ -209,7 +240,7 @@
        兜住（判据 20 盯着「全表只有这一处 `!important`」）—— 所以这里**不要**再自己写一个。 */
     .spa-blocked {
         flex: 1; display: flex; align-items: center; justify-content: center;
-        padding: 24px; background: var(--bg);
+        padding: var(--pane-pad-y) var(--pane-pad-x); background: var(--bg);
     }
 
     .spa-blocked .box {
@@ -441,7 +472,9 @@
        `documentElement`，与 `data-theme` / `data-sidebar` 同一套做法。 */
     .composer {
         position: relative; flex: none; height: var(--composer-h, auto);
-        border-top: 1px solid var(--border); padding: 9px 12px 11px;
+        /* ⚠️ 横向走主区那条基线（见 `.main` 上面那段）；纵向 9 / 11 是**有意不对称**的
+           —— 下面那条边就是窗口边缘，多给 2px 才不至于看着贴地。 */
+        border-top: 1px solid var(--border); padding: 9px var(--pane-pad-x) 11px;
     }
 
     /* 拖拽带：压在上边缘那条 1px 边框上（`top: -3px`，6px 高 = 两边各 3px 好抓）。
@@ -468,7 +501,25 @@
 
     .composer .ph { color: var(--text-2); font-size: 12.5px; }
 
-    .composer .row { display: flex; align-items: center; gap: 8px; margin-top: 8px; }
+    .composer .row { display: flex; align-items: center; gap: 8px; margin-top: 8px; min-width: 0; }
+
+    /* ⚠️★ 窄窗口下这一排不许挤坏（2026-10-08）。
+       它要塞下「两个图标按钮 + 一句键盘提示 + 两条上限 + 发送」，而窗口最窄 640px、
+       侧栏占掉 208px 之后主区只剩 432px（`tauri.conf.json` 的 `minWidth`）。
+       挤不下时**先让那句键盘提示缩**（它是提示，不是数据），
+       两颗图标按钮、两条上限、发送按钮**一律不缩** —— 缩成 `…` 的「1024 / 40960」
+       等于没说，而缩掉的发送按钮直接就是点不到。
+       ⚠️★ `min-width: 0` 是必须的：flex 项默认 `min-width: auto`（= 内容宽），
+       不给它 0 的话下面那条 `overflow: hidden` 一点用都没有 —— 这是 flex 里最容易漏的一条
+       （`.room .nm` 那里踩过同一次）。
+       ⚠️ 用 id 而不是复用 `.lim`：两条上限与那句提示共享 `.lim` 的**字号颜色**，
+       但在「谁先被挤掉」上优先级不同，只挑得出 id。 */
+    .composer .row > .btn { flex: none; }
+    .composer .row #composer-hint {
+        flex: 0 1 auto; min-width: 0;
+        overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    }
+    .composer .row #limits-file, .composer .row #limits { flex: none; }
 
     .composer .row .spacer { flex: 1; }
 
@@ -496,7 +547,9 @@
        ⚠️ 是 `absolute` 不是 `fixed`：`fixed` 不跟着窗口重排（拖高输入区 / 改侧栏宽度时
        它会留在原地），而它本来就挂在输入框所在的那个容器里，跟着走才对。 */
     .composer .slashmenu {
-        position: absolute; left: 12px; right: 12px; bottom: calc(100% - 2px); z-index: 30;
+        /* ⚠️ 左右跟着主区那条基线：这排胶囊是**输入框的附件**，
+           与 `.box` 的两条竖边对齐才像一回事（原来写死 12px，与 `.box` 差 2px）。 */
+        position: absolute; left: var(--pane-pad-x); right: var(--pane-pad-x); bottom: calc(100% - 2px); z-index: 30;
         display: flex; flex-wrap: wrap; gap: 4px;
         padding: 6px 8px; margin-bottom: 4px;
         background: var(--card-bg); border: 1px solid var(--border);
@@ -787,10 +840,13 @@ body {
    ⚠️ 选中态仍走 `.on` 那个通用写法（accent 底 + 白字），与 `.room.on` / `.it.on` 一致。 */
 .view-switch {
     border-top: 1px solid var(--sidebar-line);
-    padding: 6px; display: flex; flex-direction: column; gap: 5px;
+    /* ⚠️★ 间距统一成 `6px`（2026-10-08）：原来行内是 5px、而它自己的内边距是 6px ——
+       「两颗按钮之间」与「按钮到栏边」差 1px，摆在一起看得出来。
+       `6px` 也是 `.sidebar-foot` 的内边距，这一栏里外一个数。 */
+    padding: 6px; display: flex; flex-direction: column; gap: 6px;
 }
 
-.view-switch .vs-row { display: flex; gap: 5px; }
+.view-switch .vs-row { display: flex; gap: 6px; }
 
 .view-switch .btn {
     flex: 1; padding: 4px 0; font-size: 11.5px;
@@ -799,10 +855,12 @@ body {
 
 .view-switch .btn.on { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 500; }
 
-/* ⚠️ 「桌面输入框」那行：一个 `.sq` 方块 + 一句字。整行可点（点击处理在 app.js）。 */
+/* ⚠️ 「桌面输入框」那行：一个 `.sq` 方块 + 一句字。整行可点（点击处理在 app.js）。
+   ⚠️ 方块与文字之间用 `8px`：`.sq` 是同一个方块，设置页里 `.chk` 给的就是 8px ——
+   同一个「方块 + 一句话」不该在两个地方有两个间距。 */
 .view-switch .vs-chk {
     cursor: default; font-size: 11.5px; color: var(--sidebar-fg);
-    padding: 2px 0; gap: 7px; align-items: center;
+    padding: 2px 0; gap: 8px; align-items: center;
 }
 
 /* ⚠️★ 收起侧栏（56px）时两颗按钮改成上下叠；这行字藏掉，悬停提示顶上（`data-i18n-title`）。
@@ -1333,7 +1391,7 @@ table.ra td input[type='checkbox'] { margin: 0; }
 
 /* 主界面的即时提示（发不出去 / 存不上 / 配置有毛病）—— 稿子里没有，但 app 必须说 */
 .notice {
-    flex: none; padding: 5px 14px; font-size: 11.5px;
+    flex: none; padding: 5px var(--pane-pad-x); font-size: 11.5px;
     border-bottom: 1px solid var(--border); word-break: break-word;
 }
 .notice.ok { background: color-mix(in srgb, var(--ok) 12%, transparent); }
@@ -1493,7 +1551,12 @@ table.ra td input[type='checkbox'] { margin: 0; }
                     <div class="row">
                         <button class="btn icon" id="btn-attach" data-i18n-title="选文件发到房间">📎</button>
                         <button class="btn icon" id="btn-image" data-i18n-title="选图片发到房间">🖼</button>
-                        <span class="lim" id="composer-hint"></span>
+                        <!-- ⚠️ 这一句是**窄窗口下第一个被挤掉的**（见 `.composer .row` 那段
+                             CSS）：主区窄到 432px 时它会缩成 `回车发送 · Shi…`。
+                             所以全文也挂在 `title` 上 —— 缩掉的那半句悬停还读得到。
+                             ⚠️ 与 `.box` 里的 placeholder 不是一回事：placeholder 说「能输入什么」，
+                             这一句说「按哪个键发出去」，两样都得有。 -->
+                        <span class="lim" id="composer-hint" data-i18n-title="回车发送 · Shift+回车换行"></span>
                         <div class="spacer"></div>
                         <!-- ⚠️★ 两个上限**同时**显示：字节那条是「你现在打了多少 / 这条消息最多多少」，
                              文件那条是**另一条**界（拖进来的单个文件多大能发出去）。

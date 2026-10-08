@@ -3720,6 +3720,71 @@ if (entryViewFiles.length !== 1) {
   }
 }
 
+// ── 判据 42：主区几块内容共用一条左右基线（理由见 index.html 那段注释）──────────
+// ⚠️★ 2026-10-08：输入区原来是 12px、其余是 14px —— 输入框比上面的消息卡片**各宽 2px**。
+//    这类「差 2px」不会报错、也不会让谁点不到，**只是看着不对**；而它恰恰是
+//    「布局不统一」这一族里少数能被静态判出来的：两边都是文本，比一下就知道。
+// ⚠️ 只钉**横向**：纵向各家按角色不同（状态栏 10 / 提示条 5 / 滚动内容 12 / 输入区 9-11），
+//    强行拉平反而会让提示条变胖、或者让输入区看着被顶起来。
+{
+  const problems = [];
+  const styleMatch = html.match(/<style>([\s\S]*?)<\/style>/);
+  const css = styleMatch ? styleMatch[1] : '';
+  // ⚠️★ 先剥注释：解释这条判据的那几句注释里就写着 `padding: 12px` 之类的话，
+  //    不剥的话它们会被当成规则读进来 —— 判据自己把自己判红（写这条时真踩到过）。
+  const bare = css.replace(/\/\*[\s\S]*?\*\//g, '');
+  // 把 `选择器 { 声明 }` 逐条拆开。这份样式表里没有 `@media`、也没有嵌套规则，
+  // 所以 `[^{}]*` 够用；`@keyframes` 那种会被拆成内层几块，与要找的选择器无关。
+  const rules = [];
+  const ruleRe = /([^{}]+)\{([^{}]*)\}/g;
+  let m;
+  while ((m = ruleRe.exec(bare)) !== null) rules.push([m[1].trim(), m[2]]);
+  /** 某个选择器的**全部**规则体（同名规则可能有好几条，比如 .main-head 有两条）。 */
+  const bodiesOf = (sel) =>
+    rules
+      .filter(([text]) => text.split(',').some((one) => one.trim() === sel))
+      .map(([, body]) => body);
+  /** `padding` 的左右两个分量（简写 1 / 2 / 3 / 4 值都还原出来）。 */
+  const horizontal = (body) => {
+    const decl = /(?:^|;)\s*padding\s*:\s*([^;]+)/.exec(body);
+    if (!decl) return null;
+    const parts = decl[1].trim().split(/\s+/);
+    if (parts.length === 1) return [parts[0], parts[0]];
+    if (parts.length === 2 || parts.length === 3) return [parts[1], parts[1]];
+    return [parts[1], parts[3]];
+  };
+  const uses = (bare.match(/var\(--pane-pad-[xy]\)/g) || []).length;
+  if (!/:root\s*\{[^}]*--pane-pad-x:\s*14px[^}]*\}/.test(bare)) {
+    problems.push(':root 里没有定义 --pane-pad-x: 14px —— 主区那条左右基线没了');
+  }
+  // ⚠️★ 下限：「读不到东西」与「读到的东西都对」必须分开判（这条在这个文件里踩过好几次）。
+  //    走查坏了 / 变量被撤了 / 类名改了，都会让下面的循环空转，然后**结论照绿**。
+  const MIN_USES = 6;
+  if (uses < MIN_USES) {
+    problems.push(`主区只有 ${uses} 处用这条基线（少于 ${MIN_USES}）—— 走查坏了，或者有人把它撤了`);
+  }
+  for (const sel of ['.main-head', '.notice', '.tl', '.composer', '.spa-blocked']) {
+    const found = bodiesOf(sel).map(horizontal).filter(Boolean);
+    if (found.length === 0) {
+      problems.push(`${sel} 读不到 padding —— 这条判据要跟着样式表改`);
+      continue;
+    }
+    for (const [left, right] of found) {
+      if (left !== 'var(--pane-pad-x)' || right !== 'var(--pane-pad-x)') {
+        problems.push(`${sel} 的横向内边距是 ${left} / ${right}，应当是 var(--pane-pad-x)`
+          + '（差几个像素不会有任何报错，只是与上面那几块对不齐）');
+      }
+    }
+  }
+  if (problems.length) {
+    failed = true;
+    console.error(`✗ 判据 42：主区那条左右基线没被共用（${problems.length} 处）：`);
+    for (const one of problems) console.error(`    · ${one}`);
+  } else {
+    console.log(`· 判据 42：主区几块内容共用一条左右基线（var(--pane-pad-x) 用了 ${uses} 处）。`);
+  }
+}
+
 if (cssOnly.length) {
   console.log(`· ${cssOnly.length} 个 id 只被选择器用（形如 #id { … }），正常：${cssOnly.join('、')}`);
 }if (dynamicPrefixes.size) {
