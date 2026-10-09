@@ -305,14 +305,14 @@ paths./stats/daily.get.parameters.0.description: 要统计的房间。不传即 
 paths./stats/daily.get.parameters.1.description: 窗口天数，截止到今天。夹到 `371`。`0`、负数和非数字都当作「没给」。
 paths./stats/daily.get.parameters.2.description: 用来判断某个时间戳属于哪个本地日的 IANA 时区名。认不出来就回落 `UTC`。
 paths./stats/daily.get.responses.200.description: 所请求窗口内每天的条数。
-paths./stats/daily.get.responses.200.content.application/json.schema.properties.tz.description: '**实际用的**时区（回落之后）。'
+paths./stats/daily.get.responses.200.content.application/json.schema.properties.tz.description: '''**实际用的**时区（回落之后）。'''
 paths./stats/daily.get.responses.200.content.application/json.schema.properties.requestedTz.description: 调用方请求的那个，原样回显，这样回落就看得见。
 paths./stats/daily.get.responses.200.content.application/json.schema.properties.truncated.description: 为真表示扫描撞到了行数上限，窗口里最旧的那几天可能少算。
 paths./stats/daily.get.responses.200.content.application/json.schema.properties.activity.properties.days.description: 旧的在前；长度恰好等于生效的 `days`。
 paths./stats/daily.get.responses.200.content.application/json.schema.properties.activity.properties.days.items.properties.date.description: 本地日期，`YYYY-MM-DD`。
 paths./stats/daily.get.responses.200.content.application/json.schema.properties.activity.properties.streak.properties.current.description: 一直到今天的连续天数。今天还没内容时**跳过它**、从昨天往回数 —— 这样这个数不会每天早上都掉回 0。
 paths./stats/daily.get.responses.200.content.application/json.schema.properties.activity.properties.levels.description: 配色用的四道递增阈值。窗口内活跃天不足四天时，这四个值相等。
-paths./stats/daily.get.responses.200.content.application/json.examples.unknownTimezone.summary: '`tz` 认不出来时回落 UTC'
+paths./stats/daily.get.responses.200.content.application/json.examples.unknownTimezone.summary: '''`tz` 认不出来时回落 UTC'''
 
 # ── /upload ───────────────────────────────────────────────────────────
 paths./upload.post.description: |
@@ -425,3 +425,157 @@ paths./file/{uuid}/{name}.delete.description: 与 `DELETE /file/{uuid}` 完全�
 paths./file/{uuid}/{name}.delete.responses.200.description: 文件已删除。
 paths./file/{uuid}/{name}.delete.responses.401.description: 无权访问该文件所在的房间。
 paths./file/{uuid}/{name}.delete.responses.404.description: 没这个文件，或者它已过期。
+
+# ── /revoke ───────────────────────────────────────────────────────────
+paths./revoke/{id}.post.description: |
+  删掉这条，并广播 `revoke`（`{"id": <number>}`）。成功响应**没有 body**（光秃秃一个 200），
+  与参考实现一致。
+
+  NOTE (code)：这个服务端**只接受 POST**。其他任何方法（包括 GET）都回 `405`。
+  更早的实现根本没有方法检查，于是**在浏览器里访问一下 `/revoke/5` 就真的删掉了第 5 条**；
+  这个洞在这里堵上了。
+paths./revoke/{id}.post.responses.200.description: 条目已删除。响应体为空。
+paths./revoke/{id}.post.responses.400.description: id 不是数字。
+paths./revoke/{id}.post.responses.401.description: 无权访问该条目所在的房间。
+paths./revoke/{id}.post.responses.404.description: 没这条，或者它不在请求的那个房间里。
+paths./revoke/{id}.post.responses.500.description: 删除失败。
+paths./revoke/all.post.description: |
+  删掉这个房间里的**每一条**，并广播 `clearAll`（`{"room": "..."}`）。只清被点名的那个房间 ——
+  **刻意没有**「清空一切」这个能力。`?room=` 为空或不传即 `default` 房间。
+
+  NOTE (code)：成功响应体是**纯文本**（`所有消息已清除\n`），不是 JSON，照参考实现来的。
+  在这里硬编码 JSON 的客户端会挂。
+paths./revoke/all.post.responses.200.description: 房间里的每条消息都已清除。
+paths./revoke/all.post.responses.401.description: 无权访问该房间。
+
+# ── /share ────────────────────────────────────────────────────────────
+paths./share.post.description: |
+  签一枚带签名、自描述的令牌，授予对**一条内容或一个文件**的**读**权限。有效期、次数上限、密码
+  全都写在令牌里，所以**总是**签令牌 —— 包括对开放的房间，那里如果只回一个裸 URL，
+  就等于把调用方要的那几道限制**悄悄丢掉**了。
+
+  请求体（JSON，所有字段可选；**空体即全部用默认值**）：
+
+  | 字段 | 说明 |
+  |---|---|
+  | `type` | `content` 或 `file`。缺失 → 400 `missing_type` |
+  | `id` | `type: content` 时是条目 id（字符串） |
+  | `uuid` | `type: file` 时是文件 uuid。也接受 `id`（老客户端） |
+  | `ttl` | 秒；默认 900，夹到 60 – 86400 |
+  | `maxUses` | `0`（默认）= 不限次 |
+  | `password` | 可选；给了之后收件方必须带 `X-Share-Password` |
+
+  ⚠️ **不认识的字段会被拒（400），而不是忽略** —— 这样把 `max_uses` 写成下划线的人
+  不会**悄悄**丢掉他配的那道限制。
+
+  响应里有两种寻址形式：`url` / `pageUrl`（落地页，**爬虫和人看到的是同一个地址**），
+  以及 `rawUrl`（带同一枚令牌直达内容/文件接口）。
+paths./share.post.requestBody.content.application/json.examples.content.summary: 分享一条文本，15 分钟
+paths./share.post.requestBody.content.application/json.examples.file.summary: 分享一个文件，5 次，带密码
+paths./share.post.responses.200.description: 分享已创建。
+paths./share.post.responses.200.content.application/json.examples.content.summary: 内容分享
+paths./share.post.responses.200.content.application/json.examples.file.summary: 文件分享
+paths./share.post.responses.400.description: JSON 体不合法（`invalid_request_body`）、有未知字段，或者 `type` / `id` / `uuid` 缺失或非法。
+paths./share.post.responses.401.description: 无权访问目标所属的那个房间。
+paths./share.post.responses.404.description: 目标条目或文件不存在（或已过期），或者不在请求的那个房间里。
+
+paths./share.get.description: |
+  分享落地页在取任何东西**之前**先问这个：类型、文件名与大小、还剩多久、还剩几次、要不要密码。
+
+  - **它不消耗次数** —— 光打开页面不该烧掉一次。
+  - 密码走 `X-Share-Password`，**永远不**进 URL。
+  - 受密码保护的分享还会多回一个 `previewToken`（以及 `previewExpiresAt`）。
+    浏览器没法给 `<img>` / `<video>` / `<a download>` 加自定义头，所以页面需要这枚令牌来内联预览。
+    ⚠️ 不受保护的分享**刻意不给**预览令牌：那会是个不限次的东西，等于把 `maxUses` 废掉。
+  - `used` 只在「限次且还有活的记录」的分享上出现。
+paths./share.get.responses.200.description: 分享的元信息。
+paths./share.get.responses.200.content.application/json.examples.textNoPassword.summary: 文本分享，无密码，不限次
+paths./share.get.responses.200.content.application/json.examples.fileWithPassword.summary: 文件分享，带密码与次数上限
+paths./share.get.responses.400.description: 这枚令牌带的是本接口描述不了的分享类型。
+paths./share.get.responses.401.description: 令牌不对/已过期，或者需要密码/密码不对。
+paths./share.get.responses.404.description: 分享指向的东西已经不在了。
+paths./share.head.description: 与 `GET /share?t=` 相同，只是不要响应体。
+paths./share.head.responses.200.description: 分享存在，且令牌可用。
+paths./share.head.responses.401.description: 令牌不对/已过期，或者需要密码/密码不对。
+paths./share.head.responses.404.description: 分享指向的东西已经不在了。
+
+paths./share/list.get.description: |
+  列出某个房间最近的分享记录，以及每个链接被打开了几次。鉴权与「在该房间创建分享」完全一致 ——
+  所以**不可能**出现「能创建分享却看不到自己的」。
+
+  - `limit` 默认 50，上限 200。
+  - ⚠️ **列表里永远不含令牌。** 令牌是持有即用的凭据；列出来的话，任何能读这个房间的人
+    都能拿去复用别人的分享。
+  - `password` 只报**有没有**设密码，绝不报它的哈希。
+  - `expired` 是按当前时间算出来的。
+paths./share/list.get.parameters.1.description: 每页条数，默认 50，最大 200。回给你的就是实际用的那个值。
+paths./share/list.get.responses.200.description: 该房间的分享记录。
+paths./share/list.get.responses.401.description: 无权访问该房间。
+
+paths./share/visit.post.description: |
+  分享页挂载时调一次。服务端自己校验令牌；无效或已过期的令牌回 401，**永远不计入**。
+
+  - 同一个访客十分钟内再报一次时 `tracked` 是 `false` —— 重复上报不能把数字灌大。
+    返回的计数仍然是最新的。
+  - `qr: true`（或 `?q=1`）在「打开」之外**再记一次扫码**。二维码里应该编 `/s/<token>?q=1`。
+  - **不需要鉴权**：拿着链接就是上报的资格，而响应也只描述这一个分享。
+  - 光是请求 `/s/{token}` **本身从不计数** —— 这就是为什么聊天软件的爬虫
+    （它们按自己的节奏反复抓那个地址、也不执行 JavaScript）灌不了水。
+paths./share/visit.post.parameters.1.description: '`1` 表示这次访问来自扫二维码。'
+paths./share/visit.post.responses.200.description: 上报已处理。
+paths./share/visit.post.responses.200.content.application/json.examples.debounced.summary: 同一访客十分钟内 —— 不重复计数
+paths./share/visit.post.responses.400.description: 没给令牌，或者请求体不是合法 JSON。
+paths./share/visit.post.responses.401.description: 令牌不对或已过期（过期链接不计入）。
+
+paths./s/{token}.get.description: |
+  分享链接的**唯一地址**：一个 SPA 外壳，`<head>` 里注入了 Open Graph 标签。
+  聊天软件展开这个 URL 时看到的是一张真的预览卡（它不执行 JavaScript，所以摘要必须服务端渲染好）；
+  人点开**同一个** URL 则落到分享页本身。不跳转、没有第二个地址、没有第二个身份。
+
+  - **它既不计数也不消耗次数**：只有 `POST /share/visit` 计。
+  - 受密码保护的分享**绝不**把内容摘要泄进卡片里。
+  - `og:image` 只给**不限次**分享里的图片加上 —— 爬虫去取那张图会在 `/file` 那条路上消耗一次，
+    而预览把额度烧光，等于把一条已经用尽的链接递给真人。
+  - 响应头：`X-Robots-Tag: noindex, nofollow`、`Cache-Control: private, max-age=0, must-revalidate`、
+    `Referrer-Policy: no-referrer`、`X-Content-Type-Options: nosniff`。
+  - 没有静态资源时（纯 API 部署）回一个自带的兜底页，标签一样。
+paths./s/{token}.get.responses.200.description: 分享页的 HTML。
+paths./s/{token}.get.responses.200.content.text/html.examples.html.summary: 节选
+
+# ── /push ─────────────────────────────────────────────────────────────
+paths./push.get.description: |
+  升级成 WebSocket，流式推这个房间的事件。注册成 `GET` 是因为 WebSocket 握手本来就是 GET。
+
+  **握手顺序（这个顺序就是契约）：**
+
+  1. 房间受保护时：没带凭据回 `401 unauthorized_missing_token`，带错了回
+     `401 unauthorized_invalid_token`。两者**分开**，客户端才能分辨「该去要密码」和「密码是错的」。
+     拒绝发生在升级**之前**，所以那是一个普通的 JSON 响应。
+  2. `Sec-WebSocket-Protocol` 要**回显**。客户端给了子协议而服务端不选一个，浏览器就会判定握手失败 ——
+     客户端正是靠它把令牌传进来、又不放进 URL。
+  3. 升级。
+  4. 帧序：先给房间里已有的每台设备各来一条 `connect`，再给这条连接向其他人发一条 `connect`，
+     然后是 `config`，最后才是实时事件。
+
+  ⚠️★ **握手不推历史。** 历史用 `GET /content` 取，并用 `config.latestId`
+  —— 连接那一刻房间里最大的消息 id（空房间为 `0`）—— 来对齐历史与实时的边界。
+  `id <= latestId` 当历史（记下来，**不要**写剪贴板），`id > latestId` 才是实时。
+  **绝不要**用时间窗口去猜边界：窗口早结束一点，就会**悄悄**把整段历史灌进剪贴板。
+  拿不到 `latestId`（服务端太旧）时，**宁可拒绝写入，也不要猜**。
+
+  服务端每 5 秒发一次协议级 ping（否则空闲连接会在代理后面**悄无声息地**死掉），
+  并且会把**跟不上广播**的客户端断开 —— 让它重连、重新同步，而不是安静地漏掉一条 `revoke`。
+  重连与退避是客户端的事。
+paths./push.get.parameters.3.description: 凭据优先从 `Authorization` / `?auth=` 取，取不到才看第一个子协议。**优先用这个载体**：它让令牌不进 URL，也就不进访问日志。
+paths./push.get.responses.101.description: 正在切换协议。之后事件帧按下面写的流动。
+paths./push.get.responses.401.description: 房间受保护，而凭据缺失或不对。
+paths./push.get.x-websocket-events.clientToServer.0.description: 应用层 ping。服务端会把 `data` 原样放进 `pong` 回显，客户端据此用 `Date.now() - data` 算 RTT。
+paths./push.get.x-websocket-events.serverToClient.0.description: 房间里的一台设备，或者这条连接在向其他人宣告自己。
+paths./push.get.x-websocket-events.serverToClient.1.description: 某台设备的**最后一条**连接断了。一台设备开多个标签页时，关掉其中一个**不**报断开。
+paths./push.get.x-websocket-events.serverToClient.2.description: 连上之后发一次，排在任何实时消息**之前**。`version` 与那几个大小限额**只在这里**给，也是前端 `app.config` 的唯一来源。
+paths./push.get.x-websocket-events.serverToClient.3.description: 房间里来了新内容。
+paths./push.get.x-websocket-events.serverToClient.4.description: 已有条目被**原地**改了（同一个 `id`）—— 改写正文或挪看板列。
+paths./push.get.x-websocket-events.serverToClient.5.description: 某一条被删了。
+paths./push.get.x-websocket-events.serverToClient.6.description: 房间被清空了。
+paths./push.get.x-websocket-events.serverToClient.7.description: 对客户端 `ping` 的回复，`data` 原样带回。
+paths./push.get.x-websocket-events.serverToClient.8.description: 组件之间的内部事件；**不会**发给 WebSocket 客户端。

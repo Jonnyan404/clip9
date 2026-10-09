@@ -4,7 +4,7 @@
 #   然后跑 `python3 docs/openapi/build-zh.py`。
 #
 # 结构（路径 / 字段 / 必填 / 示例）**全部来自英文那份**，所以两份不会漂。
-# 已译 176 条，未译（保留英文）274 条。
+# 已译 232 条，未译（保留英文）218 条。
 openapi: 3.1.0
 info:
   title: clip9 API
@@ -1079,7 +1079,7 @@ paths:
                     type: string
                   tz:
                     type: string
-                    description: '**实际用的**时区（回落之后）。'
+                    description: '''**实际用的**时区（回落之后）。'''
                   requestedTz:
                     type: string
                     description: 调用方请求的那个，原样回显，这样回落就看得见。
@@ -1171,7 +1171,7 @@ paths:
                       - 8
                       - 12
                 unknownTimezone:
-                  summary: '`tz` 认不出来时回落 UTC'
+                  summary: '''`tz` 认不出来时回落 UTC'''
                   value:
                     room: ''
                     tz: UTC
@@ -1926,16 +1926,16 @@ paths:
       tags:
       - Content
       summary: 删掉一条
-      description: 'Removes the entry and broadcasts `revoke` with `{"id": <number>}`. The success
+      description: '删掉这条，并广播 `revoke`（`{"id": <number>}`）。成功响应**没有 body**（光秃秃一个 200），
 
-        response has **no body** (a bare 200), matching the reference implementation.
+        与参考实现一致。
 
 
-        NOTE (code): this server accepts **POST only**. Any other method (including GET)
+        NOTE (code)：这个服务端**只接受 POST**。其他任何方法（包括 GET）都回 `405`。
 
-        returns `405`. Earlier implementations had no method check at all, so simply visiting
+        更早的实现根本没有方法检查，于是**在浏览器里访问一下 `/revoke/5` 就真的删掉了第 5 条**；
 
-        `/revoke/5` in a browser deleted entry 5; that hole is closed here.
+        这个洞在这里堵上了。
 
         '
       operationId: revokeEntry
@@ -1954,9 +1954,9 @@ paths:
       - authQuery: []
       responses:
         '200':
-          description: The entry was deleted. Empty body.
+          description: 条目已删除。响应体为空。
         '400':
-          description: The id is not numeric.
+          description: id 不是数字。
           content:
             application/json:
               schema:
@@ -1968,7 +1968,7 @@ paths:
                     error: Invalid revoke id
                     message: 无效的撤销 ID
         '401':
-          description: No access to the entry's room.
+          description: 无权访问该条目所在的房间。
           content:
             application/json:
               schema:
@@ -1980,7 +1980,7 @@ paths:
                     error: No access to this room
                     message: 无权访问该房间
         '404':
-          description: No such entry, or it is not in the requested room.
+          description: 没这条，或者它不在请求的那个房间里。
           content:
             application/json:
               schema:
@@ -1992,7 +1992,7 @@ paths:
                     error: Message not found
                     message: 消息未找到
         '500':
-          description: Removing the entry failed.
+          description: 删除失败。
           content:
             application/json:
               schema:
@@ -2010,17 +2010,14 @@ paths:
       tags:
       - Content
       summary: 清空一个房间
-      description: 'Deletes every entry in the room and broadcasts `clearAll` with `{"room": "..."}`.
+      description: '删掉这个房间里的**每一条**，并广播 `clearAll`（`{"room": "..."}`）。只清被点名的那个房间 ——
+
+        **刻意没有**「清空一切」这个能力。`?room=` 为空或不传即 `default` 房间。
 
 
-        Only the named room is cleared — there is deliberately **no** "clear everything"
+        NOTE (code)：成功响应体是**纯文本**（`所有消息已清除\n`），不是 JSON，照参考实现来的。
 
-        capability. `?room=` empty or absent means the `default` room.
-
-
-        NOTE (code): the success body is **plain text** (`所有消息已清除\n`), not JSON,
-
-        mirroring the reference implementation. Clients that hard-code JSON here will break.
+        在这里硬编码 JSON 的客户端会挂。
 
         '
       operationId: clearRoom
@@ -2032,7 +2029,7 @@ paths:
       - authQuery: []
       responses:
         '200':
-          description: Every message in the room was cleared.
+          description: 房间里的每条消息都已清除。
           content:
             text/plain:
               schema:
@@ -2043,7 +2040,7 @@ paths:
 
                     '
         '401':
-          description: No access to the room.
+          description: 无权访问该房间。
           content:
             application/json:
               schema:
@@ -2061,45 +2058,41 @@ paths:
       tags:
       - Sharing
       summary: 签一个分享令牌
-      description: 'Creates a signed, self-describing token that grants **read** access to one content
+      description: '签一枚带签名、自描述的令牌，授予对**一条内容或一个文件**的**读**权限。有效期、次数上限、密码
 
-        entry or one file. TTL, usage limit and password all live inside the token, so a token
+        全都写在令牌里，所以**总是**签令牌 —— 包括对开放的房间，那里如果只回一个裸 URL，
 
-        is issued **always** — including for open rooms, where returning a bare URL would
-
-        silently discard the limits the caller asked for.
+        就等于把调用方要的那几道限制**悄悄丢掉**了。
 
 
-        Request body (JSON, all fields optional; an **empty body means all defaults**):
+        请求体（JSON，所有字段可选；**空体即全部用默认值**）：
 
 
-        | Field | Notes |
+        | 字段 | 说明 |
 
         |---|---|
 
-        | `type` | `content` or `file`. Missing → 400 `missing_type` |
+        | `type` | `content` 或 `file`。缺失 → 400 `missing_type` |
 
-        | `id` | For `type: content`, the entry id (as a string) |
+        | `id` | `type: content` 时是条目 id（字符串） |
 
-        | `uuid` | For `type: file`, the file uuid. `id` is also accepted (older clients) |
+        | `uuid` | `type: file` 时是文件 uuid。也接受 `id`（老客户端） |
 
-        | `ttl` | Seconds; default 900, clamped to 60 – 86400 |
+        | `ttl` | 秒；默认 900，夹到 60 – 86400 |
 
-        | `maxUses` | `0` (default) = unlimited |
+        | `maxUses` | `0`（默认）= 不限次 |
 
-        | `password` | Optional; the recipient must then send `X-Share-Password` |
-
-
-        Unknown fields are **rejected** (400) rather than ignored, so a typo like `max_uses`
-
-        cannot silently drop the limit the user configured.
+        | `password` | 可选；给了之后收件方必须带 `X-Share-Password` |
 
 
-        The response carries two addressing forms: `url` / `pageUrl` (the landing page, which
+        ⚠️ **不认识的字段会被拒（400），而不是忽略** —— 这样把 `max_uses` 写成下划线的人
 
-        is the *same* address a crawler and a human see) and `rawUrl` (which reaches the
+        不会**悄悄**丢掉他配的那道限制。
 
-        content/file endpoint directly with the same token).
+
+        响应里有两种寻址形式：`url` / `pageUrl`（落地页，**爬虫和人看到的是同一个地址**），
+
+        以及 `rawUrl`（带同一枚令牌直达内容/文件接口）。
 
         '
       operationId: createShare
@@ -2117,7 +2110,7 @@ paths:
               $ref: '#/components/schemas/ShareRequest'
             examples:
               content:
-                summary: Share one text entry for 15 minutes
+                summary: 分享一条文本，15 分钟
                 value:
                   type: content
                   id: '7'
@@ -2125,7 +2118,7 @@ paths:
                   maxUses: 0
                   password: ''
               file:
-                summary: Share a file, 5 uses, password protected
+                summary: 分享一个文件，5 次，带密码
                 value:
                   type: file
                   uuid: 11111111-2222-3333-4444-555555555555
@@ -2134,7 +2127,7 @@ paths:
                   password: hunter2
       responses:
         '200':
-          description: The share was created.
+          description: 分享已创建。
           content:
             application/json:
               schema:
@@ -2143,7 +2136,7 @@ paths:
                 - $ref: '#/components/schemas/ShareCreatedFile'
               examples:
                 content:
-                  summary: Content share
+                  summary: 内容分享
                   value:
                     type: content
                     id: '7'
@@ -2159,7 +2152,7 @@ paths:
                     visits: 0
                     scans: 0
                 file:
-                  summary: File share
+                  summary: 文件分享
                   value:
                     type: file
                     uuid: 11111111-2222-3333-4444-555555555555
@@ -2175,11 +2168,7 @@ paths:
                     visits: 0
                     scans: 0
         '400':
-          description: 'Bad JSON body (`invalid_request_body`), an unknown field, or a missing/invalid
-
-            `type` / `id` / `uuid`.
-
-            '
+          description: JSON 体不合法（`invalid_request_body`）、有未知字段，或者 `type` / `id` / `uuid` 缺失或非法。
           content:
             application/json:
               schema:
@@ -2206,7 +2195,7 @@ paths:
                     error: Invalid request body
                     message: 无效的请求体
         '401':
-          description: No access to the room the target belongs to.
+          description: 无权访问目标所属的那个房间。
           content:
             application/json:
               schema:
@@ -2218,8 +2207,7 @@ paths:
                     error: No access to this room
                     message: 无权访问该房间
         '404':
-          description: The target entry or file does not exist (or has expired), or is not in the requested
-            room.
+          description: 目标条目或文件不存在（或已过期），或者不在请求的那个房间里。
           content:
             application/json:
               schema:
@@ -2246,15 +2234,10 @@ paths:
       tags:
       - Sharing
       summary: 分享的元信息（**不消耗次数**）
-      description: "What the share landing page asks before fetching anything: the type, the file name\
-        \ and\nsize, the remaining validity, the remaining uses, and whether a password is needed.\n\n\
-        - **It does not consume a use** — merely opening the page must not burn one.\n- The password travels\
-        \ in `X-Share-Password`, **never** in the URL.\n- When the share is password-protected the response\
-        \ also carries a `previewToken`\n  (and `previewExpiresAt`). Browsers cannot attach custom headers\
-        \ to `<img>` /\n  `<video>` / `<a download>`, so the page needs this token to render inline previews.\n\
-        \  Unprotected shares deliberately get **no** preview token: it would be unlimited-use\n  and\
-        \ would defeat `maxUses`.\n- The `used` field appears only for a limited share that has a live\
-        \ record.\n"
+      description: "分享落地页在取任何东西**之前**先问这个：类型、文件名与大小、还剩多久、还剩几次、要不要密码。\n\n- **它不消耗次数** —— 光打开页面不该烧掉一次。\n\
+        - 密码走 `X-Share-Password`，**永远不**进 URL。\n- 受密码保护的分享还会多回一个 `previewToken`（以及 `previewExpiresAt`）。\n\
+        \  浏览器没法给 `<img>` / `<video>` / `<a download>` 加自定义头，所以页面需要这枚令牌来内联预览。\n  ⚠️ 不受保护的分享**刻意不给**预览令牌：那会是个不限次的东西，等于把\
+        \ `maxUses` 废掉。\n- `used` 只在「限次且还有活的记录」的分享上出现。\n"
       operationId: getShareInfo
       parameters:
       - $ref: '#/components/parameters/ShareTokenQueryRequired'
@@ -2262,14 +2245,14 @@ paths:
       security: []
       responses:
         '200':
-          description: The share metadata.
+          description: 分享的元信息。
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/ShareInfo'
               examples:
                 textNoPassword:
-                  summary: Text share, no password, unlimited
+                  summary: 文本分享，无密码，不限次
                   value:
                     type: content
                     kind: text
@@ -2279,7 +2262,7 @@ paths:
                     maxUses: 0
                     needsPassword: false
                 fileWithPassword:
-                  summary: File share with a password and a use limit
+                  summary: 文件分享，带密码与次数上限
                   value:
                     type: content
                     kind: file
@@ -2295,7 +2278,7 @@ paths:
                     previewToken: eyJ0eXAiOiJwcmV2aWV3In0.zz99
                     previewExpiresAt: 1750003600
         '400':
-          description: The token carries a share type this endpoint cannot describe.
+          description: 这枚令牌带的是本接口描述不了的分享类型。
           content:
             application/json:
               schema:
@@ -2307,7 +2290,7 @@ paths:
                     error: Unsupported type
                     message: 不支持的分享类型
         '401':
-          description: The token is bad/expired, or a password is required/mismatched.
+          description: 令牌不对/已过期，或者需要密码/密码不对。
           content:
             application/json:
               schema:
@@ -2324,7 +2307,7 @@ paths:
                     error: Share password required
                     message: 需要分享密码
         '404':
-          description: The share points at something that is gone.
+          description: 分享指向的东西已经不在了。
           content:
             application/json:
               schema:
@@ -2349,7 +2332,7 @@ paths:
       tags:
       - Sharing
       summary: 分享的元信息（只要响应头）
-      description: Same as `GET /share?t=` with the body omitted.
+      description: 与 `GET /share?t=` 相同，只是不要响应体。
       operationId: headShareInfo
       parameters:
       - $ref: '#/components/parameters/ShareTokenQueryRequired'
@@ -2357,29 +2340,26 @@ paths:
       security: []
       responses:
         '200':
-          description: The share exists and the token is usable.
+          description: 分享存在，且令牌可用。
         '401':
-          description: The token is bad/expired, or a password is required/mismatched.
+          description: 令牌不对/已过期，或者需要密码/密码不对。
         '404':
-          description: The share points at something that is gone.
+          description: 分享指向的东西已经不在了。
   /share/list:
     get:
       tags:
       - Sharing
       summary: 这个房间最近的分享
-      description: "Lists a room's recent share records together with how often each link was opened.\n\
-        Authorisation is identical to creating a share in that room, so it is impossible to be\nable to\
-        \ create a share but not see your own.\n\n- `limit` defaults to 50 and is capped at 200.\n- **The\
-        \ list never contains tokens.** A token is a bearer credential; listing it would\n  let anyone\
-        \ who can read the room reuse somebody else's share.\n- `password` reports only *whether* a password\
-        \ is set, never its hash.\n- `expired` is computed against the current time.\n"
+      description: "列出某个房间最近的分享记录，以及每个链接被打开了几次。鉴权与「在该房间创建分享」完全一致 ——\n所以**不可能**出现「能创建分享却看不到自己的」。\n\n- `limit`\
+        \ 默认 50，上限 200。\n- ⚠️ **列表里永远不含令牌。** 令牌是持有即用的凭据；列出来的话，任何能读这个房间的人\n  都能拿去复用别人的分享。\n- `password`\
+        \ 只报**有没有**设密码，绝不报它的哈希。\n- `expired` 是按当前时间算出来的。\n"
       operationId: listShares
       parameters:
       - $ref: '#/components/parameters/RoomQuery'
       - name: limit
         in: query
         required: false
-        description: Page size, default 50, maximum 200. The value reported back is the value used.
+        description: 每页条数，默认 50，最大 200。回给你的就是实际用的那个值。
         schema:
           type: integer
           minimum: 1
@@ -2391,7 +2371,7 @@ paths:
       - authQuery: []
       responses:
         '200':
-          description: The room's share records.
+          description: 该房间的分享记录。
           content:
             application/json:
               schema:
@@ -2419,7 +2399,7 @@ paths:
                       password: false
                       expired: false
         '401':
-          description: No access to this room.
+          description: 无权访问该房间。
           content:
             application/json:
               schema:
@@ -2437,21 +2417,17 @@ paths:
       tags:
       - Sharing
       summary: 上报「有人打开了分享」
-      description: "Called once by the share page on mount. The server validates the token itself; an\n\
-        invalid or expired token is rejected with 401 and **never counted**.\n\n- `tracked` is `false`\
-        \ when the same visitor reports again within ten minutes —\n  repeated reports must not inflate\
-        \ the number. The counts returned are still current.\n- `qr: true` (or `?q=1`) records one scan\
-        \ in addition to the open. QR codes should\n  encode `/s/<token>?q=1`.\n- **No authentication**:\
-        \ holding the link is what lets you report, and the response\n  only describes that one share.\n\
-        - Serving `/s/{token}` never counts by itself, which is why chat-app crawlers (which\n  re-fetch\
-        \ the address on their own schedule and do not execute JavaScript) cannot\n  inflate anything.\n"
+      description: "分享页挂载时调一次。服务端自己校验令牌；无效或已过期的令牌回 401，**永远不计入**。\n\n- 同一个访客十分钟内再报一次时 `tracked` 是 `false`\
+        \ —— 重复上报不能把数字灌大。\n  返回的计数仍然是最新的。\n- `qr: true`（或 `?q=1`）在「打开」之外**再记一次扫码**。二维码里应该编 `/s/<token>?q=1`。\n\
+        - **不需要鉴权**：拿着链接就是上报的资格，而响应也只描述这一个分享。\n- 光是请求 `/s/{token}` **本身从不计数** —— 这就是为什么聊天软件的爬虫\n  （它们按自己的节奏反复抓那个地址、也不执行\
+        \ JavaScript）灌不了水。\n"
       operationId: reportShareVisit
       parameters:
       - $ref: '#/components/parameters/ShareTokenQuery'
       - name: q
         in: query
         required: false
-        description: '`1` marks the visit as coming from a scanned QR code.'
+        description: '`1` 表示这次访问来自扫二维码。'
         schema:
           type: string
           enum:
@@ -2471,7 +2447,7 @@ paths:
                   qr: true
       responses:
         '200':
-          description: The report was processed.
+          description: 上报已处理。
           content:
             application/json:
               schema:
@@ -2484,14 +2460,14 @@ paths:
                     visits: 3
                     scans: 1
                 debounced:
-                  summary: Same visitor within ten minutes — not counted again
+                  summary: 同一访客十分钟内 —— 不重复计数
                   value:
                     ok: true
                     tracked: false
                     visits: 3
                     scans: 1
         '400':
-          description: No token was supplied, or the body is not valid JSON.
+          description: 没给令牌，或者请求体不是合法 JSON。
           content:
             application/json:
               schema:
@@ -2508,7 +2484,7 @@ paths:
                     error: Invalid request body
                     message: 无效的请求体
         '401':
-          description: The token is bad or expired (expired links are not counted).
+          description: 令牌不对或已过期（过期链接不计入）。
           content:
             application/json:
               schema:
@@ -2526,17 +2502,12 @@ paths:
       tags:
       - Sharing
       summary: 分享落地页（HTML）
-      description: "The share link's **single address**: an SPA shell with Open Graph tags injected into\
-        \ its\n`<head>`. A chat app unfurling the URL sees a real preview card (it does not run\nJavaScript,\
-        \ so the summary must be server-rendered); a human opening the very same URL\nlands in the share\
-        \ page itself. No redirect, no second address, no second identity.\n\n- **Neither counts nor consumes**:\
-        \ only `POST /share/visit` counts.\n- A password-protected share never leaks a content summary\
-        \ into the card.\n- `og:image` is added only for images on **unlimited** shares — the crawler\
-        \ fetching\n  that image consumes a use on the `/file` path, and a preview burning the quota would\n\
-        \  hand the human an exhausted link.\n- Response headers: `X-Robots-Tag: noindex, nofollow`, `Cache-Control:\
-        \ private,\n  max-age=0, must-revalidate`, `Referrer-Policy: no-referrer`,\n  `X-Content-Type-Options:\
-        \ nosniff`.\n- Without a static source (API-only deployment) this returns a self-contained\n \
-        \ fallback page carrying the same tags.\n"
+      description: "分享链接的**唯一地址**：一个 SPA 外壳，`<head>` 里注入了 Open Graph 标签。\n聊天软件展开这个 URL 时看到的是一张真的预览卡（它不执行\
+        \ JavaScript，所以摘要必须服务端渲染好）；\n人点开**同一个** URL 则落到分享页本身。不跳转、没有第二个地址、没有第二个身份。\n\n- **它既不计数也不消耗次数**：只有\
+        \ `POST /share/visit` 计。\n- 受密码保护的分享**绝不**把内容摘要泄进卡片里。\n- `og:image` 只给**不限次**分享里的图片加上 —— 爬虫去取那张图会在\
+        \ `/file` 那条路上消耗一次，\n  而预览把额度烧光，等于把一条已经用尽的链接递给真人。\n- 响应头：`X-Robots-Tag: noindex, nofollow`、`Cache-Control:\
+        \ private, max-age=0, must-revalidate`、\n  `Referrer-Policy: no-referrer`、`X-Content-Type-Options:\
+        \ nosniff`。\n- 没有静态资源时（纯 API 部署）回一个自带的兜底页，标签一样。\n"
       operationId: getShareLandingPage
       parameters:
       - name: token
@@ -2548,7 +2519,7 @@ paths:
       security: []
       responses:
         '200':
-          description: The share page HTML.
+          description: 分享页的 HTML。
           headers:
             X-Robots-Tag:
               schema:
@@ -2565,7 +2536,7 @@ paths:
                 type: string
               examples:
                 html:
-                  summary: Abridged
+                  summary: 节选
                   value: '<!doctype html><html><head>
 
                     <title>photo.png</title>
@@ -2587,24 +2558,14 @@ paths:
       tags:
       - Realtime
       summary: WebSocket 推送通道
-      description: "Upgrades to a WebSocket and streams that room's events. Registered as a `GET` because\n\
-        that is what a WebSocket handshake is.\n\n**Handshake order (this order is the contract):**\n\n\
-        1. If the room is protected: a missing credential returns `401\n   unauthorized_missing_token`,\
-        \ a wrong one `401 unauthorized_invalid_token`. These are\n   distinct so the client can tell\
-        \ \"ask for a password\" from \"that password is wrong\".\n   The rejection happens **before**\
-        \ the upgrade, so it is an ordinary JSON response.\n2. `Sec-WebSocket-Protocol` is echoed back.\
-        \ If the client offered a subprotocol the\n   server **must** select one or the browser fails\
-        \ the handshake — clients use it to\n   pass the token without putting it in the URL.\n3. Upgrade.\n\
-        4. Frames: one `connect` per device already in the room, a `connect` for this\n   connection to\
-        \ the others, then `config`, then realtime events.\n\n**The handshake does not push history.**\
-        \ Fetch it with `GET /content`, and use\n`config.latestId` — the largest message id in the room\
-        \ at connect time (`0` when\nempty) — to align the history/realtime boundary. Treat `id <= latestId`\
-        \ as history\n(record it, do **not** apply it to the clipboard) and `id > latestId` as realtime.\n\
-        Never guess the boundary from a time window: a window that ends early silently floods\nthe clipboard.\
-        \ If `latestId` is missing (an older server), refuse to write rather than\nguess.\n\nThe server\
-        \ sends a protocol-level ping every 5 seconds (idle connections die silently\nbehind proxies otherwise)\
-        \ and **disconnects** a client that falls behind the broadcast,\nso it reconnects and re-syncs\
-        \ instead of quietly missing a `revoke`. Reconnection and\nbackoff are the client's job.\n"
+      description: "升级成 WebSocket，流式推这个房间的事件。注册成 `GET` 是因为 WebSocket 握手本来就是 GET。\n\n**握手顺序（这个顺序就是契约）：**\n\
+        \n1. 房间受保护时：没带凭据回 `401 unauthorized_missing_token`，带错了回\n   `401 unauthorized_invalid_token`。两者**分开**，客户端才能分辨「该去要密码」和「密码是错的」。\n\
+        \   拒绝发生在升级**之前**，所以那是一个普通的 JSON 响应。\n2. `Sec-WebSocket-Protocol` 要**回显**。客户端给了子协议而服务端不选一个，浏览器就会判定握手失败\
+        \ ——\n   客户端正是靠它把令牌传进来、又不放进 URL。\n3. 升级。\n4. 帧序：先给房间里已有的每台设备各来一条 `connect`，再给这条连接向其他人发一条 `connect`，\n\
+        \   然后是 `config`，最后才是实时事件。\n\n⚠️★ **握手不推历史。** 历史用 `GET /content` 取，并用 `config.latestId`\n—— 连接那一刻房间里最大的消息\
+        \ id（空房间为 `0`）—— 来对齐历史与实时的边界。\n`id <= latestId` 当历史（记下来，**不要**写剪贴板），`id > latestId` 才是实时。\n**绝不要**用时间窗口去猜边界：窗口早结束一点，就会**悄悄**把整段历史灌进剪贴板。\n\
+        拿不到 `latestId`（服务端太旧）时，**宁可拒绝写入，也不要猜**。\n\n服务端每 5 秒发一次协议级 ping（否则空闲连接会在代理后面**悄无声息地**死掉），\n并且会把**跟不上广播**的客户端断开\
+        \ —— 让它重连、重新同步，而不是安静地漏掉一条 `revoke`。\n重连与退避是客户端的事。\n"
       operationId: pushChannel
       parameters:
       - $ref: '#/components/parameters/RoomQuery'
@@ -2613,13 +2574,7 @@ paths:
       - name: Sec-WebSocket-Protocol
         in: header
         required: false
-        description: 'The credential is taken from `Authorization` / `?auth=` first, and from the first
-
-          subprotocol only as a fallback. Prefer this carrier: it keeps the token out of the
-
-          URL, hence out of access logs.
-
-          '
+        description: 凭据优先从 `Authorization` / `?auth=` 取，取不到才看第一个子协议。**优先用这个载体**：它让令牌不进 URL，也就不进访问日志。
         schema:
           type: string
         example: Bearer eyJhbGciOiJIUzI1NiJ9.abc
@@ -2649,9 +2604,9 @@ paths:
       - authQuery: []
       responses:
         '101':
-          description: Switching protocols. Event frames then flow as documented below.
+          description: 正在切换协议。之后事件帧按下面写的流动。
         '401':
-          description: The room is protected and the credential is missing or wrong.
+          description: 房间受保护，而凭据缺失或不对。
           content:
             application/json:
               schema:
@@ -2671,47 +2626,36 @@ paths:
         frameFormat: '{"event": "<name>", "data": <payload>}'
         clientToServer:
         - event: ping
-          description: 'Application-level ping. The server echoes `data` back verbatim in a `pong`, so
-
-            the client can compute RTT as `Date.now() - data`.
-
-            '
+          description: 应用层 ping。服务端会把 `data` 原样放进 `pong` 回显，客户端据此用 `Date.now() - data` 算 RTT。
           example:
             event: ping
             data: 1758000000123
         serverToClient:
         - event: connect
-          description: A device in the room, or this connection announcing itself to the others.
+          description: 房间里的一台设备，或者这条连接在向其他人宣告自己。
           schemaRef: '#/components/schemas/DeviceMeta'
         - event: disconnect
-          description: A device's **last** connection closed. Closing one tab of several does not report
-            a disconnect.
+          description: 某台设备的**最后一条**连接断了。一台设备开多个标签页时，关掉其中一个**不**报断开。
           schemaRef: '#/components/schemas/DisconnectData'
         - event: config
-          description: 'Sent once, right after connecting and before any realtime message. This is the
-
-            only place `version` and the size limits are sent, and the only source of the
-
-            front end''s `app.config`.
-
-            '
+          description: 连上之后发一次，排在任何实时消息**之前**。`version` 与那几个大小限额**只在这里**给，也是前端 `app.config` 的唯一来源。
           schemaRef: '#/components/schemas/WsConfig'
         - event: receive
-          description: A new entry arrived in the room.
+          description: 房间里来了新内容。
           schemaRef: '#/components/schemas/ReceiveEntry'
         - event: update
-          description: An existing entry was edited in place (same `id`) — body rewrite or board move.
+          description: 已有条目被**原地**改了（同一个 `id`）—— 改写正文或挪看板列。
           schemaRef: '#/components/schemas/ReceiveEntry'
         - event: revoke
-          description: One entry was deleted.
+          description: 某一条被删了。
           schemaRef: '#/components/schemas/RevokeData'
         - event: clearAll
-          description: The room was cleared.
+          description: 房间被清空了。
           schemaRef: '#/components/schemas/ClearAllData'
         - event: pong
-          description: Reply to a client `ping`, carrying the client's `data` unchanged.
+          description: 对客户端 `ping` 的回复，`data` 原样带回。
         - event: ok
-          description: Internal cross-component event; not sent to WebSocket clients.
+          description: 组件之间的内部事件；**不会**发给 WebSocket 客户端。
   /tasks:
     get:
       tags:
