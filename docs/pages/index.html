@@ -1,0 +1,258 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>clip9 — 自托管的跨设备剪贴板</title>
+<meta name="description" content="文本、图片、文件在手机、电脑、路由器之间实时互传。Rust 写的单个静态二进制，数据只留在你自己的机器上。">
+<style>
+  /* ── 落地页（C 案 + 从 B 案借了「一行命令」）─────────────────────────────
+     ⚠️★ 为什么选 C 而不是 B：产品界面是**浅色**的，深色落地页与它并排看像两个人做的；
+     而这类工具第一屏最该回答的是「长什么样、值不值得装」—— 截图比形容词有力。
+     ⚠️ 但 B 有一点必须留下：**可复制的启动命令**。自托管工具的读者里，
+     有很大一部分是「先看你怎么跑起来，再决定要不要读下去」，所以那行命令提到首屏。
+
+     ⚠️ 配色跟着产品本身：主色是网页界面默认的 MUI 蓝 #1e88e5，底色 #f6f8fb。 */
+  :root {
+    --accent: #1e88e5;
+    --accent-d: #1565c0;
+    --bg: #ffffff;
+    --soft: #f6f8fb;
+    --fg: #101828;
+    --fg2: #667085;
+    --line: #e7ecf3;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--fg);
+    font: 15px/1.7 -apple-system, "PingFang SC", "Microsoft YaHei", system-ui, sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+  .wrap { max-width: 1080px; margin: 0 auto; padding: 0 24px; }
+  a { color: var(--accent); }
+
+  header {
+    padding: 18px 0; display: flex; align-items: center; gap: 12px;
+    position: sticky; top: 0; background: rgba(255,255,255,.88);
+    backdrop-filter: saturate(180%) blur(12px); z-index: 5;
+  }
+  .logo {
+    width: 30px; height: 30px; border-radius: 8px;
+    background: linear-gradient(140deg, var(--accent), var(--accent-d));
+    display: grid; place-items: center; color: #fff; font-weight: 700; font-size: 15px;
+  }
+  header .name { font-weight: 650; }
+  header .sp { flex: 1; }
+  header nav a { color: var(--fg2); text-decoration: none; font-size: 13.5px; margin-left: 18px; }
+  header nav a:hover { color: var(--accent); }
+
+  /* ── 首屏 ── */
+  .hero { text-align: center; padding: 52px 0 34px; }
+  .pill {
+    display: inline-block; border: 1px solid var(--line); border-radius: 999px;
+    padding: 5px 14px; font-size: 12.5px; color: var(--fg2); margin-bottom: 20px; background: var(--soft);
+  }
+  .hero h1 { font-size: 46px; line-height: 1.2; margin: 0 0 16px; font-weight: 750; letter-spacing: -.8px; }
+  .hero h1 em { font-style: normal; color: var(--accent); }
+  .hero > p { font-size: 17px; color: var(--fg2); max-width: 600px; margin: 0 auto 26px; }
+
+  /* 一行命令（从 B 案借来的那一点）—— 点击即复制 */
+  .cmd {
+    display: inline-flex; align-items: center; gap: 10px; max-width: 100%;
+    background: #0f172a; color: #e6ecf7; border-radius: 11px;
+    padding: 11px 12px 11px 18px; font-size: 13px; cursor: pointer;
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    box-shadow: 0 8px 22px rgba(15,23,42,.18);
+  }
+  .cmd .t { overflow-x: auto; white-space: nowrap; }
+  .cmd .t b { color: #7dd3fc; font-weight: 400; }
+  .cmd .cp {
+    flex: none; background: rgba(255,255,255,.12); border-radius: 7px;
+    padding: 3px 10px; font-size: 12px; color: #cbd5e1;
+  }
+  .cmd:hover .cp { background: rgba(255,255,255,.22); color: #fff; }
+  .cta { display: flex; gap: 12px; justify-content: center; flex-wrap: wrap; margin-top: 22px; }
+  .btn {
+    display: inline-flex; align-items: center; gap: 8px; padding: 11px 22px;
+    border-radius: 11px; text-decoration: none; font-size: 14.5px; font-weight: 550;
+  }
+  .btn.primary { background: var(--accent); color: #fff; box-shadow: 0 6px 18px rgba(30,136,229,.3); }
+  .btn.ghost { border: 1px solid var(--line); color: var(--fg); }
+
+  /* ── 大截图（真图，不是示意图）── */
+  .stage { padding: 10px 0 64px; }
+  .win { border: 1px solid var(--line); border-radius: 16px; overflow: hidden; box-shadow: 0 30px 70px rgba(16,24,40,.13); }
+  .win .bar {
+    height: 38px; background: var(--soft); border-bottom: 1px solid var(--line);
+    display: flex; align-items: center; gap: 7px; padding: 0 14px;
+  }
+  .win .dot { width: 11px; height: 11px; border-radius: 50%; background: #d5dde8; }
+  .win .url { margin-left: 12px; font-size: 12px; color: var(--fg2); font-family: ui-monospace, Menlo, monospace; }
+  .win img { display: block; width: 100%; height: auto; }
+
+  /* ── 交替图文行 ── */
+  .row { display: grid; grid-template-columns: 1fr 1.15fr; gap: 48px; align-items: center; padding: 44px 0; }
+  .row.flip .txt { order: 2; }
+  .row .txt h3 { font-size: 23px; margin: 0 0 10px; letter-spacing: -.2px; }
+  .row .txt p { color: var(--fg2); margin: 0 0 14px; }
+  .row .txt ul { margin: 0; padding: 0; list-style: none; }
+  .row .txt li { color: var(--fg2); font-size: 13.5px; padding: 5px 0 5px 20px; position: relative; }
+  .row .txt li::before { content: "✓"; position: absolute; left: 0; color: var(--accent); font-weight: 700; }
+  .row .vis {
+    border: 1px solid var(--line); border-radius: 14px; overflow: hidden;
+    box-shadow: 0 16px 40px rgba(16,24,40,.1); background: var(--soft);
+  }
+  .row .vis img { display: block; width: 100%; height: auto; }
+
+  /* ── 装法 ── */
+  h2.mid { text-align: center; font-size: 26px; margin: 40px 0 8px; letter-spacing: -.3px; }
+  p.mid { text-align: center; color: var(--fg2); margin: 0 0 26px; }
+  .ways { display: flex; gap: 8px; flex-wrap: wrap; justify-content: center; padding-bottom: 16px; }
+  .ways span {
+    border: 1px solid var(--line); border-radius: 999px; padding: 7px 15px;
+    font-size: 13px; color: var(--fg2); background: var(--soft);
+  }
+
+  footer {
+    margin-top: 56px; padding: 26px 0; border-top: 1px solid var(--line);
+    color: var(--fg2); font-size: 13px; display: flex; gap: 16px; flex-wrap: wrap;
+  }
+  footer .sp { flex: 1; }
+  footer a { color: var(--fg2); }
+  @media (max-width: 860px) {
+    .hero h1 { font-size: 33px; }
+    .row { grid-template-columns: 1fr; gap: 22px; padding: 30px 0; }
+    .row.flip .txt { order: 0; }
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header>
+    <div class="logo">9</div>
+    <div class="name">clip9</div>
+    <div class="sp"></div>
+    <nav>
+      <a href="#features">特性</a>
+      <a href="#install">安装</a>
+      <a href="https://github.com/Jonnyan404/clip9">GitHub ↗</a>
+    </nav>
+  </header>
+
+  <div class="hero">
+    <span class="pill">Rust 重写 · 单个静态二进制 · MIT</span>
+    <h1>你自己的<em>剪贴板服务器</em></h1>
+    <p>手机复制，电脑粘贴。文本、图片、文件在任意设备之间实时互传，而数据一直留在你自己的机器上。</p>
+
+    <div class="cmd" id="cmd" title="点击复制">
+      <span class="t">docker run -d --name clip9 <b>--init</b> -p 9501:9501 ghcr.io/jonnyan404/clip9:latest</span>
+      <span class="cp" id="cp">复制</span>
+    </div>
+
+    <div class="cta">
+      <a class="btn primary" href="#install">部署方式 →</a>
+      <a class="btn ghost" href="https://github.com/Jonnyan404/clip9">查看源码</a>
+    </div>
+  </div>
+
+  <div class="stage">
+    <div class="win">
+      <div class="bar"><i class="dot"></i><i class="dot"></i><i class="dot"></i>
+        <span class="url">localhost:9501</span></div>
+      <img src="../shots/web.png" alt="clip9 网页界面">
+    </div>
+  </div>
+
+  <div id="features">
+    <div class="row">
+      <div class="txt">
+        <h3>复制即同步</h3>
+        <p>一端粘贴，另一端立刻收到 —— 中间没有第三方服务器，也没有账号。</p>
+        <ul>
+          <li>WebSocket 双向广播，实时推送</li>
+          <li>历史走 HTTP 分页拉取，不推全量</li>
+          <li>桌面端可静默双向同步系统剪贴板</li>
+        </ul>
+      </div>
+      <div class="vis"><img src="../shots/desktop.png" alt="clip9 桌面端"></div>
+    </div>
+
+    <div class="row flip">
+      <div class="txt">
+        <h3>手机、电脑、路由器都能当服务端</h3>
+        <p>同一份代码，六种落地方式。路由器上 16 MB flash 也跑得动。</p>
+        <ul>
+          <li>Docker 一行命令起服务</li>
+          <li>OpenWrt 带 LuCI 插件，装完在路由器后台配置</li>
+          <li>Android 一键开服，不用电脑</li>
+        </ul>
+      </div>
+      <div class="vis"><img src="../shots/mobile.png" alt="clip9 手机端"></div>
+    </div>
+
+    <div class="row">
+      <div class="txt">
+        <h3>一条内容，换个方式看</h3>
+        <p>内置动作库：Markdown 渲染、JSON 美化、编解码、汉字注音、日期计算…… 也能把几个动作串成流水线。</p>
+        <ul>
+          <li>时间流 / 速览 / 便签 / 看板多种模式</li>
+          <li>定时自动化：按 cron 把渲染好的文本投进房间</li>
+          <li>分享链接：可限次数、可带密码</li>
+        </ul>
+      </div>
+      <div class="vis"><img src="../shots/web.png" alt="clip9 网页界面"></div>
+    </div>
+  </div>
+
+  <div id="install">
+    <h2 class="mid">装在哪都行</h2>
+    <p class="mid">默认监听 9501，装完打开浏览器就是界面。</p>
+    <div class="ways">
+      <span>🐳 Docker</span><span>📦 独立二进制</span><span>📡 OpenWrt</span>
+      <span>📱 Android 开服</span><span>☁️ Cloudflare Workers</span><span>🔧 源码构建</span>
+    </div>
+  </div>
+
+  <footer>
+    <span>MIT License</span>
+    <span class="sp"></span>
+    <a href="https://github.com/Jonnyan404/clip9">GitHub</a>
+    <a href="https://github.com/Jonnyan404/clip9/releases">Releases</a>
+    <a href="https://github.com/Jonnyan404/cloud-clipboard-go">Go 前身</a>
+  </footer>
+
+</div>
+
+<script>
+// 点一下复制那行命令。
+// ⚠️ 用 `navigator.clipboard` 时**必须兜住失败**：非 https / 非 localhost 的页面里它是
+// undefined 或直接 reject（`file://` 打开就是这样），不兜的话点击**静默无效** ——
+// 而「点了复制、粘出来是空的」是最难被发现的坏法之一。
+const cmd = document.getElementById('cmd');
+const cp = document.getElementById('cp');
+cmd.addEventListener('click', async () => {
+  const text = cmd.querySelector('.t').textContent.trim();
+  let ok = false;
+  try {
+    await navigator.clipboard.writeText(text);
+    ok = true;
+  } catch {
+    // 退回老办法（`execCommand` 已废弃，但它在这类场景里仍然管用）
+    try {
+      const ta = document.createElement('textarea');
+      ta.value = text;
+      ta.style.position = 'fixed';
+      ta.style.opacity = '0';
+      document.body.appendChild(ta);
+      ta.select();
+      ok = document.execCommand('copy');
+      ta.remove();
+    } catch { ok = false; }
+  }
+  cp.textContent = ok ? '已复制' : '复制失败';
+  setTimeout(() => { cp.textContent = '复制'; }, 1600);
+});
+</script>
+</body>
+</html>
