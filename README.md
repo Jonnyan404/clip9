@@ -202,9 +202,10 @@ cd rust && cargo build --release -p clip9-server
 
 ## 🌐 API
 
-- **在线参考**：[jonnyan404.github.io/clip9/api.html](https://jonnyan404.github.io/clip9/api.html)
-- **中文说明**（鉴权、错误形状、限额从哪来、`/push` 的帧、与 Go/Worker 的差异）：[`docs/api.md`](./docs/api.md)
-- **字段级权威**：[`docs/openapi/clip9.openapi.yaml`](./docs/openapi/clip9.openapi.yaml)（OpenAPI 3.1，32 条路径）
+- **规格**（Redoc，可切中英）：[jonnyan404.github.io/clip9/spec.html](https://jonnyan404.github.io/clip9/spec.html)
+- **英文原文**：[`docs/openapi/clip9.openapi.yaml`](./docs/openapi/clip9.openapi.yaml)（OpenAPI 3.1，32 条路径）
+- **中文规格**：[`docs/openapi/clip9.openapi.zh.yaml`](./docs/openapi/clip9.openapi.zh.yaml) —— **生成物**，
+  由 [`zh.yaml`](./docs/openapi/zh.yaml) 译文表 + 英文原文拼出；未译到的条目保留英文。
 
 ```bash
 curl http://localhost:9501/content/latest          # 最新一条
