@@ -11,6 +11,10 @@
 # （2026-10-09 实测：一条以 `**实际用的**` 开头的译文直接把 build-zh.py 打崩了）。
 # 中英混排的正文里以 `**` 开头很常见，所以这条不是边角情况。
 #
+# ⚠️★ **值里含 `: `（冒号+空格）也必须加引号** —— YAML 会把它当成嵌套映射，
+# 报 `mapping values are not allowed here`。中英混排里 `` `valid: true` ``、
+# 「注意：」这类写法到处都是，所以这同样不是边角情况。
+#
 # ⚠️ **不要翻**字段名、枚举值、示例里的数据 —— 那些是标识符或数据，翻了客户端就对不上。
 # 只有 `summary` / `description` 会被这个脚本替换。
 
@@ -305,14 +309,14 @@ paths./stats/daily.get.parameters.0.description: 要统计的房间。不传即 
 paths./stats/daily.get.parameters.1.description: 窗口天数，截止到今天。夹到 `371`。`0`、负数和非数字都当作「没给」。
 paths./stats/daily.get.parameters.2.description: 用来判断某个时间戳属于哪个本地日的 IANA 时区名。认不出来就回落 `UTC`。
 paths./stats/daily.get.responses.200.description: 所请求窗口内每天的条数。
-paths./stats/daily.get.responses.200.content.application/json.schema.properties.tz.description: '''**实际用的**时区（回落之后）。'''
+paths./stats/daily.get.responses.200.content.application/json.schema.properties.tz.description: '''''''''''''''**实际用的**时区（回落之后）。'''''''''''''''
 paths./stats/daily.get.responses.200.content.application/json.schema.properties.requestedTz.description: 调用方请求的那个，原样回显，这样回落就看得见。
 paths./stats/daily.get.responses.200.content.application/json.schema.properties.truncated.description: 为真表示扫描撞到了行数上限，窗口里最旧的那几天可能少算。
 paths./stats/daily.get.responses.200.content.application/json.schema.properties.activity.properties.days.description: 旧的在前；长度恰好等于生效的 `days`。
 paths./stats/daily.get.responses.200.content.application/json.schema.properties.activity.properties.days.items.properties.date.description: 本地日期，`YYYY-MM-DD`。
 paths./stats/daily.get.responses.200.content.application/json.schema.properties.activity.properties.streak.properties.current.description: 一直到今天的连续天数。今天还没内容时**跳过它**、从昨天往回数 —— 这样这个数不会每天早上都掉回 0。
 paths./stats/daily.get.responses.200.content.application/json.schema.properties.activity.properties.levels.description: 配色用的四道递增阈值。窗口内活跃天不足四天时，这四个值相等。
-paths./stats/daily.get.responses.200.content.application/json.examples.unknownTimezone.summary: '''`tz` 认不出来时回落 UTC'''
+paths./stats/daily.get.responses.200.content.application/json.examples.unknownTimezone.summary: '''''''''''''''`tz` 认不出来时回落 UTC'''''''''''''''
 
 # ── /upload ───────────────────────────────────────────────────────────
 paths./upload.post.description: |
@@ -521,7 +525,7 @@ paths./share/visit.post.description: |
   - **不需要鉴权**：拿着链接就是上报的资格，而响应也只描述这一个分享。
   - 光是请求 `/s/{token}` **本身从不计数** —— 这就是为什么聊天软件的爬虫
     （它们按自己的节奏反复抓那个地址、也不执行 JavaScript）灌不了水。
-paths./share/visit.post.parameters.1.description: '`1` 表示这次访问来自扫二维码。'
+paths./share/visit.post.parameters.1.description: '''''''`1` 表示这次访问来自扫二维码。'''''''
 paths./share/visit.post.responses.200.description: 上报已处理。
 paths./share/visit.post.responses.200.content.application/json.examples.debounced.summary: 同一访客十分钟内 —— 不重复计数
 paths./share/visit.post.responses.400.description: 没给令牌，或者请求体不是合法 JSON。
@@ -579,3 +583,109 @@ paths./push.get.x-websocket-events.serverToClient.5.description: 某一条被删
 paths./push.get.x-websocket-events.serverToClient.6.description: 房间被清空了。
 paths./push.get.x-websocket-events.serverToClient.7.description: 对客户端 `ping` 的回复，`data` 原样带回。
 paths./push.get.x-websocket-events.serverToClient.8.description: 组件之间的内部事件；**不会**发给 WebSocket 客户端。
+
+# ── /tasks ────────────────────────────────────────────────────────────
+paths./tasks.get.description: |
+  列出**凭据对应的那个房间**的定时任务。列表**永远**按房间过滤，管理员也一样。
+  `tier` 是 `admin` / `room` / `single` / `none`；`max` 为 `0` 表示不限。
+  `single` 档的房间只返回与出示的任务令牌匹配的那些，`foreignCount` 报被藏起来了几条。
+  每个任务上只读的有：`nextRunAt`、`lastRunAt`、`lastStatus`。
+paths./tasks.get.responses.200.description: 该房间的定时任务。
+paths./tasks.get.responses.403.description: 这个房间不允许用定时任务。
+paths./tasks.get.responses.404.description: 服务端整体关掉了定时任务（`automation.enabled = false`）。
+
+paths./tasks.post.description: |
+  不给 `id` 就是新建；给了已存在的 `id` 就是**整份替换**那个任务。
+  ⚠️ 房间取自**凭据** —— 请求体里的 `room` 字段**不会被读**。
+  时间、模板、动作 id 都在**保存时**校验（`invalid_task`），绝不静默忽略。
+  值得注意的是：模板变量不认识、或者偏移量写坏，都会在这里失败；
+  而 `freq: cron` 配一条根本不会触发的表达式同样失败。
+paths./tasks.post.requestBody.content.application/json.examples.create.summary: 一条每天提醒
+paths./tasks.post.requestBody.content.application/json.examples.cron.summary: 工作日每半小时，09:00–18:00
+paths./tasks.post.responses.200.description: 任务已保存。
+paths./tasks.post.responses.200.content.application/json.examples.singleTier.summary: single 档房间 —— 任务令牌只发一次
+paths./tasks.post.responses.400.description: 请求体不对、任务非法、房间任务数到上限，或者源房间读不到。
+paths./tasks.post.responses.403.description: 任务属于别人或别的房间（`task_forbidden`），或者该房间不允许定时任务（`automation_forbidden`）。
+paths./tasks.post.responses.404.description: 替换一个不存在的任务，或者定时任务被关掉了。
+paths./tasks.post.responses.413.description: 请求体超过 64 KiB。
+paths./tasks.post.responses.500.description: 存任务失败。
+
+paths./tasks/preview.post.description: |
+  渲染一个**不落库、也不发送**的草稿任务。请求体形状与 `POST /tasks` 相同（去掉 `id`）。
+
+  参考时刻默认取这个任务的**下一次计划触发时刻**，而不是「现在」—— 否则一条配成
+  「每天 09:30，正文 `{{date:+1d}}`」的任务，下午 15:00 预览会显示今天+1，
+  而它明天早上真正发出去的是明天+1。`?at=` 可以覆盖（RFC3339，或 `2026-09-25` / `2026-09-25 09:30`）。
+paths./tasks/preview.post.parameters.1.description: 用来渲染的参考时刻。解析不了就是 400，**绝不静默回落**。
+paths./tasks/preview.post.responses.200.description: 渲染出来的结果。
+paths./tasks/preview.post.responses.400.description: 请求体/任务非法、`?at=` 解析不了，或者渲染失败。
+paths./tasks/preview.post.responses.403.description: 这个房间不允许用定时任务。
+paths./tasks/preview.post.responses.404.description: 服务端整体关掉了定时任务。
+
+paths./tasks/cron.get.description: |
+  解析一条 5 字段表达式，返回接下来几次触发时刻，外加一个结构化的 `desc`，
+  界面拿它渲染成一句「意思是……」。
+
+  ⚠️ 表达式非法时返回的是 **200 且 `valid: false`**（带 `error`），**不是 400**：
+  「校验」正是这个接口的**用途**，所以「不合法」是它的正常输出之一。
+  客户端每次按键都会调它，回 4xx 会让页面看起来坏了。
+paths./tasks/cron.get.parameters.0.description: '''`<分> <时> <日> <月> <周>`。**只支持 5 个字段**；支持区间、步长、列表与英文名。'''
+paths./tasks/cron.get.parameters.1.description: 返回的那些时刻用的时区名。默认取 `automation.defaultTZ`。
+paths./tasks/cron.get.responses.200.description: '校验结果 —— `valid: true` 带接下来的触发时刻，或 `valid: false` 带一句解释。'
+paths./tasks/cron.get.responses.400.description: 时区名不认识。
+paths./tasks/cron.get.responses.403.description: 这个房间不允许用定时任务。
+paths./tasks/cron.get.responses.404.description: 服务端整体关掉了定时任务。
+paths./tasks/cron.post.description: 与 `GET /tasks/cron` 完全相同；表达式一律从查询串取，所以两种方法等价。两个都留着是为了「按任一种写法写的客户端都能用」。
+paths./tasks/cron.post.responses.200.description: 校验结果。
+paths./tasks/cron.post.responses.400.description: 时区名不认识。
+paths./tasks/cron.post.responses.403.description: 这个房间不允许用定时任务。
+paths./tasks/cron.post.responses.404.description: 服务端整体关掉了定时任务。
+paths./tasks/rooms.get.description: 列出当前至少持有一条定时任务的房间，各带一个计数。管理员看得到所有房间；其他人只看得到自己房间那一条。
+paths./tasks/rooms.get.responses.200.description: 每个房间的条数。
+paths./tasks/rooms.get.responses.403.description: 这个房间不允许用定时任务。
+paths./tasks/rooms.get.responses.404.description: 服务端整体关掉了定时任务。
+
+paths./tasks/{id}.delete.description: 删掉这个任务。调用方必须拥有它（管理员；`room` 档要同房间；`single` 档要出示匹配的任务令牌）。
+paths./tasks/{id}.delete.responses.200.description: 任务已删除。
+paths./tasks/{id}.delete.responses.403.description: 任务属于别人或别的房间。
+paths./tasks/{id}.delete.responses.404.description: 没这个任务（或者定时任务被关掉了）。
+paths./tasks/{id}.delete.responses.405.description: |
+  方法不对，或者动作不支持。
+
+  NOTE (code)：任务是**先解析、后判方法**的，所以 `GET /tasks/{id}` 打一个不存在的 id 会回
+  `404 task_not_found`，而不是 405。
+
+  NOTE (code)：路由里还为 `/tasks/{id}/{action}` 挂了一条兜底，专门回这个 405 ——
+  否则它会掉进静态资源的兜底、拿回一整页 HTML。
+
+paths./tasks/{id}/run.post.description: |
+  拿这个已保存的任务，对着它**下一次计划时刻**渲染，并返回结果。
+
+  - 不带 `send` 就什么都不发 —— 纯试跑。
+  - 带 `?send=1` 则**现在真的广播**。
+  - `?at=` 覆盖参考时刻（RFC3339，或 `2026-09-25` / `2026-09-25 09:30`）；解析不了就是 400，**绝不静默回落**。
+paths./tasks/{id}/run.post.parameters.1.description: 为真时**现在就发**，而不是只渲染。
+paths./tasks/{id}/run.post.parameters.2.description: 试跑用的参考时刻。
+paths./tasks/{id}/run.post.responses.200.description: 渲染结果（试跑）或发送确认。
+paths./tasks/{id}/run.post.responses.200.content.application/json.examples.dry.summary: 试跑（不带 `send`）
+paths./tasks/{id}/run.post.responses.200.content.application/json.examples.sent.summary: 带 ?send=1 发出去了
+paths./tasks/{id}/run.post.responses.400.description: '''`?at=` 不对、渲染失败，或者任务非法。'''
+paths./tasks/{id}/run.post.responses.403.description: 任务属于别人或别的房间，或者该房间不允许定时任务。
+paths./tasks/{id}/run.post.responses.404.description: 没这个任务（或者定时任务被关掉了）。
+
+paths./tasks/{id}/toggle.post.description: |
+  默认**翻转** `enabled`；`?enabled=1` / `?enabled=0` 则显式设定。
+  ⚠️ 只动这一个开关 —— **绝不**碰模板、动作链或幂等键，所以关掉再打开**不会多发一条**。
+paths./tasks/{id}/toggle.post.parameters.1.description: 显式设定开关，而不是翻转它。为真的值：`1`、`true`、`yes`、`on`。
+paths./tasks/{id}/toggle.post.responses.200.description: 更新后的任务。
+paths./tasks/{id}/toggle.post.responses.403.description: 任务属于别人或别的房间。
+paths./tasks/{id}/toggle.post.responses.404.description: 没这个任务（或者定时任务被关掉了）。
+
+# ── /automation ───────────────────────────────────────────────────────
+paths./automation.get.description: |
+  一个**服务端渲染**的页面，用来新建和编辑定时任务。它有自己的 HTML
+  （注册在 SPA 兜底**之前**，否则会解析成一个没有表单的空壳）。
+
+  ⚠️ 它**自己不做任何鉴权** —— 能不能建、能不能改，完全由 `/tasks` 决定。
+  页面拿密码换一枚会话令牌，存在 `sessionStorage` 里（关掉标签页就没了）。
+paths./automation.get.responses.200.description: 管理页。
