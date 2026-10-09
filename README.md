@@ -200,6 +200,19 @@ cd rust && cargo build --release -p clip9-server
 
 ---
 
+## 🌐 API
+
+- **在线参考**：[jonnyan404.github.io/clip9/api.html](https://jonnyan404.github.io/clip9/api.html)
+- **中文说明**（鉴权、错误形状、限额从哪来、`/push` 的帧、与 Go/Worker 的差异）：[`docs/api.md`](./docs/api.md)
+- **字段级权威**：[`docs/openapi/clip9.openapi.yaml`](./docs/openapi/clip9.openapi.yaml)（OpenAPI 3.1，32 条路径）
+
+```bash
+curl http://localhost:9501/content/latest          # 最新一条
+curl "http://localhost:9501/content?room=work"     # 某个房间的历史
+```
+
+---
+
 ## 📱 客户端与辅助工具
 
 | 形式 | 平台 | 说明 |

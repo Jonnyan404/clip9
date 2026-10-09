@@ -7,7 +7,7 @@ prose here and the code disagree, the code wins.
 
 | File | What it is |
 |---|---|
-| `clip9.openapi.yaml` | the spec: 31 paths, 51 schemas, every response carries a named example |
+| `clip9.openapi.yaml` | the spec: 32 paths, 51 schemas, every response carries a named example |
 | `check-openapi.py` | checks the document, and that every example conforms to its schema |
 
 ## Checking it
@@ -18,8 +18,8 @@ python3 docs/openapi/check-openapi.py
 ```
 
 ```
-OK  structure: clip9.openapi.yaml is a valid OpenAPI 3.1.0 document (31 paths, 51 schemas)
-OK  examples: all 187 named examples conform to their schemas
+OK  structure: clip9.openapi.yaml is a valid OpenAPI 3.1.0 document (32 paths, 51 schemas)
+OK  examples: all 190 named examples conform to their schemas
 ```
 
 The example check is the point. `openapi-spec-validator` only proves the document is
@@ -36,8 +36,12 @@ npx @redocly/cli preview-docs docs/openapi/clip9.openapi.yaml
 npx swagger-ui-watcher docs/openapi/clip9.openapi.yaml
 ```
 
-Both need Node and network access for the viewer assets. For a quick look without either,
-the top of the file has an endpoint index and `docs/api.md` remains the prose reference.
+Both need Node and network access for the viewer assets. Without either, the published site renders
+the spec at <https://jonnyan404.github.io/clip9/api.html>, and the top of the file has an endpoint index.
+
+**Prose reference, in Chinese**: [`docs/api.md`](../api.md) — authentication, the error contract,
+where the limits come from, the `/push` frames, and the divergences from the Go and Worker backends.
+It is the companion to this spec rather than a substitute: fields are authoritative here.
 
 ## What to read first
 
@@ -67,5 +71,6 @@ in the spec with `NOTE (code)`:
 | `/tasks/preview` reference time | — | returned as `referenceAt2`, while a saved-task dry run calls it `scheduledAt` |
 | `GET /content/{id}/column` auth error | — | `room_auth_required`, not `room_forbidden` |
 
-`/healthz` is present in the spec but is **not** part of the contract — it is a Rust-only
-liveness probe, flagged as such in its description.
+`/healthz` is present in the spec but is **not** part of the contract — it is a liveness probe
+that the Rust server and the Cloudflare Worker both answer (the Worker also keeps its original
+`/health`; the Go server had neither), flagged as such in its description.

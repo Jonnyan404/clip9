@@ -320,9 +320,13 @@ paths:
       tags: [Service]
       summary: Liveness probe
       description: |
-        Returns the literal text `ok`. This is an **implementation extra** of the Rust
-        server (the Go build has no such endpoint); it exists so acceptance scripts have a
-        cheap liveness probe that does not compute auth state the way `/server` does.
+        Returns the literal text `ok`. This is an **implementation extra** (the Go build never
+        had it); it exists so acceptance scripts have a cheap liveness probe that does not
+        compute auth state the way `/server` does.
+
+        ⚠️ The Cloudflare Worker answers this path as well, alongside its own `/health` -- two
+        names for one probe would make every health check branch per backend. The Go server
+        has neither.
       operationId: healthz
       security: []
       responses:
@@ -1164,6 +1168,186 @@ paths:
           $ref: '#/components/responses/OnlyGet'
 
   # ── Files ─────────────────────────────────────────────────────────────
+  /stats/daily:
+    get:
+      tags: [Stats]
+      summary: Room activity per day
+      description: |
+        The data behind the activity heat map: how many entries a room received on each of the
+        last `days` local days.
+
+        **The timezone is the caller's, not the server's.** `tz` takes an IANA name; the server
+        does not know where the reader is, and "today" has to mean *their* today. Bucketing in
+        UTC would push everything after 20:00 in UTC+8 into the next day. An unrecognised name
+        falls back to `UTC`, and the response reports which one was actually used in `tz`
+        (`requestedTz` echoes what was asked for, so the caller can tell the two apart).
+
+        **`levels` are quantiles of this room's own non-zero days**, not fixed thresholds. A room
+        that gets three entries a day would render entirely in the lightest shade under fixed
+        cut-offs -- and "which days were busier" is the only reason to look at this chart. The
+        trade-off is that the same colour means different counts in different rooms, which is why
+        the response carries the thresholds and the UI prints the actual ranges.
+
+        - `days` is clamped to `371` (53 weeks). `0`, a negative number and a non-number all mean
+          "not given" and fall back to the default -- **not** an empty chart, which would read as
+          "this room has never had anything".
+        - **Expired files do not count.** The server deletes the timeline entry when a file
+          expires, so counting them here would make a room look busier than the timeline shows.
+        - `busiest` is `null` when the window is empty; ties resolve to the **most recent** day.
+      operationId: getRoomDailyActivity
+      parameters:
+        - name: room
+          in: query
+          required: false
+          description: Room to report on. Omit for the `default` room.
+          schema:
+            type: string
+          example: work
+        - name: days
+          in: query
+          required: false
+          description: |
+            Window length in days, ending today. Clamped to `371`. `0`, negative and
+            non-numeric values are treated as "not given".
+          schema:
+            type: integer
+            minimum: 0
+            maximum: 371
+          example: 371
+        - name: tz
+          in: query
+          required: false
+          description: |
+            IANA timezone name used to decide which local day a timestamp belongs to.
+            An unrecognised name falls back to `UTC`.
+          schema:
+            type: string
+          example: Asia/Shanghai
+      security:
+        - bearerAuth: []
+        - authQuery: []
+      responses:
+        '200':
+          description: Per-day counts for the requested window.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [room, tz, requestedTz, truncated, activity]
+                properties:
+                  room:
+                    type: string
+                  tz:
+                    type: string
+                    description: The timezone actually used (after fallback).
+                  requestedTz:
+                    type: string
+                    description: What the caller asked for, echoed back so a fallback is visible.
+                  truncated:
+                    type: boolean
+                    description: |
+                      True when the scan hit its row ceiling, so the oldest days in the window
+                      may be undercounted.
+                  activity:
+                    type: object
+                    required: [days, total, busiest, streak, levels]
+                    properties:
+                      days:
+                        type: array
+                        description: Oldest first; length is exactly the effective `days`.
+                        items:
+                          type: object
+                          required: [date, count]
+                          properties:
+                            date:
+                              type: string
+                              description: Local date, `YYYY-MM-DD`.
+                            count:
+                              type: integer
+                      total:
+                        type: integer
+                      busiest:
+                        type: object
+                        nullable: true
+                        properties:
+                          date:
+                            type: string
+                          count:
+                            type: integer
+                      streak:
+                        type: object
+                        required: [current, longest]
+                        properties:
+                          current:
+                            type: integer
+                            description: |
+                              Consecutive days up to today. When today is still empty this
+                              skips it and counts back from yesterday, so the number does not
+                              drop to zero every morning.
+                          longest:
+                            type: integer
+                      levels:
+                        type: array
+                        description: |
+                          Four ascending thresholds for the shade scale. All four are equal when
+                          fewer than four days in the window have any activity.
+                        items:
+                          type: integer
+              examples:
+                week:
+                  value:
+                    room: work
+                    tz: Asia/Shanghai
+                    requestedTz: Asia/Shanghai
+                    truncated: false
+                    activity:
+                      days:
+                        - date: '2026-10-01'
+                          count: 0
+                        - date: '2026-10-02'
+                          count: 3
+                        - date: '2026-10-03'
+                          count: 0
+                        - date: '2026-10-04'
+                          count: 12
+                        - date: '2026-10-05'
+                          count: 5
+                        - date: '2026-10-06'
+                          count: 0
+                        - date: '2026-10-07'
+                          count: 8
+                      total: 28
+                      busiest:
+                        date: '2026-10-04'
+                        count: 12
+                      streak:
+                        current: 2
+                        longest: 3
+                      levels: [3, 5, 8, 12]
+                unknownTimezone:
+                  summary: An unrecognised `tz` falls back to UTC
+                  value:
+                    room: ''
+                    tz: UTC
+                    requestedTz: Not/AZone
+                    truncated: false
+                    activity:
+                      days:
+                        - date: '2026-10-06'
+                          count: 0
+                        - date: '2026-10-07'
+                          count: 1
+                      total: 1
+                      busiest:
+                        date: '2026-10-07'
+                        count: 1
+                      streak:
+                        current: 1
+                        longest: 1
+                      levels: [1, 1, 1, 1]
+        '403':
+          $ref: '#/components/responses/RoomForbidden'
+
   /upload:
     post:
       tags: [Files]
@@ -3783,6 +3967,18 @@ components:
                 error: Only GET is allowed
                 message: 仅允许 GET 请求
 
+    RoomForbidden:
+      description: The credential cannot open this room.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          examples:
+            forbidden:
+              value:
+                code: room_forbidden
+                error: Room forbidden
+                message: 无权访问该房间
     OnlyPost:
       description: This endpoint only accepts POST.
       content:

@@ -1,0 +1,47 @@
+name: Deploy GitHub Pages
+
+# 站点是 `docs/` 下的纯静态文件（**无构建步骤**），所以这个 workflow 只做「打包 + 发布」。
+#
+# ⚠️★ 第一次跑之前要在仓库 Settings → Pages → Source 里选 **"GitHub Actions"** ——
+# 选成 "Deploy from a branch" 的话这个 workflow 不会触发，而**它不会报错**，
+# 只是 Pages 那边一直显示上一次的分支部署。这是这类 workflow 最容易卡住的一步。
+#
+# ⚠️ 只在 `docs/**` 动过时才跑：站点内容与源码无关，为一次 `rust/` 的改动静默重发一遍
+# 只会让 Actions 记录变吵，也会让「上一次部署对应哪版文档」变得说不清。
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'docs/**'
+      - '.github/workflows/pages.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# ⚠️ 同一时刻只允许一次部署（`cancel-in-progress` 让后一次直接顶掉前一次）——
+# 连着推两次文档时，不设这个会出现「先跑完的那次把后一次的产物覆盖掉」。
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/configure-pages@v5
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: docs
+
+      - id: deployment
+        uses: actions/deploy-pages@v4
