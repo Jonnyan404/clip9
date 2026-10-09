@@ -4,7 +4,7 @@
 #   然后跑 `python3 docs/openapi/build-zh.py`。
 #
 # 结构（路径 / 字段 / 必填 / 示例）**全部来自英文那份**，所以两份不会漂。
-# 已译 106 条，未译（保留英文）344 条。
+# 已译 176 条，未译（保留英文）274 条。
 openapi: 3.1.0
 info:
   title: clip9 API
@@ -968,28 +968,17 @@ paths:
       tags:
       - Rooms
       summary: 房间列表
-      description: "Lists the rooms the caller may see. Requires `server.roomList` to be enabled,\notherwise\
-        \ `403 room_list_disabled`.\n\n- Rooms the credential cannot open are **omitted entirely**, not\
-        \ listed with a lock.\n- The `default` room is reported with an **empty** `name` (the front end\
-        \ treats an\n  empty name as the default room).\n- The array order is **not** part of the contract\
-        \ (Go iterated a map). This server\n  returns a deterministic order, but no client should depend\
-        \ on it.\n- `isProtected` means \"actually needs a password\", so a room explicitly configured\n\
-        \  `{\"open\": true}` reports `false` even when a global password exists.\n- A credential can\
-        \ be supplied as the primary one plus extra ones via\n  `X-Room-Auth-Tokens` (JSON array or comma-separated),\
-        \ which is how a client with\n  several room passwords sees all of its rooms at once.\n"
+      description: "列出调用方看得见的房间。需要打开 `server.roomList`，否则回 `403 room_list_disabled`。\n\n- 凭据打不开的房间**整个不出现**，而不是列出来挂把锁。\n\
+        - `default` 房间的 `name` 报成**空串**（前端把空名字当作默认房间）。\n- 数组顺序**不属于契约**（Go 版遍历的是 map）。这个服务端给的是确定顺序，但客户端不该依赖它。\n\
+        - `isProtected` 的意思是「**确实**需要密码」，所以显式配了 `{\"open\": true}` 的房间即使存在全局密码也报 `false`。\n- 凭据可以给一个主的\
+        \ + 若干个附加的，附加的走 `X-Room-Auth-Tokens`（JSON 数组或逗号分隔）——\n  手里有好几个房间密码的客户端靠它一次看全自己所有的房间。\n"
       operationId: listRooms
       parameters:
       - $ref: '#/components/parameters/AuthQuery'
       - name: X-Room-Auth-Tokens
         in: header
         required: false
-        description: 'Additional credentials, as a JSON array (`["a","b"]`) or comma-separated
-
-          (`a, b`). Whitespace is trimmed, duplicates dropped, order preserved, and the
-
-          primary credential comes first.
-
-          '
+        description: 附加凭据，JSON 数组（`["a","b"]`）或逗号分隔（`a, b`）。首尾空白会去掉、重复的丢掉、顺序保留，主凭据排在最前。
         schema:
           type: string
         example: '["home-pass","work-pass"]'
@@ -998,7 +987,7 @@ paths:
       - authQuery: []
       responses:
         '200':
-          description: The accessible rooms.
+          description: 看得见的那些房间。
           content:
             application/json:
               schema:
@@ -1020,7 +1009,7 @@ paths:
                       isActive: false
                       isProtected: true
         '403':
-          description: The room list feature is disabled on this server.
+          description: 这个服务端关掉了房间列表功能。
           content:
             application/json:
               schema:
@@ -1038,39 +1027,25 @@ paths:
       tags:
       - Stats
       summary: 房间每天的活跃度
-      description: "The data behind the activity heat map: how many entries a room received on each of\
-        \ the\nlast `days` local days.\n\n**The timezone is the caller's, not the server's.** `tz` takes\
-        \ an IANA name; the server\ndoes not know where the reader is, and \"today\" has to mean *their*\
-        \ today. Bucketing in\nUTC would push everything after 20:00 in UTC+8 into the next day. An unrecognised\
-        \ name\nfalls back to `UTC`, and the response reports which one was actually used in `tz`\n(`requestedTz`\
-        \ echoes what was asked for, so the caller can tell the two apart).\n\n**`levels` are quantiles\
-        \ of this room's own non-zero days**, not fixed thresholds. A room\nthat gets three entries a\
-        \ day would render entirely in the lightest shade under fixed\ncut-offs -- and \"which days were\
-        \ busier\" is the only reason to look at this chart. The\ntrade-off is that the same colour means\
-        \ different counts in different rooms, which is why\nthe response carries the thresholds and the\
-        \ UI prints the actual ranges.\n\n- `days` is clamped to `371` (53 weeks). `0`, a negative number\
-        \ and a non-number all mean\n  \"not given\" and fall back to the default -- **not** an empty\
-        \ chart, which would read as\n  \"this room has never had anything\".\n- **Expired files do not\
-        \ count.** The server deletes the timeline entry when a file\n  expires, so counting them here\
-        \ would make a room look busier than the timeline shows.\n- `busiest` is `null` when the window\
-        \ is empty; ties resolve to the **most recent** day.\n"
+      description: "活跃度热力图背后的数据：这个房间在最近 `days` 个**本地日**里各收到多少条。\n\n**时区是调用方的，不是服务端的。** `tz` 收 IANA 名字；服务端不知道看图的人在哪，\n\
+        而「今天」必须是**他的**今天。按 UTC 分桶的话，东八区晚上 8 点之后的活跃会被算进第二天。\n认不出来的名字回落 `UTC`，响应里的 `tz` 报**实际用的**那个\n（`requestedTz`\
+        \ 把请求的原样回显，调用方据此分辨有没有回落）。\n\n**`levels` 是这个房间自己那些非零天的分位数**，不是固定阈值。一个每天只收三条的房间，\n在固定阈值下会整张图都是最浅色\
+        \ —— 而「哪几天更多」正是来看这张图的唯一理由。\n代价是同一个颜色在不同房间里代表不同的量，所以响应里带着那几道阈值，界面上印的是实际区间。\n\n- `days` 夹到 `371`（53\
+        \ 周）。`0`、负数和非数字都表示「没给」而回落到默认值 ——\n  **不是**一张空图，那会被读成「这个房间从来没有过东西」。\n- **已过期的文件不算数。** 服务端在文件过期时会把时间线那条删掉，这里再算一遍会让房间\n\
+        \  显得比时间线上看到的更活跃。\n- 窗口为空时 `busiest` 是 `null`；并列时取**最近**那天。\n"
       operationId: getRoomDailyActivity
       parameters:
       - name: room
         in: query
         required: false
-        description: Room to report on. Omit for the `default` room.
+        description: 要统计的房间。不传即 `default` 房间。
         schema:
           type: string
         example: work
       - name: days
         in: query
         required: false
-        description: 'Window length in days, ending today. Clamped to `371`. `0`, negative and
-
-          non-numeric values are treated as "not given".
-
-          '
+        description: 窗口天数，截止到今天。夹到 `371`。`0`、负数和非数字都当作「没给」。
         schema:
           type: integer
           minimum: 0
@@ -1079,11 +1054,7 @@ paths:
       - name: tz
         in: query
         required: false
-        description: 'IANA timezone name used to decide which local day a timestamp belongs to.
-
-          An unrecognised name falls back to `UTC`.
-
-          '
+        description: 用来判断某个时间戳属于哪个本地日的 IANA 时区名。认不出来就回落 `UTC`。
         schema:
           type: string
         example: Asia/Shanghai
@@ -1092,7 +1063,7 @@ paths:
       - authQuery: []
       responses:
         '200':
-          description: Per-day counts for the requested window.
+          description: 所请求窗口内每天的条数。
           content:
             application/json:
               schema:
@@ -1108,17 +1079,13 @@ paths:
                     type: string
                   tz:
                     type: string
-                    description: The timezone actually used (after fallback).
+                    description: '**实际用的**时区（回落之后）。'
                   requestedTz:
                     type: string
-                    description: What the caller asked for, echoed back so a fallback is visible.
+                    description: 调用方请求的那个，原样回显，这样回落就看得见。
                   truncated:
                     type: boolean
-                    description: 'True when the scan hit its row ceiling, so the oldest days in the window
-
-                      may be undercounted.
-
-                      '
+                    description: 为真表示扫描撞到了行数上限，窗口里最旧的那几天可能少算。
                   activity:
                     type: object
                     required:
@@ -1130,7 +1097,7 @@ paths:
                     properties:
                       days:
                         type: array
-                        description: Oldest first; length is exactly the effective `days`.
+                        description: 旧的在前；长度恰好等于生效的 `days`。
                         items:
                           type: object
                           required:
@@ -1139,7 +1106,7 @@ paths:
                           properties:
                             date:
                               type: string
-                              description: Local date, `YYYY-MM-DD`.
+                              description: 本地日期，`YYYY-MM-DD`。
                             count:
                               type: integer
                       total:
@@ -1160,23 +1127,12 @@ paths:
                         properties:
                           current:
                             type: integer
-                            description: 'Consecutive days up to today. When today is still empty this
-
-                              skips it and counts back from yesterday, so the number does not
-
-                              drop to zero every morning.
-
-                              '
+                            description: 一直到今天的连续天数。今天还没内容时**跳过它**、从昨天往回数 —— 这样这个数不会每天早上都掉回 0。
                           longest:
                             type: integer
                       levels:
                         type: array
-                        description: 'Four ascending thresholds for the shade scale. All four are equal
-                          when
-
-                          fewer than four days in the window have any activity.
-
-                          '
+                        description: 配色用的四道递增阈值。窗口内活跃天不足四天时，这四个值相等。
                         items:
                           type: integer
               examples:
@@ -1215,7 +1171,7 @@ paths:
                       - 8
                       - 12
                 unknownTimezone:
-                  summary: An unrecognised `tz` falls back to UTC
+                  summary: '`tz` 认不出来时回落 UTC'
                   value:
                     room: ''
                     tz: UTC
@@ -1246,36 +1202,29 @@ paths:
       tags:
       - Files
       summary: 整份上传（multipart）
-      description: 'Uploads a small file in one request: writes the bytes, registers the file, stores
-        a
+      description: '一次请求传完一个小文件：写字节、登记文件、在房间里存一条文件条目、广播 `receive`，
 
-        file entry in the room, broadcasts `receive`, and returns the entry id and URL.
-
-
-        The form field name is always **`file`**.
+        然后返回条目 id 与 URL。
 
 
-        Special case: when `Content-Type` is exactly `text/plain` (character for character —
-
-        `text/plain; charset=utf-8` does **not** count), the body is treated as a **filename**
-
-        and this becomes the chunked-upload initialiser, exactly like `POST /upload/chunk`.
-
-        That is a deliberate, documented quirk shared with the Go implementation.
+        表单字段名**永远是 `file`**。
 
 
-        `Content-Length`, when present, is checked against `file.limit` up front so an
+        特殊情况：当 `Content-Type` **逐字符**等于 `text/plain` 时（`text/plain; charset=utf-8` **不算**），
 
-        oversized file is rejected before it is read into memory.
+        请求体被当成一个**文件名**，这个接口就变成了分片上传的初始化 —— 与 `POST /upload/chunk` 完全一样。
+
+        这是与 Go 实现共有的、刻意保留并且写进文档的怪癖。
 
 
-        NOTE (code): the success body is `{url, id, type}` — the same three fields as
+        有 `Content-Length` 时，会先拿它跟 `file.limit` 比，**在把文件读进内存之前**就拒掉超大的。
 
-        `/text`. An older document showed `name` / `size` / `uuid` / `expire` here too; this
 
-        server does not return them. `type` is the detected media kind of the filename, not
+        NOTE (code)：成功响应体是 `{url, id, type}` —— 与 `/text` 同样那三个字段。旧文档在这里还写了
 
-        the literal string `file`.
+        `name` / `size` / `uuid` / `expire`，这个服务端不返回它们。`type` 是按文件名探测出的媒体种类，
+
+        **不是**字面量 `file`。
 
         '
       operationId: uploadFile
@@ -1299,19 +1248,19 @@ paths:
                 file:
                   type: string
                   format: binary
-                  description: The file bytes. The filename in the part header is the entry's `name`.
+                  description: 文件字节。part 头里的文件名会成为条目的 `name`。
           text/plain:
             schema:
               type: string
             examples:
               initAsFilename:
-                summary: Body is a filename — acts as the chunked-upload initialiser
+                summary: 请求体是文件名 —— 这时它充当分片上传的初始化
                 value: 'big-video.mp4
 
                   '
       responses:
         '200':
-          description: The file was stored and announced (or, for the `text/plain` form, initialised).
+          description: 文件已存下并广播（`text/plain` 那种形式则是已初始化）。
           content:
             application/json:
               schema:
@@ -1323,12 +1272,12 @@ paths:
                     id: '8'
                     type: image
                 initialised:
-                  summary: Response of the chunked-upload initialiser
+                  summary: 分片上传初始化的响应
                   value:
                     result:
                       uuid: 11111111-2222-3333-4444-555555555555
         '400':
-          description: The form could not be parsed or carried no `file` field.
+          description: 表单解析不了，或者没有 `file` 字段。
           content:
             application/json:
               schema:
@@ -1345,7 +1294,7 @@ paths:
                     error: Cannot read uploaded file
                     message: 无法获取文件
         '401':
-          description: No access to the target room.
+          description: 无权访问目标房间。
           content:
             application/json:
               schema:
@@ -1357,7 +1306,7 @@ paths:
                     error: Authentication required
                     message: 需要认证令牌
         '413':
-          description: The file exceeds `file.limit`.
+          description: 文件超过 `file.limit`。
           content:
             application/json:
               schema:
@@ -1369,7 +1318,7 @@ paths:
                     error: File too large
                     message: 文件大小超出限制 (最大 268435456 字节)
         '500':
-          description: Writing or registering the file failed.
+          description: 写文件或登记失败。
           content:
             application/json:
               schema:
@@ -1387,27 +1336,23 @@ paths:
       tags:
       - Files
       summary: 分片上传 —— 初始化
-      description: 'Step 1 of a chunked upload. The request body is the **filename** as plain text; no
+      description: '分片上传的第一步。请求体是**文件名**（纯文本），这时还不写任何字节。
 
-        bytes are written yet. The response contains the `uuid` that the following chunk and
-
-        finish calls address.
+        响应里带着 `uuid`，后面追加分片与收尾都用它。
 
 
         ```text
 
-        POST /upload/chunk          body = filename            → {"result":{"uuid":"..."}}
+        POST /upload/chunk          body = 文件名            → {"result":{"uuid":"..."}}
 
-        POST /upload/chunk/{uuid}   body = bytes of a chunk     → {}
+        POST /upload/chunk/{uuid}   body = 一片的字节        → {}
 
-        POST /upload/finish/{uuid}  (no body)                   → {"url","id","type"}
+        POST /upload/finish/{uuid}  （无 body）              → {"url","id","type"}
 
         ```
 
 
-        This route and `POST /upload` share one handler; the difference is the path plus the
-
-        `Content-Type: text/plain` guard.
+        这条路由与 `POST /upload` **共用同一个处理器**，区别只在路径和那道 `Content-Type: text/plain` 的关卡。
 
         '
       operationId: initChunkedUpload
@@ -1421,7 +1366,7 @@ paths:
       - authQuery: []
       requestBody:
         required: true
-        description: The filename, as plain text.
+        description: 文件名，纯文本。
         content:
           text/plain:
             schema:
@@ -1433,7 +1378,7 @@ paths:
                   '
       responses:
         '200':
-          description: A fresh upload uuid.
+          description: 一个新的上传 uuid。
           content:
             application/json:
               schema:
@@ -1444,7 +1389,7 @@ paths:
                     result:
                       uuid: 11111111-2222-3333-4444-555555555555
         '401':
-          description: No access to the target room.
+          description: 无权访问目标房间。
           content:
             application/json:
               schema:
@@ -1456,7 +1401,7 @@ paths:
                     error: Authentication required
                     message: 需要认证令牌
         '500':
-          description: Registering the upload failed.
+          description: 登记这次上传失败。
           content:
             application/json:
               schema:
@@ -1474,19 +1419,17 @@ paths:
       tags:
       - Files
       summary: 分片上传 —— 追加一片
-      description: 'Appends raw bytes to an upload previously initialised with `POST /upload/chunk`. Each
+      description: '往一个先前用 `POST /upload/chunk` 初始化过的上传里追加原始字节。每次调用都会更新已记录的体积，
 
-        call updates the recorded size; the running total is checked against `file.limit`.
-
-
-        Send chunks of about `file.chunk` bytes (default 1 MiB). A single request body is
-
-        capped at 16 MiB by the HTTP layer regardless of `file.limit`.
+        累计值会拿去跟 `file.limit` 比。
 
 
-        NOTE (code): the room used for authorisation is the one recorded on the upload when it
+        分片大小按 `file.chunk`（默认 1 MiB）左右发。**单个请求体上限 16 MiB**，由 HTTP 层管，
 
-        was initialised, not the `?room=` sent here.
+        与 `file.limit` 无关。
+
+
+        NOTE (code)：鉴权用的是**初始化时记录在上传上的那个房间**，不是这次请求里带的 `?room=`。
 
         '
       operationId: appendChunk
@@ -1512,18 +1455,18 @@ paths:
               format: binary
       responses:
         '200':
-          description: The chunk was appended.
+          description: 分片已追加。
           content:
             application/json:
               schema:
                 type: object
-                description: An empty object (this server does not answer 204 here).
+                description: 一个空对象（这个服务端在这里**不回 204**）。
                 additionalProperties: false
               examples:
                 ok:
                   value: {}
         '400':
-          description: No upload is registered under that uuid.
+          description: 那个 uuid 下没有登记过上传。
           content:
             application/json:
               schema:
@@ -1535,7 +1478,7 @@ paths:
                     error: Invalid UUID
                     message: 无效的 UUID
         '401':
-          description: No access to the upload's room.
+          description: 无权访问这次上传所属的房间。
           content:
             application/json:
               schema:
@@ -1547,7 +1490,7 @@ paths:
                     error: Authentication required
                     message: 需要认证令牌
         '413':
-          description: The accumulated size would exceed `file.limit`.
+          description: 累计体积会超过 `file.limit`。
           content:
             application/json:
               schema:
@@ -1559,7 +1502,7 @@ paths:
                     error: File too large
                     message: 文件大小已超过限制 (最大 268435456 字节)
         '500':
-          description: The chunk could not be written.
+          description: 分片写不进去。
           content:
             application/json:
               schema:
@@ -1577,19 +1520,17 @@ paths:
       tags:
       - Files
       summary: 分片上传 —— 封口并广播
-      description: 'Finalises a chunked upload: generates the file entry (including a thumbnail when the
+      description: '收尾一次分片上传：生成文件条目（字节能解码成图片、且不超过 32 MiB 时**顺带生成缩略图**）、
 
-        bytes decode as an image and are at most 32 MiB), stores it, and broadcasts `receive`.
-
-
-        The room is taken from the upload''s own registration; a `?room=default` here does not
-
-        move it out of a protected room.
+        存下来、广播 `receive`。
 
 
-        NOTE (code): the success body is `{url, id, type}`, and `type` is the detected media
+        房间取自**这次上传自己的登记**；在这里带 `?room=default` **不能**把它挪出受保护的房间。
 
-        kind of the filename rather than the literal string `file`.
+
+        NOTE (code)：成功响应体是 `{url, id, type}`，而 `type` 是按文件名探测出的媒体种类，
+
+        不是字面量 `file`。
 
         '
       operationId: finishChunkedUpload
@@ -1610,7 +1551,7 @@ paths:
       - authQuery: []
       responses:
         '200':
-          description: The file entry was stored and announced.
+          description: 文件条目已存下并广播。
           content:
             application/json:
               schema:
@@ -1622,7 +1563,7 @@ paths:
                     id: '9'
                     type: video
         '400':
-          description: No upload is registered under that uuid.
+          description: 那个 uuid 下没有登记过上传。
           content:
             application/json:
               schema:
@@ -1634,7 +1575,7 @@ paths:
                     error: Invalid UUID
                     message: 无效的 UUID
         '401':
-          description: No access to the upload's room.
+          description: 无权访问这次上传所属的房间。
           content:
             application/json:
               schema:
@@ -1646,7 +1587,7 @@ paths:
                     error: Authentication required
                     message: 需要认证令牌
         '500':
-          description: Storing the message failed.
+          description: 存消息失败。
           content:
             application/json:
               schema:
@@ -1664,16 +1605,11 @@ paths:
       tags:
       - Files
       summary: 下载或预览文件
-      description: "Streams the file bytes. `Range` is honoured (video scrubbing and resumable downloads\n\
-        work), and `If-Modified-Since` / `If-None-Match` are passed through.\n\n- The `Content-Type` is\
-        \ guessed from the **original filename**, not the on-disk name\n  (which is the bare uuid with\
-        \ no extension). Text types get `; charset=utf-8` so a\n  Chinese `.txt` is not rendered as Latin-1\
-        \ mojibake.\n- `?download=true` adds `Content-Disposition: attachment`; otherwise the file is\n\
-        \  `inline` so browsers render it directly.\n- Authorisation uses the room recorded on the file\
-        \ — a client-supplied `?room=` is\n  ignored, which is what stops `?room=default` from reading\
-        \ a protected room's file.\n- A **share token** (`?t=`) works for `GET` only, and it must point\
-        \ at this very file.\n  The UI's share button issues a `content`-typed token whose target is a\
-        \ file; that is\n  accepted too, but only when the content really references this uuid.\n"
+      description: "把文件字节流出去。支持 `Range`（拖视频进度条、断点续传都能用），\n`If-Modified-Since` / `If-None-Match` 也原样透传。\n\
+        \n- `Content-Type` 是按**原始文件名**猜的，不是按磁盘上的名字（磁盘上是不带扩展名的裸 uuid）。\n  文本类型会带上 `; charset=utf-8`，这样中文\
+        \ `.txt` 不会被渲染成 Latin-1 乱码。\n- `?download=true` 会加上 `Content-Disposition: attachment`；否则是 `inline`，浏览器直接渲染。\n\
+        - 鉴权用**文件上记录的那个房间** —— 客户端传的 `?room=` 被忽略，这正是「`?room=default`\n  读不到受保护房间的文件」的原因。\n- **分享令牌**（`?t=`）只对\
+        \ `GET` 有效，而且必须指向**这个**文件。界面上那颗分享按钮签的是\n  `content` 类型的令牌、目标是文件 —— 那种也接受，但只在这个内容确实引用该 uuid 时。\n"
       operationId: downloadFile
       parameters:
       - name: uuid
@@ -1688,14 +1624,14 @@ paths:
       - name: download
         in: query
         required: false
-        description: When `true`, forces a download instead of inline rendering.
+        description: 为 `true` 时强制下载，而不是内联渲染。
         schema:
           type: boolean
         example: true
       - name: Range
         in: header
         required: false
-        description: Standard HTTP byte range; does **not** consume a share-token use.
+        description: 标准的 HTTP 字节区间；**不消耗**分享令牌的次数。
         schema:
           type: string
         example: bytes=0-1023
@@ -1706,18 +1642,18 @@ paths:
       - shareTokenQuery: []
       responses:
         '200':
-          description: The file bytes.
+          description: 文件字节。
           headers:
             Content-Type:
-              description: Guessed from the original filename.
+              description: 按原始文件名猜出来的。
               schema:
                 type: string
             Content-Disposition:
-              description: '`inline` by default, `attachment` with `?download=true`.'
+              description: 默认 `inline`，带 `?download=true` 时是 `attachment`。
               schema:
                 type: string
             Accept-Ranges:
-              description: Present because ranges are supported.
+              description: 有这一条是因为支持区间请求。
               schema:
                 type: string
           content:
@@ -1726,16 +1662,16 @@ paths:
                 type: string
                 format: binary
         '206':
-          description: A partial response (Range request).
+          description: 部分响应（Range 请求）。
           content:
             application/octet-stream:
               schema:
                 type: string
                 format: binary
         '304':
-          description: Not modified (conditional request).
+          description: 未修改（条件请求）。
         '401':
-          description: No access to the file's room, and no usable share token.
+          description: 无权访问该文件所在的房间，且没有可用的分享令牌。
           content:
             application/json:
               schema:
@@ -1752,7 +1688,7 @@ paths:
                     error: Invalid auth token
                     message: 无效的认证令牌
         '404':
-          description: No such file, it expired, or its bytes are gone from disk.
+          description: 没这个文件、它已过期，或者字节已从磁盘上消失。
           content:
             application/json:
               schema:
@@ -1779,14 +1715,7 @@ paths:
       tags:
       - Files
       summary: 删文件
-      description: 'Removes the bytes from disk and the registration from the store. Deleting an
-
-        already-missing file is not an error (`NotFound` is tolerated).
-
-
-        A share token does **not** work here: it is read-only.
-
-        '
+      description: 从磁盘删掉字节、从存储里删掉登记。删一个**本来就没了**的文件不算错（`NotFound` 被容忍）。分享令牌在这里**不管用**：它是只读的。
       operationId: deleteFile
       parameters:
       - name: uuid
@@ -1802,7 +1731,7 @@ paths:
       - authQuery: []
       responses:
         '200':
-          description: The file was deleted.
+          description: 文件已删除。
           content:
             application/json:
               schema:
@@ -1815,7 +1744,7 @@ paths:
                   value:
                     status: 文件删除成功
         '401':
-          description: No access to the file's room.
+          description: 无权访问该文件所在的房间。
           content:
             application/json:
               schema:
@@ -1827,7 +1756,7 @@ paths:
                     error: Authentication required
                     message: 需要认证令牌
         '404':
-          description: No such file, or it expired.
+          description: 没这个文件，或者它已过期。
           content:
             application/json:
               schema:
@@ -1844,7 +1773,7 @@ paths:
                     error: File expired
                     message: 文件已过期
         '500':
-          description: The bytes exist but could not be removed.
+          description: 字节还在，但删不掉。
           content:
             application/json:
               schema:
@@ -1868,7 +1797,7 @@ paths:
     - name: name
       in: path
       required: true
-      description: Informational only — the server keys off the uuid.
+      description: 只是给人看的 —— 服务端认的是 uuid。
       schema:
         type: string
       example: photo.png
@@ -1876,8 +1805,7 @@ paths:
       tags:
       - Files
       summary: 下载或预览文件（带文件名那种写法）
-      description: Identical to `GET /file/{uuid}`; the trailing filename exists so URLs read as real
-        filenames.
+      description: 与 `GET /file/{uuid}` 完全相同；末尾那段文件名是为了让 URL 看起来像个真文件名。
       operationId: downloadFileNamed
       parameters:
       - $ref: '#/components/parameters/RoomQueryOptional'
@@ -1900,23 +1828,23 @@ paths:
       - shareTokenQuery: []
       responses:
         '200':
-          description: The file bytes.
+          description: 文件字节。
           content:
             application/octet-stream:
               schema:
                 type: string
                 format: binary
         '206':
-          description: A partial response (Range request).
+          description: 部分响应（Range 请求）。
           content:
             application/octet-stream:
               schema:
                 type: string
                 format: binary
         '304':
-          description: Not modified (conditional request).
+          description: 未修改（条件请求）。
         '401':
-          description: No access to the file's room, and no usable share token.
+          description: 无权访问该文件所在的房间，且没有可用的分享令牌。
           content:
             application/json:
               schema:
@@ -1928,7 +1856,7 @@ paths:
                     error: Invalid auth token
                     message: 无效的认证令牌
         '404':
-          description: No such file, it expired, or its bytes are gone from disk.
+          description: 没这个文件、它已过期，或者字节已从磁盘上消失。
           content:
             application/json:
               schema:
@@ -1945,7 +1873,7 @@ paths:
       tags:
       - Files
       summary: 删文件（带文件名那种写法）
-      description: Identical to `DELETE /file/{uuid}`.
+      description: 与 `DELETE /file/{uuid}` 完全相同。
       operationId: deleteFileNamed
       parameters:
       - $ref: '#/components/parameters/RoomQueryOptional'
@@ -1955,7 +1883,7 @@ paths:
       - authQuery: []
       responses:
         '200':
-          description: The file was deleted.
+          description: 文件已删除。
           content:
             application/json:
               schema:
@@ -1968,7 +1896,7 @@ paths:
                   value:
                     status: 文件删除成功
         '401':
-          description: No access to the file's room.
+          description: 无权访问该文件所在的房间。
           content:
             application/json:
               schema:
@@ -1980,7 +1908,7 @@ paths:
                     error: Authentication required
                     message: 需要认证令牌
         '404':
-          description: No such file, or it expired.
+          description: 没这个文件，或者它已过期。
           content:
             application/json:
               schema:

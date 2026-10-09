@@ -6,6 +6,11 @@
 # ⚠️ 表里没有的键**保留英文原文**（不是留空）—— 漏译的表现是「那一句还是英文」，
 # 而不是「那一节没了」。所以这张表可以**一条一条补**，任何时候产出的规格都是完整的。
 #
+# ⚠️★ 值以 `*`、`&`、`!`、`[`、`{` 这类字符**开头**时必须加引号 ——
+# YAML 里 `*` 是别名、`&` 是锚点、`!` 是标签，不加引号会**解析失败**
+# （2026-10-09 实测：一条以 `**实际用的**` 开头的译文直接把 build-zh.py 打崩了）。
+# 中英混排的正文里以 `**` 开头很常见，所以这条不是边角情况。
+#
 # ⚠️ **不要翻**字段名、枚举值、示例里的数据 —— 那些是标识符或数据，翻了客户端就对不上。
 # 只有 `summary` / `description` 会被这个脚本替换。
 
@@ -263,3 +268,160 @@ paths./content/{id}/column.post.responses.200.description: 条目已挪动。
 paths./content/{id}/column.post.responses.400.description: id 不对、JSON 体不对，或列名不认识。
 paths./content/{id}/column.post.responses.401.description: 无权访问该条目所在的房间。
 paths./content/{id}/column.post.responses.404.description: 没这条，或者它不在请求的那个房间里。
+
+# ── /rooms ────────────────────────────────────────────────────────────
+paths./rooms.get.description: |
+  列出调用方看得见的房间。需要打开 `server.roomList`，否则回 `403 room_list_disabled`。
+
+  - 凭据打不开的房间**整个不出现**，而不是列出来挂把锁。
+  - `default` 房间的 `name` 报成**空串**（前端把空名字当作默认房间）。
+  - 数组顺序**不属于契约**（Go 版遍历的是 map）。这个服务端给的是确定顺序，但客户端不该依赖它。
+  - `isProtected` 的意思是「**确实**需要密码」，所以显式配了 `{"open": true}` 的房间即使存在全局密码也报 `false`。
+  - 凭据可以给一个主的 + 若干个附加的，附加的走 `X-Room-Auth-Tokens`（JSON 数组或逗号分隔）——
+    手里有好几个房间密码的客户端靠它一次看全自己所有的房间。
+paths./rooms.get.parameters.1.description: 附加凭据，JSON 数组（`["a","b"]`）或逗号分隔（`a, b`）。首尾空白会去掉、重复的丢掉、顺序保留，主凭据排在最前。
+paths./rooms.get.responses.200.description: 看得见的那些房间。
+paths./rooms.get.responses.403.description: 这个服务端关掉了房间列表功能。
+
+# ── /stats/daily ──────────────────────────────────────────────────────
+paths./stats/daily.get.description: |
+  活跃度热力图背后的数据：这个房间在最近 `days` 个**本地日**里各收到多少条。
+
+  **时区是调用方的，不是服务端的。** `tz` 收 IANA 名字；服务端不知道看图的人在哪，
+  而「今天」必须是**他的**今天。按 UTC 分桶的话，东八区晚上 8 点之后的活跃会被算进第二天。
+  认不出来的名字回落 `UTC`，响应里的 `tz` 报**实际用的**那个
+  （`requestedTz` 把请求的原样回显，调用方据此分辨有没有回落）。
+
+  **`levels` 是这个房间自己那些非零天的分位数**，不是固定阈值。一个每天只收三条的房间，
+  在固定阈值下会整张图都是最浅色 —— 而「哪几天更多」正是来看这张图的唯一理由。
+  代价是同一个颜色在不同房间里代表不同的量，所以响应里带着那几道阈值，界面上印的是实际区间。
+
+  - `days` 夹到 `371`（53 周）。`0`、负数和非数字都表示「没给」而回落到默认值 ——
+    **不是**一张空图，那会被读成「这个房间从来没有过东西」。
+  - **已过期的文件不算数。** 服务端在文件过期时会把时间线那条删掉，这里再算一遍会让房间
+    显得比时间线上看到的更活跃。
+  - 窗口为空时 `busiest` 是 `null`；并列时取**最近**那天。
+paths./stats/daily.get.parameters.0.description: 要统计的房间。不传即 `default` 房间。
+paths./stats/daily.get.parameters.1.description: 窗口天数，截止到今天。夹到 `371`。`0`、负数和非数字都当作「没给」。
+paths./stats/daily.get.parameters.2.description: 用来判断某个时间戳属于哪个本地日的 IANA 时区名。认不出来就回落 `UTC`。
+paths./stats/daily.get.responses.200.description: 所请求窗口内每天的条数。
+paths./stats/daily.get.responses.200.content.application/json.schema.properties.tz.description: '**实际用的**时区（回落之后）。'
+paths./stats/daily.get.responses.200.content.application/json.schema.properties.requestedTz.description: 调用方请求的那个，原样回显，这样回落就看得见。
+paths./stats/daily.get.responses.200.content.application/json.schema.properties.truncated.description: 为真表示扫描撞到了行数上限，窗口里最旧的那几天可能少算。
+paths./stats/daily.get.responses.200.content.application/json.schema.properties.activity.properties.days.description: 旧的在前；长度恰好等于生效的 `days`。
+paths./stats/daily.get.responses.200.content.application/json.schema.properties.activity.properties.days.items.properties.date.description: 本地日期，`YYYY-MM-DD`。
+paths./stats/daily.get.responses.200.content.application/json.schema.properties.activity.properties.streak.properties.current.description: 一直到今天的连续天数。今天还没内容时**跳过它**、从昨天往回数 —— 这样这个数不会每天早上都掉回 0。
+paths./stats/daily.get.responses.200.content.application/json.schema.properties.activity.properties.levels.description: 配色用的四道递增阈值。窗口内活跃天不足四天时，这四个值相等。
+paths./stats/daily.get.responses.200.content.application/json.examples.unknownTimezone.summary: '`tz` 认不出来时回落 UTC'
+
+# ── /upload ───────────────────────────────────────────────────────────
+paths./upload.post.description: |
+  一次请求传完一个小文件：写字节、登记文件、在房间里存一条文件条目、广播 `receive`，
+  然后返回条目 id 与 URL。
+
+  表单字段名**永远是 `file`**。
+
+  特殊情况：当 `Content-Type` **逐字符**等于 `text/plain` 时（`text/plain; charset=utf-8` **不算**），
+  请求体被当成一个**文件名**，这个接口就变成了分片上传的初始化 —— 与 `POST /upload/chunk` 完全一样。
+  这是与 Go 实现共有的、刻意保留并且写进文档的怪癖。
+
+  有 `Content-Length` 时，会先拿它跟 `file.limit` 比，**在把文件读进内存之前**就拒掉超大的。
+
+  NOTE (code)：成功响应体是 `{url, id, type}` —— 与 `/text` 同样那三个字段。旧文档在这里还写了
+  `name` / `size` / `uuid` / `expire`，这个服务端不返回它们。`type` 是按文件名探测出的媒体种类，
+  **不是**字面量 `file`。
+paths./upload.post.requestBody.content.multipart/form-data.schema.properties.file.description: 文件字节。part 头里的文件名会成为条目的 `name`。
+paths./upload.post.requestBody.content.text/plain.examples.initAsFilename.summary: 请求体是文件名 —— 这时它充当分片上传的初始化
+paths./upload.post.responses.200.description: 文件已存下并广播（`text/plain` 那种形式则是已初始化）。
+paths./upload.post.responses.200.content.application/json.examples.initialised.summary: 分片上传初始化的响应
+paths./upload.post.responses.400.description: 表单解析不了，或者没有 `file` 字段。
+paths./upload.post.responses.401.description: 无权访问目标房间。
+paths./upload.post.responses.413.description: 文件超过 `file.limit`。
+paths./upload.post.responses.500.description: 写文件或登记失败。
+
+# ── /upload/chunk ─────────────────────────────────────────────────────
+paths./upload/chunk.post.description: |
+  分片上传的第一步。请求体是**文件名**（纯文本），这时还不写任何字节。
+  响应里带着 `uuid`，后面追加分片与收尾都用它。
+
+  ```text
+  POST /upload/chunk          body = 文件名            → {"result":{"uuid":"..."}}
+  POST /upload/chunk/{uuid}   body = 一片的字节        → {}
+  POST /upload/finish/{uuid}  （无 body）              → {"url","id","type"}
+  ```
+
+  这条路由与 `POST /upload` **共用同一个处理器**，区别只在路径和那道 `Content-Type: text/plain` 的关卡。
+paths./upload/chunk.post.requestBody.description: 文件名，纯文本。
+paths./upload/chunk.post.responses.200.description: 一个新的上传 uuid。
+paths./upload/chunk.post.responses.401.description: 无权访问目标房间。
+paths./upload/chunk.post.responses.500.description: 登记这次上传失败。
+
+paths./upload/chunk/{uuid}.post.description: |
+  往一个先前用 `POST /upload/chunk` 初始化过的上传里追加原始字节。每次调用都会更新已记录的体积，
+  累计值会拿去跟 `file.limit` 比。
+
+  分片大小按 `file.chunk`（默认 1 MiB）左右发。**单个请求体上限 16 MiB**，由 HTTP 层管，
+  与 `file.limit` 无关。
+
+  NOTE (code)：鉴权用的是**初始化时记录在上传上的那个房间**，不是这次请求里带的 `?room=`。
+paths./upload/chunk/{uuid}.post.responses.200.description: 分片已追加。
+paths./upload/chunk/{uuid}.post.responses.200.content.application/json.schema.description: 一个空对象（这个服务端在这里**不回 204**）。
+paths./upload/chunk/{uuid}.post.responses.400.description: 那个 uuid 下没有登记过上传。
+paths./upload/chunk/{uuid}.post.responses.401.description: 无权访问这次上传所属的房间。
+paths./upload/chunk/{uuid}.post.responses.413.description: 累计体积会超过 `file.limit`。
+paths./upload/chunk/{uuid}.post.responses.500.description: 分片写不进去。
+
+# ── /upload/finish ────────────────────────────────────────────────────
+paths./upload/finish/{uuid}.post.description: |
+  收尾一次分片上传：生成文件条目（字节能解码成图片、且不超过 32 MiB 时**顺带生成缩略图**）、
+  存下来、广播 `receive`。
+
+  房间取自**这次上传自己的登记**；在这里带 `?room=default` **不能**把它挪出受保护的房间。
+
+  NOTE (code)：成功响应体是 `{url, id, type}`，而 `type` 是按文件名探测出的媒体种类，
+  不是字面量 `file`。
+paths./upload/finish/{uuid}.post.responses.200.description: 文件条目已存下并广播。
+paths./upload/finish/{uuid}.post.responses.400.description: 那个 uuid 下没有登记过上传。
+paths./upload/finish/{uuid}.post.responses.401.description: 无权访问这次上传所属的房间。
+paths./upload/finish/{uuid}.post.responses.500.description: 存消息失败。
+
+# ── /file/{uuid} ──────────────────────────────────────────────────────
+paths./file/{uuid}.get.description: |
+  把文件字节流出去。支持 `Range`（拖视频进度条、断点续传都能用），
+  `If-Modified-Since` / `If-None-Match` 也原样透传。
+
+  - `Content-Type` 是按**原始文件名**猜的，不是按磁盘上的名字（磁盘上是不带扩展名的裸 uuid）。
+    文本类型会带上 `; charset=utf-8`，这样中文 `.txt` 不会被渲染成 Latin-1 乱码。
+  - `?download=true` 会加上 `Content-Disposition: attachment`；否则是 `inline`，浏览器直接渲染。
+  - 鉴权用**文件上记录的那个房间** —— 客户端传的 `?room=` 被忽略，这正是「`?room=default`
+    读不到受保护房间的文件」的原因。
+  - **分享令牌**（`?t=`）只对 `GET` 有效，而且必须指向**这个**文件。界面上那颗分享按钮签的是
+    `content` 类型的令牌、目标是文件 —— 那种也接受，但只在这个内容确实引用该 uuid 时。
+paths./file/{uuid}.get.parameters.4.description: 为 `true` 时强制下载，而不是内联渲染。
+paths./file/{uuid}.get.parameters.5.description: 标准的 HTTP 字节区间；**不消耗**分享令牌的次数。
+paths./file/{uuid}.get.responses.200.description: 文件字节。
+paths./file/{uuid}.get.responses.200.headers.Content-Type.description: 按原始文件名猜出来的。
+paths./file/{uuid}.get.responses.200.headers.Content-Disposition.description: 默认 `inline`，带 `?download=true` 时是 `attachment`。
+paths./file/{uuid}.get.responses.200.headers.Accept-Ranges.description: 有这一条是因为支持区间请求。
+paths./file/{uuid}.get.responses.206.description: 部分响应（Range 请求）。
+paths./file/{uuid}.get.responses.304.description: 未修改（条件请求）。
+paths./file/{uuid}.get.responses.401.description: 无权访问该文件所在的房间，且没有可用的分享令牌。
+paths./file/{uuid}.get.responses.404.description: 没这个文件、它已过期，或者字节已从磁盘上消失。
+paths./file/{uuid}.delete.description: 从磁盘删掉字节、从存储里删掉登记。删一个**本来就没了**的文件不算错（`NotFound` 被容忍）。分享令牌在这里**不管用**：它是只读的。
+paths./file/{uuid}.delete.responses.200.description: 文件已删除。
+paths./file/{uuid}.delete.responses.401.description: 无权访问该文件所在的房间。
+paths./file/{uuid}.delete.responses.404.description: 没这个文件，或者它已过期。
+paths./file/{uuid}.delete.responses.500.description: 字节还在，但删不掉。
+
+# ── /file/{uuid}/{name} ───────────────────────────────────────────────
+paths./file/{uuid}/{name}.parameters.1.description: 只是给人看的 —— 服务端认的是 uuid。
+paths./file/{uuid}/{name}.get.description: 与 `GET /file/{uuid}` 完全相同；末尾那段文件名是为了让 URL 看起来像个真文件名。
+paths./file/{uuid}/{name}.get.responses.200.description: 文件字节。
+paths./file/{uuid}/{name}.get.responses.206.description: 部分响应（Range 请求）。
+paths./file/{uuid}/{name}.get.responses.304.description: 未修改（条件请求）。
+paths./file/{uuid}/{name}.get.responses.401.description: 无权访问该文件所在的房间，且没有可用的分享令牌。
+paths./file/{uuid}/{name}.get.responses.404.description: 没这个文件、它已过期，或者字节已从磁盘上消失。
+paths./file/{uuid}/{name}.delete.description: 与 `DELETE /file/{uuid}` 完全相同。
+paths./file/{uuid}/{name}.delete.responses.200.description: 文件已删除。
+paths./file/{uuid}/{name}.delete.responses.401.description: 无权访问该文件所在的房间。
+paths./file/{uuid}/{name}.delete.responses.404.description: 没这个文件，或者它已过期。
