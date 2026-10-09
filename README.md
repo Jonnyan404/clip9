@@ -214,27 +214,6 @@ curl "http://localhost:9501/content?room=work"     # 某个房间的历史
 
 ---
 
-## ☕ 支持项目
-
-如果这个项目对你有帮助，欢迎通过以下方式支持我们：
-
-### 💰 赞赏捐助
-
-你的支持是我们继续维护和改进项目的动力！
-
-| 方式 | 二维码 |
-|------|--------|
-| **微信** | <img src="https://github.com/Jonnyan404/cloud-clipboard-go/blob/main/wechat.png" width="300" alt="微信赞赏码"> |
-
-
-
-### 🌟 其他支持方式
-
-- [【腾讯云】2核2G云服务器新老同享 99元/年，续费同价](https://cloud.tencent.com/act/cps/redirect?redirect=6150&cps_key=0b1dfaf9bb573dac05abef76202dc8cc&from=console)
-- [【阿里云】2核2G云服务器新老同享 99元/年，续费同价](https://www.aliyun.com/daily-act/ecs/activity_selection?userCode=79h2wrag)
-
----
-
 ## 🗂️ 项目结构
 
 <details>
@@ -282,4 +261,23 @@ cargo test  --workspace
 与 [yurenchen000/cloud-clipboard](https://github.com/yurenchen000/cloud-clipboard)，
 以及它的 Go 前身 [Jonnyan404/cloud-clipboard-go](https://github.com/Jonnyan404/cloud-clipboard-go)。
 
-如果这个项目帮到了你，欢迎 ⭐ Star，或到应用内「赞赏支持」请作者喝杯咖啡。
+---
+
+## ☕ 支持项目
+
+如果这个项目帮到了你，欢迎 ⭐ Star，或通过以下方式支持我们：
+
+### 💰 赞赏捐助
+
+你的支持是我们继续维护和改进项目的动力！
+
+| 方式 | 二维码 |
+|------|--------|
+| **微信** | <img src="https://github.com/Jonnyan404/cloud-clipboard-go/blob/main/wechat.png" width="300" alt="微信赞赏码"> |
+
+
+
+### 🌟 其他支持方式
+
+- [【腾讯云】2核2G云服务器新老同享 99元/年，续费同价](https://cloud.tencent.com/act/cps/redirect?redirect=6150&cps_key=0b1dfaf9bb573dac05abef76202dc8cc&from=console)
+- [【阿里云】2核2G云服务器新老同享 99元/年，续费同价](https://www.aliyun.com/daily-act/ecs/activity_selection?userCode=79h2wrag)
