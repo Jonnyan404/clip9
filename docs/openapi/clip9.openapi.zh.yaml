@@ -4,7 +4,7 @@
 #   然后跑 `python3 docs/openapi/build-zh.py`。
 #
 # 结构（路径 / 字段 / 必填 / 示例）**全部来自英文那份**，所以两份不会漂。
-# 已译 289 条，未译（保留英文）161 条。
+# 已译 450 条，未译（保留英文）0 条。
 openapi: 3.1.0
 info:
   title: clip9 API
@@ -1079,7 +1079,7 @@ paths:
                     type: string
                   tz:
                     type: string
-                    description: '''''''''''''''**实际用的**时区（回落之后）。'''''''''''''''
+                    description: '''''''''''''''''''''''''''''''**实际用的**时区（回落之后）。'''''''''''''''''''''''''''''''
                   requestedTz:
                     type: string
                     description: 调用方请求的那个，原样回显，这样回落就看得见。
@@ -1171,7 +1171,7 @@ paths:
                       - 8
                       - 12
                 unknownTimezone:
-                  summary: '''''''''''''''`tz` 认不出来时回落 UTC'''''''''''''''
+                  summary: '''''''''''''''''''''''''''''''`tz` 认不出来时回落 UTC'''''''''''''''''''''''''''''''
                   value:
                     room: ''
                     tz: UTC
@@ -2427,7 +2427,7 @@ paths:
       - name: q
         in: query
         required: false
-        description: '''''''`1` 表示这次访问来自扫二维码。'''''''
+        description: '''''''''''''''`1` 表示这次访问来自扫二维码。'''''''''''''''
         schema:
           type: string
           enum:
@@ -3061,7 +3061,7 @@ paths:
       - name: expr
         in: query
         required: true
-        description: '''`<分> <时> <日> <月> <周>`。**只支持 5 个字段**；支持区间、步长、列表与英文名。'''
+        description: '''''''`<分> <时> <日> <月> <周>`。**只支持 5 个字段**；支持区间、步长、列表与英文名。'''''''
         schema:
           type: string
         example: '*/30 9-18 * * 1-5'
@@ -3079,7 +3079,7 @@ paths:
       - authQuery: []
       responses:
         '200':
-          description: '校验结果 —— `valid: true` 带接下来的触发时刻，或 `valid: false` 带一句解释。'
+          description: '''校验结果 —— `valid: true` 带接下来的触发时刻，或 `valid: false` 带一句解释。'''
           content:
             application/json:
               schema:
@@ -3452,7 +3452,7 @@ paths:
                     keepHistory: false
                     sentAt: 1758000000
         '400':
-          description: '''`?at=` 不对、渲染失败，或者任务非法。'''
+          description: '''''''`?at=` 不对、渲染失败，或者任务非法。'''''''
           content:
             application/json:
               schema:
@@ -3637,68 +3637,43 @@ components:
     bearerAuth:
       type: http
       scheme: bearer
-      description: '`Authorization: Bearer <credential>`, where the credential is the global password,
-        a
+      description: '`Authorization: Bearer <凭据>`，凭据可以是全局密码、房间密码，或 `POST /auth/token` 换来的会话令牌。
 
-        room password, or a session token from `POST /auth/token`.
+        头里的值如果不是「以 `Bearer` 开头的两个空格分隔的词」，就**原样**当凭据用 ——
 
-
-        A header whose value is not two space-separated words starting with `Bearer` is used
-
-        **verbatim** as the credential, so `Authorization: my-password` also works. Note that
-
-        `Bearer a b` (three parts) is likewise taken whole, rather than as `a b`.
+        这样手写的 `Authorization: mypass` 也能用。
 
         '
     authQuery:
       type: apiKey
       in: query
       name: auth
-      description: 'The same credential, as `?auth=`. Consulted only when the `Authorization` header is
+      description: '同一份凭据，走 `?auth=`。**只在** `Authorization` 头缺失或为空时才看它。为 Apple 快捷指令保留的。
 
-        absent or empty. Kept for Apple Shortcuts. **Never put a password in a shareable URL** —
-
-        query strings land in browser history and server access logs.
+        ⚠️ **永远不要把密码放进可以分享的 URL** —— 查询串会进浏览器历史和访问日志。
 
         '
     shareTokenQuery:
       type: apiKey
       in: query
       name: t
-      description: 'A share token, which authorises **read** access to the one entry or file it was issued
-
-        for. Read-only: write endpoints ignore it.
-
-        '
+      description: 分享令牌，授予对**它被签出来的那一条内容或文件**的**读**权限。只读：写接口一律忽略它。
     sharePassword:
       type: apiKey
       in: header
       name: X-Share-Password
-      description: 'The password of a password-protected share. Never sent in the URL, because query strings
-
-        are logged.
-
-        '
+      description: 受密码保护的分享的密码。**永远不进 URL**，因为查询串会被记日志。
     taskToken:
       type: apiKey
       in: header
       name: X-Task-Token
-      description: 'The task token of a `single`-tier automation (also accepted as `?taskToken=`). Issued
-
-        once, when the task is created.
-
-        '
+      description: '`single` 档定时任务的任务令牌（也接受 `?taskToken=`）。任务创建时**只发一次**。'
   parameters:
     RoomQuery:
       name: room
       in: query
       required: false
-      description: 'Room name. Empty or absent (or the literal `default`) means the `default` room. Names
-        are
-
-        case-sensitive; only surrounding whitespace is trimmed.
-
-        '
+      description: 房间名。空、不传、或者字面量 `default` 都表示 `default` 房间。名字**区分大小写**，只去首尾空白。
       schema:
         type: string
       example: home
@@ -3706,11 +3681,9 @@ components:
       name: room
       in: query
       required: false
-      description: 'Room name. On endpoints that also accept "no room at all" as a distinct case, omitting
+      description: '房间名。在那些「完全不传」也是一种独立情形的接口上，不传与传空**可能不一样** ——
 
-        this parameter entirely may differ from sending it empty — `GET /content/latest` is the
-
-        one to watch: `?room=` is the `default` room, `?all=1` is "newest anywhere".
+        `GET /content/latest` 就是要留神的那一个：`?room=` 是 `default` 房间，`?all=1` 才是「哪都行，取最新」。
 
         '
       schema:
@@ -3720,7 +3693,7 @@ components:
       name: auth
       in: query
       required: false
-      description: Credential, used only when the `Authorization` header is absent or empty.
+      description: 凭据，只在 `Authorization` 头缺失或为空时才用。
       schema:
         type: string
         writeOnly: true
@@ -3729,13 +3702,11 @@ components:
       name: name
       in: query
       required: false
-      description: 'The **device display name** the sender claims. It is cleaned (control characters
+      description: '发送方自称的**设备显示名**。会先清洗（去掉控制字符、去首尾空白）、截到 32 个**字符**，
 
-        removed, trimmed) and truncated to 32 **characters**, then stored as
+        再存成 `senderDevice.name`。为空时服务端从 User-Agent 推一个名字。
 
-        `senderDevice.name`. When empty the server infers a name from the User-Agent. Not
-
-        interchangeable with `client`.
+        它和 `client` **不是一回事**，不能互换。
 
         '
       schema:
@@ -3746,12 +3717,7 @@ components:
       name: client
       in: query
       required: false
-      description: 'A **stable client id**, stored as `senderClientID` and used to decide which messages
-        are
-
-        the caller''s own. Set it once per installation.
-
-        '
+      description: 一个**稳定的客户端 id**，存成 `senderClientID`，用来判断哪些消息是调用方自己发的。**每台安装设一次**即可。
       schema:
         type: string
       example: web-1a2b
@@ -3759,11 +3725,9 @@ components:
       name: format
       in: query
       required: false
-      description: 'Explicit representation selector. `raw` (aliases `text`, `plain`) forces raw bytes;
+      description: '显式指定表示形式。`raw`（别名 `text` / `plain`）强制原始字节；`json` 强制 JSON。
 
-        `json` forces JSON. Any other non-empty value is a `400 unsupported_format` — it never
-
-        falls back. Overrides `?json=` and `Accept`.
+        ⚠️ 其他任何非空值都是 `400 unsupported_format` —— **绝不回落**。它压过 `?json=` 与 `Accept`。
 
         '
       schema:
@@ -3778,12 +3742,7 @@ components:
       name: json
       in: query
       required: false
-      description: 'Legacy JSON switch. `1` or `true` selects JSON; anything else is ignored. Retained
-        for
-
-        existing clients — new code should use `?format=json`.
-
-        '
+      description: 早期的 JSON 开关。`1` 或 `true` 选 JSON，其他值忽略。为老客户端保留 —— 新代码请用 `?format=json`。
       schema:
         type: string
         enum:
@@ -3794,7 +3753,7 @@ components:
       name: t
       in: query
       required: false
-      description: A share token. When present it is tried after the room credential.
+      description: 分享令牌。给了的话，它在房间凭据**之后**再试一次。
       schema:
         type: string
       example: eyJ0eXAiOiJzaGFyZSJ9.9f2c
@@ -3802,7 +3761,7 @@ components:
       name: t
       in: query
       required: true
-      description: The share token to describe.
+      description: 要描述的分享令牌。
       schema:
         type: string
       example: eyJ0eXAiOiJzaGFyZSJ9.9f2c
@@ -3810,7 +3769,7 @@ components:
       name: X-Share-Password
       in: header
       required: false
-      description: The password of a password-protected share. Never placed in the URL.
+      description: 受密码保护的分享的密码。**绝不**放进 URL。
       schema:
         type: string
         writeOnly: true
@@ -3819,18 +3778,14 @@ components:
       name: taskToken
       in: query
       required: false
-      description: 'The task token of a `single`-tier automation, as an alternative to the `X-Task-Token`
-
-        header (which takes precedence).
-
-        '
+      description: '`single` 档定时任务的任务令牌，作为 `X-Task-Token` 头的替代（头优先）。'
       schema:
         type: string
         writeOnly: true
       example: f4a2c9e1b7d3450689abcdef01234567
   responses:
     OnlyGet:
-      description: This endpoint only accepts GET.
+      description: 这个接口只接受 GET。
       content:
         application/json:
           schema:
@@ -3842,7 +3797,7 @@ components:
                 error: Only GET is allowed
                 message: 仅允许 GET 请求
     RoomForbidden:
-      description: The credential cannot open this room.
+      description: 这个凭据打不开该房间。
       content:
         application/json:
           schema:
@@ -3854,7 +3809,7 @@ components:
                 error: Room forbidden
                 message: 无权访问该房间
     OnlyPost:
-      description: This endpoint only accepts POST.
+      description: 这个接口只接受 POST。
       content:
         application/json:
           schema:
@@ -3866,7 +3821,7 @@ components:
                 error: Only POST is allowed
                 message: 仅允许 POST 请求
     OnlyGetPost:
-      description: This endpoint accepts GET and POST.
+      description: 这个接口接受 GET 与 POST。
       content:
         application/json:
           schema:
@@ -3878,12 +3833,9 @@ components:
                 error: Only GET and POST are allowed
                 message: 仅允许 GET / POST 请求
     MethodNotAllowed:
-      description: 'The method is not one this path accepts. Note the wording differs per path family:
-        the
+      description: '这个方法不是这条路径接受的。⚠️ 措辞**按路径族不同**：`/file/*` 用的是下面那句通用文案，
 
-        `/file/*` routes use the generic message below, while other paths name the allowed
-
-        methods.
+        其他路径会把允许的方法名点出来。
 
         '
       content:
@@ -3897,11 +3849,7 @@ components:
                 error: Method not allowed
                 message: 方法不允许
     UnsupportedTaskAction:
-      description: 'The method or action is not supported on `/tasks/{id}*`. The message lists what is
-
-        supported, which is more useful to a user than "POST only".
-
-        '
+      description: '`/tasks/{id}*` 上不支持这个方法或动作。文案里会把支持的列出来 —— 对用户来说比「只允许 POST」有用得多。'
       content:
         application/json:
           schema:
@@ -3913,7 +3861,7 @@ components:
                 error: Unsupported method or action
                 message: 仅支持 DELETE /tasks/:id、POST /tasks/:id/run、POST /tasks/:id/toggle
     InvalidRequestBody:
-      description: The request body is not valid JSON.
+      description: 请求体不是合法 JSON。
       content:
         application/json:
           schema:
@@ -3925,7 +3873,7 @@ components:
                 error: Invalid request body
                 message: 无效的请求体
     UnsupportedFormat:
-      description: The `?format=` value is not one of raw/json.
+      description: '`?format=` 的值不是 raw / json 之一。'
       content:
         application/json:
           schema:
@@ -3939,11 +3887,9 @@ components:
   schemas:
     Error:
       type: object
-      description: 'The single error envelope. Every error path returns exactly these three fields with
+      description: '**唯一**的错误信封。每条错误路径都只返回这三个字段，`Content-Type` 恒为
 
-        `Content-Type: application/json; charset=utf-8`, never varying by `Accept`, and with a
-
-        trailing newline.
+        `application/json; charset=utf-8`，**绝不**随 `Accept` 变化，并且**末尾带一个换行**。
 
         '
       required:
@@ -3954,18 +3900,17 @@ components:
       properties:
         code:
           type: string
-          description: Machine code in snake_case. Stable once shipped — do not branch on anything else.
+          description: 机器码，蛇形命名。**一旦发布就稳定** —— 别拿别的字段做判断分支。
           examples:
           - text_too_long
         error:
           type: string
-          description: Plain English, for logs and English-speaking users.
+          description: 英文原句，给日志和英语用户看。
           examples:
           - Text too long
         message:
           type: string
-          description: Plain Chinese, shown verbatim by clients. Limit errors embed live server config
-            values.
+          description: 中文原句，客户端**原样显示**。限额类错误里会嵌入服务端**当前**的配置值。
           examples:
           - 文本内容超出限制 (最大 4096 字符)
       examples:
@@ -3974,12 +3919,7 @@ components:
         message: 文本内容超出限制 (最大 4096 字符)
     Truthy:
       type: string
-      description: 'A truthy switch. Truthy values are `1`, `true`, `yes` and `on` (case-insensitive,
-        trimmed).
-
-        Everything else is falsy.
-
-        '
+      description: 一个「真值」开关。为真的值：`1`、`true`、`yes`、`on`（忽略大小写、去首尾空白）。其余一律为假。
       enum:
       - '1'
       - 'true'
@@ -3989,12 +3929,7 @@ components:
       - '1'
     BoardColumn:
       type: string
-      description: 'Board column. `todo` is the default — a missing or empty value normalises to it. Names
-        are
-
-        matched case-insensitively and trimmed.
-
-        '
+      description: 看板列。`todo` 是默认 —— 缺失或空值都归一到它。列名**忽略大小写并去首尾空白**。
       enum:
       - todo
       - doing
@@ -4003,7 +3938,7 @@ components:
       - doing
     ServerInfo:
       type: object
-      description: The `GET /server` response. Note it carries **no** `version` and **no** size limits.
+      description: '`GET /server` 的响应。⚠️ 注意它**不带** `version`，也**不带**大小限额。'
       required:
       - server
       - auth
@@ -4014,25 +3949,22 @@ components:
       properties:
         server:
           type: string
-          description: The WebSocket URL, with the scheme already switched to `ws` / `wss`.
+          description: WebSocket 地址，协议头已经换成 `ws` / `wss`。
           examples:
           - ws://127.0.0.1:9501/push
         auth:
           type: boolean
-          description: Whether the resolved context requires a password. Without `?room=` this reflects
-            the global password only.
+          description: 解析出的上下文是否**需要**密码。不带 `?room=` 时它只反映全局密码。
         authorized:
           type: boolean
-          description: 'Whether the presented credential is good. Starts at `true` — with no `?room=`
-            and no
+          description: '出示的凭据是否可用。⚠️ 初值是 `true` —— 不带 `?room=`、也没有全局密码时，
 
-            global password it is `true` even with no credential at all.
+            **连凭据都没有也是 `true`**。
 
             '
         roomProtected:
           type: boolean
-          description: Whether the room named by `?room=` requires a password. Always `false` when `?room=`
-            was not supplied.
+          description: '`?room=` 点名的房间是否要密码。**没传 `?room=` 时恒为 `false`**。'
         config:
           type: object
           properties:
@@ -4042,20 +3974,15 @@ components:
                 history:
                   type: integer
                   format: int64
-                  description: Entries retained per room. Also the default `GET /content` page size.
+                  description: 每个房间保留多少条。也是 `GET /content` 的默认每页条数。
                 roomList:
                   type: boolean
-                  description: Whether `GET /rooms` is enabled.
+                  description: '`GET /rooms` 有没有开。'
         automation:
           $ref: '#/components/schemas/AutomationCapability'
     AutomationCapability:
       type: object
-      description: 'Describes what the caller may do with `/tasks`. When automation is disabled server-wide
-        the
-
-        object is just `{"enabled": false}`.
-
-        '
+      description: '描述调用方对 `/tasks` 能做什么。定时任务整体关掉时，这个对象就是 `{"enabled": false}`。'
       required:
       - enabled
       properties:
@@ -4063,10 +3990,10 @@ components:
           type: boolean
         room:
           type: string
-          description: The room the request resolves to.
+          description: 这次请求解析到的房间。
         tier:
           type: string
-          description: Policy tier. `admin` = global password; `none` = not allowed.
+          description: 策略档位。`admin` = 全局密码；`none` = 不允许。
           enum:
           - admin
           - room
@@ -4078,14 +4005,14 @@ components:
           type: boolean
         max:
           type: integer
-          description: Maximum number of tasks; `0` means unlimited.
+          description: 任务数上限；`0` 表示不限。
         defaultTZ:
           type: string
           examples:
           - Asia/Shanghai
         vars:
           type: array
-          description: Template variable names the UI may offer.
+          description: 界面可以提供哪些模板变量名。
           items:
             type: string
           examples:
@@ -4099,10 +4026,9 @@ components:
             - room
         actions:
           type: array
-          description: 'The action library, as metadata only. `key` / `groupKey` are i18n keys from the
-            front
+          description: '动作库，只是元数据。`key` / `groupKey` 是前端语言文件里的 i18n **键** ——
 
-            end''s locale files — the server ships keys, never translations.
+            服务端只发键，从不发译文。
 
             '
           items:
@@ -4133,7 +4059,7 @@ components:
           - actionTrimLines
         params:
           type: array
-          description: Empty (and omitted) for actions that take no parameters.
+          description: 不需要参数的动作这里是空的（并且省略）。
           items:
             $ref: '#/components/schemas/AutomationParam'
     AutomationParam:
@@ -4152,12 +4078,12 @@ components:
           - actionParamFind
         type:
           type: string
-          description: Omitted for a single-line text input; `select` for a choice.
+          description: 单行文本输入时省略；`select` 表示下拉选择。
           enum:
           - select
         options:
           type: array
-          description: Omitted when empty.
+          description: 为空时省略。
           items:
             type: object
             required:
@@ -4170,7 +4096,7 @@ components:
                 type: string
         visibleWhen:
           type: object
-          description: Omitted when absent. Shows the param only when another param equals a value.
+          description: 没有时省略。用于「当另一个参数等于某值时，才显示这个参数」。
           required:
           - key
           - equals
@@ -4186,11 +4112,11 @@ components:
       properties:
         password:
           type: string
-          description: The global password or a room password. An empty value is rejected with `password_required`.
+          description: 全局密码或房间密码。空值会被拒，回 `password_required`。
           writeOnly: true
     SessionToken:
       type: object
-      description: A session token. Valid for about one hour.
+      description: 一枚会话令牌。有效期约一小时。
       required:
       - token
       - expiresAt
@@ -4201,13 +4127,13 @@ components:
         expiresAt:
           type: integer
           format: int64
-          description: Unix **seconds**.
+          description: Unix **秒**。
         scope:
           type: string
-          description: '`global` for a token minted from the global password, `""` for a room password.'
+          description: 由全局密码签出的令牌是 `global`；房间密码签出的是 `""`。
     TextSendResult:
       type: object
-      description: Response of `POST /text` (both the create and overwrite paths).
+      description: '`POST /text` 的响应（新建与改写两条路都是它）。'
       required:
       - url
       - id
@@ -4220,19 +4146,18 @@ components:
           - http://localhost:9501/content/7
         id:
           type: string
-          description: The entry id, **as a string**.
+          description: 条目 id，**是字符串**。
           examples:
           - '7'
         type:
           type: string
           const: text
     ContentEntry:
-      description: 'The JSON projection used by `GET /content` and `GET /content/{id}?format=json`.
+      description: '`GET /content` 与 `GET /content/{id}?format=json` 用的 JSON 投影。
 
+        分支要看的是**有没有 `content`（文本）还是 `name`（文件）**。
 
-        Branch on the presence of `content` (text) versus `name` (file). Do **not** branch on
-
-        `type`: for a file it holds the detected media kind, not the word `file`.
+        ⚠️ **不要**拿 `type` 分支：文件时它装的是探测出的媒体种类，不是 `file` 这个词。
 
         '
       oneOf:
@@ -4251,28 +4176,25 @@ components:
           const: text
         content:
           type: string
-          description: Omitted when empty (the empty string and "no content" are indistinguishable).
+          description: 为空时省略（空串与「没有正文」在这里分不出来）。
         id:
           type: string
-          description: Entry id as a string.
+          description: 条目 id，字符串。
         timestamp:
           type: integer
           format: int64
-          description: Unix **seconds**. Second-granular, so it repeats within a second — never use it
-            as a cursor.
+          description: Unix **秒**。秒级精度，同一秒里会重复 —— **绝不要**拿它当游标。
         room:
           type: string
         senderIP:
           type: string
         senderClientID:
           type: string
-          description: Omitted when empty.
+          description: 为空时省略。
         senderDevice:
-          description: 'The sender''s device info — a free-form string map, **not** the stricter `DeviceMeta`
+          description: '发送方的设备信息 —— 一张自由形状的字符串表，**不是** WebSocket `connect` 事件用的那个更严格的
 
-            used by WebSocket `connect` events. `null` when unknown, which is distinct from `{}`,
-
-            so clients should handle all three states.
+            `DeviceMeta`。未知时是 `null`，而它与 `{}` **不是一回事**，所以客户端三种状态都要处理。
 
             '
           oneOf:
@@ -4282,15 +4204,14 @@ components:
           $ref: '#/components/schemas/BoardColumn'
         source:
           type: string
-          description: Omitted unless set. `automation` marks a message posted by a scheduled task.
+          description: 没设就省略。`automation` 表示这条是定时任务发的。
         scheduledAt:
           type: integer
           format: int64
-          description: Omitted unless set. The instant a task was scheduled for; differs from `timestamp`
-            when backfilled.
+          description: 没设就省略。任务**计划**触发的那一刻；补发时它与 `timestamp` 不同。
         late:
           type: boolean
-          description: Omitted unless true. The message was sent late, after missing its window.
+          description: 不为真就省略。表示这条发晚了，错过了自己的窗口。
     FileContentEntry:
       type: object
       required:
@@ -4307,7 +4228,7 @@ components:
       properties:
         type:
           type: string
-          description: The media kind detected from the filename.
+          description: 按文件名探测出的媒体种类。
           enum:
           - image
           - audio
@@ -4320,26 +4241,19 @@ components:
         size:
           type: integer
           format: int64
-          description: Size on disk, in bytes. The entry itself carries no body — fetch the bytes from
-            `url`.
+          description: 磁盘上的字节数。条目本身不带正文 —— 字节从 `url` 取。
         uuid:
           type: string
-          description: Same value as `cache`.
+          description: 与 `cache` 同一个值。
         cache:
           type: string
         thumbnail:
           type: string
-          description: 'A `data:image/jpeg;base64,…` thumbnail, or empty when none was generated (which
-            is
-
-            normal for archives, PDFs and videos).
-
-            '
+          description: 一个 `data:image/jpeg;base64,…` 缩略图；没生成时是空串（压缩包、PDF、视频没生成是正常的）。
         url:
           type: string
           format: uri
-          description: Absolute download URL **with the filename already appended**, so it can be used
-            as-is.
+          description: 绝对下载地址，**文件名已经拼好了**，可以直接用。
         id:
           type: string
         timestamp:
@@ -4348,7 +4262,7 @@ components:
         expire:
           type: integer
           format: int64
-          description: Unix seconds; `0` means it never expires.
+          description: Unix 秒；`0` 表示永不过期。
         room:
           type: string
         senderIP:
@@ -4370,7 +4284,7 @@ components:
           type: boolean
     ContentList:
       type: object
-      description: A page of history, ascending. An empty array means there is no more history.
+      description: 一页历史，升序。**空数组表示没有更多历史了**。
       required:
       - messages
       properties:
@@ -4380,12 +4294,7 @@ components:
             $ref: '#/components/schemas/ContentEntry'
     LatestTextEntry:
       type: object
-      description: '`GET /content/latest` for a text entry — a **compact** shape, not the rich projection
-        used
-
-        by `GET /content`.
-
-        '
+      description: '`GET /content/latest` 返回文本条目时的形状 —— 是**紧凑**的，不是 `GET /content` 那个丰富投影。'
       required:
       - type
       - id
@@ -4405,12 +4314,8 @@ components:
           $ref: '#/components/schemas/BoardColumn'
     LatestFileEntry:
       type: object
-      description: '`GET /content/latest` for a file entry — a **compact** shape. Note it has no `cache`
-        / `room`
-
-        / `senderIP`, unlike the `GET /content` projection.
-
-        '
+      description: '`GET /content/latest` 返回文件条目时的形状 —— 也是**紧凑**的。⚠️ 它没有 `cache` / `room` / `senderIP`，与
+        `GET /content` 的投影不同。'
       required:
       - type
       - name
@@ -4461,7 +4366,7 @@ components:
           type: string
         type:
           type: string
-          description: The entry's own kind (`text` or `file`), not the media kind.
+          description: 条目自己的种类（`text` / `file`），**不是**媒体种类。
         column:
           $ref: '#/components/schemas/BoardColumn'
     RoomListResponse:
@@ -4485,7 +4390,7 @@ components:
       properties:
         name:
           type: string
-          description: Room name. The `default` room is reported as an **empty string**.
+          description: 房间名。`default` 房间报成**空串**。
         messageCount:
           type: integer
           format: int64
@@ -4495,17 +4400,16 @@ components:
         lastActive:
           type: integer
           format: int64
-          description: Unix seconds. Bumped to "now" while devices are connected.
+          description: Unix 秒。有设备连着时会不断刷成「现在」。
         isActive:
           type: boolean
-          description: True while at least one device is connected.
+          description: 至少有一台设备连着时为真。
         isProtected:
           type: boolean
-          description: 'Whether the room **actually** needs a password (an `{"open": true}` room reports
-            `false`).'
+          description: '房间**确实**要不要密码（配了 `{"open": true}` 的房间报 `false`）。'
     UploadedEntry:
       type: object
-      description: Response of a completed upload (`/upload` with a file part, or `/upload/finish/{uuid}`).
+      description: 一次上传完成后的响应（`/upload` 带文件 part，或 `/upload/finish/{uuid}`）。
       required:
       - url
       - id
@@ -4514,12 +4418,12 @@ components:
         url:
           type: string
           format: uri
-          description: The entry URL (`/content/{id}`), not the raw file URL.
+          description: '**条目**地址（`/content/{id}`），不是文件的裸地址。'
         id:
           type: string
         type:
           type: string
-          description: The media kind detected from the filename.
+          description: 按文件名探测出的媒体种类。
           enum:
           - image
           - audio
@@ -4529,8 +4433,7 @@ components:
           - file
     ChunkInitResult:
       type: object
-      description: Response of the chunked-upload initialiser (`/upload/chunk`, or `/upload` with a `text/plain`
-        filename).
+      description: 分片上传初始化的响应（`/upload/chunk`，或 `/upload` 带一个 `text/plain` 的文件名）。
       required:
       - result
       properties:
@@ -4543,48 +4446,45 @@ components:
               type: string
               format: uuid
     UploadResult:
-      description: Either a completed upload, or (for the `text/plain` filename form) an initialisation
-        result.
+      description: 要么是一次完成的上传，要么（`text/plain` 文件名那种形式）是一个初始化结果。
       oneOf:
       - $ref: '#/components/schemas/UploadedEntry'
       - $ref: '#/components/schemas/ChunkInitResult'
     ShareRequest:
       type: object
-      description: 'Body of `POST /share`. Every field is optional (an empty body means all defaults),
-        but
+      description: '`POST /share` 的请求体。所有字段可选（空体即全部默认），
 
-        **unknown fields are rejected** — a typo must not silently drop a limit.
+        但 ⚠️ **未知字段会被拒** —— 一个拼写错误绝不能**悄悄**丢掉用户配的限制。
 
         '
       additionalProperties: false
       properties:
         type:
           type: string
-          description: '`content` or `file`. Omitted → `400 missing_type`.'
+          description: '`content` 或 `file`。不传 → `400 missing_type`。'
           enum:
           - content
           - file
         id:
           type: string
-          description: 'For `type: content`, the entry id as a string. Also accepted for `type: file`
-            in place of `uuid`.'
+          description: '`type: content` 时是条目 id（字符串）。`type: file` 时也可以用它代替 `uuid`。'
         uuid:
           type: string
-          description: 'For `type: file`, the file uuid. Takes precedence over `id`.'
+          description: '`type: file` 时是文件 uuid。**优先于** `id`。'
         ttl:
           type: integer
           format: int64
-          description: Seconds until expiry. Default 900; clamped to 60 – 86400.
+          description: 过期秒数。默认 900；夹到 60 – 86400。
           minimum: 60
           maximum: 86400
         maxUses:
           type: integer
           format: int64
-          description: Maximum number of reads. `0` (default) means unlimited.
+          description: 最多能被读几次。`0`（默认）表示不限。
           minimum: 0
         password:
           type: string
-          description: Optional password, required from the recipient in `X-Share-Password`.
+          description: 可选密码，之后收件方必须带 `X-Share-Password`。
           writeOnly: true
     ShareCreatedContent:
       type: object
@@ -4626,15 +4526,15 @@ components:
         url:
           type: string
           format: uri
-          description: The share page. The same address serves crawlers and humans.
+          description: 分享页。**爬虫和人看到的是同一个地址**。
         pageUrl:
           type: string
           format: uri
-          description: Kept for compatibility; currently the same value as `url`.
+          description: 为兼容保留；目前与 `url` 同值。
         rawUrl:
           type: string
           format: uri
-          description: Reaches the content endpoint directly with the same token.
+          description: 带同一枚令牌直达内容接口。
         visits:
           type: integer
         scans:
@@ -4691,10 +4591,7 @@ components:
           type: integer
     ShareInfo:
       type: object
-      description: '`GET /share?t=` — what the landing page needs before fetching anything. Does not consume
-        a use.
-
-        '
+      description: '`GET /share?t=` —— 落地页在取任何东西之前需要的东西。**不消耗次数**。'
       required:
       - type
       - expiresAt
@@ -4708,7 +4605,7 @@ components:
           - file
         kind:
           type: string
-          description: The target's kind (`text` or `file`).
+          description: 目标的种类（`text` / `file`）。
           enum:
           - text
           - file
@@ -4724,29 +4621,26 @@ components:
           format: int64
         used:
           type: integer
-          description: Present only for a limited share that has a live record.
+          description: '**只**在「限次且还有活的记录」的分享上出现。'
         needsPassword:
           type: boolean
         uuid:
           type: string
-          description: Present for file targets.
+          description: 目标是文件时才有。
         name:
           type: string
-          description: Present for file targets.
+          description: 目标是文件时才有。
         size:
           type: integer
           format: int64
-          description: Present for file targets.
+          description: 目标是文件时才有。
         previewToken:
           type: string
-          description: 'Present **only** when the share is password-protected. Safe to embed in `<img
-            src>` etc.
-
-            '
+          description: '**只**在分享受密码保护时出现。可以安全地塞进 `<img src>` 之类。'
         previewExpiresAt:
           type: integer
           format: int64
-          description: Present alongside `previewToken`.
+          description: 与 `previewToken` 一起出现。
     ShareList:
       type: object
       required:
@@ -4759,10 +4653,10 @@ components:
           type: string
         total:
           type: integer
-          description: Total records for the room (not just this page).
+          description: 该房间的记录**总数**（不只是这一页）。
         limit:
           type: integer
-          description: The page size actually used.
+          description: 实际用的每页条数。
         records:
           type: array
           items:
@@ -4788,7 +4682,7 @@ components:
       properties:
         jti:
           type: string
-          description: Identifies the share in this list. The token itself is never included.
+          description: 在这份列表里标识这个分享。**令牌本身永远不在里面**。
         type:
           type: string
           enum:
@@ -4805,7 +4699,7 @@ components:
           type: string
         name:
           type: string
-          description: Text shares carry a first-line summary; file shares carry the filename.
+          description: 文本分享带首行摘要；文件分享带文件名。
         size:
           type: integer
           format: int64
@@ -4826,7 +4720,7 @@ components:
           type: integer
         password:
           type: boolean
-          description: Whether a password is set — never the hash.
+          description: 只报**有没有**设密码 —— 绝不是哈希。
         expired:
           type: boolean
     ShareVisitRequest:
@@ -4835,10 +4729,10 @@ components:
       properties:
         token:
           type: string
-          description: The share token. May also be supplied as `?t=`.
+          description: 分享令牌。也可以走 `?t=`。
         qr:
           type: boolean
-          description: Marks the visit as a QR scan in addition to an open.
+          description: 在「打开」之外，把这次访问再记成一次扫码。
     ShareVisitResult:
       type: object
       required:
@@ -4852,26 +4746,16 @@ components:
           const: true
         tracked:
           type: boolean
-          description: '`false` when the same visitor reported again within ten minutes.'
+          description: 同一访客十分钟内再报时为 `false`。
         visits:
           type: integer
         scans:
           type: integer
     SenderDevice:
       type: object
-      description: 'The `senderDevice` map attached to a content entry. Unlike the WebSocket `connect`
-        event''s
+      description: '挂在内容条目上的 `senderDevice` 表。与 WebSocket `connect` 事件的 `DeviceMeta` 不同，
 
-        `DeviceMeta`, this is a plain string map: there is no `id` or `device` key, and `type`
-
-        holds the lowercase device class.
-
-
-        A message with no User-Agent at all — a scheduled task — carries only
-
-        `{name, type: "Automation"}`; the server deliberately does not parse a UA there, because
-
-        that yields whitespace-only `os` / `browser` values that would render as a blank label.
+        这是**一张普通字符串表**：没有 `id` 也没有 `device` 键，`type` 装的是小写的设备类别。
 
         '
       additionalProperties:
@@ -4879,7 +4763,7 @@ components:
       properties:
         type:
           type: string
-          description: Device class, or `Automation` for a message posted by a scheduled task.
+          description: 设备类别；定时任务发的消息是 `Automation`。
           enum:
           - desktop
           - smartphone
@@ -4887,13 +4771,13 @@ components:
           - Automation
         name:
           type: string
-          description: The name the client declared via `?name=`. Absent when it declared none.
+          description: 客户端用 `?name=` 声明的名字。它没声明时**不出现**。
         os:
           type: string
-          description: '`<family> <major>`, e.g. `iOS 17`. Trimmed, so an unknown family is just `Other`.'
+          description: '`<家族> <主版本>`，如 `iOS 17`。会去首尾空白，所以认不出的家族就只是 `Other`。'
         browser:
           type: string
-          description: '`<family> <major>`, e.g. `Safari 17` or `curl 8`.'
+          description: '`<家族> <主版本>`，如 `Safari 17` 或 `curl 8`。'
       examples:
       - type: smartphone
         name: iPhone
@@ -4901,10 +4785,9 @@ components:
         browser: Safari 18
     DeviceMeta:
       type: object
-      description: 'A connected device. Only `name` is omitted when empty; `id`, `type`, `device`, `os`
-        and
+      description: '一台连着的设备。**只有** `name` 在为空时省略；`id`、`type`、`device`、`os`、`browser`
 
-        `browser` are always present, even as empty strings.
+        **永远都在**，哪怕是空串。
 
         '
       required:
@@ -4916,7 +4799,7 @@ components:
       properties:
         id:
           type: string
-          description: A stable hash of the connection, used for de-duplication.
+          description: 这条连接的稳定哈希，用来去重。
         type:
           type: string
           examples:
@@ -4925,7 +4808,7 @@ components:
           - Automation
         name:
           type: string
-          description: The name the client declared, if any. Omitted when empty.
+          description: 客户端声明的名字（如果有）。为空时省略。
         device:
           type: string
           examples:
@@ -4945,7 +4828,7 @@ components:
       properties:
         id:
           type: string
-          description: The device id whose last connection closed.
+          description: '**最后一条**连接断掉的那台设备的 id。'
     RevokeData:
       type: object
       required:
@@ -4954,8 +4837,7 @@ components:
         id:
           type: integer
           format: int32
-          description: The id of the deleted entry. Note this is a **number** here, unlike the string
-            ids in content payloads.
+          description: 被删条目的 id。⚠️ 注意这里它是**数字**，而内容负载里的 id 是字符串。
     ClearAllData:
       type: object
       required:
@@ -4965,12 +4847,9 @@ components:
           type: string
     WsConfig:
       type: object
-      description: 'The `config` frame, sent once after connecting and before any realtime message. It
-        is the
+      description: '`config` 帧，连上之后、任何实时消息**之前**发一次。它是 `version` 与那几个大小限额的**唯一**来源，
 
-        **only** source of `version` and the size limits, and the only source of the front end''s
-
-        `app.config`.
+        也是前端 `app.config` 的唯一来源。
 
         '
       required:
@@ -5002,14 +4881,14 @@ components:
             limit:
               type: integer
               format: int64
-              description: Maximum text length in **bytes**. `0` means unlimited.
+              description: 文本长度上限，单位**字节**。`0` 表示不限。
         file:
           type: object
           properties:
             expire:
               type: integer
               format: int64
-              description: Default file lifetime in seconds; `0` means never expires.
+              description: 文件默认存活秒数；`0` 表示永不过期。
             chunk:
               type: integer
               format: int64
@@ -5018,16 +4897,13 @@ components:
               format: int64
         auth:
           type: boolean
-          description: Whether this room required a credential at handshake time.
+          description: 握手那一刻这个房间要不要凭据。
         latestId:
           type: integer
           format: int32
-          description: 'The largest message id in the room at connect time (`0` when empty). Use it as
-            the
+          description: '连接那一刻房间里最大的消息 id（空房间为 `0`）。拿它当历史/实时的边界。
 
-            history/realtime boundary. Absent on older servers — in that case a client must not
-
-            write to the clipboard.
+            ⚠️ 老服务端没有这个字段 —— 那种情况下客户端**必须不写剪贴板**。
 
             '
         automation:
@@ -5038,10 +4914,9 @@ components:
             enabled:
               type: boolean
     ReceiveEntry:
-      description: 'The `receive` / `update` payload — the entry exactly as stored, which is also the
-        shape
+      description: '`receive` / `update` 的负载 —— 条目**存进去时的原样**，也是 `GET /content` 投影出来的形状。
 
-        `GET /content` projects to. Branch on `type`: `text` or `file`.
+        分支看 `type`：`text` 或 `file`。
 
         '
       oneOf:
@@ -5058,7 +4933,7 @@ components:
         id:
           type: integer
           format: int32
-          description: Entry id — a **number** in the realtime payload.
+          description: 条目 id —— 在实时负载里是**数字**。
         type:
           type: string
           const: text
@@ -5071,7 +4946,7 @@ components:
           type: string
         senderClientID:
           type: string
-          description: Omitted when empty.
+          description: 为空时省略。
         senderDevice:
           oneOf:
           - $ref: '#/components/schemas/SenderDevice'
@@ -5087,7 +4962,7 @@ components:
           type: boolean
         content:
           type: string
-          description: Omitted when empty.
+          description: 为空时省略。
         deviceConnection:
           $ref: '#/components/schemas/DeviceMeta'
         deviceID:
@@ -5139,7 +5014,7 @@ components:
           format: int64
         cache:
           type: string
-          description: Usually the file uuid.
+          description: 通常就是文件 uuid。
         expire:
           type: integer
           format: int64
@@ -5148,19 +5023,16 @@ components:
         url:
           type: string
           format: uri
-          description: Omitted when empty.
+          description: 为空时省略。
     ChainStep:
-      description: 'One step of an action chain. A step with no parameters is written as a bare string;
-        a
+      description: '动作链里的一步。不带参数的一步写成**裸字符串**；带参数的写成对象。
 
-        parameterised step is an object. Both forms are accepted, and parameterless steps are
-
-        written back as strings so existing data is never reshaped.
+        两种形式都接受，而**没有参数的一步在写回时仍然是字符串** —— 这样已有数据永远不会被改写形状。
 
         '
       oneOf:
       - type: string
-        description: An action id, e.g. `text.trimLines`.
+        description: 一个动作 id，如 `text.trimLines`。
       - type: object
         required:
         - id
@@ -5169,30 +5041,29 @@ components:
             type: string
           params:
             type: object
-            description: Parameters for this step only.
+            description: '**只**属于这一步的参数。'
             additionalProperties:
               type: string
     TaskRequest:
       type: object
-      description: 'Body of `POST /tasks` and `POST /tasks/preview`. There is **no `room` field** — the
-        room
+      description: '`POST /tasks` 与 `POST /tasks/preview` 的请求体。
 
-        comes from the credential.
+        ⚠️ **没有 `room` 字段** —— 房间取自凭据。
 
         '
       properties:
         id:
           type: string
-          description: Omitted to create; supplied to replace that task wholesale.
+          description: 不传即新建；传了即**整份替换**那个任务。
         name:
           type: string
-          description: Falls back to the first line of the rendered body when empty.
+          description: 为空时回落到渲染后正文的第一行。
         enabled:
           type: boolean
-          description: Defaults to `true`.
+          description: 默认 `true`。
         freq:
           type: string
-          description: Schedule kind.
+          description: 计划类型。
           enum:
           - once
           - daily
@@ -5200,49 +5071,40 @@ components:
           - cron
         time:
           type: string
-          description: '`HH:MM`, for `daily` / `weekly`.'
+          description: '`HH:MM`，用于 `daily` / `weekly`。'
         cron:
           type: string
-          description: 'Five-field expression, for `freq: cron` — `<min> <hour> <dom> <month> <dow>`.'
+          description: '5 字段表达式，用于 `freq: cron` —— `<分> <时> <日> <月> <周>`。'
         byWeekday:
           type: array
-          description: For `weekly`. `0` = Sunday … `6` = Saturday, matching `Date.getDay()`.
+          description: 用于 `weekly`。`0` = 周日 … `6` = 周六，与 `Date.getDay()` 一致。
           items:
             type: integer
             minimum: 0
             maximum: 6
         runAt:
           type: string
-          description: 'For `once`: RFC3339, or `2026-10-01T09:30` interpreted in `tz`. Normalised to
-            RFC3339.
-
-            '
+          description: 用于 `once`：RFC3339，或按 `tz` 解释的 `2026-10-01T09:30`。会归一成 RFC3339。
         tz:
           type: string
-          description: Omitted → filled from `automation.defaultTZ` and stored on the task.
+          description: 不传 → 从 `automation.defaultTZ` 填上，并**存进任务里**。
         template:
           type: string
-          description: 'The body template. `{{ }}` variables are evaluated at firing time; unknown variables
-
-            and malformed offsets are rejected at save time.
-
-            '
+          description: 正文模板。`{{ }}` 变量在**触发时**求值；不认识的变量和写坏的偏移量在**保存时**就被拒。
         chain:
           type: array
-          description: Optional ordered list of steps applied to the rendered text. A failing step stops
-            the chain.
+          description: 可选的有序步骤列表，作用在渲染后的文本上。某一步失败会**中断整条链**。
           items:
             $ref: '#/components/schemas/ChainStep'
         keepHistory:
           type: boolean
-          description: Defaults to `false` — the message is broadcast but does not consume room history
-            quota.
+          description: 默认 `false` —— 消息照常广播，但**不占**房间的历史额度。
         sender:
           type: string
-          description: Display name. Defaults to `定时任务`.
+          description: 显示名。默认 `定时任务`。
     Task:
       type: object
-      description: An automation as returned by the API. `ownerHash` is never exposed.
+      description: 接口返回的定时任务。`ownerHash` **从不**暴露。
       required:
       - id
       - name
@@ -5299,13 +5161,13 @@ components:
         nextRunAt:
           type: integer
           format: int64
-          description: Next fire time, Unix seconds; `0` when disabled or exhausted.
+          description: 下次触发时刻，Unix 秒；停用或已用尽时为 `0`。
         lastRunAt:
           type: integer
           format: int64
         lastStatus:
           type: string
-          description: Outcome of the last firing.
+          description: 上一次触发的结局。
           enum:
           - ''
           - ok
@@ -5319,12 +5181,9 @@ components:
           $ref: '#/components/schemas/CronDesc'
     CronDesc:
       type: object
-      description: 'A structured, prose-free summary of a cron expression. It describes only the shape;
-        clients
+      description: '对一条 cron 表达式的**结构化、不含散文**的概括。它只描述形状，
 
-        compose the sentence from their own message table. It never contains expression syntax
-
-        (`*`, `/`, `?`).
+        句子由客户端用自己的文案表拼出来。⚠️ 里面**永远不含**表达式语法（`*`、`/`、`?`）。
 
         '
       required:
@@ -5370,7 +5229,7 @@ components:
             type: string
         more:
           type: boolean
-          description: True when the summarised list was truncated.
+          description: 概括用的列表被截断时为真。
     TaskList:
       type: object
       required:
@@ -5400,13 +5259,13 @@ components:
             $ref: '#/components/schemas/Task'
         max:
           type: integer
-          description: Task limit for this room; `0` means unlimited.
+          description: 该房间的任务数上限；`0` 表示不限。
         now:
           type: integer
           format: int64
         foreignCount:
           type: integer
-          description: Present only when some tasks in the room were hidden because they are not yours.
+          description: '**只**在房间里有些任务因为不是你的而被藏起来时出现。'
         actions:
           type: array
           items:
@@ -5424,10 +5283,7 @@ components:
           $ref: '#/components/schemas/Task'
         taskToken:
           type: string
-          description: 'Present **only** when a `single`-tier room creates a task. It is shown exactly
-            once and
-
-            is the only way to later edit or delete that task.
+          description: '**只**在 `single` 档房间创建任务时出现。它**只显示这一次**，而它是之后编辑或删除该任务的**唯一**办法。
 
             '
     TaskDeleted:
@@ -5466,9 +5322,9 @@ components:
                 type: integer
     CronCheck:
       type: object
-      description: 'The result of validating a cron expression. An invalid expression is a **200** with
+      description: '校验 cron 表达式的结果。⚠️ 表达式非法时是 **200** 且 `valid: false`；
 
-        `valid: false`; only an unusable time zone is a 400.
+        **只有**时区名不可用才是 400。
 
         '
       required:
@@ -5479,7 +5335,7 @@ components:
       properties:
         expr:
           type: string
-          description: The normalised expression (identical to the input when valid).
+          description: 归一化之后的表达式（合法时与输入相同）。
         tz:
           type: string
         valid:
@@ -5488,23 +5344,23 @@ components:
           type: string
         error:
           type: string
-          description: Present when `valid` is false.
+          description: '`valid` 为假时才有。'
         next:
           type: array
-          description: Upcoming fire times, Unix seconds. Absent when `valid` is false.
+          description: 接下来的触发时刻，Unix 秒。`valid` 为假时没有。
           items:
             type: integer
             format: int64
         nextFormatted:
           type: array
-          description: The same instants, formatted as `YYYY-MM-DD HH:MM Day`.
+          description: 同样那些时刻，格式化成 `YYYY-MM-DD HH:MM 星期`。
           items:
             type: string
         desc:
           $ref: '#/components/schemas/CronDesc'
     TaskPreview:
       type: object
-      description: The rendered output of an unsaved task. Nothing was persisted or sent.
+      description: 一个**没保存**的任务的渲染结果。什么都没落库、什么都没发。
       required:
       - preview
       - output
@@ -5531,10 +5387,12 @@ components:
           format: int64
         referenceAt2:
           type: string
-          description: 'The reference instant as RFC3339. NOTE (code): this field is named `referenceAt2`
-            on the
+          description: '参考时刻，RFC3339。
 
-            preview endpoint, whereas the dry run of a saved task calls the same idea `scheduledAt`.
+
+            NOTE (code)：预览接口上这个字段叫 `referenceAt2`，而**试跑一个已存任务**时，
+
+            同一个概念叫 `scheduledAt`。
 
             '
     TaskRunDry:
@@ -5568,7 +5426,7 @@ components:
           format: int64
         scheduledAt:
           type: string
-          description: The reference instant as RFC3339.
+          description: 参考时刻，RFC3339。
     TaskRunSent:
       type: object
       required:

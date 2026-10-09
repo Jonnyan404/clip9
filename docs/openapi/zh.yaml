@@ -309,14 +309,14 @@ paths./stats/daily.get.parameters.0.description: 要统计的房间。不传即 
 paths./stats/daily.get.parameters.1.description: 窗口天数，截止到今天。夹到 `371`。`0`、负数和非数字都当作「没给」。
 paths./stats/daily.get.parameters.2.description: 用来判断某个时间戳属于哪个本地日的 IANA 时区名。认不出来就回落 `UTC`。
 paths./stats/daily.get.responses.200.description: 所请求窗口内每天的条数。
-paths./stats/daily.get.responses.200.content.application/json.schema.properties.tz.description: '''''''''''''''**实际用的**时区（回落之后）。'''''''''''''''
+paths./stats/daily.get.responses.200.content.application/json.schema.properties.tz.description: '''''''''''''''''''''''''''''''**实际用的**时区（回落之后）。'''''''''''''''''''''''''''''''
 paths./stats/daily.get.responses.200.content.application/json.schema.properties.requestedTz.description: 调用方请求的那个，原样回显，这样回落就看得见。
 paths./stats/daily.get.responses.200.content.application/json.schema.properties.truncated.description: 为真表示扫描撞到了行数上限，窗口里最旧的那几天可能少算。
 paths./stats/daily.get.responses.200.content.application/json.schema.properties.activity.properties.days.description: 旧的在前；长度恰好等于生效的 `days`。
 paths./stats/daily.get.responses.200.content.application/json.schema.properties.activity.properties.days.items.properties.date.description: 本地日期，`YYYY-MM-DD`。
 paths./stats/daily.get.responses.200.content.application/json.schema.properties.activity.properties.streak.properties.current.description: 一直到今天的连续天数。今天还没内容时**跳过它**、从昨天往回数 —— 这样这个数不会每天早上都掉回 0。
 paths./stats/daily.get.responses.200.content.application/json.schema.properties.activity.properties.levels.description: 配色用的四道递增阈值。窗口内活跃天不足四天时，这四个值相等。
-paths./stats/daily.get.responses.200.content.application/json.examples.unknownTimezone.summary: '''''''''''''''`tz` 认不出来时回落 UTC'''''''''''''''
+paths./stats/daily.get.responses.200.content.application/json.examples.unknownTimezone.summary: '''''''''''''''''''''''''''''''`tz` 认不出来时回落 UTC'''''''''''''''''''''''''''''''
 
 # ── /upload ───────────────────────────────────────────────────────────
 paths./upload.post.description: |
@@ -525,7 +525,7 @@ paths./share/visit.post.description: |
   - **不需要鉴权**：拿着链接就是上报的资格，而响应也只描述这一个分享。
   - 光是请求 `/s/{token}` **本身从不计数** —— 这就是为什么聊天软件的爬虫
     （它们按自己的节奏反复抓那个地址、也不执行 JavaScript）灌不了水。
-paths./share/visit.post.parameters.1.description: '''''''`1` 表示这次访问来自扫二维码。'''''''
+paths./share/visit.post.parameters.1.description: '''''''''''''''`1` 表示这次访问来自扫二维码。'''''''''''''''
 paths./share/visit.post.responses.200.description: 上报已处理。
 paths./share/visit.post.responses.200.content.application/json.examples.debounced.summary: 同一访客十分钟内 —— 不重复计数
 paths./share/visit.post.responses.400.description: 没给令牌，或者请求体不是合法 JSON。
@@ -629,9 +629,9 @@ paths./tasks/cron.get.description: |
   ⚠️ 表达式非法时返回的是 **200 且 `valid: false`**（带 `error`），**不是 400**：
   「校验」正是这个接口的**用途**，所以「不合法」是它的正常输出之一。
   客户端每次按键都会调它，回 4xx 会让页面看起来坏了。
-paths./tasks/cron.get.parameters.0.description: '''`<分> <时> <日> <月> <周>`。**只支持 5 个字段**；支持区间、步长、列表与英文名。'''
+paths./tasks/cron.get.parameters.0.description: '''''''`<分> <时> <日> <月> <周>`。**只支持 5 个字段**；支持区间、步长、列表与英文名。'''''''
 paths./tasks/cron.get.parameters.1.description: 返回的那些时刻用的时区名。默认取 `automation.defaultTZ`。
-paths./tasks/cron.get.responses.200.description: '校验结果 —— `valid: true` 带接下来的触发时刻，或 `valid: false` 带一句解释。'
+paths./tasks/cron.get.responses.200.description: '''校验结果 —— `valid: true` 带接下来的触发时刻，或 `valid: false` 带一句解释。'''
 paths./tasks/cron.get.responses.400.description: 时区名不认识。
 paths./tasks/cron.get.responses.403.description: 这个房间不允许用定时任务。
 paths./tasks/cron.get.responses.404.description: 服务端整体关掉了定时任务。
@@ -669,7 +669,7 @@ paths./tasks/{id}/run.post.parameters.2.description: 试跑用的参考时刻。
 paths./tasks/{id}/run.post.responses.200.description: 渲染结果（试跑）或发送确认。
 paths./tasks/{id}/run.post.responses.200.content.application/json.examples.dry.summary: 试跑（不带 `send`）
 paths./tasks/{id}/run.post.responses.200.content.application/json.examples.sent.summary: 带 ?send=1 发出去了
-paths./tasks/{id}/run.post.responses.400.description: '''`?at=` 不对、渲染失败，或者任务非法。'''
+paths./tasks/{id}/run.post.responses.400.description: '''''''`?at=` 不对、渲染失败，或者任务非法。'''''''
 paths./tasks/{id}/run.post.responses.403.description: 任务属于别人或别的房间，或者该房间不允许定时任务。
 paths./tasks/{id}/run.post.responses.404.description: 没这个任务（或者定时任务被关掉了）。
 
@@ -689,3 +689,234 @@ paths./automation.get.description: |
   ⚠️ 它**自己不做任何鉴权** —— 能不能建、能不能改，完全由 `/tasks` 决定。
   页面拿密码换一枚会话令牌，存在 `sessionStorage` 里（关掉标签页就没了）。
 paths./automation.get.responses.200.description: 管理页。
+
+# ── 鉴权方案与公共参数 ────────────────────────────────────────────────
+components.securitySchemes.bearerAuth.description: |
+  `Authorization: Bearer <凭据>`，凭据可以是全局密码、房间密码，或 `POST /auth/token` 换来的会话令牌。
+  头里的值如果不是「以 `Bearer` 开头的两个空格分隔的词」，就**原样**当凭据用 ——
+  这样手写的 `Authorization: mypass` 也能用。
+components.securitySchemes.authQuery.description: |
+  同一份凭据，走 `?auth=`。**只在** `Authorization` 头缺失或为空时才看它。为 Apple 快捷指令保留的。
+  ⚠️ **永远不要把密码放进可以分享的 URL** —— 查询串会进浏览器历史和访问日志。
+components.securitySchemes.shareTokenQuery.description: 分享令牌，授予对**它被签出来的那一条内容或文件**的**读**权限。只读：写接口一律忽略它。
+components.securitySchemes.sharePassword.description: 受密码保护的分享的密码。**永远不进 URL**，因为查询串会被记日志。
+components.securitySchemes.taskToken.description: '`single` 档定时任务的任务令牌（也接受 `?taskToken=`）。任务创建时**只发一次**。'
+
+components.parameters.RoomQuery.description: 房间名。空、不传、或者字面量 `default` 都表示 `default` 房间。名字**区分大小写**，只去首尾空白。
+components.parameters.RoomQueryOptional.description: |
+  房间名。在那些「完全不传」也是一种独立情形的接口上，不传与传空**可能不一样** ——
+  `GET /content/latest` 就是要留神的那一个：`?room=` 是 `default` 房间，`?all=1` 才是「哪都行，取最新」。
+components.parameters.AuthQuery.description: 凭据，只在 `Authorization` 头缺失或为空时才用。
+components.parameters.NameQuery.description: |
+  发送方自称的**设备显示名**。会先清洗（去掉控制字符、去首尾空白）、截到 32 个**字符**，
+  再存成 `senderDevice.name`。为空时服务端从 User-Agent 推一个名字。
+  它和 `client` **不是一回事**，不能互换。
+components.parameters.ClientQuery.description: 一个**稳定的客户端 id**，存成 `senderClientID`，用来判断哪些消息是调用方自己发的。**每台安装设一次**即可。
+components.parameters.FormatQuery.description: |
+  显式指定表示形式。`raw`（别名 `text` / `plain`）强制原始字节；`json` 强制 JSON。
+  ⚠️ 其他任何非空值都是 `400 unsupported_format` —— **绝不回落**。它压过 `?json=` 与 `Accept`。
+components.parameters.JsonQuery.description: 早期的 JSON 开关。`1` 或 `true` 选 JSON，其他值忽略。为老客户端保留 —— 新代码请用 `?format=json`。
+components.parameters.ShareTokenQuery.description: 分享令牌。给了的话，它在房间凭据**之后**再试一次。
+components.parameters.ShareTokenQueryRequired.description: 要描述的分享令牌。
+components.parameters.SharePasswordHeader.description: 受密码保护的分享的密码。**绝不**放进 URL。
+components.parameters.TaskTokenQuery.description: '`single` 档定时任务的任务令牌，作为 `X-Task-Token` 头的替代（头优先）。'
+
+components.responses.OnlyGet.description: 这个接口只接受 GET。
+components.responses.RoomForbidden.description: 这个凭据打不开该房间。
+components.responses.OnlyPost.description: 这个接口只接受 POST。
+components.responses.OnlyGetPost.description: 这个接口接受 GET 与 POST。
+components.responses.MethodNotAllowed.description: |
+  这个方法不是这条路径接受的。⚠️ 措辞**按路径族不同**：`/file/*` 用的是下面那句通用文案，
+  其他路径会把允许的方法名点出来。
+components.responses.UnsupportedTaskAction.description: '`/tasks/{id}*` 上不支持这个方法或动作。文案里会把支持的列出来 —— 对用户来说比「只允许 POST」有用得多。'
+components.responses.InvalidRequestBody.description: 请求体不是合法 JSON。
+components.responses.UnsupportedFormat.description: '`?format=` 的值不是 raw / json 之一。'
+
+# ── 核心 schema ───────────────────────────────────────────────────────
+components.schemas.Error.description: |
+  **唯一**的错误信封。每条错误路径都只返回这三个字段，`Content-Type` 恒为
+  `application/json; charset=utf-8`，**绝不**随 `Accept` 变化，并且**末尾带一个换行**。
+components.schemas.Error.properties.code.description: 机器码，蛇形命名。**一旦发布就稳定** —— 别拿别的字段做判断分支。
+components.schemas.Error.properties.error.description: 英文原句，给日志和英语用户看。
+components.schemas.Error.properties.message.description: 中文原句，客户端**原样显示**。限额类错误里会嵌入服务端**当前**的配置值。
+components.schemas.Truthy.description: 一个「真值」开关。为真的值：`1`、`true`、`yes`、`on`（忽略大小写、去首尾空白）。其余一律为假。
+components.schemas.BoardColumn.description: 看板列。`todo` 是默认 —— 缺失或空值都归一到它。列名**忽略大小写并去首尾空白**。
+components.schemas.ServerInfo.description: '`GET /server` 的响应。⚠️ 注意它**不带** `version`，也**不带**大小限额。'
+components.schemas.ServerInfo.properties.server.description: WebSocket 地址，协议头已经换成 `ws` / `wss`。
+components.schemas.ServerInfo.properties.auth.description: 解析出的上下文是否**需要**密码。不带 `?room=` 时它只反映全局密码。
+components.schemas.ServerInfo.properties.authorized.description: |
+  出示的凭据是否可用。⚠️ 初值是 `true` —— 不带 `?room=`、也没有全局密码时，
+  **连凭据都没有也是 `true`**。
+components.schemas.ServerInfo.properties.roomProtected.description: '`?room=` 点名的房间是否要密码。**没传 `?room=` 时恒为 `false`**。'
+components.schemas.ServerInfo.properties.config.properties.server.properties.history.description: 每个房间保留多少条。也是 `GET /content` 的默认每页条数。
+components.schemas.ServerInfo.properties.config.properties.server.properties.roomList.description: '`GET /rooms` 有没有开。'
+
+components.schemas.AutomationCapability.description: '描述调用方对 `/tasks` 能做什么。定时任务整体关掉时，这个对象就是 `{"enabled": false}`。'
+components.schemas.AutomationCapability.properties.room.description: 这次请求解析到的房间。
+components.schemas.AutomationCapability.properties.tier.description: 策略档位。`admin` = 全局密码；`none` = 不允许。
+components.schemas.AutomationCapability.properties.max.description: 任务数上限；`0` 表示不限。
+components.schemas.AutomationCapability.properties.vars.description: 界面可以提供哪些模板变量名。
+components.schemas.AutomationCapability.properties.actions.description: |
+  动作库，只是元数据。`key` / `groupKey` 是前端语言文件里的 i18n **键** ——
+  服务端只发键，从不发译文。
+components.schemas.AutomationAction.properties.params.description: 不需要参数的动作这里是空的（并且省略）。
+components.schemas.AutomationParam.properties.type.description: 单行文本输入时省略；`select` 表示下拉选择。
+components.schemas.AutomationParam.properties.options.description: 为空时省略。
+components.schemas.AutomationParam.properties.visibleWhen.description: 没有时省略。用于「当另一个参数等于某值时，才显示这个参数」。
+
+components.schemas.TokenRequest.properties.password.description: 全局密码或房间密码。空值会被拒，回 `password_required`。
+components.schemas.SessionToken.description: 一枚会话令牌。有效期约一小时。
+components.schemas.SessionToken.properties.expiresAt.description: Unix **秒**。
+components.schemas.SessionToken.properties.scope.description: 由全局密码签出的令牌是 `global`；房间密码签出的是 `""`。
+
+components.schemas.TextSendResult.description: '`POST /text` 的响应（新建与改写两条路都是它）。'
+components.schemas.TextSendResult.properties.id.description: 条目 id，**是字符串**。
+
+components.schemas.ContentEntry.description: |
+  `GET /content` 与 `GET /content/{id}?format=json` 用的 JSON 投影。
+  分支要看的是**有没有 `content`（文本）还是 `name`（文件）**。
+  ⚠️ **不要**拿 `type` 分支：文件时它装的是探测出的媒体种类，不是 `file` 这个词。
+components.schemas.TextContentEntry.properties.content.description: 为空时省略（空串与「没有正文」在这里分不出来）。
+components.schemas.TextContentEntry.properties.id.description: 条目 id，字符串。
+components.schemas.TextContentEntry.properties.timestamp.description: Unix **秒**。秒级精度，同一秒里会重复 —— **绝不要**拿它当游标。
+components.schemas.TextContentEntry.properties.senderClientID.description: 为空时省略。
+components.schemas.TextContentEntry.properties.senderDevice.description: |
+  发送方的设备信息 —— 一张自由形状的字符串表，**不是** WebSocket `connect` 事件用的那个更严格的
+  `DeviceMeta`。未知时是 `null`，而它与 `{}` **不是一回事**，所以客户端三种状态都要处理。
+components.schemas.TextContentEntry.properties.source.description: 没设就省略。`automation` 表示这条是定时任务发的。
+components.schemas.TextContentEntry.properties.scheduledAt.description: 没设就省略。任务**计划**触发的那一刻；补发时它与 `timestamp` 不同。
+components.schemas.TextContentEntry.properties.late.description: 不为真就省略。表示这条发晚了，错过了自己的窗口。
+
+components.schemas.FileContentEntry.properties.type.description: 按文件名探测出的媒体种类。
+components.schemas.FileContentEntry.properties.size.description: 磁盘上的字节数。条目本身不带正文 —— 字节从 `url` 取。
+components.schemas.FileContentEntry.properties.uuid.description: 与 `cache` 同一个值。
+components.schemas.FileContentEntry.properties.thumbnail.description: 一个 `data:image/jpeg;base64,…` 缩略图；没生成时是空串（压缩包、PDF、视频没生成是正常的）。
+components.schemas.FileContentEntry.properties.url.description: 绝对下载地址，**文件名已经拼好了**，可以直接用。
+components.schemas.FileContentEntry.properties.expire.description: Unix 秒；`0` 表示永不过期。
+
+components.schemas.ContentList.description: 一页历史，升序。**空数组表示没有更多历史了**。
+components.schemas.LatestTextEntry.description: '`GET /content/latest` 返回文本条目时的形状 —— 是**紧凑**的，不是 `GET /content` 那个丰富投影。'
+components.schemas.LatestFileEntry.description: '`GET /content/latest` 返回文件条目时的形状 —— 也是**紧凑**的。⚠️ 它没有 `cache` / `room` / `senderIP`，与 `GET /content` 的投影不同。'
+components.schemas.ColumnResult.properties.type.description: 条目自己的种类（`text` / `file`），**不是**媒体种类。
+
+components.schemas.RoomInfo.properties.name.description: 房间名。`default` 房间报成**空串**。
+components.schemas.RoomInfo.properties.lastActive.description: Unix 秒。有设备连着时会不断刷成「现在」。
+components.schemas.RoomInfo.properties.isActive.description: 至少有一台设备连着时为真。
+components.schemas.RoomInfo.properties.isProtected.description: '房间**确实**要不要密码（配了 `{"open": true}` 的房间报 `false`）。'
+
+components.schemas.UploadedEntry.description: 一次上传完成后的响应（`/upload` 带文件 part，或 `/upload/finish/{uuid}`）。
+components.schemas.UploadedEntry.properties.url.description: '**条目**地址（`/content/{id}`），不是文件的裸地址。'
+components.schemas.UploadedEntry.properties.type.description: 按文件名探测出的媒体种类。
+components.schemas.ChunkInitResult.description: 分片上传初始化的响应（`/upload/chunk`，或 `/upload` 带一个 `text/plain` 的文件名）。
+components.schemas.UploadResult.description: 要么是一次完成的上传，要么（`text/plain` 文件名那种形式）是一个初始化结果。
+
+# ── 分享 ──────────────────────────────────────────────────────────────
+components.schemas.ShareRequest.description: |
+  `POST /share` 的请求体。所有字段可选（空体即全部默认），
+  但 ⚠️ **未知字段会被拒** —— 一个拼写错误绝不能**悄悄**丢掉用户配的限制。
+components.schemas.ShareRequest.properties.type.description: '`content` 或 `file`。不传 → `400 missing_type`。'
+components.schemas.ShareRequest.properties.id.description: '`type: content` 时是条目 id（字符串）。`type: file` 时也可以用它代替 `uuid`。'
+components.schemas.ShareRequest.properties.uuid.description: '`type: file` 时是文件 uuid。**优先于** `id`。'
+components.schemas.ShareRequest.properties.ttl.description: 过期秒数。默认 900；夹到 60 – 86400。
+components.schemas.ShareRequest.properties.maxUses.description: 最多能被读几次。`0`（默认）表示不限。
+components.schemas.ShareRequest.properties.password.description: 可选密码，之后收件方必须带 `X-Share-Password`。
+components.schemas.ShareCreatedContent.properties.url.description: 分享页。**爬虫和人看到的是同一个地址**。
+components.schemas.ShareCreatedContent.properties.pageUrl.description: 为兼容保留；目前与 `url` 同值。
+components.schemas.ShareCreatedContent.properties.rawUrl.description: 带同一枚令牌直达内容接口。
+components.schemas.ShareInfo.description: '`GET /share?t=` —— 落地页在取任何东西之前需要的东西。**不消耗次数**。'
+components.schemas.ShareInfo.properties.kind.description: 目标的种类（`text` / `file`）。
+components.schemas.ShareInfo.properties.used.description: '**只**在「限次且还有活的记录」的分享上出现。'
+components.schemas.ShareInfo.properties.uuid.description: 目标是文件时才有。
+components.schemas.ShareInfo.properties.name.description: 目标是文件时才有。
+components.schemas.ShareInfo.properties.size.description: 目标是文件时才有。
+components.schemas.ShareInfo.properties.previewToken.description: '**只**在分享受密码保护时出现。可以安全地塞进 `<img src>` 之类。'
+components.schemas.ShareInfo.properties.previewExpiresAt.description: 与 `previewToken` 一起出现。
+components.schemas.ShareList.properties.total.description: 该房间的记录**总数**（不只是这一页）。
+components.schemas.ShareList.properties.limit.description: 实际用的每页条数。
+components.schemas.ShareRecord.properties.jti.description: 在这份列表里标识这个分享。**令牌本身永远不在里面**。
+components.schemas.ShareRecord.properties.name.description: 文本分享带首行摘要；文件分享带文件名。
+components.schemas.ShareRecord.properties.password.description: 只报**有没有**设密码 —— 绝不是哈希。
+components.schemas.ShareVisitRequest.properties.token.description: 分享令牌。也可以走 `?t=`。
+components.schemas.ShareVisitRequest.properties.qr.description: 在「打开」之外，把这次访问再记成一次扫码。
+components.schemas.ShareVisitResult.properties.tracked.description: 同一访客十分钟内再报时为 `false`。
+
+# ── 设备与实时 ────────────────────────────────────────────────────────
+components.schemas.SenderDevice.description: |
+  挂在内容条目上的 `senderDevice` 表。与 WebSocket `connect` 事件的 `DeviceMeta` 不同，
+  这是**一张普通字符串表**：没有 `id` 也没有 `device` 键，`type` 装的是小写的设备类别。
+components.schemas.SenderDevice.properties.type.description: 设备类别；定时任务发的消息是 `Automation`。
+components.schemas.SenderDevice.properties.name.description: 客户端用 `?name=` 声明的名字。它没声明时**不出现**。
+components.schemas.SenderDevice.properties.os.description: '`<家族> <主版本>`，如 `iOS 17`。会去首尾空白，所以认不出的家族就只是 `Other`。'
+components.schemas.SenderDevice.properties.browser.description: '`<家族> <主版本>`，如 `Safari 17` 或 `curl 8`。'
+components.schemas.DeviceMeta.description: |
+  一台连着的设备。**只有** `name` 在为空时省略；`id`、`type`、`device`、`os`、`browser`
+  **永远都在**，哪怕是空串。
+components.schemas.DeviceMeta.properties.id.description: 这条连接的稳定哈希，用来去重。
+components.schemas.DeviceMeta.properties.name.description: 客户端声明的名字（如果有）。为空时省略。
+components.schemas.DisconnectData.properties.id.description: '**最后一条**连接断掉的那台设备的 id。'
+components.schemas.RevokeData.properties.id.description: 被删条目的 id。⚠️ 注意这里它是**数字**，而内容负载里的 id 是字符串。
+components.schemas.WsConfig.description: |
+  `config` 帧，连上之后、任何实时消息**之前**发一次。它是 `version` 与那几个大小限额的**唯一**来源，
+  也是前端 `app.config` 的唯一来源。
+components.schemas.WsConfig.properties.text.properties.limit.description: 文本长度上限，单位**字节**。`0` 表示不限。
+components.schemas.WsConfig.properties.file.properties.expire.description: 文件默认存活秒数；`0` 表示永不过期。
+components.schemas.WsConfig.properties.auth.description: 握手那一刻这个房间要不要凭据。
+components.schemas.WsConfig.properties.latestId.description: |
+  连接那一刻房间里最大的消息 id（空房间为 `0`）。拿它当历史/实时的边界。
+  ⚠️ 老服务端没有这个字段 —— 那种情况下客户端**必须不写剪贴板**。
+components.schemas.ReceiveEntry.description: |
+  `receive` / `update` 的负载 —— 条目**存进去时的原样**，也是 `GET /content` 投影出来的形状。
+  分支看 `type`：`text` 或 `file`。
+components.schemas.ReceiveTextEntry.properties.id.description: 条目 id —— 在实时负载里是**数字**。
+components.schemas.ReceiveTextEntry.properties.senderClientID.description: 为空时省略。
+components.schemas.ReceiveTextEntry.properties.content.description: 为空时省略。
+components.schemas.ReceiveFileEntry.properties.cache.description: 通常就是文件 uuid。
+components.schemas.ReceiveFileEntry.properties.url.description: 为空时省略。
+
+# ── 定时任务 ──────────────────────────────────────────────────────────
+components.schemas.ChainStep.description: |
+  动作链里的一步。不带参数的一步写成**裸字符串**；带参数的写成对象。
+  两种形式都接受，而**没有参数的一步在写回时仍然是字符串** —— 这样已有数据永远不会被改写形状。
+components.schemas.ChainStep.oneOf.0.description: 一个动作 id，如 `text.trimLines`。
+components.schemas.ChainStep.oneOf.1.properties.params.description: '**只**属于这一步的参数。'
+components.schemas.TaskRequest.description: |
+  `POST /tasks` 与 `POST /tasks/preview` 的请求体。
+  ⚠️ **没有 `room` 字段** —— 房间取自凭据。
+components.schemas.TaskRequest.properties.id.description: 不传即新建；传了即**整份替换**那个任务。
+components.schemas.TaskRequest.properties.name.description: 为空时回落到渲染后正文的第一行。
+components.schemas.TaskRequest.properties.enabled.description: 默认 `true`。
+components.schemas.TaskRequest.properties.freq.description: 计划类型。
+components.schemas.TaskRequest.properties.time.description: '`HH:MM`，用于 `daily` / `weekly`。'
+components.schemas.TaskRequest.properties.cron.description: '5 字段表达式，用于 `freq: cron` —— `<分> <时> <日> <月> <周>`。'
+components.schemas.TaskRequest.properties.byWeekday.description: 用于 `weekly`。`0` = 周日 … `6` = 周六，与 `Date.getDay()` 一致。
+components.schemas.TaskRequest.properties.runAt.description: 用于 `once`：RFC3339，或按 `tz` 解释的 `2026-10-01T09:30`。会归一成 RFC3339。
+components.schemas.TaskRequest.properties.tz.description: 不传 → 从 `automation.defaultTZ` 填上，并**存进任务里**。
+components.schemas.TaskRequest.properties.template.description: 正文模板。`{{ }}` 变量在**触发时**求值；不认识的变量和写坏的偏移量在**保存时**就被拒。
+components.schemas.TaskRequest.properties.chain.description: 可选的有序步骤列表，作用在渲染后的文本上。某一步失败会**中断整条链**。
+components.schemas.TaskRequest.properties.keepHistory.description: 默认 `false` —— 消息照常广播，但**不占**房间的历史额度。
+components.schemas.TaskRequest.properties.sender.description: 显示名。默认 `定时任务`。
+components.schemas.Task.description: 接口返回的定时任务。`ownerHash` **从不**暴露。
+components.schemas.Task.properties.nextRunAt.description: 下次触发时刻，Unix 秒；停用或已用尽时为 `0`。
+components.schemas.Task.properties.lastStatus.description: 上一次触发的结局。
+components.schemas.CronDesc.description: |
+  对一条 cron 表达式的**结构化、不含散文**的概括。它只描述形状，
+  句子由客户端用自己的文案表拼出来。⚠️ 里面**永远不含**表达式语法（`*`、`/`、`?`）。
+components.schemas.CronDesc.properties.more.description: 概括用的列表被截断时为真。
+components.schemas.TaskList.properties.max.description: 该房间的任务数上限；`0` 表示不限。
+components.schemas.TaskList.properties.foreignCount.description: '**只**在房间里有些任务因为不是你的而被藏起来时出现。'
+components.schemas.TaskSaved.properties.taskToken.description: |
+  **只**在 `single` 档房间创建任务时出现。它**只显示这一次**，而它是之后编辑或删除该任务的**唯一**办法。
+components.schemas.CronCheck.description: |
+  校验 cron 表达式的结果。⚠️ 表达式非法时是 **200** 且 `valid: false`；
+  **只有**时区名不可用才是 400。
+components.schemas.CronCheck.properties.expr.description: 归一化之后的表达式（合法时与输入相同）。
+components.schemas.CronCheck.properties.error.description: '`valid` 为假时才有。'
+components.schemas.CronCheck.properties.next.description: 接下来的触发时刻，Unix 秒。`valid` 为假时没有。
+components.schemas.CronCheck.properties.nextFormatted.description: 同样那些时刻，格式化成 `YYYY-MM-DD HH:MM 星期`。
+components.schemas.TaskPreview.description: 一个**没保存**的任务的渲染结果。什么都没落库、什么都没发。
+components.schemas.TaskPreview.properties.referenceAt2.description: |
+  参考时刻，RFC3339。
+
+  NOTE (code)：预览接口上这个字段叫 `referenceAt2`，而**试跑一个已存任务**时，
+  同一个概念叫 `scheduledAt`。
+components.schemas.TaskRunDry.properties.scheduledAt.description: 参考时刻，RFC3339。
