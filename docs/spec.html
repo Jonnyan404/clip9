@@ -74,7 +74,6 @@
 <div id="spec"></div>
 
 <script>
-const specEl = document.getElementById('spec');
 const note = document.getElementById('note-zh');
 const btnZh = document.getElementById('btn-zh');
 const btnEn = document.getElementById('btn-en');
@@ -99,23 +98,31 @@ async function render(lang) {
   link.href = FILES[lang];
   location.hash = isZh ? '' : '#en';
 
-  specEl.innerHTML = '<div id="failed">正在加载规格…如果这句话一直不消失，' +
+  // ⚠️★ 换语言时要**换一个全新的容器节点**，不能对着原来那个再 `init` 一次。
+  // Redoc 会接管传进去的节点、自己往里挂东西，第二次 `init` 会在它自己的清理里抛
+  // `Failed to execute 'removeChild' …`（2026-10-09 实测）—— 而那个错**看起来像规格坏了**，
+  // 其实规格好好的，是渲染器不喜欢被复用。所以每次都 replaceWith 一个新的。
+  const fresh = document.createElement('div');
+  fresh.id = 'spec';
+  const old = document.getElementById('spec');
+  old.replaceWith(fresh);
+
+  fresh.innerHTML = '<div id="failed">正在加载规格…如果这句话一直不消失，' +
     '说明渲染器没能从 CDN 加载。规格文件：<a href="' + FILES[lang] + '">' + FILES[lang] + '</a></div>';
 
   try {
-    // ⚠️ 只在第一次拉 Redoc；换语言只重开一次 `init`（脚本已经在页面里了）。
+    // ⚠️ 脚本只拉一次（换语言时它已经在页面里了）。
     if (!loaded) {
       await script('https://cdn.redoc.ly/redoc/latest/bundles/redoc.standalone.js');
       loaded = true;
     }
-    specEl.innerHTML = '';
     Redoc.init(FILES[lang], {
       expandResponses: '200,201',
       hideDownloadButton: false,
       // ⚠️ 只影响**代码示例**的语种标签，不影响正文。
       languages: ['curl', 'javascript', 'python'],
       theme: { colors: { primary: { main: '#1e88e5' } } },
-    }, specEl);
+    }, fresh);
   } catch (e) {
     // 上面那句提示留着就够了 —— 空白页会被读成「文档没写」。
   }
