@@ -5,47 +5,186 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>clip9 — API 参考</title>
 <style>
-  body { margin: 0; font-family: -apple-system, "PingFang SC", system-ui, sans-serif; }
-  /* ⚠️ 加载失败时这块会露出来 —— Redoc 是从 CDN 拉的，断网 / 被墙时它到不了，
-     而**空白页看起来像「文档没写」**。所以先给一句话，Redoc 起来之后会盖掉它。 */
-  #fallback {
-    max-width: 720px; margin: 80px auto; padding: 0 24px; color: #667085; line-height: 1.8;
+  /* ⚠️★ 默认那一页是**中文说明**（`api.md`），规格（英文）在第二个标签里。
+     原来只有 Redoc 一页 —— 规格是英文写的，所以整个界面一个字中文都没有，
+     而「中文用户打开 API 页看到全英文」是这个项目里最容易劝退的一处。
+     ⚠️ Redoc 自己的**界面文字**（Request samples / Responses 那些）仍是英文：
+     开源版 Redoc 不提供 i18n。中文读者看「中文说明」那一页，
+     规格那一页是给要抠字段的人用的。 */
+  :root {
+    --accent: #1e88e5; --bg: #fff; --soft: #f6f8fb;
+    --fg: #101828; --fg2: #667085; --line: #e7ecf3;
   }
-  #fallback h1 { color: #101828; font-size: 22px; }
-  #fallback code { background: #f6f8fb; padding: 2px 6px; border-radius: 5px; }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--fg);
+    font: 15px/1.75 -apple-system, "PingFang SC", "Microsoft YaHei", system-ui, sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  header {
+    position: sticky; top: 0; z-index: 10; background: rgba(255,255,255,.92);
+    backdrop-filter: saturate(180%) blur(12px); border-bottom: 1px solid var(--line);
+  }
+  .bar {
+    max-width: 900px; margin: 0 auto; padding: 14px 24px;
+    display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  }
+  .logo {
+    width: 26px; height: 26px; border-radius: 7px;
+    background: linear-gradient(140deg, #1e88e5, #1565c0);
+    display: grid; place-items: center; color: #fff; font-weight: 700; font-size: 13px;
+  }
+  .bar b { font-weight: 650; }
+  .bar .sp { flex: 1; }
+  .tabs { display: flex; gap: 4px; }
+  .tabs button {
+    border: 1px solid var(--line); background: var(--bg); color: var(--fg2);
+    font: inherit; font-size: 13px; padding: 5px 14px; border-radius: 8px; cursor: pointer;
+  }
+  .tabs button.on { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 550; }
+  .bar a { color: var(--fg2); font-size: 13px; text-decoration: none; }
+  .bar a:hover { color: var(--accent); }
+
+  /* 中文说明（由 `api.md` 渲染）—— 只给到「读起来舒服」所需的样式 */
+  #doc { max-width: 900px; margin: 0 auto; padding: 8px 24px 80px; }
+  #doc h1 { font-size: 30px; margin: 28px 0 12px; letter-spacing: -.4px; }
+  #doc h2 { font-size: 21px; margin: 36px 0 12px; padding-top: 8px; border-top: 1px solid var(--line); }
+  #doc h3 { font-size: 16.5px; margin: 24px 0 8px; }
+  #doc p { color: #344054; }
+  #doc a { color: var(--accent); }
+  #doc code {
+    background: var(--soft); padding: 2px 6px; border-radius: 5px; font-size: 13px;
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  }
+  #doc pre {
+    background: #0f172a; color: #e6ecf7; padding: 14px 16px; border-radius: 10px;
+    overflow-x: auto; font-size: 13px; line-height: 1.7;
+  }
+  #doc pre code { background: none; padding: 0; color: inherit; }
+  #doc blockquote {
+    margin: 14px 0; padding: 2px 16px; border-left: 3px solid var(--accent);
+    background: var(--soft); border-radius: 0 8px 8px 0; color: #475467;
+  }
+  #doc blockquote p { color: inherit; }
+  #doc table { border-collapse: collapse; width: 100%; margin: 14px 0; font-size: 14px; }
+  #doc th, #doc td { border: 1px solid var(--line); padding: 8px 12px; text-align: left; vertical-align: top; }
+  #doc th { background: var(--soft); font-weight: 600; }
+  #doc hr { border: 0; border-top: 1px solid var(--line); margin: 32px 0; }
+  #doc img { max-width: 100%; }
+
+  #loading, #failed { max-width: 900px; margin: 60px auto; padding: 0 24px; color: var(--fg2); }
+  #failed a { color: var(--accent); }
+  #spec { height: calc(100vh - 57px); }
 </style>
 </head>
 <body>
 
-<!-- ⚠️★ 这个页面**没有构建步骤**：它直接读同目录下的 `openapi/clip9.openapi.yaml`。
-     所以改规格不用改这里，Pages 一发布就是新的。
-     ⚠️ Redoc 走 CDN：站点本身仍是纯静态，但**离线打不开**。
-     真要离线，把 `redoc.standalone.js` 下下来放进 `docs/vendor/` 即可。 -->
-<div id="fallback">
-  <h1>API 参考正在加载…</h1>
-  <p>这一页用 Redoc 渲染 <code>openapi/clip9.openapi.yaml</code>。如果这句话一直不消失，
-  说明渲染器没能从 CDN 加载（离线或被拦截）。</p>
-  <p>直接看规格文件：<a href="openapi/clip9.openapi.yaml">openapi/clip9.openapi.yaml</a>；
-  或看 <a href="openapi/">说明与校验方法</a>。</p>
+<header>
+  <div class="bar">
+    <div class="logo">9</div>
+    <b>API 参考</b>
+    <div class="sp"></div>
+    <div class="tabs">
+      <button id="tab-doc" class="on">中文说明</button>
+      <button id="tab-spec">完整规格</button>
+    </div>
+    <a href="openapi/clip9.openapi.yaml">规格文件</a>
+  </div>
+</header>
+
+<!-- 中文说明：**从 `api.md` 现读现渲染**，不把内容抄一份进这个 HTML ——
+     抄一份就等于有了两个来源，改了 md 忘了改这里，页面上还是旧的。 -->
+<div id="doc">
+  <p id="loading">正在加载中文说明…</p>
 </div>
 
-<script src="https://cdn.redoc.ly/redoc/latest/bundles/redoc.standalone.js"></script>
+<!-- 完整规格（英文）：Redoc。⚠️ 懒加载 —— 它在另一个标签里，不该拖慢首屏。 -->
+<div id="spec" hidden></div>
+
 <script>
-  // ⚠️ 用 `onload` 里的判断而不是「有没有 Redoc」：脚本被拦时 `Redoc` 是 undefined，
-  // 直接调它会抛一个看不懂的错，而页面上什么都不显示。
-  window.addEventListener('load', () => {
-    if (typeof Redoc === 'undefined') {
-      return; // 保留上面的兜底说明
+const docEl = document.getElementById('doc');
+const specEl = document.getElementById('spec');
+const tabDoc = document.getElementById('tab-doc');
+const tabSpec = document.getElementById('tab-spec');
+
+// ── 标签切换 ──────────────────────────────────────────────────────
+function show(which) {
+  const isDoc = which === 'doc';
+  docEl.hidden = !isDoc;
+  specEl.hidden = isDoc;
+  tabDoc.classList.toggle('on', isDoc);
+  tabSpec.classList.toggle('on', !isDoc);
+  // ⚠️ 用 hash 记一下：两页的地址不一样，别人才能把其中一个直接发给别人。
+  location.hash = isDoc ? '' : '#spec';
+  if (!isDoc) loadRedoc();
+}
+tabDoc.addEventListener('click', () => show('doc'));
+tabSpec.addEventListener('click', () => show('spec'));
+window.addEventListener('hashchange', () => show(location.hash === '#spec' ? 'spec' : 'doc'));
+
+// ⚠️★ 渲染器都要从 CDN 拿（marked + Redoc），而 CDN 会被拦、会离线。
+// 所以**失败时必须说清楚**，并且给一条能走的路 —— 空白页看起来像「文档没写」。
+function script(src) {
+  return new Promise((ok, no) => {
+    const s = document.createElement('script');
+    s.src = src; s.onload = ok; s.onerror = no;
+    document.head.appendChild(s);
+  });
+}
+
+// ── 中文说明 ──────────────────────────────────────────────────────
+async function loadDoc() {
+  let md;
+  try {
+    const res = await fetch('api.md');
+    if (!res.ok) throw new Error(res.status);
+    md = await res.text();
+  } catch (e) {
+    document.getElementById('loading').outerHTML =
+      '<p id="failed">读不到 <code>api.md</code>（' + e.message + '）。' +
+      '直接看：<a href="api.md">api.md</a></p>';
+    return;
+  }
+  try {
+    if (typeof marked === 'undefined') {
+      await script('https://cdn.jsdelivr.net/npm/marked/marked.min.js');
     }
-    document.getElementById('fallback').remove();
+    docEl.innerHTML = marked.parse(md);
+  } catch (e) {
+    // 渲染器没拿到 —— **至少把原文给出来**，而不是留一块空白。
+    docEl.innerHTML = '<p id="failed">Markdown 渲染器没能加载（离线或被拦截）。' +
+      '原文在这里：<a href="api.md">api.md</a></p><pre></pre>';
+    docEl.querySelector('pre').textContent = md;
+  }
+}
+
+// ── 完整规格（Redoc，懒加载）──────────────────────────────────────
+let specLoaded = false;
+async function loadRedoc() {
+  if (specLoaded) return;
+  specLoaded = true;
+  specEl.innerHTML = '<div id="failed">正在加载完整规格…如果这句话一直不消失，' +
+    '说明渲染器没能从 CDN 加载。规格文件本身：' +
+    '<a href="openapi/clip9.openapi.yaml">openapi/clip9.openapi.yaml</a></div>';
+  try {
+    await script('https://cdn.redoc.ly/redoc/latest/bundles/redoc.standalone.js');
+    specEl.innerHTML = '';
     Redoc.init('openapi/clip9.openapi.yaml', {
-      // ⚠️ 展开到二级（tag + operation），而不是全展开：31 个路径全展开要滚很久。
       expandResponses: '200,201',
       hideDownloadButton: false,
-      // 主题跟着产品走（与落地页同一支主色）。
+      // ⚠️ 只影响**代码示例**的语种标签，不影响正文（正文语种由规格决定，那是英文）。
+      languages: ['curl', 'javascript', 'python'],
       theme: { colors: { primary: { main: '#1e88e5' } } },
-    }, document.body);
-  });
+    }, specEl);
+  } catch (e) {
+    // 上面那句提示留着就够了。
+  }
+}
+
+// 首屏：默认中文说明；带 `#spec` 进来的直接开规格。
+show(location.hash === '#spec' ? 'spec' : 'doc');
+loadDoc();
 </script>
 </body>
 </html>

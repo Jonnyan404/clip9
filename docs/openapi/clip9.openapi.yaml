@@ -205,12 +205,19 @@ info:
     name: MIT
     identifier: MIT
   contact:
-    name: cloud-clipboard-go / clip9
-    url: https://github.com/jonny/cloud-clipboard-go
+    name: clip9
+    # ⚠️★ 原来写的是 `https://github.com/jonny/cloud-clipboard-go` —— 两处都错：
+    # 用户名是 `jonny`（真名 `Jonnyan404`），而且指向的是**上一个 Go 项目**。
+    # 这类链接最坏的地方不是打不开，是**打开之后看起来是对的**（同一个作者、同一个产品名）。
+    url: https://github.com/Jonnyan404/clip9
 
 externalDocs:
-  description: Human-readable contract notes (Go / Worker / Rust compared)
-  url: ../api.md
+  description: 中文说明（鉴权 / 错误形状 / 限额出处 / 与 Go、Worker 的差异）
+  # ⚠️★ 原来是 `../api.md`。Redoc 是**按页面**解析相对地址的，页面在 `/clip9/api.html`，
+  # 于是它算出来是 `/api.md` —— 少了 `/clip9/` 那一段，点开是 404。
+  # 写绝对地址：规格文件会被从好几个地方打开（Pages / 本地 Redoc / 编辑器预览），
+  # 相对地址在不同基准下算出来的东西不一样。
+  url: https://jonnyan404.github.io/clip9/api.md
 
 servers:
   - url: http://localhost:9501
