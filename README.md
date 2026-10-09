@@ -214,15 +214,24 @@ curl "http://localhost:9501/content?room=work"     # 某个房间的历史
 
 ---
 
-## 📱 客户端与辅助工具
+## ☕ 支持项目
 
-| 形式 | 平台 | 说明 |
-|---|---|---|
-| **网页界面** | 全平台浏览器 | 服务端内置下发，可安装为 PWA |
-| **桌面端** | Windows / macOS / Linux | Tauri 壳 + 原生剪贴板监听，双向静默同步 |
-| **Android App** | Android | 一键开服 + 内嵌 WebView + 远端服务器管理 |
-| **Apple 快捷指令** | iOS / macOS | 发送文本/文件、按 id 拉取 — [`shortcuts/apple/`](./shortcuts/apple) |
-| **Android 快捷指令** | Android | 配合 [HTTP Shortcuts](https://http-shortcuts.rmy.ch/) — [`shortcuts/android/`](./shortcuts/android) |
+如果这个项目对你有帮助，欢迎通过以下方式支持我们：
+
+### 💰 赞赏捐助
+
+你的支持是我们继续维护和改进项目的动力！
+
+| 方式 | 二维码 |
+|------|--------|
+| **微信** | <img src="https://github.com/Jonnyan404/cloud-clipboard-go/blob/main/wechat.png" width="300" alt="微信赞赏码"> |
+
+
+
+### 🌟 其他支持方式
+
+- [【腾讯云】2核2G云服务器新老同享 99元/年，续费同价](https://cloud.tencent.com/act/cps/redirect?redirect=6150&cps_key=0b1dfaf9bb573dac05abef76202dc8cc&from=console)
+- [【阿里云】2核2G云服务器新老同享 99元/年，续费同价](https://www.aliyun.com/daily-act/ecs/activity_selection?userCode=79h2wrag)
 
 ---
 
