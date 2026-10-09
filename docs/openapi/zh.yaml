@@ -84,3 +84,182 @@ paths./tasks/{id}.delete.summary: 删掉一个定时任务
 paths./tasks/{id}/run.post.summary: 试跑一个任务，或者立刻发一次
 paths./tasks/{id}/toggle.post.summary: 启用 / 停用一个定时任务
 paths./automation.get.summary: 定时任务的管理页（HTML）
+
+# ── 服务器与部署 ──────────────────────────────────────────────────────
+externalDocs.description: 可切中英的规格页面（中文那份由 `zh.yaml` 生成）
+servers.0.description: 默认的本地服务端（不带前缀）
+servers.1.description: 走 TLS 的部署示例（域名与协议由你自己定）
+servers.2.description: 配了 server.prefix 的部署示例
+tags.0.description: 服务能力、健康检查，以及这个部署**当前**的鉴权状态。
+tags.1.description: 会话令牌 —— 用密码换一次，之后拿着一枚短期令牌。
+tags.2.description: 发文本、读历史、看板列、撤回。
+tags.3.description: 上传、下载（支持 Range）与删除文件。
+tags.4.description: 房间发现。
+tags.5.description: 为单条内容签分享令牌，并跟踪链接被打开了几次。
+tags.6.description: 定时自动化（cron）、试跑，以及管理页。
+tags.7.description: WebSocket 推送通道。
+
+# ── /server ───────────────────────────────────────────────────────────
+paths./server.get.description: |
+  网页界面调它来决定：要不要弹密码框、WebSocket 在哪、要不要给出定时任务的入口。**不需要鉴权。**
+
+  有三处语义很容易理解错，而它们**都不会报错**：
+
+  1. `auth`（「这个房间要不要密码」）与 `roomProtected` **不是一回事**：
+     `roomProtected` 只在给了 `?room=` 时才算，否则是 `false`。
+  2. `authorized` 初值是 `true` —— 不给 `?room=`、也没有全局密码时，它**连凭据都没有也是 `true`**。
+     别默认把它读成 `false`。
+  3. 不给 `?room=` 时，`auth` 反映的**只是全局密码**。
+
+  NOTE (code)：这个接口**不返回** `version`，也**不返回**那几个限额 —— 它们在 WebSocket 握手的
+  `config` 帧里。（`/server` 还带定时任务的能力位，而 `config` 帧里那个只是个布尔。）
+
+  上面那个 `automation` 对象是节选，完整形状见 `AutomationCapability`。
+paths./server.get.responses.200.description: 按调用方当前上下文算出的服务端信息。
+paths./server.get.responses.200.content.application/json.examples.openServer.summary: 开放部署，没给房间
+paths./server.get.responses.200.content.application/json.examples.protectedRoom.summary: 房间 `home` 受保护，没带凭据
+
+# ── /healthz ──────────────────────────────────────────────────────────
+paths./healthz.get.description: |
+  返回字面量 `ok`。这是**实现附赠**（Go 版从来没有过），存在的理由是让验收脚本有一个便宜的
+  存活探针 —— 它不像 `/server` 那样要算鉴权状态。
+
+  ⚠️ Cloudflare Worker 也答这个路径（它自己那个 `/health` 也还在）—— 一个探针两个名字，
+  会让每个健康检查都得按后端分叉。Go 版两个都没有。
+paths./healthz.get.responses.200.description: 服务端活着。
+
+# ── /auth/token ───────────────────────────────────────────────────────
+paths./auth/token.post.description: |
+  这个密码会**同时**跟房间密码和全局密码比。匹配上**全局**密码的会拿到
+  `scope: "global"` 的令牌（对所有房间有效，且在 `/tasks` 上是管理员）；房间密码则拿到 `scope: ""`。
+
+  请求体必须是合法 JSON —— **空体会是 400，不是取默认值**（空密码没有意义）。
+
+  NOTE (code)：这个接口**刻意不用**那个「房间访问」的公共助手 —— 它对本就开放的房间一律返回
+  `true`，那等于**任何**密码都能给一个没设防的房间签出令牌。这里直接比明文。
+paths./auth/token.post.requestBody.content.application/json.examples.roomPassword.summary: 房间密码
+paths./auth/token.post.responses.200.description: 一枚会话令牌。
+paths./auth/token.post.responses.200.content.application/json.examples.global.summary: 全局密码 —— 到处都有效
+paths./auth/token.post.responses.200.content.application/json.examples.room.summary: 房间密码 —— 只对该房间有效
+paths./auth/token.post.responses.401.description: 密码为空或不对。
+
+# ── /auth/token/refresh ───────────────────────────────────────────────
+paths./auth/token/refresh.post.description: |
+  拿旧令牌换一枚新的，**房间绑定与 `scope` 都不变** —— 全局会话**绝不会**被悄悄降级成只对单个房间
+  （定时任务管理页不存明文密码，一降级它就再也进不去了）。
+paths./auth/token/refresh.post.responses.200.description: 一枚新令牌。
+paths./auth/token/refresh.post.responses.401.description: 出示的令牌无效、已过期，或者绑定的是别的房间。
+
+# ── /text ─────────────────────────────────────────────────────────────
+paths./text.post.description: |
+  存一条文本，并向房间里广播 `receive`。
+
+  **请求体有三种被接受的形状**，由 `Content-Type` 决定：
+
+  | `Content-Type` | 请求体 |
+  |---|---|
+  | `text/plain`、缺失、或不认识 | 整个请求体就是正文 |
+  | `application/json` | `{"content": "..."}` |
+  | `multipart/form-data` | 表单字段 `content` |
+
+  后两种是给 Apple 快捷指令的：它把字符串变量当原始正文发时用的是 UTF-16，而发结构化正文时用 UTF-8。
+  纯文本那条路也会嗅探并解码 UTF-16（看 BOM 或特征字节）；其余一律**逐字节原样存**，不转义、不改写。
+
+  ⚠️ `application/x-www-form-urlencoded` 是**刻意不认**的 —— 它保留「整个正文就是文本」那条路，
+  因为 `curl --data-binary` 默认发的就是它，当成表单会**悄悄存一条空的**。
+
+  带 `?id=` 时，那个 id 的条目会被**原地改写**（id 不变），广播的是 `update`。改写会刷新
+  `timestamp`（它是新内容了），并且要求该 id 是同房间的一条文本条目。
+
+  长度按**字节**算，不按字符：4096 字节大约是 1365 个汉字。
+paths./text.post.parameters.3.description: 给了且非空时，**改写**这个 id 的条目，而不是新建。该条目必须是同房间的文本条目，否则服务端回 `404 message_not_updatable`。
+paths./text.post.requestBody.description: 正文本身，按 `Content-Type` 包装（见上）。
+paths./text.post.requestBody.content.text/plain.examples.plain.summary: 整个请求体就是正文
+paths./text.post.requestBody.content.application/json.examples.json.summary: 结构化请求体（快捷指令）
+paths./text.post.responses.200.description: 条目已存下（或被改写）。
+paths./text.post.responses.200.content.application/json.examples.created.summary: 新建的条目
+paths./text.post.responses.200.content.application/json.examples.overwritten.summary: 改写已有条目 7
+paths./text.post.responses.400.description: 请求体解析不了，或 `?id=` 不是数字。
+paths./text.post.responses.401.description: 这个房间需要凭据，而没给（或给错了）。
+paths./text.post.responses.404.description: 带 `?id=` 时，目标条目不存在，或者它不是本房间里可改写的文本条目。
+paths./text.post.responses.413.description: 文本超过了 `text.limit` 字节。
+
+# ── /content ──────────────────────────────────────────────────────────
+paths./content.get.description: |
+  按**升序**（旧的在前）返回房间历史的一页，客户端直接 append 即可，下一页游标取 `messages[0].id`。
+
+  - 游标是 **`id`**，不是时间戳：时间戳是秒级的、同一秒里会重复，拿它当游标会**漏条或重复**。
+  - `limit` 会被夹到 `min(server.history, 100)` —— 这个夹取正是为了不让 `?limit=999999`
+    把「一次推 2MB」从 WebSocket 挪到 HTTP。
+  - `before` 指向一条已被删掉的条目**不算错**：那一页退化成「最近的 `limit` 条」，
+    而这正是「从最新往回读」的意思。这里回 5xx 只会把客户端卡死。
+  - 一页如果超过 1 MiB 的字节预算，会丢**最旧**的几条（绝不整页丢），所以 `messages[0]` 永远是有效游标。
+  - **空数组表示「没有更多历史了」。**
+paths./content.get.parameters.1.description: 只返回**严格早于**这个 id 的条目。不给或解析不了 = 「从最新开始」。
+paths./content.get.parameters.2.description: 每页条数。夹到 `min(server.history, 100)`；非数字、0 或负数都**静默**回落到那个有效上限。
+paths./content.get.responses.200.description: 一页历史，旧的在前。
+paths./content.get.responses.200.content.application/json.examples.mixedPage.summary: 一条文本 + 一条文件
+paths./content.get.responses.401.description: 无权访问该房间。
+
+# ── /content/latest ───────────────────────────────────────────────────
+paths./content/latest.get.description: |
+  默认把最新一条按**原始内容**返回；带 `?format=json`（文本条目也可以靠 `Accept: application/json`）
+  则返回一个紧凑的 JSON 对象。
+
+  **搜哪个房间：**
+
+  | 请求 | 搜哪里 |
+  |---|---|
+  | `?room=R` | 房间 `R` |
+  | `?all=1` | 凭据能读的**每个**房间，最新的赢 |
+  | 都不给 | `default` 房间 |
+
+  NOTE (code)：`?all=1` 是这个服务端表达「哪都行、取最新」的写法。旧文档写的是
+  「不给 `room` → 全房间最新」；这里**把隐式变显式**了 —— 不给 `room` 就是 `default`，
+  与其他所有接口一致，跨房间要显式 `?all=1`。`?all=1` 下**读不了的房间会被跳过**，而不是致命：
+  一个受保护房间有新消息，不该把每次「全局最新」的请求都变成 401。
+
+  NOTE (code)：这里的 JSON 形状**不是** `GET /content` 那个丰富形状，只返回下面列出的字段。
+  文件条目的 `type` 是探测出的媒体种类（`image` / `video` / `audio` / `document` / `archive` / `file`）。
+
+  ⚠️ 这里**不接受分享令牌**（分享绑定的是一个稳定的条目 id，而 `latest` 没有）；只有房间凭据管用。
+paths./content/latest.get.parameters.1.description: 搜**每个**可读房间，而不是只搜 `default`。
+paths./content/latest.get.responses.200.description: 最新一条，原始内容或紧凑 JSON。
+paths./content/latest.get.responses.200.content.text/plain.examples.rawText.summary: 文本条目，原始内容
+paths./content/latest.get.responses.200.content.application/json.examples.text.summary: 文本条目（JSON）
+paths./content/latest.get.responses.200.content.application/json.examples.file.summary: 文件条目（JSON）
+paths./content/latest.get.responses.401.description: 无权访问解析出来的那个房间。
+paths./content/latest.get.responses.404.description: 没东西可返回：房间是空的（`no_content`）、解析出的房间与请求的不一致（`content_not_found`），或者最新的那条文件已过期（`file_expired`，只在原始分支上）。
+
+# ── /content/{id} ─────────────────────────────────────────────────────
+paths./content/{id}.get.description: |
+  取单独一条。你给的 `?room=` **必须**和该条目记录的房间一致，否则服务端回 `404 content_not_found`
+  （它不会确认「你叫错的那个房间里」有没有这条）。
+
+  鉴权可以是房间凭据，**或者**（仅限读）`?t=` 里的分享令牌。分享令牌**永远不能**授权写操作。
+
+  文本条目默认返回原始文本（**总带一个换行**，免得 `curl` 的输出和提示符粘在一起），
+  带 `?format=json` 则返回**丰富**的 JSON 投影。文件条目没有正文可返回：`?format=json` 给投影，
+  而原始分支回 `404 file_expired`（字节在 `/file/{uuid}`）。
+paths./content/{id}.get.parameters.0.description: 条目 id。必须是整数 —— 非数字的 id 是 **400，不是 404**。
+paths./content/{id}.get.responses.200.description: 该条目，原始内容或 JSON 投影。
+paths./content/{id}.get.responses.200.content.application/json.examples.text.summary: 文本条目的投影
+paths./content/{id}.get.responses.200.content.application/json.examples.file.summary: 文件条目的投影
+paths./content/{id}.get.responses.400.description: id 不是数字，或 `?format=` 不是 raw / json 之一。
+paths./content/{id}.get.responses.401.description: 无权访问该条目所在的房间。
+paths./content/{id}.get.responses.404.description: 不存在、房间对不上，或（原始分支上）文件已过期。
+
+# ── /content/{id}/column ──────────────────────────────────────────────
+paths./content/{id}/column.post.description: |
+  看板是**同一批条目的一个视图**，不是第二份存储：这个接口只在条目上设**一个**字段，别的什么都不动，
+  然后广播 `update`。
+
+  - 三列是固定的：`todo`（默认；空或缺失的列都归一到它）、`doing`、`done`。列名**忽略大小写并去首尾空白**。
+  - 文本与文件条目都适用。
+  - **`timestamp` 刻意不动。** `POST /text?id=` 改写正文时会刷新它，但拖一张卡片**不该**把它顶到时间线最上面。
+  - 鉴权要房间凭据。分享令牌**不接受** —— 它是只读的。
+  - NOTE (code)：这里的失败码是 `room_auth_required`，与读接口用的 `room_forbidden` **不同**。客户端可以据此分支。
+paths./content/{id}/column.post.responses.200.description: 条目已挪动。
+paths./content/{id}/column.post.responses.400.description: id 不对、JSON 体不对，或列名不认识。
+paths./content/{id}/column.post.responses.401.description: 无权访问该条目所在的房间。
+paths./content/{id}/column.post.responses.404.description: 没这条，或者它不在请求的那个房间里。

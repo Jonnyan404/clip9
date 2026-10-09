@@ -4,7 +4,7 @@
 #   然后跑 `python3 docs/openapi/build-zh.py`。
 #
 # 结构（路径 / 字段 / 必填 / 示例）**全部来自英文那份**，所以两份不会漂。
-# 已译 40 条，未译（保留英文）410 条。
+# 已译 106 条，未译（保留英文）344 条。
 openapi: 3.1.0
 info:
   title: clip9 API
@@ -80,59 +80,54 @@ externalDocs:
   url: https://jonnyan404.github.io/clip9/spec.html
 servers:
 - url: http://localhost:9501
-  description: Default local server (no prefix)
+  description: 默认的本地服务端（不带前缀）
 - url: https://clip.example.com
-  description: Example deployment behind TLS (scheme and host are yours)
+  description: 走 TLS 的部署示例（域名与协议由你自己定）
 - url: https://clip.example.com/clip9
-  description: Example deployment under server.prefix
+  description: 配了 server.prefix 的部署示例
 tags:
 - name: Service
-  description: Capabilities, health and the deployment's current auth state.
+  description: 服务能力、健康检查，以及这个部署**当前**的鉴权状态。
 - name: Auth
-  description: Session tokens — exchange a password once, then hold a short-lived token.
+  description: 会话令牌 —— 用密码换一次，之后拿着一枚短期令牌。
 - name: Content
-  description: Sending text, reading history, board columns and revocation.
+  description: 发文本、读历史、看板列、撤回。
 - name: Files
-  description: Uploading, downloading (with Range) and deleting files.
+  description: 上传、下载（支持 Range）与删除文件。
 - name: Rooms
-  description: Room discovery.
+  description: 房间发现。
 - name: Sharing
-  description: Issue share tokens for one entry and track how often the link is opened.
+  description: 为单条内容签分享令牌，并跟踪链接被打开了几次。
 - name: Automation
-  description: Scheduled automations (cron), dry runs and the admin page.
+  description: 定时自动化（cron）、试跑，以及管理页。
 - name: Realtime
-  description: The WebSocket push channel.
+  description: WebSocket 推送通道。
 paths:
   /server:
     get:
       tags:
       - Service
       summary: 服务能力与当前鉴权状态
-      description: "The web UI calls this to decide whether to show a password prompt, where the\nWebSocket\
-        \ lives, and whether to offer an automation entry point. No auth is required.\n\nThree semantics\
-        \ are easy to get wrong and none of them errors:\n\n1. `auth` (\"does this room need a password\"\
-        ) and `roomProtected` are **not** the\n   same thing: `roomProtected` is only computed when `?room=`\
-        \ is supplied, and is\n   `false` otherwise.\n2. `authorized` starts at `true` — with no `?room=`\
-        \ and no global password it is\n   `true` even with no credential at all. Do not read it as `false`\
-        \ by default.\n3. Without `?room=`, `auth` reflects the **global** password only.\n\nNOTE (code):\
-        \ this endpoint does **not** return `version` and does **not** return the\nsize limits. Those\
-        \ arrive in the WebSocket handshake's `config` frame. (`/server`\nalso carries the automation\
-        \ capability, which the WebSocket `config` frame carries\nonly as a boolean.)\n\nThe embedded\
-        \ `automation` object is abridged above; see `AutomationCapability`.\n"
+      description: "网页界面调它来决定：要不要弹密码框、WebSocket 在哪、要不要给出定时任务的入口。**不需要鉴权。**\n\n有三处语义很容易理解错，而它们**都不会报错**：\n\
+        \n1. `auth`（「这个房间要不要密码」）与 `roomProtected` **不是一回事**：\n   `roomProtected` 只在给了 `?room=` 时才算，否则是\
+        \ `false`。\n2. `authorized` 初值是 `true` —— 不给 `?room=`、也没有全局密码时，它**连凭据都没有也是 `true`**。\n   别默认把它读成\
+        \ `false`。\n3. 不给 `?room=` 时，`auth` 反映的**只是全局密码**。\n\nNOTE (code)：这个接口**不返回** `version`，也**不返回**那几个限额\
+        \ —— 它们在 WebSocket 握手的\n`config` 帧里。（`/server` 还带定时任务的能力位，而 `config` 帧里那个只是个布尔。）\n\n上面那个 `automation`\
+        \ 对象是节选，完整形状见 `AutomationCapability`。\n"
       operationId: getServerInfo
       parameters:
       - $ref: '#/components/parameters/RoomQueryOptional'
       security: []
       responses:
         '200':
-          description: Server info for the caller's current context.
+          description: 按调用方当前上下文算出的服务端信息。
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/ServerInfo'
               examples:
                 openServer:
-                  summary: Open deployment, no room supplied
+                  summary: 开放部署，没给房间
                   value:
                     server: ws://127.0.0.1:9501/push
                     auth: false
@@ -145,7 +140,7 @@ paths:
                     automation:
                       enabled: false
                 protectedRoom:
-                  summary: Room `home` is protected, credential absent
+                  summary: 房间 `home` 受保护，没带凭据
                   value:
                     server: wss://clip.example.com/push
                     auth: true
@@ -182,25 +177,21 @@ paths:
       tags:
       - Service
       summary: 存活探针
-      description: 'Returns the literal text `ok`. This is an **implementation extra** (the Go build never
+      description: '返回字面量 `ok`。这是**实现附赠**（Go 版从来没有过），存在的理由是让验收脚本有一个便宜的
 
-        had it); it exists so acceptance scripts have a cheap liveness probe that does not
-
-        compute auth state the way `/server` does.
+        存活探针 —— 它不像 `/server` 那样要算鉴权状态。
 
 
-        ⚠️ The Cloudflare Worker answers this path as well, alongside its own `/health` -- two
+        ⚠️ Cloudflare Worker 也答这个路径（它自己那个 `/health` 也还在）—— 一个探针两个名字，
 
-        names for one probe would make every health check branch per backend. The Go server
-
-        has neither.
+        会让每个健康检查都得按后端分叉。Go 版两个都没有。
 
         '
       operationId: healthz
       security: []
       responses:
         '200':
-          description: The server is up.
+          description: 服务端活着。
           content:
             text/plain:
               schema:
@@ -214,25 +205,17 @@ paths:
       tags:
       - Auth
       summary: 用密码换会话令牌
-      description: 'The password is compared against the room''s password and the global password.
+      description: '这个密码会**同时**跟房间密码和全局密码比。匹配上**全局**密码的会拿到
 
-        A password that matches the **global** password yields a token with
-
-        `scope: "global"` (valid for every room, and admin for `/tasks`); a room password
-
-        yields `scope: ""`.
+        `scope: "global"` 的令牌（对所有房间有效，且在 `/tasks` 上是管理员）；房间密码则拿到 `scope: ""`。
 
 
-        The request body must be valid JSON — an empty body is a **400**, not a default
-
-        (an empty password is meaningless).
+        请求体必须是合法 JSON —— **空体会是 400，不是取默认值**（空密码没有意义）。
 
 
-        NOTE (code): this endpoint deliberately does *not* use the room-access helper,
+        NOTE (code)：这个接口**刻意不用**那个「房间访问」的公共助手 —— 它对本就开放的房间一律返回
 
-        because that helper returns `true` for open rooms — which would let *any* password
-
-        mint a token for an unprotected room. It compares plaintext directly.
+        `true`，那等于**任何**密码都能给一个没设防的房间签出令牌。这里直接比明文。
 
         '
       operationId: issueSessionToken
@@ -247,25 +230,25 @@ paths:
               $ref: '#/components/schemas/TokenRequest'
             examples:
               roomPassword:
-                summary: Room password
+                summary: 房间密码
                 value:
                   password: correct-horse-battery-staple
       responses:
         '200':
-          description: A session token.
+          description: 一枚会话令牌。
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/SessionToken'
               examples:
                 global:
-                  summary: Global password — valid everywhere
+                  summary: 全局密码 —— 到处都有效
                   value:
                     token: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzY29wZSI6Imdsb2JhbCJ9.7mQ2
                     expiresAt: 1758003600
                     scope: global
                 room:
-                  summary: Room password — valid for that room only
+                  summary: 房间密码 —— 只对该房间有效
                   value:
                     token: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzY29wZSI6IiJ9.8xR4
                     expiresAt: 1758003600
@@ -273,7 +256,7 @@ paths:
         '400':
           $ref: '#/components/responses/InvalidRequestBody'
         '401':
-          description: The password was empty or wrong.
+          description: 密码为空或不对。
           content:
             application/json:
               schema:
@@ -296,13 +279,9 @@ paths:
       tags:
       - Auth
       summary: 不用密码续期会话令牌
-      description: 'Presents the old token and receives a fresh one with the same room binding and the
+      description: '拿旧令牌换一枚新的，**房间绑定与 `scope` 都不变** —— 全局会话**绝不会**被悄悄降级成只对单个房间
 
-        same `scope` — a global session is **never** silently downgraded to a room-only one
-
-        (the automation admin page stores no plaintext password, so that downgrade would
-
-        lock it out).
+        （定时任务管理页不存明文密码，一降级它就再也进不去了）。
 
         '
       operationId: refreshSessionToken
@@ -314,7 +293,7 @@ paths:
       - authQuery: []
       responses:
         '200':
-          description: A fresh token.
+          description: 一枚新令牌。
           content:
             application/json:
               schema:
@@ -326,7 +305,7 @@ paths:
                     expiresAt: 1758007200
                     scope: ''
         '401':
-          description: The presented token is invalid, expired, or bound to another room.
+          description: 出示的令牌无效、已过期，或者绑定的是别的房间。
           content:
             application/json:
               schema:
@@ -344,49 +323,39 @@ paths:
       tags:
       - Content
       summary: 发文本，或原地改一条已存在的
-      description: 'Stores a text entry and broadcasts a `receive` event to the room.
+      description: '存一条文本，并向房间里广播 `receive`。
 
 
-        **The body has three accepted shapes**, chosen by `Content-Type`:
+        **请求体有三种被接受的形状**，由 `Content-Type` 决定：
 
 
-        | `Content-Type` | Body |
+        | `Content-Type` | 请求体 |
 
         |---|---|
 
-        | `text/plain`, absent, or anything unrecognised | the whole request body is the text |
+        | `text/plain`、缺失、或不认识 | 整个请求体就是正文 |
 
         | `application/json` | `{"content": "..."}` |
 
-        | `multipart/form-data` | the form field `content` |
+        | `multipart/form-data` | 表单字段 `content` |
 
 
-        The last two exist for Apple Shortcuts, which emits UTF-16 when it sends a string
+        后两种是给 Apple 快捷指令的：它把字符串变量当原始正文发时用的是 UTF-16，而发结构化正文时用 UTF-8。
 
-        variable as the raw body but UTF-8 for a structured body. The plain-text path also
-
-        sniffs and decodes UTF-16 (BOM or tell-tale byte pattern); everything else is stored
-
-        byte-for-byte with nothing escaped or rewritten.
+        纯文本那条路也会嗅探并解码 UTF-16（看 BOM 或特征字节）；其余一律**逐字节原样存**，不转义、不改写。
 
 
-        `application/x-www-form-urlencoded` is **deliberately not recognised** — it keeps the
+        ⚠️ `application/x-www-form-urlencoded` 是**刻意不认**的 —— 它保留「整个正文就是文本」那条路，
 
-        "whole body is the text" path, because that is what `curl --data-binary` sends by
-
-        default, and treating it as a form would silently store an empty entry.
+        因为 `curl --data-binary` 默认发的就是它，当成表单会**悄悄存一条空的**。
 
 
-        With `?id=` the entry identified by that id is **overwritten in place** (same id) and
+        带 `?id=` 时，那个 id 的条目会被**原地改写**（id 不变），广播的是 `update`。改写会刷新
 
-        an `update` event is broadcast instead. Overwriting refreshes `timestamp` — the entry
-
-        is new content — and requires the id to be a text entry living in the same room.
+        `timestamp`（它是新内容了），并且要求该 id 是同房间的一条文本条目。
 
 
-        The length check counts **bytes**, not characters: 4096 bytes is roughly 1365 Chinese
-
-        characters.
+        长度按**字节**算，不按字符：4096 字节大约是 1365 个汉字。
 
         '
       operationId: sendText
@@ -397,13 +366,7 @@ paths:
       - name: id
         in: query
         required: false
-        description: 'If present and non-empty, overwrite the entry with this id instead of creating a
-
-          new one. The entry must be a text entry in the same room, or the server answers
-
-          `404 message_not_updatable`.
-
-          '
+        description: 给了且非空时，**改写**这个 id 的条目，而不是新建。该条目必须是同房间的文本条目，否则服务端回 `404 message_not_updatable`。
         schema:
           type: integer
           format: int32
@@ -414,16 +377,14 @@ paths:
       - authQuery: []
       requestBody:
         required: true
-        description: 'The text itself, wrapped according to `Content-Type` (see above).
-
-          '
+        description: 正文本身，按 `Content-Type` 包装（见上）。
         content:
           text/plain:
             schema:
               type: string
             examples:
               plain:
-                summary: The whole body is the text
+                summary: 整个请求体就是正文
                 value: 'hello from curl
 
                   '
@@ -437,7 +398,7 @@ paths:
                   type: string
             examples:
               json:
-                summary: Structured body (Shortcuts)
+                summary: 结构化请求体（快捷指令）
                 value:
                   content: hello from Shortcuts
           multipart/form-data:
@@ -454,26 +415,26 @@ paths:
                   content: hello from a form
       responses:
         '200':
-          description: The entry was stored (or overwritten).
+          description: 条目已存下（或被改写）。
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/TextSendResult'
               examples:
                 created:
-                  summary: New entry
+                  summary: 新建的条目
                   value:
                     url: http://localhost:9501/content/7
                     id: '7'
                     type: text
                 overwritten:
-                  summary: Existing entry 7 overwritten
+                  summary: 改写已有条目 7
                   value:
                     url: http://localhost:9501/content/7
                     id: '7'
                     type: text
         '400':
-          description: The body could not be parsed, or `?id=` was not a number.
+          description: 请求体解析不了，或 `?id=` 不是数字。
           content:
             application/json:
               schema:
@@ -490,7 +451,7 @@ paths:
                     error: Invalid id parameter
                     message: 无效的 ID 参数
         '401':
-          description: The room needs a credential and none (or a wrong one) was supplied.
+          description: 这个房间需要凭据，而没给（或给错了）。
           content:
             application/json:
               schema:
@@ -507,8 +468,7 @@ paths:
                     error: Invalid auth token
                     message: 无效的认证令牌
         '404':
-          description: With `?id=`, the target entry was not found or is not an updatable text entry in
-            this room.
+          description: 带 `?id=` 时，目标条目不存在，或者它不是本房间里可改写的文本条目。
           content:
             application/json:
               schema:
@@ -520,7 +480,7 @@ paths:
                     error: Message not found or not updatable
                     message: 消息未找到或无法更新
         '413':
-          description: The text is longer than `text.limit` bytes.
+          description: 文本超过了 `text.limit` 字节。
           content:
             application/json:
               schema:
@@ -538,27 +498,17 @@ paths:
       tags:
       - Content
       summary: 房间历史（游标分页）
-      description: "Returns a page of a room's history in **ascending** order (oldest first), so a client\n\
-        can simply append and use `messages[0].id` as the next `before` cursor.\n\n- The cursor is the\
-        \ **id**, not the timestamp: timestamps are second-granular and\n  repeat within a second, so\
-        \ a timestamp cursor would skip or duplicate entries.\n- `limit` is clamped to `min(server.history,\
-        \ 100)` — the clamp is what stops\n  `?limit=999999` from turning a 2 MB WebSocket push into a\
-        \ 2 MB HTTP response.\n- `before` that names a deleted entry is **not** an error; the page degrades\
-        \ to \"the\n  newest `limit` entries\", which is exactly what \"read backwards from the newest\"\
-        \n  means. A 5xx there would only wedge the client.\n- A page that would exceed the 1 MiB byte\
-        \ budget drops its **oldest** entries (never\n  all of them), so `messages[0]` is always a valid\
-        \ cursor.\n- An **empty array means \"no more history\"**.\n"
+      description: "按**升序**（旧的在前）返回房间历史的一页，客户端直接 append 即可，下一页游标取 `messages[0].id`。\n\n- 游标是 **`id`**，不是时间戳：时间戳是秒级的、同一秒里会重复，拿它当游标会**漏条或重复**。\n\
+        - `limit` 会被夹到 `min(server.history, 100)` —— 这个夹取正是为了不让 `?limit=999999`\n  把「一次推 2MB」从 WebSocket\
+        \ 挪到 HTTP。\n- `before` 指向一条已被删掉的条目**不算错**：那一页退化成「最近的 `limit` 条」，\n  而这正是「从最新往回读」的意思。这里回 5xx 只会把客户端卡死。\n\
+        - 一页如果超过 1 MiB 的字节预算，会丢**最旧**的几条（绝不整页丢），所以 `messages[0]` 永远是有效游标。\n- **空数组表示「没有更多历史了」。**\n"
       operationId: listContent
       parameters:
       - $ref: '#/components/parameters/RoomQuery'
       - name: before
         in: query
         required: false
-        description: 'Return entries strictly older than this id. Omitted or unparseable means "start
-
-          from the newest".
-
-          '
+        description: 只返回**严格早于**这个 id 的条目。不给或解析不了 = 「从最新开始」。
         schema:
           type: integer
           format: int32
@@ -566,11 +516,7 @@ paths:
       - name: limit
         in: query
         required: false
-        description: 'Page size. Clamped to `min(server.history, 100)`; non-numeric, zero or negative
-
-          values silently fall back to that effective maximum.
-
-          '
+        description: 每页条数。夹到 `min(server.history, 100)`；非数字、0 或负数都**静默**回落到那个有效上限。
         schema:
           type: integer
           minimum: 1
@@ -581,14 +527,14 @@ paths:
       - authQuery: []
       responses:
         '200':
-          description: A page of history, oldest first.
+          description: 一页历史，旧的在前。
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/ContentList'
               examples:
                 mixedPage:
-                  summary: A text entry and a file entry
+                  summary: 一条文本 + 一条文件
                   value:
                     messages:
                     - type: text
@@ -623,7 +569,7 @@ paths:
                         browser: Safari 18
                       column: todo
         '401':
-          description: No access to this room.
+          description: 无权访问该房间。
           content:
             application/json:
               schema:
@@ -641,48 +587,40 @@ paths:
       tags:
       - Content
       summary: 房间里最新的一条
-      description: 'Returns the newest entry as raw content by default, or as a compact JSON object with
+      description: '默认把最新一条按**原始内容**返回；带 `?format=json`（文本条目也可以靠 `Accept: application/json`）
 
-        `?format=json` (or `Accept: application/json` for text entries).
-
-
-        **Which room is searched:**
+        则返回一个紧凑的 JSON 对象。
 
 
-        | Request | Searches |
+        **搜哪个房间：**
+
+
+        | 请求 | 搜哪里 |
 
         |---|---|
 
-        | `?room=R` | room `R` |
+        | `?room=R` | 房间 `R` |
 
-        | `?all=1` | every room the credential can read, newest wins |
+        | `?all=1` | 凭据能读的**每个**房间，最新的赢 |
 
-        | neither | the `default` room |
-
-
-        NOTE (code): `?all=1` is how this server spells "the newest anywhere". An older
-
-        document described "omit `room` → newest across all rooms"; this server instead makes
-
-        the implicit explicit — omitting `room` means `default`, matching every other
-
-        endpoint, and cross-room needs `?all=1`. Under `?all=1` a room the credential cannot
-
-        read is **skipped**, not fatal: one protected room having a new message must not turn
-
-        every global-latest request into a 401.
+        | 都不给 | `default` 房间 |
 
 
-        NOTE (code): the JSON shape here is **not** the rich shape used by `GET /content`.
+        NOTE (code)：`?all=1` 是这个服务端表达「哪都行、取最新」的写法。旧文档写的是
 
-        Only the fields below are returned. The `type` of a file entry is the detected media
+        「不给 `room` → 全房间最新」；这里**把隐式变显式**了 —— 不给 `room` 就是 `default`，
 
-        kind (`image`, `video`, `audio`, `document`, `archive`, `file`).
+        与其他所有接口一致，跨房间要显式 `?all=1`。`?all=1` 下**读不了的房间会被跳过**，而不是致命：
+
+        一个受保护房间有新消息，不该把每次「全局最新」的请求都变成 401。
 
 
-        Share tokens are **not** accepted here (a share is bound to a stable entry id and
+        NOTE (code)：这里的 JSON 形状**不是** `GET /content` 那个丰富形状，只返回下面列出的字段。
 
-        `latest` has none); only a room credential works.
+        文件条目的 `type` 是探测出的媒体种类（`image` / `video` / `audio` / `document` / `archive` / `file`）。
+
+
+        ⚠️ 这里**不接受分享令牌**（分享绑定的是一个稳定的条目 id，而 `latest` 没有）；只有房间凭据管用。
 
         '
       operationId: getLatestContent
@@ -691,7 +629,7 @@ paths:
       - name: all
         in: query
         required: false
-        description: Search every readable room instead of the `default` room.
+        description: 搜**每个**可读房间，而不是只搜 `default`。
         schema:
           $ref: '#/components/schemas/Truthy'
         example: 1
@@ -703,14 +641,14 @@ paths:
       - authQuery: []
       responses:
         '200':
-          description: The newest entry, raw or as compact JSON.
+          description: 最新一条，原始内容或紧凑 JSON。
           content:
             text/plain:
               schema:
                 type: string
               examples:
                 rawText:
-                  summary: Text entry, raw
+                  summary: 文本条目，原始内容
                   value: 'hello world
 
                     '
@@ -721,7 +659,7 @@ paths:
                 - $ref: '#/components/schemas/LatestFileEntry'
               examples:
                 text:
-                  summary: Text entry as JSON
+                  summary: 文本条目（JSON）
                   value:
                     type: text
                     content: hello world
@@ -729,7 +667,7 @@ paths:
                     timestamp: 1758000000
                     column: todo
                 file:
-                  summary: File entry as JSON
+                  summary: 文件条目（JSON）
                   value:
                     type: image
                     name: photo.png
@@ -743,7 +681,7 @@ paths:
         '400':
           $ref: '#/components/responses/UnsupportedFormat'
         '401':
-          description: No access to the resolved room.
+          description: 无权访问解析出来的那个房间。
           content:
             application/json:
               schema:
@@ -755,13 +693,7 @@ paths:
                     error: No access to this room
                     message: 无权访问该房间
         '404':
-          description: 'Nothing to return: the room is empty (`no_content`), the resolved room does not
-
-            match the requested one (`content_not_found`), or the newest file has expired
-
-            (`file_expired`, only on the raw branch).
-
-            '
+          description: 没东西可返回：房间是空的（`no_content`）、解析出的房间与请求的不一致（`content_not_found`），或者最新的那条文件已过期（`file_expired`，只在原始分支上）。
           content:
             application/json:
               schema:
@@ -787,25 +719,19 @@ paths:
       tags:
       - Content
       summary: 按 id 取一条
-      description: 'Fetches a single entry. The `?room=` you pass must match the room recorded on the
+      description: '取单独一条。你给的 `?room=` **必须**和该条目记录的房间一致，否则服务端回 `404 content_not_found`
 
-        entry, otherwise the server answers `404 content_not_found` (it will not confirm that
-
-        an entry exists in a room you named wrongly).
+        （它不会确认「你叫错的那个房间里」有没有这条）。
 
 
-        Authorization is a room credential **or**, for reads only, a share token in `?t=`.
-
-        Share tokens never authorise a write.
+        鉴权可以是房间凭据，**或者**（仅限读）`?t=` 里的分享令牌。分享令牌**永远不能**授权写操作。
 
 
-        A text entry returns raw text by default (always terminated with a newline so `curl`
+        文本条目默认返回原始文本（**总带一个换行**，免得 `curl` 的输出和提示符粘在一起），
 
-        output does not glue to the prompt) or the _rich_ JSON projection with `?format=json`.
+        带 `?format=json` 则返回**丰富**的 JSON 投影。文件条目没有正文可返回：`?format=json` 给投影，
 
-        A file entry has no body to return; `?format=json` yields the projection, and the raw
-
-        branch returns `404 file_expired` (the bytes live at `/file/{uuid}`).
+        而原始分支回 `404 file_expired`（字节在 `/file/{uuid}`）。
 
         '
       operationId: getContentById
@@ -813,7 +739,7 @@ paths:
       - name: id
         in: path
         required: true
-        description: Entry id. Must parse as an integer — a non-numeric id is a 400, not a 404.
+        description: 条目 id。必须是整数 —— 非数字的 id 是 **400，不是 404**。
         schema:
           type: integer
           format: int32
@@ -829,7 +755,7 @@ paths:
       - shareTokenQuery: []
       responses:
         '200':
-          description: The entry, raw or as the JSON projection.
+          description: 该条目，原始内容或 JSON 投影。
           content:
             text/plain:
               schema:
@@ -844,7 +770,7 @@ paths:
                 $ref: '#/components/schemas/ContentEntry'
               examples:
                 text:
-                  summary: Text entry projection
+                  summary: 文本条目的投影
                   value:
                     type: text
                     content: hello world
@@ -860,7 +786,7 @@ paths:
                       browser: Safari 18
                     column: todo
                 file:
-                  summary: File entry projection
+                  summary: 文件条目的投影
                   value:
                     type: image
                     name: photo.png
@@ -881,7 +807,7 @@ paths:
                       browser: Safari 18
                     column: todo
         '400':
-          description: The id is not numeric, or `?format=` is not one of raw/json.
+          description: id 不是数字，或 `?format=` 不是 raw / json 之一。
           content:
             application/json:
               schema:
@@ -898,7 +824,7 @@ paths:
                     error: Unsupported format
                     message: 不支持的格式（只支持 raw / json）
         '401':
-          description: No access to the entry's room.
+          description: 无权访问该条目所在的房间。
           content:
             application/json:
               schema:
@@ -910,7 +836,7 @@ paths:
                     error: No access to this room
                     message: 无权访问该房间
         '404':
-          description: Not found, room mismatch, or an expired file on the raw branch.
+          description: 不存在、房间对不上，或（原始分支上）文件已过期。
           content:
             application/json:
               schema:
@@ -933,15 +859,22 @@ paths:
       tags:
       - Content
       summary: 把一条挪到看板的某一列
-      description: "The board is a **view over the same entries**, not a second store: this endpoint sets\n\
-        one field on the entry and nothing else, then broadcasts an `update` event.\n\n- The three columns\
-        \ are fixed: `todo` (default; an empty or absent column normalises\n  to it), `doing`, `done`.\
-        \ Column names are matched case-insensitively and trimmed.\n- Works for text and file entries\
-        \ alike.\n- **`timestamp` is deliberately not touched.** `POST /text?id=` bumps it when it\n \
-        \ rewrites the body, but dragging a card must not jump it to the top of the timeline.\n- Auth\
-        \ is a room credential. A share token is **not** accepted — it is read-only.\n- NOTE (code): the\
-        \ failure code here is `room_auth_required`, which differs from the\n  `room_forbidden` used by\
-        \ the read endpoints. Clients may branch on it.\n"
+      description: '看板是**同一批条目的一个视图**，不是第二份存储：这个接口只在条目上设**一个**字段，别的什么都不动，
+
+        然后广播 `update`。
+
+
+        - 三列是固定的：`todo`（默认；空或缺失的列都归一到它）、`doing`、`done`。列名**忽略大小写并去首尾空白**。
+
+        - 文本与文件条目都适用。
+
+        - **`timestamp` 刻意不动。** `POST /text?id=` 改写正文时会刷新它，但拖一张卡片**不该**把它顶到时间线最上面。
+
+        - 鉴权要房间凭据。分享令牌**不接受** —— 它是只读的。
+
+        - NOTE (code)：这里的失败码是 `room_auth_required`，与读接口用的 `room_forbidden` **不同**。客户端可以据此分支。
+
+        '
       operationId: setContentColumn
       parameters:
       - name: id
@@ -971,7 +904,7 @@ paths:
                   column: doing
       responses:
         '200':
-          description: The entry was moved.
+          description: 条目已挪动。
           content:
             application/json:
               schema:
@@ -983,7 +916,7 @@ paths:
                     type: text
                     column: doing
         '400':
-          description: Bad id, bad JSON body, or an unknown column.
+          description: id 不对、JSON 体不对，或列名不认识。
           content:
             application/json:
               schema:
@@ -1005,7 +938,7 @@ paths:
                     error: Unknown board column
                     message: 未知的看板列（只支持 todo / doing / done）
         '401':
-          description: No access to the entry's room.
+          description: 无权访问该条目所在的房间。
           content:
             application/json:
               schema:
@@ -1017,7 +950,7 @@ paths:
                     error: Room authentication required
                     message: 无权访问该房间
         '404':
-          description: No such entry, or it is not in the requested room.
+          description: 没这条，或者它不在请求的那个房间里。
           content:
             application/json:
               schema:
