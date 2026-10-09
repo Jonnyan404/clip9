@@ -7,7 +7,7 @@ prose here and the code disagree, the code wins.
 
 | File | What it is |
 |---|---|
-| `clip9.openapi.yaml` | the spec: 32 paths, 51 schemas, every response carries a named example |
+| `clip9.openapi.yaml` | the spec: 32 paths, 51 schemas, every response carries a named example; the Chinese build is checked too |
 | `check-openapi.py` | checks the document, and that every example conforms to its schema |
 
 ## Checking it
@@ -37,11 +37,13 @@ npx swagger-ui-watcher docs/openapi/clip9.openapi.yaml
 ```
 
 Both need Node and network access for the viewer assets. Without either, the published site renders
-the spec at <https://jonnyan404.github.io/clip9/api.html>, and the top of the file has an endpoint index.
+the spec at <https://jonnyan404.github.io/clip9/spec.html> (with a language switch), and the top of
+the file has an endpoint index.
 
-**Prose reference, in Chinese**: [`docs/api.md`](../api.md) — authentication, the error contract,
-where the limits come from, the `/push` frames, and the divergences from the Go and Worker backends.
-It is the companion to this spec rather than a substitute: fields are authoritative here.
+**Chinese**: `clip9.openapi.zh.yaml` is **generated** — `zh.yaml` holds the translated prose and
+`build-zh.py` splices it into a copy of this spec. Structure (paths, fields, `required`, examples)
+comes from the English file, so the two cannot drift; that is the whole reason it is generated
+rather than written twice. Entries that are not translated yet keep their English text.
 
 ## What to read first
 
@@ -53,13 +55,13 @@ It is the companion to this spec rather than a substitute: fields are authoritat
 - **Realtime** — `/push` carries an `x-websocket-events` extension describing every frame, since
   OpenAPI has no native WebSocket support.
 
-## Deliberate divergences from `docs/api.md`
+## Deliberate divergences from the Go and Worker backends
 
-`docs/api.md` covers three backends (Go / Worker / Rust) and has drifted from the Rust
-implementation in a few places. The spec follows the code; these are the differences, marked
-in the spec with `NOTE (code)`:
+The three backends are not identical, and the older prose reference (now removed) had drifted from
+the Rust implementation in a few places. The spec follows the code; these are the differences,
+marked in the spec with `NOTE (code)`:
 
-| Area | `docs/api.md` | this spec (and the Rust code) |
+| Area | Go / older docs | this spec (and the Rust code) |
 |---|---|---|
 | Content format | table lists `?format=` priority 1-5 | `?json=1` is legacy, `.json` path suffix is **gone** (`/content/7.json` → `400 invalid_content_id`) |
 | `GET /content/latest` | "omit `room` → newest across all rooms" | omit `room` → the `default` room; cross-room needs the explicit `?all=1` |

@@ -1,279 +1,127 @@
+# ⚠️★ 这是**生成物**，不要手改。
+#
+#   改法：改 `zh.yaml`（译文表）或 `clip9.openapi.yaml`（英文原文），
+#   然后跑 `python3 docs/openapi/build-zh.py`。
+#
+# 结构（路径 / 字段 / 必填 / 示例）**全部来自英文那份**，所以两份不会漂。
+# 已译 40 条，未译（保留英文）410 条。
 openapi: 3.1.0
-
 info:
   title: clip9 API
   version: 0.1.0
-  summary: REST + WebSocket contract of the clip9 Rust server (crates/server).
-  description: |
-    # clip9 API
+  summary: clip9 Rust 服务端（crates/server）的 REST + WebSocket 契约
+  description: '# clip9 API
 
-    The HTTP + WebSocket surface implemented by `clip9-server` (`rust/crates/server`).
-    It is the server half of the *Cloud Clipboard* project: a room-scoped clipboard
-    where clients send text or files into a room and every other member of that room
-    receives them, live, over a WebSocket.
 
-    This document was derived by reading the Rust routing table
-    (`crates/server/src/lib.rs::router`) and each handler. Where the prose in
-    `docs/api.md` and the code disagree, **the code wins** — a handful of those
-    divergences are called out inline with a `NOTE (code)` marker.
+    `clip9-server`（`rust/crates/server`）对外提供的 HTTP + WebSocket 接口。
 
-    ## Endpoint index
+    它是 Cloud Clipboard 项目的服务端一半：一个**按房间隔离**的剪贴板 ——
 
-    | Method | Path | Purpose |
+    客户端把文本或文件投进某个房间，房间里其他成员**实时**收到。
+
+
+    这份文档是照着 Rust 的路由表（`crates/server/src/lib.rs::router`）和各处理器读出来的。
+
+    ⚠️ 与代码不一致时**以代码为准**；与 Go 版 / Worker 版不一致的地方在正文里用 `NOTE (code)` 标出来。
+
+
+    ## 路径索引
+
+
+    | 方法 | 路径 | 干什么 |
+
     |---|---|---|
-    | GET | `/server` | Service capabilities and current auth state |
-    | GET | `/healthz` | Liveness probe (implementation extra) |
-    | POST | `/auth/token` | Exchange a password for a 1-hour session token |
-    | POST | `/auth/token/refresh` | Renew a session token (no password) |
-    | POST | `/text` | Send (or overwrite) a text entry |
-    | GET | `/content` | Room history, cursor-paginated, oldest first |
-    | GET | `/content/latest` | Newest entry in a room |
-    | GET | `/content/{id}` | One entry by id |
-    | POST | `/content/{id}/column` | Move an entry to a board column |
-    | GET | `/rooms` | Room list |
-    | POST | `/upload` | Whole-file multipart upload |
-    | POST | `/upload/chunk` | Chunked upload: initialise (body = filename) |
-    | POST | `/upload/chunk/{uuid}` | Chunked upload: append a chunk |
-    | POST | `/upload/finish/{uuid}` | Chunked upload: seal and broadcast |
-    | GET | `/file/{uuid}` `/{uuid}/{name}` | Download / preview (Range supported) |
-    | DELETE | `/file/{uuid}` `/{uuid}/{name}` | Delete a file |
-    | POST | `/revoke/{id}` | Delete one entry |
-    | POST | `/revoke/all` | Clear a room |
-    | POST | `/share` | Issue a share token |
-    | GET | `/share?t=` | Share metadata (does not consume a use) |
-    | GET | `/share/list` | Recent shares of a room |
-    | POST | `/share/visit` | Report that a human opened a share |
-    | GET | `/s/{token}` | Share landing page (HTML with Open Graph tags) |
-    | GET | `/tasks` | List automations of the room |
-    | POST | `/tasks` | Create or replace an automation |
-    | GET/POST | `/tasks/cron` | Validate a cron expression, list next fire times |
-    | GET | `/tasks/rooms` | Rooms that have automations |
-    | POST | `/tasks/preview` | Render an unsaved automation (no side effects) |
-    | DELETE | `/tasks/{id}` | Delete an automation |
-    | POST | `/tasks/{id}/run` | Dry run, or send now with `?send=1` |
-    | POST | `/tasks/{id}/toggle` | Enable / disable one automation |
-    | GET | `/automation` | Automation management page (HTML; no auth) |
-    | WS | `/push` | Real-time room push |
 
-    Static front-end assets are served as a **fallback** for any unmatched path when a
-    static source is configured (`-static` directory or the embedded build); API routes
-    always win. When no static source exists (API-only deployment, e.g. the Android
-    client talking to somebody else's server) unmatched paths return a bare 404.
+    | GET | `/server` | 服务能力与当前鉴权状态 |
 
-    ## Base URL and prefix
+    | GET | `/healthz` | 存活探针（**实现附赠**） |
 
-    The server listens on port **9501** by default. When deployed under a sub-path
-    (`server.prefix`, e.g. `/clip9`), **every** endpoint above carries that prefix.
-    With a prefix configured the unprefixed paths keep working too, because reverse
-    proxies commonly strip the prefix before forwarding.
+    | POST | `/auth/token` | 用密码换一个 1 小时的会话令牌 |
 
-    ## Authentication
+    | POST | `/auth/token/refresh` | 续期会话令牌（不用再给密码） |
 
-    A credential is one of: the **global password**, a **room password**, or a
-    **session token** obtained from `POST /auth/token`. It is carried in one of three ways:
+    | POST | `/text` | 发文本（带 `id` 是**原地改**） |
 
-    | Carrier | How | Notes |
-    |---|---|---|
-    | `Authorization` header | `Authorization: Bearer <credential>` | Preferred. A non-`Bearer` header value is used verbatim (kept so clients can put a bare password there) |
-    | `?auth=` query | `?auth=<credential>` | Kept for Apple Shortcuts. **Never put a password in a shareable URL** — it lands in history and access logs |
-    | `Sec-WebSocket-Protocol` | WebSocket handshake only | Lets the token stay out of the URL. Preferred for `/push` |
+    | GET | `/content` | 历史分页（游标是 `id`） |
 
-    `?auth=` is only consulted when the `Authorization` header is absent or empty.
+    | GET | `/content/latest` | 最新一条 |
 
-    ### Rooms
+    | GET | `/content/{id}` | 按 id 取一条 |
 
-    - `?room=` empty or `default` normalises to the `default` room; **omitting `room`
-      entirely** is a distinct case that some endpoints treat as "any room"
-      (it is why `/content/latest` has an explicit `?all=1` instead — see below).
-    - Whether a room needs a password comes from the **global** `auth` plus that room's
-      `roomAuth` entry: not configured → follows the global `auth`; empty string → also
-      follows the global `auth` (**not** "open"); `{"open": true}` → open even when a
-      global `auth` is set; a non-empty password → required, and the global password still works.
-    - Authorization always uses **the room recorded on the content itself**, never the
-      `?room=` the client claims. This matters most for `/file/{uuid}` — otherwise
-      `?room=default` would let anyone read a protected room's files.
-    - Room names are case-sensitive; only surrounding whitespace is trimmed.
+    | POST | `/content/{id}/column` | 改看板那一列 |
 
-    ### Session tokens
+    | GET | `/rooms` | 房间列表 |
 
-    `POST /auth/token` trades a password for a token (~1 hour, `ROOM_SESSION_TTL_SECONDS`).
-    A token minted from the **global** password has `scope: "global"`, is valid for every
-    room, and counts as **admin** for `/tasks`; a token minted from a room password has
-    `scope: ""` and only opens that room. `POST /auth/token/refresh` renews it without a
-    password and **preserves the scope**.
+    | GET | `/stats/daily` | 每天活跃度（热力图数据源） |
 
-    ### Share tokens
+    | POST | `/upload` | 小文件整份上传（multipart） |
 
-    A share token is a signed, self-describing, short-lived grant that opens **one
-    content entry** (or one file) and is carried in `?t=`. It is **read-only**: `/text`,
-    `/upload`, `/revoke/*` and `/content/{id}/column` do **not** accept it. A share token
-    may carry a password, which must be sent in the `X-Share-Password` header — never in
-    the URL. When a share is password-protected the server also returns a `previewToken`
-    that is safe to put in an `<img src>` (browsers cannot attach custom headers to those).
+    | POST | `/upload/chunk` · `/upload/chunk/{uuid}` · `/upload/finish/{uuid}` | 分片上传 |
 
-    ### Task tokens
+    | GET/DELETE | `/file/{uuid}` · `/file/{uuid}/{name}` | 下载 / 删 |
 
-    In `single`-tier rooms the caller has no password to reuse, so creating an automation
-    returns a `taskToken` **once**. It identifies the task on later calls via the
-    `X-Task-Token` header or `?taskToken=`.
+    | POST | `/revoke/{id}` · `/revoke/all` | 撤回一条 / 清空 |
 
-    ## Error contract
+    | POST/GET | `/share` · `/share/list` · `/share/visit` · `/s/{token}` | 分享链接与落地页 |
 
-    **Every** error path returns the same three-field JSON object with
-    `Content-Type: application/json; charset=utf-8`, regardless of `Accept`:
+    | GET | `/push` | **WebSocket** |
 
-    ```json
-    {"code": "text_too_long", "error": "Text too long", "message": "文本内容超出限制 (最大 4096 字符)"}
-    ```
+    | GET/POST | `/tasks*` | 定时自动化 |
 
-    - `code` — machine code, snake_case. Stable once shipped.
-    - `error` — plain English, for logs and English-speaking users.
-    - `message` — plain Chinese, shown verbatim by clients. Do not compose your own
-      sentence for limit errors; the numbers in it come from live server config.
-
-    Responses end with a trailing newline (it mirrors Go's `json.NewEncoder`). Clients
-    should read `message`/`error` rather than branching on `Accept`: Apple Shortcuts do
-    not expose the status code and do not send `Accept`.
-
-    ## Content format (`/content/*`)
-
-    `GET /content/{id}` and `GET /content/latest` pick their representation with `?format=`:
-
-    | Priority | Signal | Effect |
-    |---|---|---|
-    | 1 | `?format=raw` / `?format=text` / `?format=plain` | Raw bytes |
-    | 2 | `?format=json` | JSON |
-    | 3 | `?json=1` / `?json=true` | JSON (legacy, retained) |
-    | 4 | `Accept: application/json` | JSON — **text responses only**, never files |
-    | 5 | default | Raw |
-
-    An unrecognised `?format=` returns **400 `unsupported_format`** rather than falling
-    back. The `.json` path suffix was removed — `/content/7.json` is now parsed as
-    `id = "7.json"` and fails with `400 invalid_content_id`.
-
-    Files never look at `Accept`: the download path sees every variety of `Accept` the
-    wild produces, so clicking a file link in a browser must not return a blob of JSON.
-
-    ## Limits
-
-    Limits are dynamic and must not be hard-coded; read them from the WS handshake
-    `config` event (`/server` does **not** carry them).
-
-    - `text.limit` — default **4096 bytes** (not characters; a Chinese character is 3 bytes),
-      configurable up to 8 MiB. `0` means unlimited.
-    - `file.limit` — default **256 MiB** per file.
-    - `file.chunk` — default **1 MiB** suggested chunk size.
-    - `file.expire` — default **3600 s**; a room's `roomAuth[x].fileExpire` overrides it,
-      and `0` means "never expires".
-    - `server.history` — default **50** entries retained per room (also the default page size).
-
-    On top of those, there are **absolute per-request body ceilings** that are deliberately
-    independent of `text.limit` / `file.limit`: `POST /text` accepts at most **8 MiB** and a
-    single upload request at most **16 MiB**. They exist so the HTTP framework never rejects
-    a body with its own (non-contract) error shape. Exceeding them is an HTTP-layer
-    rejection, not an API error. Send anything larger as a chunked file upload.
-
-    `GET /content` additionally caps a page twice over: at most
-    `min(server.history, 100)` entries, and at most **1 MiB** of payload — when a page
-    would exceed the byte budget the **oldest** entries are dropped, and never *all* of
-    them (an empty array means "no more history", so a page is never emptied).
-
-    ## Real-time push (WebSocket)
-
-    `GET /push` upgrades to a WebSocket. The handshake **does not push history**; it sends
-    the room's already-connected devices, then a `config` frame. Fetch history yourself with
-    `GET /content`, and use `config.latestId` as the boundary between history and realtime:
-    `id <= latestId` is history (record it, do not apply), `id > latestId` is realtime.
-    Reading a limit or a capability from `/server` instead of this `config` frame is a known
-    trap — `app.config` has exactly one source and it is this frame.
-
-    Every frame is `{"event": "...", "data": ...}`. The server sends
-    `connect`, `disconnect`, `config`, `receive`, `update`, `revoke`, `clearAll`, `pong`;
-    the client may send `{"event": "ping", "data": <anything>}` and gets it echoed back in a
-    `pong`. The server sends protocol-level pings every 5 seconds and drops a client that
-    falls behind the broadcast (so it reconnects and re-syncs rather than silently missing a
-    `revoke`). Reconnection is the client's job.
-
-    ## Scheduled automations
-
-    An automation posts rendered text into a room at a fixed time with nobody watching, which
-    makes it a proxy for write access. Access is therefore scoped per room through
-    `roomAuth[x].automation`: `none` (0 tasks), `single` (1 task, identified by a task token),
-    `room` (up to 20, room credential), or admin (global password — unlimited, any room).
-    The room an automation writes to comes from the credential, never from the request body.
+    '
   license:
     name: MIT
     identifier: MIT
   contact:
     name: clip9
-    # ⚠️★ 原来写的是 `https://github.com/jonny/cloud-clipboard-go` —— 两处都错：
-    # 用户名是 `jonny`（真名 `Jonnyan404`），而且指向的是**上一个 Go 项目**。
-    # 这类链接最坏的地方不是打不开，是**打开之后看起来是对的**（同一个作者、同一个产品名）。
     url: https://github.com/Jonnyan404/clip9
-
 externalDocs:
   description: 可切中英的规格页面（中文那份由 `zh.yaml` 生成）
-  # ⚠️★ 这里原来是个相对地址（`../api.md`）。Redoc 是**按页面**解析相对地址的，
-  # 于是它算出来会少掉 `/clip9/` 那一段，点开是 404。
-  # 写绝对地址：规格文件会被从好几个地方打开（Pages / 本地 Redoc / 编辑器预览），
-  # 相对地址在不同基准下算出来的东西不一样。
   url: https://jonnyan404.github.io/clip9/spec.html
-
 servers:
-  - url: http://localhost:9501
-    description: Default local server (no prefix)
-  - url: https://clip.example.com
-    description: Example deployment behind TLS (scheme and host are yours)
-  - url: https://clip.example.com/clip9
-    description: Example deployment under server.prefix
-
+- url: http://localhost:9501
+  description: Default local server (no prefix)
+- url: https://clip.example.com
+  description: Example deployment behind TLS (scheme and host are yours)
+- url: https://clip.example.com/clip9
+  description: Example deployment under server.prefix
 tags:
-  - name: Service
-    description: Capabilities, health and the deployment's current auth state.
-  - name: Auth
-    description: Session tokens — exchange a password once, then hold a short-lived token.
-  - name: Content
-    description: Sending text, reading history, board columns and revocation.
-  - name: Files
-    description: Uploading, downloading (with Range) and deleting files.
-  - name: Rooms
-    description: Room discovery.
-  - name: Sharing
-    description: Issue share tokens for one entry and track how often the link is opened.
-  - name: Automation
-    description: Scheduled automations (cron), dry runs and the admin page.
-  - name: Realtime
-    description: The WebSocket push channel.
-
+- name: Service
+  description: Capabilities, health and the deployment's current auth state.
+- name: Auth
+  description: Session tokens — exchange a password once, then hold a short-lived token.
+- name: Content
+  description: Sending text, reading history, board columns and revocation.
+- name: Files
+  description: Uploading, downloading (with Range) and deleting files.
+- name: Rooms
+  description: Room discovery.
+- name: Sharing
+  description: Issue share tokens for one entry and track how often the link is opened.
+- name: Automation
+  description: Scheduled automations (cron), dry runs and the admin page.
+- name: Realtime
+  description: The WebSocket push channel.
 paths:
-
-  # ── Service ───────────────────────────────────────────────────────────
   /server:
     get:
-      tags: [Service]
-      summary: Service capabilities and current auth state
-      description: |
-        The web UI calls this to decide whether to show a password prompt, where the
-        WebSocket lives, and whether to offer an automation entry point. No auth is required.
-
-        Three semantics are easy to get wrong and none of them errors:
-
-        1. `auth` ("does this room need a password") and `roomProtected` are **not** the
-           same thing: `roomProtected` is only computed when `?room=` is supplied, and is
-           `false` otherwise.
-        2. `authorized` starts at `true` — with no `?room=` and no global password it is
-           `true` even with no credential at all. Do not read it as `false` by default.
-        3. Without `?room=`, `auth` reflects the **global** password only.
-
-        NOTE (code): this endpoint does **not** return `version` and does **not** return the
-        size limits. Those arrive in the WebSocket handshake's `config` frame. (`/server`
-        also carries the automation capability, which the WebSocket `config` frame carries
-        only as a boolean.)
-
-        The embedded `automation` object is abridged above; see `AutomationCapability`.
+      tags:
+      - Service
+      summary: 服务能力与当前鉴权状态
+      description: "The web UI calls this to decide whether to show a password prompt, where the\nWebSocket\
+        \ lives, and whether to offer an automation entry point. No auth is required.\n\nThree semantics\
+        \ are easy to get wrong and none of them errors:\n\n1. `auth` (\"does this room need a password\"\
+        ) and `roomProtected` are **not** the\n   same thing: `roomProtected` is only computed when `?room=`\
+        \ is supplied, and is\n   `false` otherwise.\n2. `authorized` starts at `true` — with no `?room=`\
+        \ and no global password it is\n   `true` even with no credential at all. Do not read it as `false`\
+        \ by default.\n3. Without `?room=`, `auth` reflects the **global** password only.\n\nNOTE (code):\
+        \ this endpoint does **not** return `version` and does **not** return the\nsize limits. Those\
+        \ arrive in the WebSocket handshake's `config` frame. (`/server`\nalso carries the automation\
+        \ capability, which the WebSocket `config` frame carries\nonly as a boolean.)\n\nThe embedded\
+        \ `automation` object is abridged above; see `AutomationCapability`.\n"
       operationId: getServerInfo
       parameters:
-        - $ref: '#/components/parameters/RoomQueryOptional'
+      - $ref: '#/components/parameters/RoomQueryOptional'
       security: []
       responses:
         '200':
@@ -315,25 +163,39 @@ paths:
                       admin: false
                       max: 0
                       defaultTZ: Asia/Shanghai
-                      vars: [date, weekday, time, datetime, timestamp, uuid, task, room]
+                      vars:
+                      - date
+                      - weekday
+                      - time
+                      - datetime
+                      - timestamp
+                      - uuid
+                      - task
+                      - room
                       actions:
-                        - id: text.trimLines
-                          group: text
-                          groupKey: actionGroupText
-                          key: actionTrimLines
-
+                      - id: text.trimLines
+                        group: text
+                        groupKey: actionGroupText
+                        key: actionTrimLines
   /healthz:
     get:
-      tags: [Service]
-      summary: Liveness probe
-      description: |
-        Returns the literal text `ok`. This is an **implementation extra** (the Go build never
+      tags:
+      - Service
+      summary: 存活探针
+      description: 'Returns the literal text `ok`. This is an **implementation extra** (the Go build never
+
         had it); it exists so acceptance scripts have a cheap liveness probe that does not
+
         compute auth state the way `/server` does.
 
+
         ⚠️ The Cloudflare Worker answers this path as well, alongside its own `/health` -- two
+
         names for one probe would make every health check branch per backend. The Go server
+
         has neither.
+
+        '
       operationId: healthz
       security: []
       responses:
@@ -347,27 +209,35 @@ paths:
               examples:
                 ok:
                   value: ok
-
-  # ── Auth ──────────────────────────────────────────────────────────────
   /auth/token:
     post:
-      tags: [Auth]
-      summary: Exchange a password for a session token
-      description: |
-        The password is compared against the room's password and the global password.
+      tags:
+      - Auth
+      summary: 用密码换会话令牌
+      description: 'The password is compared against the room''s password and the global password.
+
         A password that matches the **global** password yields a token with
+
         `scope: "global"` (valid for every room, and admin for `/tasks`); a room password
+
         yields `scope: ""`.
 
+
         The request body must be valid JSON — an empty body is a **400**, not a default
+
         (an empty password is meaningless).
 
+
         NOTE (code): this endpoint deliberately does *not* use the room-access helper,
+
         because that helper returns `true` for open rooms — which would let *any* password
+
         mint a token for an unprotected room. It compares plaintext directly.
+
+        '
       operationId: issueSessionToken
       parameters:
-        - $ref: '#/components/parameters/RoomQueryOptional'
+      - $ref: '#/components/parameters/RoomQueryOptional'
       security: []
       requestBody:
         required: true
@@ -421,23 +291,27 @@ paths:
                     message: 密码不正确
         '405':
           $ref: '#/components/responses/OnlyPost'
-
   /auth/token/refresh:
     post:
-      tags: [Auth]
-      summary: Renew a session token without a password
-      description: |
-        Presents the old token and receives a fresh one with the same room binding and the
+      tags:
+      - Auth
+      summary: 不用密码续期会话令牌
+      description: 'Presents the old token and receives a fresh one with the same room binding and the
+
         same `scope` — a global session is **never** silently downgraded to a room-only one
+
         (the automation admin page stores no plaintext password, so that downgrade would
+
         lock it out).
+
+        '
       operationId: refreshSessionToken
       parameters:
-        - $ref: '#/components/parameters/RoomQueryOptional'
-        - $ref: '#/components/parameters/AuthQuery'
+      - $ref: '#/components/parameters/RoomQueryOptional'
+      - $ref: '#/components/parameters/AuthQuery'
       security:
-        - bearerAuth: []
-        - authQuery: []
+      - bearerAuth: []
+      - authQuery: []
       responses:
         '200':
           description: A fresh token.
@@ -465,62 +339,84 @@ paths:
                     message: 会话令牌无效或已过期
         '405':
           $ref: '#/components/responses/OnlyPost'
-
-  # ── Content ───────────────────────────────────────────────────────────
   /text:
     post:
-      tags: [Content]
-      summary: Send text, or overwrite an existing entry
-      description: |
-        Stores a text entry and broadcasts a `receive` event to the room.
+      tags:
+      - Content
+      summary: 发文本，或原地改一条已存在的
+      description: 'Stores a text entry and broadcasts a `receive` event to the room.
+
 
         **The body has three accepted shapes**, chosen by `Content-Type`:
 
+
         | `Content-Type` | Body |
+
         |---|---|
+
         | `text/plain`, absent, or anything unrecognised | the whole request body is the text |
+
         | `application/json` | `{"content": "..."}` |
+
         | `multipart/form-data` | the form field `content` |
 
+
         The last two exist for Apple Shortcuts, which emits UTF-16 when it sends a string
+
         variable as the raw body but UTF-8 for a structured body. The plain-text path also
+
         sniffs and decodes UTF-16 (BOM or tell-tale byte pattern); everything else is stored
+
         byte-for-byte with nothing escaped or rewritten.
 
+
         `application/x-www-form-urlencoded` is **deliberately not recognised** — it keeps the
+
         "whole body is the text" path, because that is what `curl --data-binary` sends by
+
         default, and treating it as a form would silently store an empty entry.
 
+
         With `?id=` the entry identified by that id is **overwritten in place** (same id) and
+
         an `update` event is broadcast instead. Overwriting refreshes `timestamp` — the entry
+
         is new content — and requires the id to be a text entry living in the same room.
 
+
         The length check counts **bytes**, not characters: 4096 bytes is roughly 1365 Chinese
+
         characters.
+
+        '
       operationId: sendText
       parameters:
-        - $ref: '#/components/parameters/RoomQuery'
-        - $ref: '#/components/parameters/NameQuery'
-        - $ref: '#/components/parameters/ClientQuery'
-        - name: id
-          in: query
-          required: false
-          description: |
-            If present and non-empty, overwrite the entry with this id instead of creating a
-            new one. The entry must be a text entry in the same room, or the server answers
-            `404 message_not_updatable`.
-          schema:
-            type: integer
-            format: int32
-          example: 7
-        - $ref: '#/components/parameters/AuthQuery'
+      - $ref: '#/components/parameters/RoomQuery'
+      - $ref: '#/components/parameters/NameQuery'
+      - $ref: '#/components/parameters/ClientQuery'
+      - name: id
+        in: query
+        required: false
+        description: 'If present and non-empty, overwrite the entry with this id instead of creating a
+
+          new one. The entry must be a text entry in the same room, or the server answers
+
+          `404 message_not_updatable`.
+
+          '
+        schema:
+          type: integer
+          format: int32
+        example: 7
+      - $ref: '#/components/parameters/AuthQuery'
       security:
-        - bearerAuth: []
-        - authQuery: []
+      - bearerAuth: []
+      - authQuery: []
       requestBody:
         required: true
-        description: |
-          The text itself, wrapped according to `Content-Type` (see above).
+        description: 'The text itself, wrapped according to `Content-Type` (see above).
+
+          '
         content:
           text/plain:
             schema:
@@ -528,12 +424,14 @@ paths:
             examples:
               plain:
                 summary: The whole body is the text
-                value: |
-                  hello from curl
+                value: 'hello from curl
+
+                  '
           application/json:
             schema:
               type: object
-              required: [content]
+              required:
+              - content
               properties:
                 content:
                   type: string
@@ -545,7 +443,8 @@ paths:
           multipart/form-data:
             schema:
               type: object
-              required: [content]
+              required:
+              - content
               properties:
                 content:
                   type: string
@@ -608,7 +507,8 @@ paths:
                     error: Invalid auth token
                     message: 无效的认证令牌
         '404':
-          description: With `?id=`, the target entry was not found or is not an updatable text entry in this room.
+          description: With `?id=`, the target entry was not found or is not an updatable text entry in
+            this room.
           content:
             application/json:
               schema:
@@ -633,52 +533,52 @@ paths:
                     message: 文本内容超出限制 (最大 4096 字符)
         '405':
           $ref: '#/components/responses/OnlyPost'
-
   /content:
     get:
-      tags: [Content]
-      summary: Room history, cursor-paginated
-      description: |
-        Returns a page of a room's history in **ascending** order (oldest first), so a client
-        can simply append and use `messages[0].id` as the next `before` cursor.
-
-        - The cursor is the **id**, not the timestamp: timestamps are second-granular and
-          repeat within a second, so a timestamp cursor would skip or duplicate entries.
-        - `limit` is clamped to `min(server.history, 100)` — the clamp is what stops
-          `?limit=999999` from turning a 2 MB WebSocket push into a 2 MB HTTP response.
-        - `before` that names a deleted entry is **not** an error; the page degrades to "the
-          newest `limit` entries", which is exactly what "read backwards from the newest"
-          means. A 5xx there would only wedge the client.
-        - A page that would exceed the 1 MiB byte budget drops its **oldest** entries (never
-          all of them), so `messages[0]` is always a valid cursor.
-        - An **empty array means "no more history"**.
+      tags:
+      - Content
+      summary: 房间历史（游标分页）
+      description: "Returns a page of a room's history in **ascending** order (oldest first), so a client\n\
+        can simply append and use `messages[0].id` as the next `before` cursor.\n\n- The cursor is the\
+        \ **id**, not the timestamp: timestamps are second-granular and\n  repeat within a second, so\
+        \ a timestamp cursor would skip or duplicate entries.\n- `limit` is clamped to `min(server.history,\
+        \ 100)` — the clamp is what stops\n  `?limit=999999` from turning a 2 MB WebSocket push into a\
+        \ 2 MB HTTP response.\n- `before` that names a deleted entry is **not** an error; the page degrades\
+        \ to \"the\n  newest `limit` entries\", which is exactly what \"read backwards from the newest\"\
+        \n  means. A 5xx there would only wedge the client.\n- A page that would exceed the 1 MiB byte\
+        \ budget drops its **oldest** entries (never\n  all of them), so `messages[0]` is always a valid\
+        \ cursor.\n- An **empty array means \"no more history\"**.\n"
       operationId: listContent
       parameters:
-        - $ref: '#/components/parameters/RoomQuery'
-        - name: before
-          in: query
-          required: false
-          description: |
-            Return entries strictly older than this id. Omitted or unparseable means "start
-            from the newest".
-          schema:
-            type: integer
-            format: int32
-          example: 120
-        - name: limit
-          in: query
-          required: false
-          description: |
-            Page size. Clamped to `min(server.history, 100)`; non-numeric, zero or negative
-            values silently fall back to that effective maximum.
-          schema:
-            type: integer
-            minimum: 1
-          example: 50
-        - $ref: '#/components/parameters/AuthQuery'
+      - $ref: '#/components/parameters/RoomQuery'
+      - name: before
+        in: query
+        required: false
+        description: 'Return entries strictly older than this id. Omitted or unparseable means "start
+
+          from the newest".
+
+          '
+        schema:
+          type: integer
+          format: int32
+        example: 120
+      - name: limit
+        in: query
+        required: false
+        description: 'Page size. Clamped to `min(server.history, 100)`; non-numeric, zero or negative
+
+          values silently fall back to that effective maximum.
+
+          '
+        schema:
+          type: integer
+          minimum: 1
+        example: 50
+      - $ref: '#/components/parameters/AuthQuery'
       security:
-        - bearerAuth: []
-        - authQuery: []
+      - bearerAuth: []
+      - authQuery: []
       responses:
         '200':
           description: A page of history, oldest first.
@@ -691,37 +591,37 @@ paths:
                   summary: A text entry and a file entry
                   value:
                     messages:
-                      - type: text
-                        content: hello world
-                        id: '7'
-                        timestamp: 1758000000
-                        room: default
-                        senderIP: 203.0.113.7
-                        senderClientID: web-1a2b
-                        senderDevice:
-                          name: iPhone
-                          type: smartphone
-                          os: iOS 18
-                          browser: Safari 18
-                        column: todo
-                      - type: image
-                        name: photo.png
-                        size: 20480
-                        uuid: 11111111-2222-3333-4444-555555555555
-                        cache: 11111111-2222-3333-4444-555555555555
-                        thumbnail: data:image/jpeg;base64,/9j/4AAQSkZJRg==
-                        url: http://localhost:9501/file/11111111-2222-3333-4444-555555555555/photo.png
-                        id: '8'
-                        timestamp: 1758000060
-                        expire: 1758003600
-                        room: default
-                        senderIP: 203.0.113.7
-                        senderDevice:
-                          name: iPhone
-                          type: smartphone
-                          os: iOS 18
-                          browser: Safari 18
-                        column: todo
+                    - type: text
+                      content: hello world
+                      id: '7'
+                      timestamp: 1758000000
+                      room: default
+                      senderIP: 203.0.113.7
+                      senderClientID: web-1a2b
+                      senderDevice:
+                        name: iPhone
+                        type: smartphone
+                        os: iOS 18
+                        browser: Safari 18
+                      column: todo
+                    - type: image
+                      name: photo.png
+                      size: 20480
+                      uuid: 11111111-2222-3333-4444-555555555555
+                      cache: 11111111-2222-3333-4444-555555555555
+                      thumbnail: data:image/jpeg;base64,/9j/4AAQSkZJRg==
+                      url: http://localhost:9501/file/11111111-2222-3333-4444-555555555555/photo.png
+                      id: '8'
+                      timestamp: 1758000060
+                      expire: 1758003600
+                      room: default
+                      senderIP: 203.0.113.7
+                      senderDevice:
+                        name: iPhone
+                        type: smartphone
+                        os: iOS 18
+                        browser: Safari 18
+                      column: todo
         '401':
           description: No access to this room.
           content:
@@ -736,52 +636,71 @@ paths:
                     message: 无权访问该房间
         '405':
           $ref: '#/components/responses/OnlyGet'
-
   /content/latest:
     get:
-      tags: [Content]
-      summary: Newest entry of a room
-      description: |
-        Returns the newest entry as raw content by default, or as a compact JSON object with
+      tags:
+      - Content
+      summary: 房间里最新的一条
+      description: 'Returns the newest entry as raw content by default, or as a compact JSON object with
+
         `?format=json` (or `Accept: application/json` for text entries).
+
 
         **Which room is searched:**
 
+
         | Request | Searches |
+
         |---|---|
+
         | `?room=R` | room `R` |
+
         | `?all=1` | every room the credential can read, newest wins |
+
         | neither | the `default` room |
 
+
         NOTE (code): `?all=1` is how this server spells "the newest anywhere". An older
+
         document described "omit `room` → newest across all rooms"; this server instead makes
+
         the implicit explicit — omitting `room` means `default`, matching every other
+
         endpoint, and cross-room needs `?all=1`. Under `?all=1` a room the credential cannot
+
         read is **skipped**, not fatal: one protected room having a new message must not turn
+
         every global-latest request into a 401.
 
+
         NOTE (code): the JSON shape here is **not** the rich shape used by `GET /content`.
+
         Only the fields below are returned. The `type` of a file entry is the detected media
+
         kind (`image`, `video`, `audio`, `document`, `archive`, `file`).
 
+
         Share tokens are **not** accepted here (a share is bound to a stable entry id and
+
         `latest` has none); only a room credential works.
+
+        '
       operationId: getLatestContent
       parameters:
-        - $ref: '#/components/parameters/RoomQueryOptional'
-        - name: all
-          in: query
-          required: false
-          description: Search every readable room instead of the `default` room.
-          schema:
-            $ref: '#/components/schemas/Truthy'
-          example: 1
-        - $ref: '#/components/parameters/FormatQuery'
-        - $ref: '#/components/parameters/JsonQuery'
-        - $ref: '#/components/parameters/AuthQuery'
+      - $ref: '#/components/parameters/RoomQueryOptional'
+      - name: all
+        in: query
+        required: false
+        description: Search every readable room instead of the `default` room.
+        schema:
+          $ref: '#/components/schemas/Truthy'
+        example: 1
+      - $ref: '#/components/parameters/FormatQuery'
+      - $ref: '#/components/parameters/JsonQuery'
+      - $ref: '#/components/parameters/AuthQuery'
       security:
-        - bearerAuth: []
-        - authQuery: []
+      - bearerAuth: []
+      - authQuery: []
       responses:
         '200':
           description: The newest entry, raw or as compact JSON.
@@ -792,13 +711,14 @@ paths:
               examples:
                 rawText:
                   summary: Text entry, raw
-                  value: |
-                    hello world
+                  value: 'hello world
+
+                    '
             application/json:
               schema:
                 oneOf:
-                  - $ref: '#/components/schemas/LatestTextEntry'
-                  - $ref: '#/components/schemas/LatestFileEntry'
+                - $ref: '#/components/schemas/LatestTextEntry'
+                - $ref: '#/components/schemas/LatestFileEntry'
               examples:
                 text:
                   summary: Text entry as JSON
@@ -835,10 +755,13 @@ paths:
                     error: No access to this room
                     message: 无权访问该房间
         '404':
-          description: |
-            Nothing to return: the room is empty (`no_content`), the resolved room does not
+          description: 'Nothing to return: the room is empty (`no_content`), the resolved room does not
+
             match the requested one (`content_not_found`), or the newest file has expired
+
             (`file_expired`, only on the raw branch).
+
+            '
           content:
             application/json:
               schema:
@@ -859,42 +782,51 @@ paths:
                     code: file_expired
                     error: File expired
                     message: 文件已过期
-
   /content/{id}:
     get:
-      tags: [Content]
-      summary: One entry by id
-      description: |
-        Fetches a single entry. The `?room=` you pass must match the room recorded on the
+      tags:
+      - Content
+      summary: 按 id 取一条
+      description: 'Fetches a single entry. The `?room=` you pass must match the room recorded on the
+
         entry, otherwise the server answers `404 content_not_found` (it will not confirm that
+
         an entry exists in a room you named wrongly).
 
+
         Authorization is a room credential **or**, for reads only, a share token in `?t=`.
+
         Share tokens never authorise a write.
 
+
         A text entry returns raw text by default (always terminated with a newline so `curl`
+
         output does not glue to the prompt) or the _rich_ JSON projection with `?format=json`.
+
         A file entry has no body to return; `?format=json` yields the projection, and the raw
+
         branch returns `404 file_expired` (the bytes live at `/file/{uuid}`).
+
+        '
       operationId: getContentById
       parameters:
-        - name: id
-          in: path
-          required: true
-          description: Entry id. Must parse as an integer — a non-numeric id is a 400, not a 404.
-          schema:
-            type: integer
-            format: int32
-          example: 7
-        - $ref: '#/components/parameters/RoomQueryOptional'
-        - $ref: '#/components/parameters/FormatQuery'
-        - $ref: '#/components/parameters/JsonQuery'
-        - $ref: '#/components/parameters/ShareTokenQuery'
-        - $ref: '#/components/parameters/AuthQuery'
+      - name: id
+        in: path
+        required: true
+        description: Entry id. Must parse as an integer — a non-numeric id is a 400, not a 404.
+        schema:
+          type: integer
+          format: int32
+        example: 7
+      - $ref: '#/components/parameters/RoomQueryOptional'
+      - $ref: '#/components/parameters/FormatQuery'
+      - $ref: '#/components/parameters/JsonQuery'
+      - $ref: '#/components/parameters/ShareTokenQuery'
+      - $ref: '#/components/parameters/AuthQuery'
       security:
-        - bearerAuth: []
-        - authQuery: []
-        - shareTokenQuery: []
+      - bearerAuth: []
+      - authQuery: []
+      - shareTokenQuery: []
       responses:
         '200':
           description: The entry, raw or as the JSON projection.
@@ -904,8 +836,9 @@ paths:
                 type: string
               examples:
                 rawText:
-                  value: |
-                    hello world
+                  value: 'hello world
+
+                    '
             application/json:
               schema:
                 $ref: '#/components/schemas/ContentEntry'
@@ -995,37 +928,34 @@ paths:
                     message: 文件已过期
         '405':
           $ref: '#/components/responses/OnlyGet'
-
   /content/{id}/column:
     post:
-      tags: [Content]
-      summary: Move an entry to a board column
-      description: |
-        The board is a **view over the same entries**, not a second store: this endpoint sets
-        one field on the entry and nothing else, then broadcasts an `update` event.
-
-        - The three columns are fixed: `todo` (default; an empty or absent column normalises
-          to it), `doing`, `done`. Column names are matched case-insensitively and trimmed.
-        - Works for text and file entries alike.
-        - **`timestamp` is deliberately not touched.** `POST /text?id=` bumps it when it
-          rewrites the body, but dragging a card must not jump it to the top of the timeline.
-        - Auth is a room credential. A share token is **not** accepted — it is read-only.
-        - NOTE (code): the failure code here is `room_auth_required`, which differs from the
-          `room_forbidden` used by the read endpoints. Clients may branch on it.
+      tags:
+      - Content
+      summary: 把一条挪到看板的某一列
+      description: "The board is a **view over the same entries**, not a second store: this endpoint sets\n\
+        one field on the entry and nothing else, then broadcasts an `update` event.\n\n- The three columns\
+        \ are fixed: `todo` (default; an empty or absent column normalises\n  to it), `doing`, `done`.\
+        \ Column names are matched case-insensitively and trimmed.\n- Works for text and file entries\
+        \ alike.\n- **`timestamp` is deliberately not touched.** `POST /text?id=` bumps it when it\n \
+        \ rewrites the body, but dragging a card must not jump it to the top of the timeline.\n- Auth\
+        \ is a room credential. A share token is **not** accepted — it is read-only.\n- NOTE (code): the\
+        \ failure code here is `room_auth_required`, which differs from the\n  `room_forbidden` used by\
+        \ the read endpoints. Clients may branch on it.\n"
       operationId: setContentColumn
       parameters:
-        - name: id
-          in: path
-          required: true
-          schema:
-            type: integer
-            format: int32
-          example: 7
-        - $ref: '#/components/parameters/RoomQueryOptional'
-        - $ref: '#/components/parameters/AuthQuery'
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: integer
+          format: int32
+        example: 7
+      - $ref: '#/components/parameters/RoomQueryOptional'
+      - $ref: '#/components/parameters/AuthQuery'
       security:
-        - bearerAuth: []
-        - authQuery: []
+      - bearerAuth: []
+      - authQuery: []
       requestBody:
         required: true
         content:
@@ -1100,42 +1030,39 @@ paths:
                     message: 内容未找到
         '405':
           $ref: '#/components/responses/OnlyPost'
-
-  # ── Rooms ─────────────────────────────────────────────────────────────
   /rooms:
     get:
-      tags: [Rooms]
-      summary: Room list
-      description: |
-        Lists the rooms the caller may see. Requires `server.roomList` to be enabled,
-        otherwise `403 room_list_disabled`.
-
-        - Rooms the credential cannot open are **omitted entirely**, not listed with a lock.
-        - The `default` room is reported with an **empty** `name` (the front end treats an
-          empty name as the default room).
-        - The array order is **not** part of the contract (Go iterated a map). This server
-          returns a deterministic order, but no client should depend on it.
-        - `isProtected` means "actually needs a password", so a room explicitly configured
-          `{"open": true}` reports `false` even when a global password exists.
-        - A credential can be supplied as the primary one plus extra ones via
-          `X-Room-Auth-Tokens` (JSON array or comma-separated), which is how a client with
-          several room passwords sees all of its rooms at once.
+      tags:
+      - Rooms
+      summary: 房间列表
+      description: "Lists the rooms the caller may see. Requires `server.roomList` to be enabled,\notherwise\
+        \ `403 room_list_disabled`.\n\n- Rooms the credential cannot open are **omitted entirely**, not\
+        \ listed with a lock.\n- The `default` room is reported with an **empty** `name` (the front end\
+        \ treats an\n  empty name as the default room).\n- The array order is **not** part of the contract\
+        \ (Go iterated a map). This server\n  returns a deterministic order, but no client should depend\
+        \ on it.\n- `isProtected` means \"actually needs a password\", so a room explicitly configured\n\
+        \  `{\"open\": true}` reports `false` even when a global password exists.\n- A credential can\
+        \ be supplied as the primary one plus extra ones via\n  `X-Room-Auth-Tokens` (JSON array or comma-separated),\
+        \ which is how a client with\n  several room passwords sees all of its rooms at once.\n"
       operationId: listRooms
       parameters:
-        - $ref: '#/components/parameters/AuthQuery'
-        - name: X-Room-Auth-Tokens
-          in: header
-          required: false
-          description: |
-            Additional credentials, as a JSON array (`["a","b"]`) or comma-separated
-            (`a, b`). Whitespace is trimmed, duplicates dropped, order preserved, and the
-            primary credential comes first.
-          schema:
-            type: string
-          example: '["home-pass","work-pass"]'
+      - $ref: '#/components/parameters/AuthQuery'
+      - name: X-Room-Auth-Tokens
+        in: header
+        required: false
+        description: 'Additional credentials, as a JSON array (`["a","b"]`) or comma-separated
+
+          (`a, b`). Whitespace is trimmed, duplicates dropped, order preserved, and the
+
+          primary credential comes first.
+
+          '
+        schema:
+          type: string
+        example: '["home-pass","work-pass"]'
       security:
-        - bearerAuth: []
-        - authQuery: []
+      - bearerAuth: []
+      - authQuery: []
       responses:
         '200':
           description: The accessible rooms.
@@ -1147,18 +1074,18 @@ paths:
                 list:
                   value:
                     rooms:
-                      - name: ''
-                        messageCount: 12
-                        deviceCount: 2
-                        lastActive: 1758000000
-                        isActive: true
-                        isProtected: false
-                      - name: home
-                        messageCount: 3
-                        deviceCount: 0
-                        lastActive: 1757990000
-                        isActive: false
-                        isProtected: true
+                    - name: ''
+                      messageCount: 12
+                      deviceCount: 2
+                      lastActive: 1758000000
+                      isActive: true
+                      isProtected: false
+                    - name: home
+                      messageCount: 3
+                      deviceCount: 0
+                      lastActive: 1757990000
+                      isActive: false
+                      isProtected: true
         '403':
           description: The room list feature is disabled on this server.
           content:
@@ -1173,66 +1100,63 @@ paths:
                     message: 房间列表功能未启用
         '405':
           $ref: '#/components/responses/OnlyGet'
-
-  # ── Files ─────────────────────────────────────────────────────────────
   /stats/daily:
     get:
-      tags: [Stats]
-      summary: Room activity per day
-      description: |
-        The data behind the activity heat map: how many entries a room received on each of the
-        last `days` local days.
-
-        **The timezone is the caller's, not the server's.** `tz` takes an IANA name; the server
-        does not know where the reader is, and "today" has to mean *their* today. Bucketing in
-        UTC would push everything after 20:00 in UTC+8 into the next day. An unrecognised name
-        falls back to `UTC`, and the response reports which one was actually used in `tz`
-        (`requestedTz` echoes what was asked for, so the caller can tell the two apart).
-
-        **`levels` are quantiles of this room's own non-zero days**, not fixed thresholds. A room
-        that gets three entries a day would render entirely in the lightest shade under fixed
-        cut-offs -- and "which days were busier" is the only reason to look at this chart. The
-        trade-off is that the same colour means different counts in different rooms, which is why
-        the response carries the thresholds and the UI prints the actual ranges.
-
-        - `days` is clamped to `371` (53 weeks). `0`, a negative number and a non-number all mean
-          "not given" and fall back to the default -- **not** an empty chart, which would read as
-          "this room has never had anything".
-        - **Expired files do not count.** The server deletes the timeline entry when a file
-          expires, so counting them here would make a room look busier than the timeline shows.
-        - `busiest` is `null` when the window is empty; ties resolve to the **most recent** day.
+      tags:
+      - Stats
+      summary: 房间每天的活跃度
+      description: "The data behind the activity heat map: how many entries a room received on each of\
+        \ the\nlast `days` local days.\n\n**The timezone is the caller's, not the server's.** `tz` takes\
+        \ an IANA name; the server\ndoes not know where the reader is, and \"today\" has to mean *their*\
+        \ today. Bucketing in\nUTC would push everything after 20:00 in UTC+8 into the next day. An unrecognised\
+        \ name\nfalls back to `UTC`, and the response reports which one was actually used in `tz`\n(`requestedTz`\
+        \ echoes what was asked for, so the caller can tell the two apart).\n\n**`levels` are quantiles\
+        \ of this room's own non-zero days**, not fixed thresholds. A room\nthat gets three entries a\
+        \ day would render entirely in the lightest shade under fixed\ncut-offs -- and \"which days were\
+        \ busier\" is the only reason to look at this chart. The\ntrade-off is that the same colour means\
+        \ different counts in different rooms, which is why\nthe response carries the thresholds and the\
+        \ UI prints the actual ranges.\n\n- `days` is clamped to `371` (53 weeks). `0`, a negative number\
+        \ and a non-number all mean\n  \"not given\" and fall back to the default -- **not** an empty\
+        \ chart, which would read as\n  \"this room has never had anything\".\n- **Expired files do not\
+        \ count.** The server deletes the timeline entry when a file\n  expires, so counting them here\
+        \ would make a room look busier than the timeline shows.\n- `busiest` is `null` when the window\
+        \ is empty; ties resolve to the **most recent** day.\n"
       operationId: getRoomDailyActivity
       parameters:
-        - name: room
-          in: query
-          required: false
-          description: Room to report on. Omit for the `default` room.
-          schema:
-            type: string
-          example: work
-        - name: days
-          in: query
-          required: false
-          description: |
-            Window length in days, ending today. Clamped to `371`. `0`, negative and
-            non-numeric values are treated as "not given".
-          schema:
-            type: integer
-            minimum: 0
-            maximum: 371
-          example: 371
-        - name: tz
-          in: query
-          required: false
-          description: |
-            IANA timezone name used to decide which local day a timestamp belongs to.
-            An unrecognised name falls back to `UTC`.
-          schema:
-            type: string
-          example: Asia/Shanghai
+      - name: room
+        in: query
+        required: false
+        description: Room to report on. Omit for the `default` room.
+        schema:
+          type: string
+        example: work
+      - name: days
+        in: query
+        required: false
+        description: 'Window length in days, ending today. Clamped to `371`. `0`, negative and
+
+          non-numeric values are treated as "not given".
+
+          '
+        schema:
+          type: integer
+          minimum: 0
+          maximum: 371
+        example: 371
+      - name: tz
+        in: query
+        required: false
+        description: 'IANA timezone name used to decide which local day a timestamp belongs to.
+
+          An unrecognised name falls back to `UTC`.
+
+          '
+        schema:
+          type: string
+        example: Asia/Shanghai
       security:
-        - bearerAuth: []
-        - authQuery: []
+      - bearerAuth: []
+      - authQuery: []
       responses:
         '200':
           description: Per-day counts for the requested window.
@@ -1240,7 +1164,12 @@ paths:
             application/json:
               schema:
                 type: object
-                required: [room, tz, requestedTz, truncated, activity]
+                required:
+                - room
+                - tz
+                - requestedTz
+                - truncated
+                - activity
                 properties:
                   room:
                     type: string
@@ -1252,19 +1181,28 @@ paths:
                     description: What the caller asked for, echoed back so a fallback is visible.
                   truncated:
                     type: boolean
-                    description: |
-                      True when the scan hit its row ceiling, so the oldest days in the window
+                    description: 'True when the scan hit its row ceiling, so the oldest days in the window
+
                       may be undercounted.
+
+                      '
                   activity:
                     type: object
-                    required: [days, total, busiest, streak, levels]
+                    required:
+                    - days
+                    - total
+                    - busiest
+                    - streak
+                    - levels
                     properties:
                       days:
                         type: array
                         description: Oldest first; length is exactly the effective `days`.
                         items:
                           type: object
-                          required: [date, count]
+                          required:
+                          - date
+                          - count
                           properties:
                             date:
                               type: string
@@ -1283,21 +1221,29 @@ paths:
                             type: integer
                       streak:
                         type: object
-                        required: [current, longest]
+                        required:
+                        - current
+                        - longest
                         properties:
                           current:
                             type: integer
-                            description: |
-                              Consecutive days up to today. When today is still empty this
+                            description: 'Consecutive days up to today. When today is still empty this
+
                               skips it and counts back from yesterday, so the number does not
+
                               drop to zero every morning.
+
+                              '
                           longest:
                             type: integer
                       levels:
                         type: array
-                        description: |
-                          Four ascending thresholds for the shade scale. All four are equal when
+                        description: 'Four ascending thresholds for the shade scale. All four are equal
+                          when
+
                           fewer than four days in the window have any activity.
+
+                          '
                         items:
                           type: integer
               examples:
@@ -1309,20 +1255,20 @@ paths:
                     truncated: false
                     activity:
                       days:
-                        - date: '2026-10-01'
-                          count: 0
-                        - date: '2026-10-02'
-                          count: 3
-                        - date: '2026-10-03'
-                          count: 0
-                        - date: '2026-10-04'
-                          count: 12
-                        - date: '2026-10-05'
-                          count: 5
-                        - date: '2026-10-06'
-                          count: 0
-                        - date: '2026-10-07'
-                          count: 8
+                      - date: '2026-10-01'
+                        count: 0
+                      - date: '2026-10-02'
+                        count: 3
+                      - date: '2026-10-03'
+                        count: 0
+                      - date: '2026-10-04'
+                        count: 12
+                      - date: '2026-10-05'
+                        count: 5
+                      - date: '2026-10-06'
+                        count: 0
+                      - date: '2026-10-07'
+                        count: 8
                       total: 28
                       busiest:
                         date: '2026-10-04'
@@ -1330,7 +1276,11 @@ paths:
                       streak:
                         current: 2
                         longest: 3
-                      levels: [3, 5, 8, 12]
+                      levels:
+                      - 3
+                      - 5
+                      - 8
+                      - 12
                 unknownTimezone:
                   summary: An unrecognised `tz` falls back to UTC
                   value:
@@ -1340,10 +1290,10 @@ paths:
                     truncated: false
                     activity:
                       days:
-                        - date: '2026-10-06'
-                          count: 0
-                        - date: '2026-10-07'
-                          count: 1
+                      - date: '2026-10-06'
+                        count: 0
+                      - date: '2026-10-07'
+                        count: 1
                       total: 1
                       busiest:
                         date: '2026-10-07'
@@ -1351,48 +1301,67 @@ paths:
                       streak:
                         current: 1
                         longest: 1
-                      levels: [1, 1, 1, 1]
+                      levels:
+                      - 1
+                      - 1
+                      - 1
+                      - 1
         '403':
           $ref: '#/components/responses/RoomForbidden'
-
   /upload:
     post:
-      tags: [Files]
-      summary: Whole-file upload (multipart)
-      description: |
-        Uploads a small file in one request: writes the bytes, registers the file, stores a
+      tags:
+      - Files
+      summary: 整份上传（multipart）
+      description: 'Uploads a small file in one request: writes the bytes, registers the file, stores
+        a
+
         file entry in the room, broadcasts `receive`, and returns the entry id and URL.
+
 
         The form field name is always **`file`**.
 
+
         Special case: when `Content-Type` is exactly `text/plain` (character for character —
+
         `text/plain; charset=utf-8` does **not** count), the body is treated as a **filename**
+
         and this becomes the chunked-upload initialiser, exactly like `POST /upload/chunk`.
+
         That is a deliberate, documented quirk shared with the Go implementation.
 
+
         `Content-Length`, when present, is checked against `file.limit` up front so an
+
         oversized file is rejected before it is read into memory.
 
+
         NOTE (code): the success body is `{url, id, type}` — the same three fields as
+
         `/text`. An older document showed `name` / `size` / `uuid` / `expire` here too; this
+
         server does not return them. `type` is the detected media kind of the filename, not
+
         the literal string `file`.
+
+        '
       operationId: uploadFile
       parameters:
-        - $ref: '#/components/parameters/RoomQuery'
-        - $ref: '#/components/parameters/NameQuery'
-        - $ref: '#/components/parameters/ClientQuery'
-        - $ref: '#/components/parameters/AuthQuery'
+      - $ref: '#/components/parameters/RoomQuery'
+      - $ref: '#/components/parameters/NameQuery'
+      - $ref: '#/components/parameters/ClientQuery'
+      - $ref: '#/components/parameters/AuthQuery'
       security:
-        - bearerAuth: []
-        - authQuery: []
+      - bearerAuth: []
+      - authQuery: []
       requestBody:
         required: true
         content:
           multipart/form-data:
             schema:
               type: object
-              required: [file]
+              required:
+              - file
               properties:
                 file:
                   type: string
@@ -1404,8 +1373,9 @@ paths:
             examples:
               initAsFilename:
                 summary: Body is a filename — acts as the chunked-upload initialiser
-                value: |
-                  big-video.mp4
+                value: 'big-video.mp4
+
+                  '
       responses:
         '200':
           description: The file was stored and announced (or, for the `text/plain` form, initialised).
@@ -1479,33 +1449,43 @@ paths:
                     message: 无法保存文件
         '405':
           $ref: '#/components/responses/OnlyPost'
-
   /upload/chunk:
     post:
-      tags: [Files]
-      summary: Chunked upload — initialise
-      description: |
-        Step 1 of a chunked upload. The request body is the **filename** as plain text; no
+      tags:
+      - Files
+      summary: 分片上传 —— 初始化
+      description: 'Step 1 of a chunked upload. The request body is the **filename** as plain text; no
+
         bytes are written yet. The response contains the `uuid` that the following chunk and
+
         finish calls address.
 
+
         ```text
+
         POST /upload/chunk          body = filename            → {"result":{"uuid":"..."}}
+
         POST /upload/chunk/{uuid}   body = bytes of a chunk     → {}
+
         POST /upload/finish/{uuid}  (no body)                   → {"url","id","type"}
+
         ```
 
+
         This route and `POST /upload` share one handler; the difference is the path plus the
+
         `Content-Type: text/plain` guard.
+
+        '
       operationId: initChunkedUpload
       parameters:
-        - $ref: '#/components/parameters/RoomQuery'
-        - $ref: '#/components/parameters/NameQuery'
-        - $ref: '#/components/parameters/ClientQuery'
-        - $ref: '#/components/parameters/AuthQuery'
+      - $ref: '#/components/parameters/RoomQuery'
+      - $ref: '#/components/parameters/NameQuery'
+      - $ref: '#/components/parameters/ClientQuery'
+      - $ref: '#/components/parameters/AuthQuery'
       security:
-        - bearerAuth: []
-        - authQuery: []
+      - bearerAuth: []
+      - authQuery: []
       requestBody:
         required: true
         description: The filename, as plain text.
@@ -1515,8 +1495,9 @@ paths:
               type: string
             examples:
               init:
-                value: |
-                  big-video.mp4
+                value: 'big-video.mp4
+
+                  '
       responses:
         '200':
           description: A fresh upload uuid.
@@ -1555,34 +1536,40 @@ paths:
                     message: 无法保存文件
         '405':
           $ref: '#/components/responses/OnlyPost'
-
   /upload/chunk/{uuid}:
     post:
-      tags: [Files]
-      summary: Chunked upload — append a chunk
-      description: |
-        Appends raw bytes to an upload previously initialised with `POST /upload/chunk`. Each
+      tags:
+      - Files
+      summary: 分片上传 —— 追加一片
+      description: 'Appends raw bytes to an upload previously initialised with `POST /upload/chunk`. Each
+
         call updates the recorded size; the running total is checked against `file.limit`.
 
+
         Send chunks of about `file.chunk` bytes (default 1 MiB). A single request body is
+
         capped at 16 MiB by the HTTP layer regardless of `file.limit`.
 
+
         NOTE (code): the room used for authorisation is the one recorded on the upload when it
+
         was initialised, not the `?room=` sent here.
+
+        '
       operationId: appendChunk
       parameters:
-        - name: uuid
-          in: path
-          required: true
-          schema:
-            type: string
-            format: uuid
-          example: 11111111-2222-3333-4444-555555555555
-        - $ref: '#/components/parameters/RoomQueryOptional'
-        - $ref: '#/components/parameters/AuthQuery'
+      - name: uuid
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+        example: 11111111-2222-3333-4444-555555555555
+      - $ref: '#/components/parameters/RoomQueryOptional'
+      - $ref: '#/components/parameters/AuthQuery'
       security:
-        - bearerAuth: []
-        - authQuery: []
+      - bearerAuth: []
+      - authQuery: []
       requestBody:
         required: true
         content:
@@ -1652,36 +1639,42 @@ paths:
                     message: 无法写入文件
         '405':
           $ref: '#/components/responses/OnlyPost'
-
   /upload/finish/{uuid}:
     post:
-      tags: [Files]
-      summary: Chunked upload — seal and broadcast
-      description: |
-        Finalises a chunked upload: generates the file entry (including a thumbnail when the
+      tags:
+      - Files
+      summary: 分片上传 —— 封口并广播
+      description: 'Finalises a chunked upload: generates the file entry (including a thumbnail when the
+
         bytes decode as an image and are at most 32 MiB), stores it, and broadcasts `receive`.
 
-        The room is taken from the upload's own registration; a `?room=default` here does not
+
+        The room is taken from the upload''s own registration; a `?room=default` here does not
+
         move it out of a protected room.
 
+
         NOTE (code): the success body is `{url, id, type}`, and `type` is the detected media
+
         kind of the filename rather than the literal string `file`.
+
+        '
       operationId: finishChunkedUpload
       parameters:
-        - name: uuid
-          in: path
-          required: true
-          schema:
-            type: string
-            format: uuid
-          example: 11111111-2222-3333-4444-555555555555
-        - $ref: '#/components/parameters/RoomQueryOptional'
-        - $ref: '#/components/parameters/NameQuery'
-        - $ref: '#/components/parameters/ClientQuery'
-        - $ref: '#/components/parameters/AuthQuery'
+      - name: uuid
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+        example: 11111111-2222-3333-4444-555555555555
+      - $ref: '#/components/parameters/RoomQueryOptional'
+      - $ref: '#/components/parameters/NameQuery'
+      - $ref: '#/components/parameters/ClientQuery'
+      - $ref: '#/components/parameters/AuthQuery'
       security:
-        - bearerAuth: []
-        - authQuery: []
+      - bearerAuth: []
+      - authQuery: []
       responses:
         '200':
           description: The file entry was stored and announced.
@@ -1733,55 +1726,51 @@ paths:
                     message: 保存消息失败
         '405':
           $ref: '#/components/responses/OnlyPost'
-
   /file/{uuid}:
     get:
-      tags: [Files]
-      summary: Download or preview a file
-      description: |
-        Streams the file bytes. `Range` is honoured (video scrubbing and resumable downloads
-        work), and `If-Modified-Since` / `If-None-Match` are passed through.
-
-        - The `Content-Type` is guessed from the **original filename**, not the on-disk name
-          (which is the bare uuid with no extension). Text types get `; charset=utf-8` so a
-          Chinese `.txt` is not rendered as Latin-1 mojibake.
-        - `?download=true` adds `Content-Disposition: attachment`; otherwise the file is
-          `inline` so browsers render it directly.
-        - Authorisation uses the room recorded on the file — a client-supplied `?room=` is
-          ignored, which is what stops `?room=default` from reading a protected room's file.
-        - A **share token** (`?t=`) works for `GET` only, and it must point at this very file.
-          The UI's share button issues a `content`-typed token whose target is a file; that is
-          accepted too, but only when the content really references this uuid.
+      tags:
+      - Files
+      summary: 下载或预览文件
+      description: "Streams the file bytes. `Range` is honoured (video scrubbing and resumable downloads\n\
+        work), and `If-Modified-Since` / `If-None-Match` are passed through.\n\n- The `Content-Type` is\
+        \ guessed from the **original filename**, not the on-disk name\n  (which is the bare uuid with\
+        \ no extension). Text types get `; charset=utf-8` so a\n  Chinese `.txt` is not rendered as Latin-1\
+        \ mojibake.\n- `?download=true` adds `Content-Disposition: attachment`; otherwise the file is\n\
+        \  `inline` so browsers render it directly.\n- Authorisation uses the room recorded on the file\
+        \ — a client-supplied `?room=` is\n  ignored, which is what stops `?room=default` from reading\
+        \ a protected room's file.\n- A **share token** (`?t=`) works for `GET` only, and it must point\
+        \ at this very file.\n  The UI's share button issues a `content`-typed token whose target is a\
+        \ file; that is\n  accepted too, but only when the content really references this uuid.\n"
       operationId: downloadFile
       parameters:
-        - name: uuid
-          in: path
-          required: true
-          schema:
-            type: string
-          example: 11111111-2222-3333-4444-555555555555
-        - $ref: '#/components/parameters/RoomQueryOptional'
-        - $ref: '#/components/parameters/AuthQuery'
-        - $ref: '#/components/parameters/ShareTokenQuery'
-        - name: download
-          in: query
-          required: false
-          description: When `true`, forces a download instead of inline rendering.
-          schema:
-            type: boolean
-          example: true
-        - name: Range
-          in: header
-          required: false
-          description: Standard HTTP byte range; does **not** consume a share-token use.
-          schema:
-            type: string
-          example: bytes=0-1023
-        - $ref: '#/components/parameters/SharePasswordHeader'
+      - name: uuid
+        in: path
+        required: true
+        schema:
+          type: string
+        example: 11111111-2222-3333-4444-555555555555
+      - $ref: '#/components/parameters/RoomQueryOptional'
+      - $ref: '#/components/parameters/AuthQuery'
+      - $ref: '#/components/parameters/ShareTokenQuery'
+      - name: download
+        in: query
+        required: false
+        description: When `true`, forces a download instead of inline rendering.
+        schema:
+          type: boolean
+        example: true
+      - name: Range
+        in: header
+        required: false
+        description: Standard HTTP byte range; does **not** consume a share-token use.
+        schema:
+          type: string
+        example: bytes=0-1023
+      - $ref: '#/components/parameters/SharePasswordHeader'
       security:
-        - bearerAuth: []
-        - authQuery: []
-        - shareTokenQuery: []
+      - bearerAuth: []
+      - authQuery: []
+      - shareTokenQuery: []
       responses:
         '200':
           description: The file bytes.
@@ -1853,28 +1842,31 @@ paths:
                     message: 文件在磁盘上未找到
         '405':
           $ref: '#/components/responses/MethodNotAllowed'
-
     delete:
-      tags: [Files]
-      summary: Delete a file
-      description: |
-        Removes the bytes from disk and the registration from the store. Deleting an
+      tags:
+      - Files
+      summary: 删文件
+      description: 'Removes the bytes from disk and the registration from the store. Deleting an
+
         already-missing file is not an error (`NotFound` is tolerated).
 
+
         A share token does **not** work here: it is read-only.
+
+        '
       operationId: deleteFile
       parameters:
-        - name: uuid
-          in: path
-          required: true
-          schema:
-            type: string
-          example: 11111111-2222-3333-4444-555555555555
-        - $ref: '#/components/parameters/RoomQueryOptional'
-        - $ref: '#/components/parameters/AuthQuery'
+      - name: uuid
+        in: path
+        required: true
+        schema:
+          type: string
+        example: 11111111-2222-3333-4444-555555555555
+      - $ref: '#/components/parameters/RoomQueryOptional'
+      - $ref: '#/components/parameters/AuthQuery'
       security:
-        - bearerAuth: []
-        - authQuery: []
+      - bearerAuth: []
+      - authQuery: []
       responses:
         '200':
           description: The file was deleted.
@@ -1932,46 +1924,47 @@ paths:
                     message: 删除文件失败
         '405':
           $ref: '#/components/responses/MethodNotAllowed'
-
   /file/{uuid}/{name}:
     parameters:
-      - name: uuid
-        in: path
-        required: true
-        schema:
-          type: string
-        example: 11111111-2222-3333-4444-555555555555
-      - name: name
-        in: path
-        required: true
-        description: Informational only — the server keys off the uuid.
-        schema:
-          type: string
-        example: photo.png
+    - name: uuid
+      in: path
+      required: true
+      schema:
+        type: string
+      example: 11111111-2222-3333-4444-555555555555
+    - name: name
+      in: path
+      required: true
+      description: Informational only — the server keys off the uuid.
+      schema:
+        type: string
+      example: photo.png
     get:
-      tags: [Files]
-      summary: Download or preview a file (filename form)
-      description: Identical to `GET /file/{uuid}`; the trailing filename exists so URLs read as real filenames.
+      tags:
+      - Files
+      summary: 下载或预览文件（带文件名那种写法）
+      description: Identical to `GET /file/{uuid}`; the trailing filename exists so URLs read as real
+        filenames.
       operationId: downloadFileNamed
       parameters:
-        - $ref: '#/components/parameters/RoomQueryOptional'
-        - $ref: '#/components/parameters/AuthQuery'
-        - $ref: '#/components/parameters/ShareTokenQuery'
-        - name: download
-          in: query
-          required: false
-          schema:
-            type: boolean
-        - name: Range
-          in: header
-          required: false
-          schema:
-            type: string
-        - $ref: '#/components/parameters/SharePasswordHeader'
+      - $ref: '#/components/parameters/RoomQueryOptional'
+      - $ref: '#/components/parameters/AuthQuery'
+      - $ref: '#/components/parameters/ShareTokenQuery'
+      - name: download
+        in: query
+        required: false
+        schema:
+          type: boolean
+      - name: Range
+        in: header
+        required: false
+        schema:
+          type: string
+      - $ref: '#/components/parameters/SharePasswordHeader'
       security:
-        - bearerAuth: []
-        - authQuery: []
-        - shareTokenQuery: []
+      - bearerAuth: []
+      - authQuery: []
+      - shareTokenQuery: []
       responses:
         '200':
           description: The file bytes.
@@ -2016,16 +2009,17 @@ paths:
         '405':
           $ref: '#/components/responses/MethodNotAllowed'
     delete:
-      tags: [Files]
-      summary: Delete a file (filename form)
+      tags:
+      - Files
+      summary: 删文件（带文件名那种写法）
       description: Identical to `DELETE /file/{uuid}`.
       operationId: deleteFileNamed
       parameters:
-        - $ref: '#/components/parameters/RoomQueryOptional'
-        - $ref: '#/components/parameters/AuthQuery'
+      - $ref: '#/components/parameters/RoomQueryOptional'
+      - $ref: '#/components/parameters/AuthQuery'
       security:
-        - bearerAuth: []
-        - authQuery: []
+      - bearerAuth: []
+      - authQuery: []
       responses:
         '200':
           description: The file was deleted.
@@ -2066,33 +2060,37 @@ paths:
                     message: 文件未找到或已过期
         '405':
           $ref: '#/components/responses/MethodNotAllowed'
-
-  # ── Revocation ────────────────────────────────────────────────────────
   /revoke/{id}:
     post:
-      tags: [Content]
-      summary: Delete one entry
-      description: |
-        Removes the entry and broadcasts `revoke` with `{"id": <number>}`. The success
+      tags:
+      - Content
+      summary: 删掉一条
+      description: 'Removes the entry and broadcasts `revoke` with `{"id": <number>}`. The success
+
         response has **no body** (a bare 200), matching the reference implementation.
 
+
         NOTE (code): this server accepts **POST only**. Any other method (including GET)
+
         returns `405`. Earlier implementations had no method check at all, so simply visiting
+
         `/revoke/5` in a browser deleted entry 5; that hole is closed here.
+
+        '
       operationId: revokeEntry
       parameters:
-        - name: id
-          in: path
-          required: true
-          schema:
-            type: integer
-            format: int32
-          example: 7
-        - $ref: '#/components/parameters/RoomQueryOptional'
-        - $ref: '#/components/parameters/AuthQuery'
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: integer
+          format: int32
+        example: 7
+      - $ref: '#/components/parameters/RoomQueryOptional'
+      - $ref: '#/components/parameters/AuthQuery'
       security:
-        - bearerAuth: []
-        - authQuery: []
+      - bearerAuth: []
+      - authQuery: []
       responses:
         '200':
           description: The entry was deleted. Empty body.
@@ -2146,26 +2144,31 @@ paths:
                     message: 撤销消息失败
         '405':
           $ref: '#/components/responses/OnlyPost'
-
   /revoke/all:
     post:
-      tags: [Content]
-      summary: Clear a room
-      description: |
-        Deletes every entry in the room and broadcasts `clearAll` with `{"room": "..."}`.
+      tags:
+      - Content
+      summary: 清空一个房间
+      description: 'Deletes every entry in the room and broadcasts `clearAll` with `{"room": "..."}`.
+
 
         Only the named room is cleared — there is deliberately **no** "clear everything"
+
         capability. `?room=` empty or absent means the `default` room.
 
+
         NOTE (code): the success body is **plain text** (`所有消息已清除\n`), not JSON,
+
         mirroring the reference implementation. Clients that hard-code JSON here will break.
+
+        '
       operationId: clearRoom
       parameters:
-        - $ref: '#/components/parameters/RoomQuery'
-        - $ref: '#/components/parameters/AuthQuery'
+      - $ref: '#/components/parameters/RoomQuery'
+      - $ref: '#/components/parameters/AuthQuery'
       security:
-        - bearerAuth: []
-        - authQuery: []
+      - bearerAuth: []
+      - authQuery: []
       responses:
         '200':
           description: Every message in the room was cleared.
@@ -2175,8 +2178,9 @@ paths:
                 type: string
               examples:
                 cleared:
-                  value: |
-                    所有消息已清除
+                  value: '所有消息已清除
+
+                    '
         '401':
           description: No access to the room.
           content:
@@ -2191,42 +2195,59 @@ paths:
                     message: 无权访问该房间
         '405':
           $ref: '#/components/responses/OnlyPost'
-
-  # ── Sharing ───────────────────────────────────────────────────────────
   /share:
     post:
-      tags: [Sharing]
-      summary: Issue a share token
-      description: |
-        Creates a signed, self-describing token that grants **read** access to one content
+      tags:
+      - Sharing
+      summary: 签一个分享令牌
+      description: 'Creates a signed, self-describing token that grants **read** access to one content
+
         entry or one file. TTL, usage limit and password all live inside the token, so a token
+
         is issued **always** — including for open rooms, where returning a bare URL would
+
         silently discard the limits the caller asked for.
+
 
         Request body (JSON, all fields optional; an **empty body means all defaults**):
 
+
         | Field | Notes |
+
         |---|---|
+
         | `type` | `content` or `file`. Missing → 400 `missing_type` |
+
         | `id` | For `type: content`, the entry id (as a string) |
+
         | `uuid` | For `type: file`, the file uuid. `id` is also accepted (older clients) |
+
         | `ttl` | Seconds; default 900, clamped to 60 – 86400 |
+
         | `maxUses` | `0` (default) = unlimited |
+
         | `password` | Optional; the recipient must then send `X-Share-Password` |
 
+
         Unknown fields are **rejected** (400) rather than ignored, so a typo like `max_uses`
+
         cannot silently drop the limit the user configured.
 
+
         The response carries two addressing forms: `url` / `pageUrl` (the landing page, which
+
         is the *same* address a crawler and a human see) and `rawUrl` (which reaches the
+
         content/file endpoint directly with the same token).
+
+        '
       operationId: createShare
       parameters:
-        - $ref: '#/components/parameters/RoomQueryOptional'
-        - $ref: '#/components/parameters/AuthQuery'
+      - $ref: '#/components/parameters/RoomQueryOptional'
+      - $ref: '#/components/parameters/AuthQuery'
       security:
-        - bearerAuth: []
-        - authQuery: []
+      - bearerAuth: []
+      - authQuery: []
       requestBody:
         required: false
         content:
@@ -2257,8 +2278,8 @@ paths:
             application/json:
               schema:
                 oneOf:
-                  - $ref: '#/components/schemas/ShareCreatedContent'
-                  - $ref: '#/components/schemas/ShareCreatedFile'
+                - $ref: '#/components/schemas/ShareCreatedContent'
+                - $ref: '#/components/schemas/ShareCreatedFile'
               examples:
                 content:
                   summary: Content share
@@ -2293,9 +2314,11 @@ paths:
                     visits: 0
                     scans: 0
         '400':
-          description: |
-            Bad JSON body (`invalid_request_body`), an unknown field, or a missing/invalid
+          description: 'Bad JSON body (`invalid_request_body`), an unknown field, or a missing/invalid
+
             `type` / `id` / `uuid`.
+
+            '
           content:
             application/json:
               schema:
@@ -2334,7 +2357,8 @@ paths:
                     error: No access to this room
                     message: 无权访问该房间
         '404':
-          description: The target entry or file does not exist (or has expired), or is not in the requested room.
+          description: The target entry or file does not exist (or has expired), or is not in the requested
+            room.
           content:
             application/json:
               schema:
@@ -2357,26 +2381,23 @@ paths:
                     message: 文件已过期
         '405':
           $ref: '#/components/responses/OnlyPost'
-
     get:
-      tags: [Sharing]
-      summary: Share metadata (does not consume a use)
-      description: |
-        What the share landing page asks before fetching anything: the type, the file name and
-        size, the remaining validity, the remaining uses, and whether a password is needed.
-
-        - **It does not consume a use** — merely opening the page must not burn one.
-        - The password travels in `X-Share-Password`, **never** in the URL.
-        - When the share is password-protected the response also carries a `previewToken`
-          (and `previewExpiresAt`). Browsers cannot attach custom headers to `<img>` /
-          `<video>` / `<a download>`, so the page needs this token to render inline previews.
-          Unprotected shares deliberately get **no** preview token: it would be unlimited-use
-          and would defeat `maxUses`.
-        - The `used` field appears only for a limited share that has a live record.
+      tags:
+      - Sharing
+      summary: 分享的元信息（**不消耗次数**）
+      description: "What the share landing page asks before fetching anything: the type, the file name\
+        \ and\nsize, the remaining validity, the remaining uses, and whether a password is needed.\n\n\
+        - **It does not consume a use** — merely opening the page must not burn one.\n- The password travels\
+        \ in `X-Share-Password`, **never** in the URL.\n- When the share is password-protected the response\
+        \ also carries a `previewToken`\n  (and `previewExpiresAt`). Browsers cannot attach custom headers\
+        \ to `<img>` /\n  `<video>` / `<a download>`, so the page needs this token to render inline previews.\n\
+        \  Unprotected shares deliberately get **no** preview token: it would be unlimited-use\n  and\
+        \ would defeat `maxUses`.\n- The `used` field appears only for a limited share that has a live\
+        \ record.\n"
       operationId: getShareInfo
       parameters:
-        - $ref: '#/components/parameters/ShareTokenQueryRequired'
-        - $ref: '#/components/parameters/SharePasswordHeader'
+      - $ref: '#/components/parameters/ShareTokenQueryRequired'
+      - $ref: '#/components/parameters/SharePasswordHeader'
       security: []
       responses:
         '200':
@@ -2463,15 +2484,15 @@ paths:
                     code: file_expired
                     error: File expired
                     message: 文件已过期
-
     head:
-      tags: [Sharing]
-      summary: Share metadata (headers only)
+      tags:
+      - Sharing
+      summary: 分享的元信息（只要响应头）
       description: Same as `GET /share?t=` with the body omitted.
       operationId: headShareInfo
       parameters:
-        - $ref: '#/components/parameters/ShareTokenQueryRequired'
-        - $ref: '#/components/parameters/SharePasswordHeader'
+      - $ref: '#/components/parameters/ShareTokenQueryRequired'
+      - $ref: '#/components/parameters/SharePasswordHeader'
       security: []
       responses:
         '200':
@@ -2480,37 +2501,33 @@ paths:
           description: The token is bad/expired, or a password is required/mismatched.
         '404':
           description: The share points at something that is gone.
-
   /share/list:
     get:
-      tags: [Sharing]
-      summary: Recent shares of a room
-      description: |
-        Lists a room's recent share records together with how often each link was opened.
-        Authorisation is identical to creating a share in that room, so it is impossible to be
-        able to create a share but not see your own.
-
-        - `limit` defaults to 50 and is capped at 200.
-        - **The list never contains tokens.** A token is a bearer credential; listing it would
-          let anyone who can read the room reuse somebody else's share.
-        - `password` reports only *whether* a password is set, never its hash.
-        - `expired` is computed against the current time.
+      tags:
+      - Sharing
+      summary: 这个房间最近的分享
+      description: "Lists a room's recent share records together with how often each link was opened.\n\
+        Authorisation is identical to creating a share in that room, so it is impossible to be\nable to\
+        \ create a share but not see your own.\n\n- `limit` defaults to 50 and is capped at 200.\n- **The\
+        \ list never contains tokens.** A token is a bearer credential; listing it would\n  let anyone\
+        \ who can read the room reuse somebody else's share.\n- `password` reports only *whether* a password\
+        \ is set, never its hash.\n- `expired` is computed against the current time.\n"
       operationId: listShares
       parameters:
-        - $ref: '#/components/parameters/RoomQuery'
-        - name: limit
-          in: query
-          required: false
-          description: Page size, default 50, maximum 200. The value reported back is the value used.
-          schema:
-            type: integer
-            minimum: 1
-            maximum: 200
-          example: 50
-        - $ref: '#/components/parameters/AuthQuery'
+      - $ref: '#/components/parameters/RoomQuery'
+      - name: limit
+        in: query
+        required: false
+        description: Page size, default 50, maximum 200. The value reported back is the value used.
+        schema:
+          type: integer
+          minimum: 1
+          maximum: 200
+        example: 50
+      - $ref: '#/components/parameters/AuthQuery'
       security:
-        - bearerAuth: []
-        - authQuery: []
+      - bearerAuth: []
+      - authQuery: []
       responses:
         '200':
           description: The room's share records.
@@ -2525,21 +2542,21 @@ paths:
                     total: 3
                     limit: 50
                     records:
-                      - jti: 9f2c8b1e4d5a4f7d
-                        type: content
-                        kind: text
-                        id: '7'
-                        room: default
-                        name: first line of the text
-                        size: 0
-                        createdAt: 1749999000
-                        expiresAt: 1750000000
-                        maxUses: 0
-                        used: 0
-                        visits: 2
-                        scans: 1
-                        password: false
-                        expired: false
+                    - jti: 9f2c8b1e4d5a4f7d
+                      type: content
+                      kind: text
+                      id: '7'
+                      room: default
+                      name: first line of the text
+                      size: 0
+                      createdAt: 1749999000
+                      expiresAt: 1750000000
+                      maxUses: 0
+                      used: 0
+                      visits: 2
+                      scans: 1
+                      password: false
+                      expired: false
         '401':
           description: No access to this room.
           content:
@@ -2554,35 +2571,31 @@ paths:
                     message: 无权访问该房间
         '405':
           $ref: '#/components/responses/OnlyGet'
-
   /share/visit:
     post:
-      tags: [Sharing]
-      summary: Report that a human opened a share
-      description: |
-        Called once by the share page on mount. The server validates the token itself; an
-        invalid or expired token is rejected with 401 and **never counted**.
-
-        - `tracked` is `false` when the same visitor reports again within ten minutes —
-          repeated reports must not inflate the number. The counts returned are still current.
-        - `qr: true` (or `?q=1`) records one scan in addition to the open. QR codes should
-          encode `/s/<token>?q=1`.
-        - **No authentication**: holding the link is what lets you report, and the response
-          only describes that one share.
-        - Serving `/s/{token}` never counts by itself, which is why chat-app crawlers (which
-          re-fetch the address on their own schedule and do not execute JavaScript) cannot
-          inflate anything.
+      tags:
+      - Sharing
+      summary: 上报「有人打开了分享」
+      description: "Called once by the share page on mount. The server validates the token itself; an\n\
+        invalid or expired token is rejected with 401 and **never counted**.\n\n- `tracked` is `false`\
+        \ when the same visitor reports again within ten minutes —\n  repeated reports must not inflate\
+        \ the number. The counts returned are still current.\n- `qr: true` (or `?q=1`) records one scan\
+        \ in addition to the open. QR codes should\n  encode `/s/<token>?q=1`.\n- **No authentication**:\
+        \ holding the link is what lets you report, and the response\n  only describes that one share.\n\
+        - Serving `/s/{token}` never counts by itself, which is why chat-app crawlers (which\n  re-fetch\
+        \ the address on their own schedule and do not execute JavaScript) cannot\n  inflate anything.\n"
       operationId: reportShareVisit
       parameters:
-        - $ref: '#/components/parameters/ShareTokenQuery'
-        - name: q
-          in: query
-          required: false
-          description: '`1` marks the visit as coming from a scanned QR code.'
-          schema:
-            type: string
-            enum: ['1']
-          example: '1'
+      - $ref: '#/components/parameters/ShareTokenQuery'
+      - name: q
+        in: query
+        required: false
+        description: '`1` marks the visit as coming from a scanned QR code.'
+        schema:
+          type: string
+          enum:
+          - '1'
+        example: '1'
       security: []
       requestBody:
         required: false
@@ -2647,35 +2660,30 @@ paths:
                     message: 分享链接无效或已过期
         '405':
           $ref: '#/components/responses/OnlyPost'
-
   /s/{token}:
     get:
-      tags: [Sharing]
-      summary: Share landing page (HTML)
-      description: |
-        The share link's **single address**: an SPA shell with Open Graph tags injected into its
-        `<head>`. A chat app unfurling the URL sees a real preview card (it does not run
-        JavaScript, so the summary must be server-rendered); a human opening the very same URL
-        lands in the share page itself. No redirect, no second address, no second identity.
-
-        - **Neither counts nor consumes**: only `POST /share/visit` counts.
-        - A password-protected share never leaks a content summary into the card.
-        - `og:image` is added only for images on **unlimited** shares — the crawler fetching
-          that image consumes a use on the `/file` path, and a preview burning the quota would
-          hand the human an exhausted link.
-        - Response headers: `X-Robots-Tag: noindex, nofollow`, `Cache-Control: private,
-          max-age=0, must-revalidate`, `Referrer-Policy: no-referrer`,
-          `X-Content-Type-Options: nosniff`.
-        - Without a static source (API-only deployment) this returns a self-contained
-          fallback page carrying the same tags.
+      tags:
+      - Sharing
+      summary: 分享落地页（HTML）
+      description: "The share link's **single address**: an SPA shell with Open Graph tags injected into\
+        \ its\n`<head>`. A chat app unfurling the URL sees a real preview card (it does not run\nJavaScript,\
+        \ so the summary must be server-rendered); a human opening the very same URL\nlands in the share\
+        \ page itself. No redirect, no second address, no second identity.\n\n- **Neither counts nor consumes**:\
+        \ only `POST /share/visit` counts.\n- A password-protected share never leaks a content summary\
+        \ into the card.\n- `og:image` is added only for images on **unlimited** shares — the crawler\
+        \ fetching\n  that image consumes a use on the `/file` path, and a preview burning the quota would\n\
+        \  hand the human an exhausted link.\n- Response headers: `X-Robots-Tag: noindex, nofollow`, `Cache-Control:\
+        \ private,\n  max-age=0, must-revalidate`, `Referrer-Policy: no-referrer`,\n  `X-Content-Type-Options:\
+        \ nosniff`.\n- Without a static source (API-only deployment) this returns a self-contained\n \
+        \ fallback page carrying the same tags.\n"
       operationId: getShareLandingPage
       parameters:
-        - name: token
-          in: path
-          required: true
-          schema:
-            type: string
-          example: eyJ0eXAiOiJzaGFyZSJ9.9f2c
+      - name: token
+        in: path
+        required: true
+        schema:
+          type: string
+        example: eyJ0eXAiOiJzaGFyZSJ9.9f2c
       security: []
       responses:
         '200':
@@ -2697,86 +2705,87 @@ paths:
               examples:
                 html:
                   summary: Abridged
-                  value: |
-                    <!doctype html><html><head>
+                  value: '<!doctype html><html><head>
+
                     <title>photo.png</title>
+
                     <meta property="og:title" content="photo.png" />
+
                     <meta property="og:description" content="文件 · 20 KB · 15 分钟后过期" />
-                    <meta property="og:url" content="https://clip.example.com/s/eyJ0eXAiOiJzaGFyZSJ9.9f2c" />
+
+                    <meta property="og:url" content="https://clip.example.com/s/eyJ0eXAiOiJzaGFyZSJ9.9f2c"
+                    />
+
                     </head><body><div id="app"></div></body></html>
+
+                    '
         '405':
           $ref: '#/components/responses/OnlyGet'
-
-  # ── Realtime ──────────────────────────────────────────────────────────
   /push:
     get:
-      tags: [Realtime]
-      summary: WebSocket push channel
-      description: |
-        Upgrades to a WebSocket and streams that room's events. Registered as a `GET` because
-        that is what a WebSocket handshake is.
-
-        **Handshake order (this order is the contract):**
-
-        1. If the room is protected: a missing credential returns `401
-           unauthorized_missing_token`, a wrong one `401 unauthorized_invalid_token`. These are
-           distinct so the client can tell "ask for a password" from "that password is wrong".
-           The rejection happens **before** the upgrade, so it is an ordinary JSON response.
-        2. `Sec-WebSocket-Protocol` is echoed back. If the client offered a subprotocol the
-           server **must** select one or the browser fails the handshake — clients use it to
-           pass the token without putting it in the URL.
-        3. Upgrade.
-        4. Frames: one `connect` per device already in the room, a `connect` for this
-           connection to the others, then `config`, then realtime events.
-
-        **The handshake does not push history.** Fetch it with `GET /content`, and use
-        `config.latestId` — the largest message id in the room at connect time (`0` when
-        empty) — to align the history/realtime boundary. Treat `id <= latestId` as history
-        (record it, do **not** apply it to the clipboard) and `id > latestId` as realtime.
-        Never guess the boundary from a time window: a window that ends early silently floods
-        the clipboard. If `latestId` is missing (an older server), refuse to write rather than
-        guess.
-
-        The server sends a protocol-level ping every 5 seconds (idle connections die silently
-        behind proxies otherwise) and **disconnects** a client that falls behind the broadcast,
-        so it reconnects and re-syncs instead of quietly missing a `revoke`. Reconnection and
-        backoff are the client's job.
+      tags:
+      - Realtime
+      summary: WebSocket 推送通道
+      description: "Upgrades to a WebSocket and streams that room's events. Registered as a `GET` because\n\
+        that is what a WebSocket handshake is.\n\n**Handshake order (this order is the contract):**\n\n\
+        1. If the room is protected: a missing credential returns `401\n   unauthorized_missing_token`,\
+        \ a wrong one `401 unauthorized_invalid_token`. These are\n   distinct so the client can tell\
+        \ \"ask for a password\" from \"that password is wrong\".\n   The rejection happens **before**\
+        \ the upgrade, so it is an ordinary JSON response.\n2. `Sec-WebSocket-Protocol` is echoed back.\
+        \ If the client offered a subprotocol the\n   server **must** select one or the browser fails\
+        \ the handshake — clients use it to\n   pass the token without putting it in the URL.\n3. Upgrade.\n\
+        4. Frames: one `connect` per device already in the room, a `connect` for this\n   connection to\
+        \ the others, then `config`, then realtime events.\n\n**The handshake does not push history.**\
+        \ Fetch it with `GET /content`, and use\n`config.latestId` — the largest message id in the room\
+        \ at connect time (`0` when\nempty) — to align the history/realtime boundary. Treat `id <= latestId`\
+        \ as history\n(record it, do **not** apply it to the clipboard) and `id > latestId` as realtime.\n\
+        Never guess the boundary from a time window: a window that ends early silently floods\nthe clipboard.\
+        \ If `latestId` is missing (an older server), refuse to write rather than\nguess.\n\nThe server\
+        \ sends a protocol-level ping every 5 seconds (idle connections die silently\nbehind proxies otherwise)\
+        \ and **disconnects** a client that falls behind the broadcast,\nso it reconnects and re-syncs\
+        \ instead of quietly missing a `revoke`. Reconnection and\nbackoff are the client's job.\n"
       operationId: pushChannel
       parameters:
-        - $ref: '#/components/parameters/RoomQuery'
-        - $ref: '#/components/parameters/NameQuery'
-        - $ref: '#/components/parameters/AuthQuery'
-        - name: Sec-WebSocket-Protocol
-          in: header
-          required: false
-          description: |
-            The credential is taken from `Authorization` / `?auth=` first, and from the first
-            subprotocol only as a fallback. Prefer this carrier: it keeps the token out of the
-            URL, hence out of access logs.
-          schema:
-            type: string
-          example: Bearer eyJhbGciOiJIUzI1NiJ9.abc
-        - name: Sec-WebSocket-Version
-          in: header
-          required: true
-          schema:
-            type: integer
-            enum: [13]
-        - name: Upgrade
-          in: header
-          required: true
-          schema:
-            type: string
-            enum: [websocket]
-        - name: Connection
-          in: header
-          required: true
-          schema:
-            type: string
-            enum: [Upgrade]
+      - $ref: '#/components/parameters/RoomQuery'
+      - $ref: '#/components/parameters/NameQuery'
+      - $ref: '#/components/parameters/AuthQuery'
+      - name: Sec-WebSocket-Protocol
+        in: header
+        required: false
+        description: 'The credential is taken from `Authorization` / `?auth=` first, and from the first
+
+          subprotocol only as a fallback. Prefer this carrier: it keeps the token out of the
+
+          URL, hence out of access logs.
+
+          '
+        schema:
+          type: string
+        example: Bearer eyJhbGciOiJIUzI1NiJ9.abc
+      - name: Sec-WebSocket-Version
+        in: header
+        required: true
+        schema:
+          type: integer
+          enum:
+          - 13
+      - name: Upgrade
+        in: header
+        required: true
+        schema:
+          type: string
+          enum:
+          - websocket
+      - name: Connection
+        in: header
+        required: true
+        schema:
+          type: string
+          enum:
+          - Upgrade
       security:
-        - bearerAuth: []
-        - authQuery: []
+      - bearerAuth: []
+      - authQuery: []
       responses:
         '101':
           description: Switching protocols. Event frames then flow as documented below.
@@ -2800,67 +2809,79 @@ paths:
       x-websocket-events:
         frameFormat: '{"event": "<name>", "data": <payload>}'
         clientToServer:
-          - event: ping
-            description: |
-              Application-level ping. The server echoes `data` back verbatim in a `pong`, so
-              the client can compute RTT as `Date.now() - data`.
-            example:
-              event: ping
-              data: 1758000000123
-        serverToClient:
-          - event: connect
-            description: A device in the room, or this connection announcing itself to the others.
-            schemaRef: '#/components/schemas/DeviceMeta'
-          - event: disconnect
-            description: A device's **last** connection closed. Closing one tab of several does not report a disconnect.
-            schemaRef: '#/components/schemas/DisconnectData'
-          - event: config
-            description: |
-              Sent once, right after connecting and before any realtime message. This is the
-              only place `version` and the size limits are sent, and the only source of the
-              front end's `app.config`.
-            schemaRef: '#/components/schemas/WsConfig'
-          - event: receive
-            description: A new entry arrived in the room.
-            schemaRef: '#/components/schemas/ReceiveEntry'
-          - event: update
-            description: An existing entry was edited in place (same `id`) — body rewrite or board move.
-            schemaRef: '#/components/schemas/ReceiveEntry'
-          - event: revoke
-            description: One entry was deleted.
-            schemaRef: '#/components/schemas/RevokeData'
-          - event: clearAll
-            description: The room was cleared.
-            schemaRef: '#/components/schemas/ClearAllData'
-          - event: pong
-            description: Reply to a client `ping`, carrying the client's `data` unchanged.
-          - event: ok
-            description: Internal cross-component event; not sent to WebSocket clients.
+        - event: ping
+          description: 'Application-level ping. The server echoes `data` back verbatim in a `pong`, so
 
-  # ── Automation ────────────────────────────────────────────────────────
+            the client can compute RTT as `Date.now() - data`.
+
+            '
+          example:
+            event: ping
+            data: 1758000000123
+        serverToClient:
+        - event: connect
+          description: A device in the room, or this connection announcing itself to the others.
+          schemaRef: '#/components/schemas/DeviceMeta'
+        - event: disconnect
+          description: A device's **last** connection closed. Closing one tab of several does not report
+            a disconnect.
+          schemaRef: '#/components/schemas/DisconnectData'
+        - event: config
+          description: 'Sent once, right after connecting and before any realtime message. This is the
+
+            only place `version` and the size limits are sent, and the only source of the
+
+            front end''s `app.config`.
+
+            '
+          schemaRef: '#/components/schemas/WsConfig'
+        - event: receive
+          description: A new entry arrived in the room.
+          schemaRef: '#/components/schemas/ReceiveEntry'
+        - event: update
+          description: An existing entry was edited in place (same `id`) — body rewrite or board move.
+          schemaRef: '#/components/schemas/ReceiveEntry'
+        - event: revoke
+          description: One entry was deleted.
+          schemaRef: '#/components/schemas/RevokeData'
+        - event: clearAll
+          description: The room was cleared.
+          schemaRef: '#/components/schemas/ClearAllData'
+        - event: pong
+          description: Reply to a client `ping`, carrying the client's `data` unchanged.
+        - event: ok
+          description: Internal cross-component event; not sent to WebSocket clients.
   /tasks:
     get:
-      tags: [Automation]
-      summary: List the room's automations
-      description: |
-        Lists the automations of the room derived from the credential. The list is always
+      tags:
+      - Automation
+      summary: 列出这个房间的定时任务
+      description: 'Lists the automations of the room derived from the credential. The list is always
+
         filtered by room, even for an admin.
 
+
         `tier` is `admin` / `room` / `single` / `none`; `max` is `0` for unlimited. In
+
         `single`-tier rooms only tasks matching the presented task token are returned, and
+
         `foreignCount` reports how many were hidden.
 
+
         Read-only per task: `nextRunAt`, `lastRunAt`, `lastStatus` (`ok` / `error` / `skipped`),
+
         `lastError`, `lastOutput`, and `desc` for cron tasks. `ownerHash` is never exposed.
+
+        '
       operationId: listTasks
       parameters:
-        - $ref: '#/components/parameters/RoomQueryOptional'
-        - $ref: '#/components/parameters/AuthQuery'
-        - $ref: '#/components/parameters/TaskTokenQuery'
+      - $ref: '#/components/parameters/RoomQueryOptional'
+      - $ref: '#/components/parameters/AuthQuery'
+      - $ref: '#/components/parameters/TaskTokenQuery'
       security:
-        - bearerAuth: []
-        - authQuery: []
-        - taskToken: []
+      - bearerAuth: []
+      - authQuery: []
+      - taskToken: []
       responses:
         '200':
           description: The room's automations.
@@ -2878,39 +2899,47 @@ paths:
                     now: 1758000000
                     foreignCount: 0
                     tasks:
-                      - id: 5f3c1e2a-9b7d-4c6e-8a1f-2d3e4f5a6b7c
-                        name: On-call reminder
-                        enabled: true
-                        freq: cron
-                        time: ''
-                        cron: 30 9 * * *
-                        byWeekday: []
-                        runAt: ''
-                        tz: Asia/Shanghai
-                        room: home
-                        template: Today is {{date}}
-                        chain:
-                          - text.trimLines
-                        keepHistory: false
-                        sender: 定时任务
-                        createdAt: 1757900000
-                        updatedAt: 1757900000
-                        nextRunAt: 1758072600
-                        lastRunAt: 1757986200
-                        lastStatus: ok
-                        lastError: ''
-                        lastOutput: Today is 2026-09-16
-                        desc:
-                          mode: minutesEachHour
-                          minutes: '30'
-                          hours: '9'
-                          day: daily
-                    vars: [date, weekday, time, datetime, timestamp, uuid, task, room]
+                    - id: 5f3c1e2a-9b7d-4c6e-8a1f-2d3e4f5a6b7c
+                      name: On-call reminder
+                      enabled: true
+                      freq: cron
+                      time: ''
+                      cron: 30 9 * * *
+                      byWeekday: []
+                      runAt: ''
+                      tz: Asia/Shanghai
+                      room: home
+                      template: Today is {{date}}
+                      chain:
+                      - text.trimLines
+                      keepHistory: false
+                      sender: 定时任务
+                      createdAt: 1757900000
+                      updatedAt: 1757900000
+                      nextRunAt: 1758072600
+                      lastRunAt: 1757986200
+                      lastStatus: ok
+                      lastError: ''
+                      lastOutput: Today is 2026-09-16
+                      desc:
+                        mode: minutesEachHour
+                        minutes: '30'
+                        hours: '9'
+                        day: daily
+                    vars:
+                    - date
+                    - weekday
+                    - time
+                    - datetime
+                    - timestamp
+                    - uuid
+                    - task
+                    - room
                     actions:
-                      - id: text.trimLines
-                        group: text
-                        groupKey: actionGroupText
-                        key: actionTrimLines
+                    - id: text.trimLines
+                      group: text
+                      groupKey: actionGroupText
+                      key: actionTrimLines
         '403':
           description: Automation is not allowed for this room.
           content:
@@ -2938,32 +2967,44 @@ paths:
         '405':
           $ref: '#/components/responses/OnlyGetPost'
     post:
-      tags: [Automation]
-      summary: Create or replace an automation
-      description: |
-        Omit `id` to create; supply an existing `id` to replace that task wholesale. The room
+      tags:
+      - Automation
+      summary: 新建或整份替换一个定时任务
+      description: 'Omit `id` to create; supply an existing `id` to replace that task wholesale. The room
+
         is taken from the credential — **a `room` field in the body is not read**.
 
+
         Times, templates and action ids are validated at save time
+
         (`invalid_task`), never silently ignored. Notably: an unknown template variable or a
+
         malformed offset fails here, and `freq: cron` with an expression that can never fire
+
         fails here too.
 
+
         `keepHistory` defaults to `false`: the message is broadcast live but does not consume
-        the room's history quota (otherwise a daily task would evict the entire room history
+
+        the room''s history quota (otherwise a daily task would evict the entire room history
+
         within weeks).
 
+
         In a `single`-tier room the response also carries a **`taskToken`**, shown exactly
+
         once — it is the only credential that can later edit or delete that task.
+
+        '
       operationId: upsertTask
       parameters:
-        - $ref: '#/components/parameters/RoomQueryOptional'
-        - $ref: '#/components/parameters/AuthQuery'
-        - $ref: '#/components/parameters/TaskTokenQuery'
+      - $ref: '#/components/parameters/RoomQueryOptional'
+      - $ref: '#/components/parameters/AuthQuery'
+      - $ref: '#/components/parameters/TaskTokenQuery'
       security:
-        - bearerAuth: []
-        - authQuery: []
-        - taskToken: []
+      - bearerAuth: []
+      - authQuery: []
+      - taskToken: []
       requestBody:
         required: true
         content:
@@ -2976,10 +3017,11 @@ paths:
                 value:
                   name: On-call reminder
                   freq: daily
-                  time: '09:30'
+                  time: 09:30
                   tz: Asia/Shanghai
-                  template: 'Today is {{date}}, tomorrow is {{date:+1d}} ({{weekday:+1d}})'
-                  chain: [text.trimLines]
+                  template: Today is {{date}}, tomorrow is {{date:+1d}} ({{weekday:+1d}})
+                  chain:
+                  - text.trimLines
                   keepHistory: false
               cron:
                 summary: Every half hour on weekdays, 09:00-18:00
@@ -3004,7 +3046,7 @@ paths:
                       name: On-call reminder
                       enabled: true
                       freq: daily
-                      time: '09:30'
+                      time: 09:30
                       cron: ''
                       byWeekday: []
                       runAt: ''
@@ -3065,11 +3107,13 @@ paths:
                   value:
                     code: source_room_forbidden
                     error: Source room not readable
-                    message: '正文里的 {{latest:secret}} 读不了：房间 secret 需要密码，而定时任务是无人值守的、没有密码可带。'
+                    message: 正文里的 {{latest:secret}} 读不了：房间 secret 需要密码，而定时任务是无人值守的、没有密码可带。
         '403':
-          description: |
-            The task belongs to somebody else or another room (`task_forbidden`), or the room
+          description: 'The task belongs to somebody else or another room (`task_forbidden`), or the room
+
             does not allow automation (`automation_forbidden`).
+
+            '
           content:
             application/json:
               schema:
@@ -3123,38 +3167,49 @@ paths:
                     message: 保存任务失败
         '405':
           $ref: '#/components/responses/OnlyGetPost'
-
   /tasks/preview:
     post:
-      tags: [Automation]
-      summary: Render an unsaved automation
-      description: |
-        Renders a draft task that is not persisted and sends nothing. The payload is the same
+      tags:
+      - Automation
+      summary: 渲染一个还没保存的定时任务
+      description: 'Renders a draft task that is not persisted and sends nothing. The payload is the same
+
         shape as `POST /tasks` (minus `id`).
 
-        The reference instant defaults to the task's **next scheduled firing**, not "now" —
+
+        The reference instant defaults to the task''s **next scheduled firing**, not "now" —
+
         otherwise a task configured at 15:00 as "daily 09:30, body `{{date:+1d}}`" would preview
+
         today+1, while tomorrow morning it actually sends tomorrow+1. `?at=` overrides it
+
         (RFC3339, or `2026-09-25` / `2026-09-25 09:30`).
 
+
         NOTE (code): this response uses `referenceAt2` for the RFC3339 spelling of the
+
         reference instant (the saved-task dry run uses `scheduledAt` for the same idea, and
+
         `referenceAt` is the Unix-seconds form in both). Clients should read `referenceAt` and
+
         the RFC3339 field that actually exists rather than assume symmetry.
+
+        '
       operationId: previewTask
       parameters:
-        - $ref: '#/components/parameters/RoomQueryOptional'
-        - name: at
-          in: query
-          required: false
-          description: Reference instant to render against. An unparseable value is a 400, never a silent fallback.
-          schema:
-            type: string
-          example: '2026-09-24T09:30:00+08:00'
-        - $ref: '#/components/parameters/AuthQuery'
+      - $ref: '#/components/parameters/RoomQueryOptional'
+      - name: at
+        in: query
+        required: false
+        description: Reference instant to render against. An unparseable value is a 400, never a silent
+          fallback.
+        schema:
+          type: string
+        example: '2026-09-24T09:30:00+08:00'
+      - $ref: '#/components/parameters/AuthQuery'
       security:
-        - bearerAuth: []
-        - authQuery: []
+      - bearerAuth: []
+      - authQuery: []
       responses:
         '200':
           description: The rendered output.
@@ -3183,7 +3238,7 @@ paths:
                   value:
                     code: invalid_reference
                     error: Invalid reference time
-                    message: '无法解析的时间：2026-13-45'
+                    message: 无法解析的时间：2026-13-45
                 renderFailed:
                   value:
                     code: render_failed
@@ -3220,45 +3275,54 @@ paths:
                     message: 定时自动化未启用（automation.enabled = false）
         '405':
           $ref: '#/components/responses/OnlyPost'
-
   /tasks/cron:
     get:
-      tags: [Automation]
-      summary: Validate a cron expression
-      description: |
-        Parses a 5-field expression and returns the next fire times, plus a structured `desc`
+      tags:
+      - Automation
+      summary: 校验一条 cron 表达式
+      description: 'Parses a 5-field expression and returns the next fire times, plus a structured `desc`
+
         the UI renders as a "means …" line.
 
+
         An invalid expression returns **200 with `valid: false`** (and `error`), not 400:
+
         validating is what this endpoint is *for*, so "invalid" is one of its normal outputs.
+
         Clients call it on every keystroke, and a 4xx would make the page look broken.
 
+
         Rule worth remembering: an expression that is syntactically valid but can never fire
+
         (`0 0 30 2 *`, February 30th) is reported with an `error` and no `next`.
+
+        '
       operationId: checkCron
       parameters:
-        - name: expr
-          in: query
-          required: true
-          description: '`<min> <hour> <dom> <month> <dow>`. Five fields only; ranges, steps, lists and English names are supported.'
-          schema:
-            type: string
-          example: '*/30 9-18 * * 1-5'
-        - name: tz
-          in: query
-          required: false
-          description: Time zone name for the returned instants. Defaults to `automation.defaultTZ`.
-          schema:
-            type: string
-          example: Asia/Shanghai
-        - $ref: '#/components/parameters/RoomQueryOptional'
-        - $ref: '#/components/parameters/AuthQuery'
+      - name: expr
+        in: query
+        required: true
+        description: '`<min> <hour> <dom> <month> <dow>`. Five fields only; ranges, steps, lists and English
+          names are supported.'
+        schema:
+          type: string
+        example: '*/30 9-18 * * 1-5'
+      - name: tz
+        in: query
+        required: false
+        description: Time zone name for the returned instants. Defaults to `automation.defaultTZ`.
+        schema:
+          type: string
+        example: Asia/Shanghai
+      - $ref: '#/components/parameters/RoomQueryOptional'
+      - $ref: '#/components/parameters/AuthQuery'
       security:
-        - bearerAuth: []
-        - authQuery: []
+      - bearerAuth: []
+      - authQuery: []
       responses:
         '200':
-          description: 'The validation result — `valid: true` with upcoming instants, or `valid: false` with an explanation.'
+          description: 'The validation result — `valid: true` with upcoming instants, or `valid: false`
+            with an explanation.'
           content:
             application/json:
               schema:
@@ -3271,22 +3335,27 @@ paths:
                     valid: true
                     room: home
                     next:
-                      - 1758675600
-                      - 1758677400
-                      - 1758679200
+                    - 1758675600
+                    - 1758677400
+                    - 1758679200
                     nextFormatted:
-                      - '2026-09-24 09:00 Thu'
-                      - '2026-09-24 09:30 Thu'
-                      - '2026-09-24 10:00 Thu'
+                    - 2026-09-24 09:00 Thu
+                    - 2026-09-24 09:30 Thu
+                    - 2026-09-24 10:00 Thu
                     desc:
                       mode: everyNMinutes
                       n: 30
-                      hours: '9-18'
+                      hours: 9-18
                       day: weekly
-                      weekdays: [1, 2, 3, 4, 5]
+                      weekdays:
+                      - 1
+                      - 2
+                      - 3
+                      - 4
+                      - 5
                 invalid:
                   value:
-                    expr: '0 0 30 2 *'
+                    expr: 0 0 30 2 *
                     tz: Asia/Shanghai
                     valid: false
                     room: home
@@ -3330,31 +3399,35 @@ paths:
         '405':
           $ref: '#/components/responses/OnlyGetPost'
     post:
-      tags: [Automation]
-      summary: Validate a cron expression (POST form)
-      description: |
-        Identical to `GET /tasks/cron`; the expression is always taken from the query string,
+      tags:
+      - Automation
+      summary: 校验一条 cron 表达式（POST 形式）
+      description: 'Identical to `GET /tasks/cron`; the expression is always taken from the query string,
+
         so the two methods are equivalent. Both are accepted so a client written against
+
         either style works.
+
+        '
       operationId: checkCronPost
       parameters:
-        - name: expr
-          in: query
-          required: true
-          schema:
-            type: string
-          example: '0 9 * * *'
-        - name: tz
-          in: query
-          required: false
-          schema:
-            type: string
-          example: Asia/Shanghai
-        - $ref: '#/components/parameters/RoomQueryOptional'
-        - $ref: '#/components/parameters/AuthQuery'
+      - name: expr
+        in: query
+        required: true
+        schema:
+          type: string
+        example: 0 9 * * *
+      - name: tz
+        in: query
+        required: false
+        schema:
+          type: string
+        example: Asia/Shanghai
+      - $ref: '#/components/parameters/RoomQueryOptional'
+      - $ref: '#/components/parameters/AuthQuery'
       security:
-        - bearerAuth: []
-        - authQuery: []
+      - bearerAuth: []
+      - authQuery: []
       responses:
         '200':
           description: The validation result.
@@ -3365,12 +3438,14 @@ paths:
               examples:
                 valid:
                   value:
-                    expr: '0 9 * * *'
+                    expr: 0 9 * * *
                     tz: Asia/Shanghai
                     valid: true
                     room: home
-                    next: [1758675600]
-                    nextFormatted: ['2026-09-24 09:00 Thu']
+                    next:
+                    - 1758675600
+                    nextFormatted:
+                    - 2026-09-24 09:00 Thu
                     desc:
                       mode: minutesEachHour
                       minutes: '0'
@@ -3414,21 +3489,23 @@ paths:
                     message: 定时自动化未启用（automation.enabled = false）
         '405':
           $ref: '#/components/responses/OnlyGetPost'
-
   /tasks/rooms:
     get:
-      tags: [Automation]
-      summary: Rooms that have automations
-      description: |
-        Lists rooms that currently hold at least one automation, with a count each. An admin
-        sees every room; anyone else sees only their own room's entry.
+      tags:
+      - Automation
+      summary: 哪些房间有定时任务
+      description: 'Lists rooms that currently hold at least one automation, with a count each. An admin
+
+        sees every room; anyone else sees only their own room''s entry.
+
+        '
       operationId: listTaskRooms
       parameters:
-        - $ref: '#/components/parameters/RoomQueryOptional'
-        - $ref: '#/components/parameters/AuthQuery'
+      - $ref: '#/components/parameters/RoomQueryOptional'
+      - $ref: '#/components/parameters/AuthQuery'
       security:
-        - bearerAuth: []
-        - authQuery: []
+      - bearerAuth: []
+      - authQuery: []
       responses:
         '200':
           description: Counts per room.
@@ -3442,10 +3519,10 @@ paths:
                     room: home
                     admin: true
                     rooms:
-                      - room: home
-                        count: 3
-                      - room: lobby
-                        count: 1
+                    - room: home
+                      count: 3
+                    - room: lobby
+                      count: 1
         '403':
           description: Automation is not allowed for this room.
           content:
@@ -3472,27 +3549,28 @@ paths:
                     message: 定时自动化未启用（automation.enabled = false）
         '405':
           $ref: '#/components/responses/OnlyGet'
-
   /tasks/{id}:
     delete:
-      tags: [Automation]
-      summary: Delete an automation
-      description: Removes the task. The caller must own it (admin, or same room for `room` tier, or the matching task token for `single` tier).
+      tags:
+      - Automation
+      summary: 删掉一个定时任务
+      description: Removes the task. The caller must own it (admin, or same room for `room` tier, or the
+        matching task token for `single` tier).
       operationId: deleteTask
       parameters:
-        - name: id
-          in: path
-          required: true
-          schema:
-            type: string
-          example: 5f3c1e2a-9b7d-4c6e-8a1f-2d3e4f5a6b7c
-        - $ref: '#/components/parameters/RoomQueryOptional'
-        - $ref: '#/components/parameters/AuthQuery'
-        - $ref: '#/components/parameters/TaskTokenQuery'
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+        example: 5f3c1e2a-9b7d-4c6e-8a1f-2d3e4f5a6b7c
+      - $ref: '#/components/parameters/RoomQueryOptional'
+      - $ref: '#/components/parameters/AuthQuery'
+      - $ref: '#/components/parameters/TaskTokenQuery'
       security:
-        - bearerAuth: []
-        - authQuery: []
-        - taskToken: []
+      - bearerAuth: []
+      - authQuery: []
+      - taskToken: []
       responses:
         '200':
           description: The task was deleted.
@@ -3530,16 +3608,25 @@ paths:
                     error: Task not found
                     message: 任务不存在
         '405':
-          description: |
-            Wrong method or unsupported action. NOTE (code): the task is resolved **before** the
+          description: 'Wrong method or unsupported action. NOTE (code): the task is resolved **before**
+            the
+
             method is judged, so `GET /tasks/{id}` for a non-existent id returns
+
             `404 task_not_found`, not a 405.
 
+
             NOTE (code): the router also carries a catch-all route for `/tasks/{id}/{action}`,
+
             which answers exactly this 405 instead of falling through to the static-file
+
             fallback (which would return HTML with status 200). It is not modelled as its own
+
             OpenAPI path because it has no success case; the two real actions are
+
             `/tasks/{id}/run` and `/tasks/{id}/toggle`.
+
+            '
           content:
             application/json:
               schema:
@@ -3550,50 +3637,47 @@ paths:
                     code: method_not_allowed
                     error: Unsupported method or action
                     message: 仅支持 DELETE /tasks/:id、POST /tasks/:id/run、POST /tasks/:id/toggle
-
   /tasks/{id}/run:
     post:
-      tags: [Automation]
-      summary: Dry run a task, or send it now
-      description: |
-        Renders the saved task against its next scheduled instant and returns the output.
-
-        - Without `send`, nothing is sent — a pure dry run.
-        - With `?send=1`, the message is actually broadcast now.
-        - `?at=` overrides the reference instant (RFC3339, or `2026-09-25` / `2026-09-25 09:30`);
-          an unparseable value is a 400, never a silent fallback.
-        - NOTE (code): the dry run and the send branches share `output`, `taskId`, `room` and
-          `keepHistory`, but the dry run adds `preview` / `referenceAt` / `nextRunAt` /
-          `scheduledAt` while the send branch adds `sent` / `sentAt`.
+      tags:
+      - Automation
+      summary: 试跑一个任务，或者立刻发一次
+      description: "Renders the saved task against its next scheduled instant and returns the output.\n\
+        \n- Without `send`, nothing is sent — a pure dry run.\n- With `?send=1`, the message is actually\
+        \ broadcast now.\n- `?at=` overrides the reference instant (RFC3339, or `2026-09-25` / `2026-09-25\
+        \ 09:30`);\n  an unparseable value is a 400, never a silent fallback.\n- NOTE (code): the dry\
+        \ run and the send branches share `output`, `taskId`, `room` and\n  `keepHistory`, but the dry\
+        \ run adds `preview` / `referenceAt` / `nextRunAt` /\n  `scheduledAt` while the send branch adds\
+        \ `sent` / `sentAt`.\n"
       operationId: runTask
       parameters:
-        - name: id
-          in: path
-          required: true
-          schema:
-            type: string
-          example: 5f3c1e2a-9b7d-4c6e-8a1f-2d3e4f5a6b7c
-        - name: send
-          in: query
-          required: false
-          description: When truthy, send the message now instead of only rendering it.
-          schema:
-            $ref: '#/components/schemas/Truthy'
-          example: 1
-        - name: at
-          in: query
-          required: false
-          description: Reference instant for a dry run.
-          schema:
-            type: string
-          example: '2026-09-24T09:30:00+08:00'
-        - $ref: '#/components/parameters/RoomQueryOptional'
-        - $ref: '#/components/parameters/AuthQuery'
-        - $ref: '#/components/parameters/TaskTokenQuery'
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+        example: 5f3c1e2a-9b7d-4c6e-8a1f-2d3e4f5a6b7c
+      - name: send
+        in: query
+        required: false
+        description: When truthy, send the message now instead of only rendering it.
+        schema:
+          $ref: '#/components/schemas/Truthy'
+        example: 1
+      - name: at
+        in: query
+        required: false
+        description: Reference instant for a dry run.
+        schema:
+          type: string
+        example: '2026-09-24T09:30:00+08:00'
+      - $ref: '#/components/parameters/RoomQueryOptional'
+      - $ref: '#/components/parameters/AuthQuery'
+      - $ref: '#/components/parameters/TaskTokenQuery'
       security:
-        - bearerAuth: []
-        - authQuery: []
-        - taskToken: []
+      - bearerAuth: []
+      - authQuery: []
+      - taskToken: []
       responses:
         '200':
           description: The rendered output (dry run) or the send confirmation.
@@ -3601,8 +3685,8 @@ paths:
             application/json:
               schema:
                 oneOf:
-                  - $ref: '#/components/schemas/TaskRunDry'
-                  - $ref: '#/components/schemas/TaskRunSent'
+                - $ref: '#/components/schemas/TaskRunDry'
+                - $ref: '#/components/schemas/TaskRunSent'
               examples:
                 dry:
                   summary: Dry run (no `send`)
@@ -3616,7 +3700,7 @@ paths:
                     nextRunAt: 1758677400
                     scheduledAt: '2026-09-24T09:30:00+08:00'
                 sent:
-                  summary: 'Sent with ?send=1'
+                  summary: Sent with ?send=1
                   value:
                     sent: true
                     output: Today is 2026-09-24
@@ -3635,7 +3719,7 @@ paths:
                   value:
                     code: invalid_reference
                     error: Invalid reference time
-                    message: '无法解析的时间：2026-13-45'
+                    message: 无法解析的时间：2026-13-45
                 renderFailed:
                   value:
                     code: render_failed
@@ -3667,38 +3751,50 @@ paths:
                     message: 任务不存在
         '405':
           $ref: '#/components/responses/UnsupportedTaskAction'
-
   /tasks/{id}/toggle:
     post:
-      tags: [Automation]
-      summary: Enable or disable an automation
-      description: |
-        Flips `enabled` by default; `?enabled=1` / `?enabled=0` sets it explicitly. Only the
+      tags:
+      - Automation
+      summary: 启用 / 停用一个定时任务
+      description: 'Flips `enabled` by default; `?enabled=1` / `?enabled=0` sets it explicitly. Only the
+
         switch is touched — never the template, the chain or the idempotency key, so toggling
+
         off and on does not fire an extra message.
+
+        '
       operationId: toggleTask
       parameters:
-        - name: id
-          in: path
-          required: true
-          schema:
-            type: string
-          example: 5f3c1e2a-9b7d-4c6e-8a1f-2d3e4f5a6b7c
-        - name: enabled
-          in: query
-          required: false
-          description: Set the switch explicitly instead of flipping it. Truthy values are `1`, `true`, `yes`, `on`.
-          schema:
-            type: string
-            enum: ['0', '1', 'true', 'false', 'yes', 'no', 'on', 'off']
-          example: '0'
-        - $ref: '#/components/parameters/RoomQueryOptional'
-        - $ref: '#/components/parameters/AuthQuery'
-        - $ref: '#/components/parameters/TaskTokenQuery'
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+        example: 5f3c1e2a-9b7d-4c6e-8a1f-2d3e4f5a6b7c
+      - name: enabled
+        in: query
+        required: false
+        description: Set the switch explicitly instead of flipping it. Truthy values are `1`, `true`,
+          `yes`, `on`.
+        schema:
+          type: string
+          enum:
+          - '0'
+          - '1'
+          - 'true'
+          - 'false'
+          - 'yes'
+          - 'no'
+          - 'on'
+          - 'off'
+        example: '0'
+      - $ref: '#/components/parameters/RoomQueryOptional'
+      - $ref: '#/components/parameters/AuthQuery'
+      - $ref: '#/components/parameters/TaskTokenQuery'
       security:
-        - bearerAuth: []
-        - authQuery: []
-        - taskToken: []
+      - bearerAuth: []
+      - authQuery: []
+      - taskToken: []
       responses:
         '200':
           description: The updated task.
@@ -3714,7 +3810,7 @@ paths:
                       name: On-call reminder
                       enabled: false
                       freq: daily
-                      time: '09:30'
+                      time: 09:30
                       cron: ''
                       byWeekday: []
                       runAt: ''
@@ -3757,31 +3853,43 @@ paths:
                     message: 任务不存在
         '405':
           $ref: '#/components/responses/UnsupportedTaskAction'
-
   /automation:
     get:
-      tags: [Automation]
-      summary: Automation management page (HTML)
-      description: |
-        A server-rendered page for creating and editing automations. It has its own HTML (it is
+      tags:
+      - Automation
+      summary: 定时任务的管理页（HTML）
+      description: 'A server-rendered page for creating and editing automations. It has its own HTML (it
+        is
+
         registered ahead of the SPA fallback, otherwise it would resolve to a blank shell with
+
         no form).
 
+
         It performs **no authentication of its own** — whether a task can be created or changed
+
         is decided entirely by `/tasks`. The page exchanges a password for a session token and
+
         keeps it in `sessionStorage`, never storing the plaintext password.
 
+
         `?room=` and `?lang=` (one of `zh` / `zh-TW` / `en` / `ja`) are honoured.
+
+        '
       operationId: automationPage
       parameters:
-        - $ref: '#/components/parameters/RoomQueryOptional'
-        - name: lang
-          in: query
-          required: false
-          schema:
-            type: string
-            enum: [zh, zh-TW, en, ja]
-          example: zh
+      - $ref: '#/components/parameters/RoomQueryOptional'
+      - name: lang
+        in: query
+        required: false
+        schema:
+          type: string
+          enum:
+          - zh
+          - zh-TW
+          - en
+          - ja
+        example: zh
       security: []
       responses:
         '200':
@@ -3792,74 +3900,90 @@ paths:
                 type: string
         '405':
           $ref: '#/components/responses/OnlyGet'
-
 components:
-
   securitySchemes:
     bearerAuth:
       type: http
       scheme: bearer
-      description: |
-        `Authorization: Bearer <credential>`, where the credential is the global password, a
+      description: '`Authorization: Bearer <credential>`, where the credential is the global password,
+        a
+
         room password, or a session token from `POST /auth/token`.
 
+
         A header whose value is not two space-separated words starting with `Bearer` is used
+
         **verbatim** as the credential, so `Authorization: my-password` also works. Note that
+
         `Bearer a b` (three parts) is likewise taken whole, rather than as `a b`.
+
+        '
     authQuery:
       type: apiKey
       in: query
       name: auth
-      description: |
-        The same credential, as `?auth=`. Consulted only when the `Authorization` header is
+      description: 'The same credential, as `?auth=`. Consulted only when the `Authorization` header is
+
         absent or empty. Kept for Apple Shortcuts. **Never put a password in a shareable URL** —
+
         query strings land in browser history and server access logs.
+
+        '
     shareTokenQuery:
       type: apiKey
       in: query
       name: t
-      description: |
-        A share token, which authorises **read** access to the one entry or file it was issued
+      description: 'A share token, which authorises **read** access to the one entry or file it was issued
+
         for. Read-only: write endpoints ignore it.
+
+        '
     sharePassword:
       type: apiKey
       in: header
       name: X-Share-Password
-      description: |
-        The password of a password-protected share. Never sent in the URL, because query strings
+      description: 'The password of a password-protected share. Never sent in the URL, because query strings
+
         are logged.
+
+        '
     taskToken:
       type: apiKey
       in: header
       name: X-Task-Token
-      description: |
-        The task token of a `single`-tier automation (also accepted as `?taskToken=`). Issued
+      description: 'The task token of a `single`-tier automation (also accepted as `?taskToken=`). Issued
+
         once, when the task is created.
 
+        '
   parameters:
     RoomQuery:
       name: room
       in: query
       required: false
-      description: |
-        Room name. Empty or absent (or the literal `default`) means the `default` room. Names are
+      description: 'Room name. Empty or absent (or the literal `default`) means the `default` room. Names
+        are
+
         case-sensitive; only surrounding whitespace is trimmed.
+
+        '
       schema:
         type: string
       example: home
-
     RoomQueryOptional:
       name: room
       in: query
       required: false
-      description: |
-        Room name. On endpoints that also accept "no room at all" as a distinct case, omitting
+      description: 'Room name. On endpoints that also accept "no room at all" as a distinct case, omitting
+
         this parameter entirely may differ from sending it empty — `GET /content/latest` is the
+
         one to watch: `?room=` is the `default` room, `?all=1` is "newest anywhere".
+
+        '
       schema:
         type: string
       example: home
-
     AuthQuery:
       name: auth
       in: query
@@ -3869,57 +3993,71 @@ components:
         type: string
         writeOnly: true
       example: correct-horse-battery-staple
-
     NameQuery:
       name: name
       in: query
       required: false
-      description: |
-        The **device display name** the sender claims. It is cleaned (control characters
+      description: 'The **device display name** the sender claims. It is cleaned (control characters
+
         removed, trimmed) and truncated to 32 **characters**, then stored as
+
         `senderDevice.name`. When empty the server infers a name from the User-Agent. Not
+
         interchangeable with `client`.
+
+        '
       schema:
         type: string
         maxLength: 32
       example: iPhone
-
     ClientQuery:
       name: client
       in: query
       required: false
-      description: |
-        A **stable client id**, stored as `senderClientID` and used to decide which messages are
-        the caller's own. Set it once per installation.
+      description: 'A **stable client id**, stored as `senderClientID` and used to decide which messages
+        are
+
+        the caller''s own. Set it once per installation.
+
+        '
       schema:
         type: string
       example: web-1a2b
-
     FormatQuery:
       name: format
       in: query
       required: false
-      description: |
-        Explicit representation selector. `raw` (aliases `text`, `plain`) forces raw bytes;
+      description: 'Explicit representation selector. `raw` (aliases `text`, `plain`) forces raw bytes;
+
         `json` forces JSON. Any other non-empty value is a `400 unsupported_format` — it never
+
         falls back. Overrides `?json=` and `Accept`.
+
+        '
       schema:
         type: string
-        enum: [raw, text, plain, json]
+        enum:
+        - raw
+        - text
+        - plain
+        - json
       example: json
-
     JsonQuery:
       name: json
       in: query
       required: false
-      description: |
-        Legacy JSON switch. `1` or `true` selects JSON; anything else is ignored. Retained for
+      description: 'Legacy JSON switch. `1` or `true` selects JSON; anything else is ignored. Retained
+        for
+
         existing clients — new code should use `?format=json`.
+
+        '
       schema:
         type: string
-        enum: ['1', 'true']
+        enum:
+        - '1'
+        - 'true'
       example: '1'
-
     ShareTokenQuery:
       name: t
       in: query
@@ -3928,7 +4066,6 @@ components:
       schema:
         type: string
       example: eyJ0eXAiOiJzaGFyZSJ9.9f2c
-
     ShareTokenQueryRequired:
       name: t
       in: query
@@ -3937,7 +4074,6 @@ components:
       schema:
         type: string
       example: eyJ0eXAiOiJzaGFyZSJ9.9f2c
-
     SharePasswordHeader:
       name: X-Share-Password
       in: header
@@ -3947,19 +4083,19 @@ components:
         type: string
         writeOnly: true
       example: hunter2
-
     TaskTokenQuery:
       name: taskToken
       in: query
       required: false
-      description: |
-        The task token of a `single`-tier automation, as an alternative to the `X-Task-Token`
+      description: 'The task token of a `single`-tier automation, as an alternative to the `X-Task-Token`
+
         header (which takes precedence).
+
+        '
       schema:
         type: string
         writeOnly: true
       example: f4a2c9e1b7d3450689abcdef01234567
-
   responses:
     OnlyGet:
       description: This endpoint only accepts GET.
@@ -3973,7 +4109,6 @@ components:
                 code: method_not_allowed
                 error: Only GET is allowed
                 message: 仅允许 GET 请求
-
     RoomForbidden:
       description: The credential cannot open this room.
       content:
@@ -3998,7 +4133,6 @@ components:
                 code: method_not_allowed
                 error: Only POST is allowed
                 message: 仅允许 POST 请求
-
     OnlyGetPost:
       description: This endpoint accepts GET and POST.
       content:
@@ -4011,12 +4145,15 @@ components:
                 code: method_not_allowed
                 error: Only GET and POST are allowed
                 message: 仅允许 GET / POST 请求
-
     MethodNotAllowed:
-      description: |
-        The method is not one this path accepts. Note the wording differs per path family: the
+      description: 'The method is not one this path accepts. Note the wording differs per path family:
+        the
+
         `/file/*` routes use the generic message below, while other paths name the allowed
+
         methods.
+
+        '
       content:
         application/json:
           schema:
@@ -4027,11 +4164,12 @@ components:
                 code: method_not_allowed
                 error: Method not allowed
                 message: 方法不允许
-
     UnsupportedTaskAction:
-      description: |
-        The method or action is not supported on `/tasks/{id}*`. The message lists what is
+      description: 'The method or action is not supported on `/tasks/{id}*`. The message lists what is
+
         supported, which is more useful to a user than "POST only".
+
+        '
       content:
         application/json:
           schema:
@@ -4042,7 +4180,6 @@ components:
                 code: method_not_allowed
                 error: Unsupported method or action
                 message: 仅支持 DELETE /tasks/:id、POST /tasks/:id/run、POST /tasks/:id/toggle
-
     InvalidRequestBody:
       description: The request body is not valid JSON.
       content:
@@ -4055,7 +4192,6 @@ components:
                 code: invalid_request_body
                 error: Invalid request body
                 message: 无效的请求体
-
     UnsupportedFormat:
       description: The `?format=` value is not one of raw/json.
       content:
@@ -4068,73 +4204,103 @@ components:
                 code: unsupported_format
                 error: Unsupported format
                 message: 不支持的格式（只支持 raw / json）
-
   schemas:
-
-    # ── Envelopes and primitives ────────────────────────────────────────
     Error:
       type: object
-      description: |
-        The single error envelope. Every error path returns exactly these three fields with
+      description: 'The single error envelope. Every error path returns exactly these three fields with
+
         `Content-Type: application/json; charset=utf-8`, never varying by `Accept`, and with a
+
         trailing newline.
-      required: [code, error, message]
+
+        '
+      required:
+      - code
+      - error
+      - message
       additionalProperties: false
       properties:
         code:
           type: string
           description: Machine code in snake_case. Stable once shipped — do not branch on anything else.
-          examples: [text_too_long]
+          examples:
+          - text_too_long
         error:
           type: string
           description: Plain English, for logs and English-speaking users.
-          examples: [Text too long]
+          examples:
+          - Text too long
         message:
           type: string
-          description: Plain Chinese, shown verbatim by clients. Limit errors embed live server config values.
-          examples: ['文本内容超出限制 (最大 4096 字符)']
+          description: Plain Chinese, shown verbatim by clients. Limit errors embed live server config
+            values.
+          examples:
+          - 文本内容超出限制 (最大 4096 字符)
       examples:
-        - code: text_too_long
-          error: Text too long
-          message: 文本内容超出限制 (最大 4096 字符)
-
+      - code: text_too_long
+        error: Text too long
+        message: 文本内容超出限制 (最大 4096 字符)
     Truthy:
       type: string
-      description: |
-        A truthy switch. Truthy values are `1`, `true`, `yes` and `on` (case-insensitive, trimmed).
-        Everything else is falsy.
-      enum: ['1', 'true', 'yes', 'on']
-      examples: ['1']
+      description: 'A truthy switch. Truthy values are `1`, `true`, `yes` and `on` (case-insensitive,
+        trimmed).
 
+        Everything else is falsy.
+
+        '
+      enum:
+      - '1'
+      - 'true'
+      - 'yes'
+      - 'on'
+      examples:
+      - '1'
     BoardColumn:
       type: string
-      description: |
-        Board column. `todo` is the default — a missing or empty value normalises to it. Names are
-        matched case-insensitively and trimmed.
-      enum: [todo, doing, done]
-      examples: [doing]
+      description: 'Board column. `todo` is the default — a missing or empty value normalises to it. Names
+        are
 
-    # ── Service ─────────────────────────────────────────────────────────
+        matched case-insensitively and trimmed.
+
+        '
+      enum:
+      - todo
+      - doing
+      - done
+      examples:
+      - doing
     ServerInfo:
       type: object
       description: The `GET /server` response. Note it carries **no** `version` and **no** size limits.
-      required: [server, auth, authorized, roomProtected, config, automation]
+      required:
+      - server
+      - auth
+      - authorized
+      - roomProtected
+      - config
+      - automation
       properties:
         server:
           type: string
           description: The WebSocket URL, with the scheme already switched to `ws` / `wss`.
-          examples: [ws://127.0.0.1:9501/push]
+          examples:
+          - ws://127.0.0.1:9501/push
         auth:
           type: boolean
-          description: Whether the resolved context requires a password. Without `?room=` this reflects the global password only.
+          description: Whether the resolved context requires a password. Without `?room=` this reflects
+            the global password only.
         authorized:
           type: boolean
-          description: |
-            Whether the presented credential is good. Starts at `true` — with no `?room=` and no
+          description: 'Whether the presented credential is good. Starts at `true` — with no `?room=`
+            and no
+
             global password it is `true` even with no credential at all.
+
+            '
         roomProtected:
           type: boolean
-          description: Whether the room named by `?room=` requires a password. Always `false` when `?room=` was not supplied.
+          description: Whether the room named by `?room=` requires a password. Always `false` when `?room=`
+            was not supplied.
         config:
           type: object
           properties:
@@ -4150,13 +4316,16 @@ components:
                   description: Whether `GET /rooms` is enabled.
         automation:
           $ref: '#/components/schemas/AutomationCapability'
-
     AutomationCapability:
       type: object
-      description: |
-        Describes what the caller may do with `/tasks`. When automation is disabled server-wide the
+      description: 'Describes what the caller may do with `/tasks`. When automation is disabled server-wide
+        the
+
         object is just `{"enabled": false}`.
-      required: [enabled]
+
+        '
+      required:
+      - enabled
       properties:
         enabled:
           type: boolean
@@ -4166,7 +4335,11 @@ components:
         tier:
           type: string
           description: Policy tier. `admin` = global password; `none` = not allowed.
-          enum: [admin, room, single, none]
+          enum:
+          - admin
+          - room
+          - single
+          - none
         allowed:
           type: boolean
         admin:
@@ -4176,64 +4349,88 @@ components:
           description: Maximum number of tasks; `0` means unlimited.
         defaultTZ:
           type: string
-          examples: [Asia/Shanghai]
+          examples:
+          - Asia/Shanghai
         vars:
           type: array
           description: Template variable names the UI may offer.
           items:
             type: string
           examples:
-            - [date, weekday, time, datetime, timestamp, uuid, task, room]
+          - - date
+            - weekday
+            - time
+            - datetime
+            - timestamp
+            - uuid
+            - task
+            - room
         actions:
           type: array
-          description: |
-            The action library, as metadata only. `key` / `groupKey` are i18n keys from the front
-            end's locale files — the server ships keys, never translations.
+          description: 'The action library, as metadata only. `key` / `groupKey` are i18n keys from the
+            front
+
+            end''s locale files — the server ships keys, never translations.
+
+            '
           items:
             $ref: '#/components/schemas/AutomationAction'
-
     AutomationAction:
       type: object
-      required: [id, group, groupKey, key]
+      required:
+      - id
+      - group
+      - groupKey
+      - key
       properties:
         id:
           type: string
-          examples: [text.trimLines]
+          examples:
+          - text.trimLines
         group:
           type: string
-          examples: [text]
+          examples:
+          - text
         groupKey:
           type: string
-          examples: [actionGroupText]
+          examples:
+          - actionGroupText
         key:
           type: string
-          examples: [actionTrimLines]
+          examples:
+          - actionTrimLines
         params:
           type: array
           description: Empty (and omitted) for actions that take no parameters.
           items:
             $ref: '#/components/schemas/AutomationParam'
-
     AutomationParam:
       type: object
-      required: [key, labelKey]
+      required:
+      - key
+      - labelKey
       properties:
         key:
           type: string
-          examples: [find]
+          examples:
+          - find
         labelKey:
           type: string
-          examples: [actionParamFind]
+          examples:
+          - actionParamFind
         type:
           type: string
           description: Omitted for a single-line text input; `select` for a choice.
-          enum: [select]
+          enum:
+          - select
         options:
           type: array
           description: Omitted when empty.
           items:
             type: object
-            required: [value, labelKey]
+            required:
+            - value
+            - labelKey
             properties:
               value:
                 type: string
@@ -4242,27 +4439,30 @@ components:
         visibleWhen:
           type: object
           description: Omitted when absent. Shows the param only when another param equals a value.
-          required: [key, equals]
+          required:
+          - key
+          - equals
           properties:
             key:
               type: string
             equals:
               type: string
-
-    # ── Auth ────────────────────────────────────────────────────────────
     TokenRequest:
       type: object
-      required: [password]
+      required:
+      - password
       properties:
         password:
           type: string
           description: The global password or a room password. An empty value is rejected with `password_required`.
           writeOnly: true
-
     SessionToken:
       type: object
       description: A session token. Valid for about one hour.
-      required: [token, expiresAt, scope]
+      required:
+      - token
+      - expiresAt
+      - scope
       properties:
         token:
           type: string
@@ -4273,38 +4473,46 @@ components:
         scope:
           type: string
           description: '`global` for a token minted from the global password, `""` for a room password.'
-
-    # ── Content ─────────────────────────────────────────────────────────
     TextSendResult:
       type: object
       description: Response of `POST /text` (both the create and overwrite paths).
-      required: [url, id, type]
+      required:
+      - url
+      - id
+      - type
       properties:
         url:
           type: string
           format: uri
-          examples: ['http://localhost:9501/content/7']
+          examples:
+          - http://localhost:9501/content/7
         id:
           type: string
           description: The entry id, **as a string**.
-          examples: ['7']
+          examples:
+          - '7'
         type:
           type: string
           const: text
-
     ContentEntry:
-      description: |
-        The JSON projection used by `GET /content` and `GET /content/{id}?format=json`.
+      description: 'The JSON projection used by `GET /content` and `GET /content/{id}?format=json`.
+
 
         Branch on the presence of `content` (text) versus `name` (file). Do **not** branch on
-        `type`: for a file it holds the detected media kind, not the word `file`.
-      oneOf:
-        - $ref: '#/components/schemas/TextContentEntry'
-        - $ref: '#/components/schemas/FileContentEntry'
 
+        `type`: for a file it holds the detected media kind, not the word `file`.
+
+        '
+      oneOf:
+      - $ref: '#/components/schemas/TextContentEntry'
+      - $ref: '#/components/schemas/FileContentEntry'
     TextContentEntry:
       type: object
-      required: [type, id, timestamp, room]
+      required:
+      - type
+      - id
+      - timestamp
+      - room
       properties:
         type:
           type: string
@@ -4318,7 +4526,8 @@ components:
         timestamp:
           type: integer
           format: int64
-          description: Unix **seconds**. Second-granular, so it repeats within a second — never use it as a cursor.
+          description: Unix **seconds**. Second-granular, so it repeats within a second — never use it
+            as a cursor.
         room:
           type: string
         senderIP:
@@ -4327,13 +4536,16 @@ components:
           type: string
           description: Omitted when empty.
         senderDevice:
-          description: |
-            The sender's device info — a free-form string map, **not** the stricter `DeviceMeta`
+          description: 'The sender''s device info — a free-form string map, **not** the stricter `DeviceMeta`
+
             used by WebSocket `connect` events. `null` when unknown, which is distinct from `{}`,
+
             so clients should handle all three states.
+
+            '
           oneOf:
-            - $ref: '#/components/schemas/SenderDevice'
-            - type: 'null'
+          - $ref: '#/components/schemas/SenderDevice'
+          - type: 'null'
         column:
           $ref: '#/components/schemas/BoardColumn'
         source:
@@ -4342,25 +4554,42 @@ components:
         scheduledAt:
           type: integer
           format: int64
-          description: Omitted unless set. The instant a task was scheduled for; differs from `timestamp` when backfilled.
+          description: Omitted unless set. The instant a task was scheduled for; differs from `timestamp`
+            when backfilled.
         late:
           type: boolean
           description: Omitted unless true. The message was sent late, after missing its window.
-
     FileContentEntry:
       type: object
-      required: [type, name, size, uuid, cache, url, id, timestamp, expire, room]
+      required:
+      - type
+      - name
+      - size
+      - uuid
+      - cache
+      - url
+      - id
+      - timestamp
+      - expire
+      - room
       properties:
         type:
           type: string
           description: The media kind detected from the filename.
-          enum: [image, audio, video, document, archive, file]
+          enum:
+          - image
+          - audio
+          - video
+          - document
+          - archive
+          - file
         name:
           type: string
         size:
           type: integer
           format: int64
-          description: Size on disk, in bytes. The entry itself carries no body — fetch the bytes from `url`.
+          description: Size on disk, in bytes. The entry itself carries no body — fetch the bytes from
+            `url`.
         uuid:
           type: string
           description: Same value as `cache`.
@@ -4368,13 +4597,17 @@ components:
           type: string
         thumbnail:
           type: string
-          description: |
-            A `data:image/jpeg;base64,…` thumbnail, or empty when none was generated (which is
+          description: 'A `data:image/jpeg;base64,…` thumbnail, or empty when none was generated (which
+            is
+
             normal for archives, PDFs and videos).
+
+            '
         url:
           type: string
           format: uri
-          description: Absolute download URL **with the filename already appended**, so it can be used as-is.
+          description: Absolute download URL **with the filename already appended**, so it can be used
+            as-is.
         id:
           type: string
         timestamp:
@@ -4392,8 +4625,8 @@ components:
           type: string
         senderDevice:
           oneOf:
-            - $ref: '#/components/schemas/SenderDevice'
-            - type: 'null'
+          - $ref: '#/components/schemas/SenderDevice'
+          - type: 'null'
         column:
           $ref: '#/components/schemas/BoardColumn'
         source:
@@ -4403,23 +4636,28 @@ components:
           format: int64
         late:
           type: boolean
-
     ContentList:
       type: object
       description: A page of history, ascending. An empty array means there is no more history.
-      required: [messages]
+      required:
+      - messages
       properties:
         messages:
           type: array
           items:
             $ref: '#/components/schemas/ContentEntry'
-
     LatestTextEntry:
       type: object
-      description: |
-        `GET /content/latest` for a text entry — a **compact** shape, not the rich projection used
+      description: '`GET /content/latest` for a text entry — a **compact** shape, not the rich projection
+        used
+
         by `GET /content`.
-      required: [type, id, timestamp]
+
+        '
+      required:
+      - type
+      - id
+      - timestamp
       properties:
         type:
           type: string
@@ -4433,17 +4671,33 @@ components:
           format: int64
         column:
           $ref: '#/components/schemas/BoardColumn'
-
     LatestFileEntry:
       type: object
-      description: |
-        `GET /content/latest` for a file entry — a **compact** shape. Note it has no `cache` / `room`
+      description: '`GET /content/latest` for a file entry — a **compact** shape. Note it has no `cache`
+        / `room`
+
         / `senderIP`, unlike the `GET /content` projection.
-      required: [type, name, size, uuid, url, id, timestamp, expire]
+
+        '
+      required:
+      - type
+      - name
+      - size
+      - uuid
+      - url
+      - id
+      - timestamp
+      - expire
       properties:
         type:
           type: string
-          enum: [image, audio, video, document, archive, file]
+          enum:
+          - image
+          - audio
+          - video
+          - document
+          - archive
+          - file
         name:
           type: string
         size:
@@ -4464,10 +4718,12 @@ components:
           format: int64
         column:
           $ref: '#/components/schemas/BoardColumn'
-
     ColumnResult:
       type: object
-      required: [id, type, column]
+      required:
+      - id
+      - type
+      - column
       properties:
         id:
           type: string
@@ -4476,20 +4732,24 @@ components:
           description: The entry's own kind (`text` or `file`), not the media kind.
         column:
           $ref: '#/components/schemas/BoardColumn'
-
-    # ── Rooms ───────────────────────────────────────────────────────────
     RoomListResponse:
       type: object
-      required: [rooms]
+      required:
+      - rooms
       properties:
         rooms:
           type: array
           items:
             $ref: '#/components/schemas/RoomInfo'
-
     RoomInfo:
       type: object
-      required: [name, messageCount, deviceCount, lastActive, isActive, isProtected]
+      required:
+      - name
+      - messageCount
+      - deviceCount
+      - lastActive
+      - isActive
+      - isProtected
       properties:
         name:
           type: string
@@ -4509,13 +4769,15 @@ components:
           description: True while at least one device is connected.
         isProtected:
           type: boolean
-          description: 'Whether the room **actually** needs a password (an `{"open": true}` room reports `false`).'
-
-    # ── Files ───────────────────────────────────────────────────────────
+          description: 'Whether the room **actually** needs a password (an `{"open": true}` room reports
+            `false`).'
     UploadedEntry:
       type: object
       description: Response of a completed upload (`/upload` with a file part, or `/upload/finish/{uuid}`).
-      required: [url, id, type]
+      required:
+      - url
+      - id
+      - type
       properties:
         url:
           type: string
@@ -4526,42 +4788,54 @@ components:
         type:
           type: string
           description: The media kind detected from the filename.
-          enum: [image, audio, video, document, archive, file]
-
+          enum:
+          - image
+          - audio
+          - video
+          - document
+          - archive
+          - file
     ChunkInitResult:
       type: object
-      description: Response of the chunked-upload initialiser (`/upload/chunk`, or `/upload` with a `text/plain` filename).
-      required: [result]
+      description: Response of the chunked-upload initialiser (`/upload/chunk`, or `/upload` with a `text/plain`
+        filename).
+      required:
+      - result
       properties:
         result:
           type: object
-          required: [uuid]
+          required:
+          - uuid
           properties:
             uuid:
               type: string
               format: uuid
-
     UploadResult:
-      description: Either a completed upload, or (for the `text/plain` filename form) an initialisation result.
+      description: Either a completed upload, or (for the `text/plain` filename form) an initialisation
+        result.
       oneOf:
-        - $ref: '#/components/schemas/UploadedEntry'
-        - $ref: '#/components/schemas/ChunkInitResult'
-
-    # ── Sharing ─────────────────────────────────────────────────────────
+      - $ref: '#/components/schemas/UploadedEntry'
+      - $ref: '#/components/schemas/ChunkInitResult'
     ShareRequest:
       type: object
-      description: |
-        Body of `POST /share`. Every field is optional (an empty body means all defaults), but
+      description: 'Body of `POST /share`. Every field is optional (an empty body means all defaults),
+        but
+
         **unknown fields are rejected** — a typo must not silently drop a limit.
+
+        '
       additionalProperties: false
       properties:
         type:
           type: string
           description: '`content` or `file`. Omitted → `400 missing_type`.'
-          enum: [content, file]
+          enum:
+          - content
+          - file
         id:
           type: string
-          description: 'For `type: content`, the entry id as a string. Also accepted for `type: file` in place of `uuid`.'
+          description: 'For `type: content`, the entry id as a string. Also accepted for `type: file`
+            in place of `uuid`.'
         uuid:
           type: string
           description: 'For `type: file`, the file uuid. Takes precedence over `id`.'
@@ -4580,10 +4854,22 @@ components:
           type: string
           description: Optional password, required from the recipient in `X-Share-Password`.
           writeOnly: true
-
     ShareCreatedContent:
       type: object
-      required: [type, id, room, ttl, expiresAt, maxUses, token, jti, url, pageUrl, rawUrl, visits, scans]
+      required:
+      - type
+      - id
+      - room
+      - ttl
+      - expiresAt
+      - maxUses
+      - token
+      - jti
+      - url
+      - pageUrl
+      - rawUrl
+      - visits
+      - scans
       properties:
         type:
           type: string
@@ -4621,10 +4907,22 @@ components:
           type: integer
         scans:
           type: integer
-
     ShareCreatedFile:
       type: object
-      required: [type, uuid, room, ttl, expiresAt, maxUses, token, jti, url, pageUrl, rawUrl, visits, scans]
+      required:
+      - type
+      - uuid
+      - room
+      - ttl
+      - expiresAt
+      - maxUses
+      - token
+      - jti
+      - url
+      - pageUrl
+      - rawUrl
+      - visits
+      - scans
       properties:
         type:
           type: string
@@ -4659,20 +4957,29 @@ components:
           type: integer
         scans:
           type: integer
-
     ShareInfo:
       type: object
-      description: |
-        `GET /share?t=` — what the landing page needs before fetching anything. Does not consume a use.
-      required: [type, expiresAt, maxUses, needsPassword]
+      description: '`GET /share?t=` — what the landing page needs before fetching anything. Does not consume
+        a use.
+
+        '
+      required:
+      - type
+      - expiresAt
+      - maxUses
+      - needsPassword
       properties:
         type:
           type: string
-          enum: [content, file]
+          enum:
+          - content
+          - file
         kind:
           type: string
           description: The target's kind (`text` or `file`).
-          enum: [text, file]
+          enum:
+          - text
+          - file
         id:
           type: string
         room:
@@ -4700,16 +5007,21 @@ components:
           description: Present for file targets.
         previewToken:
           type: string
-          description: |
-            Present **only** when the share is password-protected. Safe to embed in `<img src>` etc.
+          description: 'Present **only** when the share is password-protected. Safe to embed in `<img
+            src>` etc.
+
+            '
         previewExpiresAt:
           type: integer
           format: int64
           description: Present alongside `previewToken`.
-
     ShareList:
       type: object
-      required: [room, total, limit, records]
+      required:
+      - room
+      - total
+      - limit
+      - records
       properties:
         room:
           type: string
@@ -4723,20 +5035,38 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/ShareRecord'
-
     ShareRecord:
       type: object
-      required: [jti, type, kind, id, room, name, size, createdAt, expiresAt, maxUses, used, visits, scans, password, expired]
+      required:
+      - jti
+      - type
+      - kind
+      - id
+      - room
+      - name
+      - size
+      - createdAt
+      - expiresAt
+      - maxUses
+      - used
+      - visits
+      - scans
+      - password
+      - expired
       properties:
         jti:
           type: string
           description: Identifies the share in this list. The token itself is never included.
         type:
           type: string
-          enum: [content, file]
+          enum:
+          - content
+          - file
         kind:
           type: string
-          enum: [text, file]
+          enum:
+          - text
+          - file
         id:
           type: string
         room:
@@ -4767,7 +5097,6 @@ components:
           description: Whether a password is set — never the hash.
         expired:
           type: boolean
-
     ShareVisitRequest:
       type: object
       additionalProperties: false
@@ -4778,10 +5107,13 @@ components:
         qr:
           type: boolean
           description: Marks the visit as a QR scan in addition to an open.
-
     ShareVisitResult:
       type: object
-      required: [ok, tracked, visits, scans]
+      required:
+      - ok
+      - tracked
+      - visits
+      - scans
       properties:
         ok:
           type: boolean
@@ -4793,25 +5125,34 @@ components:
           type: integer
         scans:
           type: integer
-
-    # ── Realtime ────────────────────────────────────────────────────────
     SenderDevice:
       type: object
-      description: |
-        The `senderDevice` map attached to a content entry. Unlike the WebSocket `connect` event's
+      description: 'The `senderDevice` map attached to a content entry. Unlike the WebSocket `connect`
+        event''s
+
         `DeviceMeta`, this is a plain string map: there is no `id` or `device` key, and `type`
+
         holds the lowercase device class.
 
+
         A message with no User-Agent at all — a scheduled task — carries only
+
         `{name, type: "Automation"}`; the server deliberately does not parse a UA there, because
+
         that yields whitespace-only `os` / `browser` values that would render as a blank label.
+
+        '
       additionalProperties:
         type: string
       properties:
         type:
           type: string
           description: Device class, or `Automation` for a message posted by a scheduled task.
-          enum: [desktop, smartphone, tablet, Automation]
+          enum:
+          - desktop
+          - smartphone
+          - tablet
+          - Automation
         name:
           type: string
           description: The name the client declared via `?name=`. Absent when it declared none.
@@ -4822,72 +5163,97 @@ components:
           type: string
           description: '`<family> <major>`, e.g. `Safari 17` or `curl 8`.'
       examples:
-        - type: smartphone
-          name: iPhone
-          os: iOS 18
-          browser: Safari 18
-
+      - type: smartphone
+        name: iPhone
+        os: iOS 18
+        browser: Safari 18
     DeviceMeta:
       type: object
-      description: |
-        A connected device. Only `name` is omitted when empty; `id`, `type`, `device`, `os` and
+      description: 'A connected device. Only `name` is omitted when empty; `id`, `type`, `device`, `os`
+        and
+
         `browser` are always present, even as empty strings.
-      required: [id, type, device, os, browser]
+
+        '
+      required:
+      - id
+      - type
+      - device
+      - os
+      - browser
       properties:
         id:
           type: string
           description: A stable hash of the connection, used for de-duplication.
         type:
           type: string
-          examples: [Desktop, mobile, Automation]
+          examples:
+          - Desktop
+          - mobile
+          - Automation
         name:
           type: string
           description: The name the client declared, if any. Omitted when empty.
         device:
           type: string
-          examples: [Apple Mac]
+          examples:
+          - Apple Mac
         os:
           type: string
-          examples: [macOS 14]
+          examples:
+          - macOS 14
         browser:
           type: string
-          examples: [Chrome 120]
-
+          examples:
+          - Chrome 120
     DisconnectData:
       type: object
-      required: [id]
+      required:
+      - id
       properties:
         id:
           type: string
           description: The device id whose last connection closed.
-
     RevokeData:
       type: object
-      required: [id]
+      required:
+      - id
       properties:
         id:
           type: integer
           format: int32
-          description: The id of the deleted entry. Note this is a **number** here, unlike the string ids in content payloads.
-
+          description: The id of the deleted entry. Note this is a **number** here, unlike the string
+            ids in content payloads.
     ClearAllData:
       type: object
-      required: [room]
+      required:
+      - room
       properties:
         room:
           type: string
-
     WsConfig:
       type: object
-      description: |
-        The `config` frame, sent once after connecting and before any realtime message. It is the
-        **only** source of `version` and the size limits, and the only source of the front end's
+      description: 'The `config` frame, sent once after connecting and before any realtime message. It
+        is the
+
+        **only** source of `version` and the size limits, and the only source of the front end''s
+
         `app.config`.
-      required: [version, server, text, file, auth, latestId, automation]
+
+        '
+      required:
+      - version
+      - server
+      - text
+      - file
+      - auth
+      - latestId
+      - automation
       properties:
         version:
           type: string
-          examples: [0.1.0]
+          examples:
+          - 0.1.0
         server:
           type: object
           properties:
@@ -4924,28 +5290,38 @@ components:
         latestId:
           type: integer
           format: int32
-          description: |
-            The largest message id in the room at connect time (`0` when empty). Use it as the
+          description: 'The largest message id in the room at connect time (`0` when empty). Use it as
+            the
+
             history/realtime boundary. Absent on older servers — in that case a client must not
+
             write to the clipboard.
+
+            '
         automation:
           type: object
-          required: [enabled]
+          required:
+          - enabled
           properties:
             enabled:
               type: boolean
-
     ReceiveEntry:
-      description: |
-        The `receive` / `update` payload — the entry exactly as stored, which is also the shape
-        `GET /content` projects to. Branch on `type`: `text` or `file`.
-      oneOf:
-        - $ref: '#/components/schemas/ReceiveTextEntry'
-        - $ref: '#/components/schemas/ReceiveFileEntry'
+      description: 'The `receive` / `update` payload — the entry exactly as stored, which is also the
+        shape
 
+        `GET /content` projects to. Branch on `type`: `text` or `file`.
+
+        '
+      oneOf:
+      - $ref: '#/components/schemas/ReceiveTextEntry'
+      - $ref: '#/components/schemas/ReceiveFileEntry'
     ReceiveTextEntry:
       type: object
-      required: [id, type, room, timestamp]
+      required:
+      - id
+      - type
+      - room
+      - timestamp
       properties:
         id:
           type: integer
@@ -4966,8 +5342,8 @@ components:
           description: Omitted when empty.
         senderDevice:
           oneOf:
-            - $ref: '#/components/schemas/SenderDevice'
-            - type: 'null'
+          - $ref: '#/components/schemas/SenderDevice'
+          - type: 'null'
         column:
           $ref: '#/components/schemas/BoardColumn'
         source:
@@ -4984,10 +5360,17 @@ components:
           $ref: '#/components/schemas/DeviceMeta'
         deviceID:
           type: string
-
     ReceiveFileEntry:
       type: object
-      required: [id, type, room, timestamp, name, size, cache, expire]
+      required:
+      - id
+      - type
+      - room
+      - timestamp
+      - name
+      - size
+      - cache
+      - expire
       properties:
         id:
           type: integer
@@ -5006,8 +5389,8 @@ components:
           type: string
         senderDevice:
           oneOf:
-            - $ref: '#/components/schemas/SenderDevice'
-            - type: 'null'
+          - $ref: '#/components/schemas/SenderDevice'
+          - type: 'null'
         column:
           $ref: '#/components/schemas/BoardColumn'
         source:
@@ -5034,32 +5417,37 @@ components:
           type: string
           format: uri
           description: Omitted when empty.
-
-    # ── Automation ──────────────────────────────────────────────────────
     ChainStep:
-      description: |
-        One step of an action chain. A step with no parameters is written as a bare string; a
-        parameterised step is an object. Both forms are accepted, and parameterless steps are
-        written back as strings so existing data is never reshaped.
-      oneOf:
-        - type: string
-          description: An action id, e.g. `text.trimLines`.
-        - type: object
-          required: [id]
-          properties:
-            id:
-              type: string
-            params:
-              type: object
-              description: Parameters for this step only.
-              additionalProperties:
-                type: string
+      description: 'One step of an action chain. A step with no parameters is written as a bare string;
+        a
 
+        parameterised step is an object. Both forms are accepted, and parameterless steps are
+
+        written back as strings so existing data is never reshaped.
+
+        '
+      oneOf:
+      - type: string
+        description: An action id, e.g. `text.trimLines`.
+      - type: object
+        required:
+        - id
+        properties:
+          id:
+            type: string
+          params:
+            type: object
+            description: Parameters for this step only.
+            additionalProperties:
+              type: string
     TaskRequest:
       type: object
-      description: |
-        Body of `POST /tasks` and `POST /tasks/preview`. There is **no `room` field** — the room
+      description: 'Body of `POST /tasks` and `POST /tasks/preview`. There is **no `room` field** — the
+        room
+
         comes from the credential.
+
+        '
       properties:
         id:
           type: string
@@ -5073,7 +5461,11 @@ components:
         freq:
           type: string
           description: Schedule kind.
-          enum: [once, daily, weekly, cron]
+          enum:
+          - once
+          - daily
+          - weekly
+          - cron
         time:
           type: string
           description: '`HH:MM`, for `daily` / `weekly`.'
@@ -5089,32 +5481,45 @@ components:
             maximum: 6
         runAt:
           type: string
-          description: |
-            For `once`: RFC3339, or `2026-10-01T09:30` interpreted in `tz`. Normalised to RFC3339.
+          description: 'For `once`: RFC3339, or `2026-10-01T09:30` interpreted in `tz`. Normalised to
+            RFC3339.
+
+            '
         tz:
           type: string
           description: Omitted → filled from `automation.defaultTZ` and stored on the task.
         template:
           type: string
-          description: |
-            The body template. `{{ }}` variables are evaluated at firing time; unknown variables
+          description: 'The body template. `{{ }}` variables are evaluated at firing time; unknown variables
+
             and malformed offsets are rejected at save time.
+
+            '
         chain:
           type: array
-          description: Optional ordered list of steps applied to the rendered text. A failing step stops the chain.
+          description: Optional ordered list of steps applied to the rendered text. A failing step stops
+            the chain.
           items:
             $ref: '#/components/schemas/ChainStep'
         keepHistory:
           type: boolean
-          description: Defaults to `false` — the message is broadcast but does not consume room history quota.
+          description: Defaults to `false` — the message is broadcast but does not consume room history
+            quota.
         sender:
           type: string
           description: Display name. Defaults to `定时任务`.
-
     Task:
       type: object
       description: An automation as returned by the API. `ownerHash` is never exposed.
-      required: [id, name, enabled, freq, room, template, createdAt, updatedAt]
+      required:
+      - id
+      - name
+      - enabled
+      - freq
+      - room
+      - template
+      - createdAt
+      - updatedAt
       properties:
         id:
           type: string
@@ -5124,7 +5529,11 @@ components:
           type: boolean
         freq:
           type: string
-          enum: [once, daily, weekly, cron]
+          enum:
+          - once
+          - daily
+          - weekly
+          - cron
         time:
           type: string
         cron:
@@ -5165,25 +5574,39 @@ components:
         lastStatus:
           type: string
           description: Outcome of the last firing.
-          enum: ['', ok, error, skipped]
+          enum:
+          - ''
+          - ok
+          - error
+          - skipped
         lastError:
           type: string
         lastOutput:
           type: string
         desc:
           $ref: '#/components/schemas/CronDesc'
-
     CronDesc:
       type: object
-      description: |
-        A structured, prose-free summary of a cron expression. It describes only the shape; clients
+      description: 'A structured, prose-free summary of a cron expression. It describes only the shape;
+        clients
+
         compose the sentence from their own message table. It never contains expression syntax
+
         (`*`, `/`, `?`).
-      required: [mode]
+
+        '
+      required:
+      - mode
       properties:
         mode:
           type: string
-          enum: [everyMinute, everyNMinutes, everyNHours, minutesEachHour, times, unknown]
+          enum:
+          - everyMinute
+          - everyNMinutes
+          - everyNHours
+          - minutesEachHour
+          - times
+          - unknown
         n:
           type: integer
         minutes:
@@ -5192,7 +5615,13 @@ components:
           type: string
         day:
           type: string
-          enum: [daily, weekly, monthly, monthlyOrWeekly, everyNDays, everyNDaysOrWeekly]
+          enum:
+          - daily
+          - weekly
+          - monthly
+          - monthlyOrWeekly
+          - everyNDays
+          - everyNDaysOrWeekly
         weekdays:
           type: array
           items:
@@ -5210,16 +5639,27 @@ components:
         more:
           type: boolean
           description: True when the summarised list was truncated.
-
     TaskList:
       type: object
-      required: [room, tier, admin, tasks, max, now, actions, vars]
+      required:
+      - room
+      - tier
+      - admin
+      - tasks
+      - max
+      - now
+      - actions
+      - vars
       properties:
         room:
           type: string
         tier:
           type: string
-          enum: [admin, room, single, none]
+          enum:
+          - admin
+          - room
+          - single
+          - none
         admin:
           type: boolean
         tasks:
@@ -5243,32 +5683,38 @@ components:
           type: array
           items:
             type: string
-
     TaskSaved:
       type: object
-      required: [task]
+      required:
+      - task
       properties:
         task:
           $ref: '#/components/schemas/Task'
         taskToken:
           type: string
-          description: |
-            Present **only** when a `single`-tier room creates a task. It is shown exactly once and
+          description: 'Present **only** when a `single`-tier room creates a task. It is shown exactly
+            once and
+
             is the only way to later edit or delete that task.
 
+            '
     TaskDeleted:
       type: object
-      required: [deleted, id]
+      required:
+      - deleted
+      - id
       properties:
         deleted:
           type: boolean
           const: true
         id:
           type: string
-
     TaskRooms:
       type: object
-      required: [room, admin, rooms]
+      required:
+      - room
+      - admin
+      - rooms
       properties:
         room:
           type: string
@@ -5278,19 +5724,26 @@ components:
           type: array
           items:
             type: object
-            required: [room, count]
+            required:
+            - room
+            - count
             properties:
               room:
                 type: string
               count:
                 type: integer
-
     CronCheck:
       type: object
-      description: |
-        The result of validating a cron expression. An invalid expression is a **200** with
+      description: 'The result of validating a cron expression. An invalid expression is a **200** with
+
         `valid: false`; only an unusable time zone is a 400.
-      required: [expr, tz, valid, room]
+
+        '
+      required:
+      - expr
+      - tz
+      - valid
+      - room
       properties:
         expr:
           type: string
@@ -5317,11 +5770,17 @@ components:
             type: string
         desc:
           $ref: '#/components/schemas/CronDesc'
-
     TaskPreview:
       type: object
       description: The rendered output of an unsaved task. Nothing was persisted or sent.
-      required: [preview, output, room, keepHistory, referenceAt, nextRunAt, referenceAt2]
+      required:
+      - preview
+      - output
+      - room
+      - keepHistory
+      - referenceAt
+      - nextRunAt
+      - referenceAt2
       properties:
         preview:
           type: boolean
@@ -5340,13 +5799,23 @@ components:
           format: int64
         referenceAt2:
           type: string
-          description: |
-            The reference instant as RFC3339. NOTE (code): this field is named `referenceAt2` on the
+          description: 'The reference instant as RFC3339. NOTE (code): this field is named `referenceAt2`
+            on the
+
             preview endpoint, whereas the dry run of a saved task calls the same idea `scheduledAt`.
 
+            '
     TaskRunDry:
       type: object
-      required: [preview, output, taskId, room, keepHistory, referenceAt, nextRunAt, scheduledAt]
+      required:
+      - preview
+      - output
+      - taskId
+      - room
+      - keepHistory
+      - referenceAt
+      - nextRunAt
+      - scheduledAt
       properties:
         preview:
           type: boolean
@@ -5368,10 +5837,15 @@ components:
         scheduledAt:
           type: string
           description: The reference instant as RFC3339.
-
     TaskRunSent:
       type: object
-      required: [sent, output, taskId, room, keepHistory, sentAt]
+      required:
+      - sent
+      - output
+      - taskId
+      - room
+      - keepHistory
+      - sentAt
       properties:
         sent:
           type: boolean

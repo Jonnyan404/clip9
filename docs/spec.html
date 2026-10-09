@@ -1,0 +1,131 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>clip9 — API 规格</title>
+<style>
+  /* ⚠️★ 这一页就是**规格本身**（Redoc），加一个语言开关。
+     中文那份是**生成物**：`zh.yaml`（译文表）+ 英文规格 → `build-zh.py` → `clip9.openapi.zh.yaml`。
+     结构（路径 / 字段 / 必填 / 示例）全部来自英文那份，所以两份不会漂 ——
+     手写第二份的话，漂了不会报错，只是有人照着错的文档写客户端。
+
+     ⚠️ Redoc 自己的界面文字（Request samples / Responses 那些）是英文，改不了：
+     开源版 Redoc 没有 i18n。中文读者看到的是**正文**中文，界面骨架仍是英文。 */
+  :root { --accent: #1e88e5; --line: #e7ecf3; --fg2: #667085; }
+  * { box-sizing: border-box; }
+  body { margin: 0; font: 15px/1.6 -apple-system, "PingFang SC", system-ui, sans-serif; }
+
+  header {
+    position: sticky; top: 0; z-index: 10; background: rgba(255,255,255,.94);
+    backdrop-filter: saturate(180%) blur(12px); border-bottom: 1px solid var(--line);
+  }
+  .bar { max-width: 1100px; margin: 0 auto; padding: 12px 20px; display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+  .logo {
+    width: 26px; height: 26px; border-radius: 7px;
+    background: linear-gradient(140deg, #1e88e5, #1565c0);
+    display: grid; place-items: center; color: #fff; font-weight: 700; font-size: 13px;
+  }
+  .bar b { font-weight: 650; }
+  .bar .sp { flex: 1; }
+  .lang { display: flex; gap: 4px; }
+  .lang button {
+    border: 1px solid var(--line); background: #fff; color: var(--fg2);
+    font: inherit; font-size: 13px; padding: 5px 14px; border-radius: 8px; cursor: pointer;
+  }
+  .lang button.on { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 550; }
+  .bar a { color: var(--fg2); font-size: 13px; text-decoration: none; }
+  .bar a:hover { color: var(--accent); }
+
+  /* 未译提示条：只在中文那一份显示 —— 它要说清「有些句子还是英文」是**已知状态**，
+     而不是让读者以为文档写错了。 */
+  .note {
+    max-width: 1100px; margin: 10px auto 0; padding: 9px 20px; font-size: 13px; color: #475467;
+    background: #f6f8fb; border: 1px solid var(--line); border-radius: 10px; line-height: 1.7;
+  }
+  .note code { background: #eef2f7; padding: 1px 5px; border-radius: 4px; font-size: 12.5px; }
+  #spec { margin-top: 6px; }
+
+  #failed { max-width: 1100px; margin: 60px auto; padding: 0 20px; color: var(--fg2); line-height: 1.8; }
+  #failed a { color: var(--accent); }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="bar">
+    <div class="logo">9</div>
+    <b>API 规格</b>
+    <div class="sp"></div>
+    <div class="lang">
+      <button id="btn-zh" class="on">中文</button>
+      <button id="btn-en">English</button>
+    </div>
+    <a href="openapi/clip9.openapi.zh.yaml" id="link-yaml">规格文件</a>
+  </div>
+</header>
+
+<div id="note-zh" class="note">
+  ⚠️ 中文那一份是**生成的**：<code>zh.yaml</code>（译文表）+ 英文规格 → <code>build-zh.py</code>。
+  <b>还没译到的条目保留英文原文</b> —— 所以你会看到中英混排，那是已知状态，不是文档写错了。
+  结构（路径 / 字段 / 必填 / 示例）全部来自英文那份，两份不会漂。
+</div>
+
+<div id="spec"></div>
+
+<script>
+const specEl = document.getElementById('spec');
+const note = document.getElementById('note-zh');
+const btnZh = document.getElementById('btn-zh');
+const btnEn = document.getElementById('btn-en');
+const link = document.getElementById('link-yaml');
+
+const FILES = { zh: 'openapi/clip9.openapi.zh.yaml', en: 'openapi/clip9.openapi.yaml' };
+
+function script(src) {
+  return new Promise((ok, no) => {
+    const s = document.createElement('script');
+    s.src = src; s.onload = ok; s.onerror = no;
+    document.head.appendChild(s);
+  });
+}
+
+let loaded = false;
+async function render(lang) {
+  const isZh = lang === 'zh';
+  btnZh.classList.toggle('on', isZh);
+  btnEn.classList.toggle('on', !isZh);
+  note.hidden = !isZh;
+  link.href = FILES[lang];
+  location.hash = isZh ? '' : '#en';
+
+  specEl.innerHTML = '<div id="failed">正在加载规格…如果这句话一直不消失，' +
+    '说明渲染器没能从 CDN 加载。规格文件：<a href="' + FILES[lang] + '">' + FILES[lang] + '</a></div>';
+
+  try {
+    // ⚠️ 只在第一次拉 Redoc；换语言只重开一次 `init`（脚本已经在页面里了）。
+    if (!loaded) {
+      await script('https://cdn.redoc.ly/redoc/latest/bundles/redoc.standalone.js');
+      loaded = true;
+    }
+    specEl.innerHTML = '';
+    Redoc.init(FILES[lang], {
+      expandResponses: '200,201',
+      hideDownloadButton: false,
+      // ⚠️ 只影响**代码示例**的语种标签，不影响正文。
+      languages: ['curl', 'javascript', 'python'],
+      theme: { colors: { primary: { main: '#1e88e5' } } },
+    }, specEl);
+  } catch (e) {
+    // 上面那句提示留着就够了 —— 空白页会被读成「文档没写」。
+  }
+}
+
+btnZh.addEventListener('click', () => render('zh'));
+btnEn.addEventListener('click', () => render('en'));
+window.addEventListener('hashchange', () => render(location.hash === '#en' ? 'en' : 'zh'));
+
+render(location.hash === '#en' ? 'en' : 'zh');
+</script>
+</body>
+</html>

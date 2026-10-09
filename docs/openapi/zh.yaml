@@ -1,0 +1,86 @@
+# 中文译文表 —— `build-zh.py` 拿它拼出 `clip9.openapi.zh.yaml`。
+#
+# ⚠️★ 只写**文字**，不写结构：键是英文规格里的点分路径，值是中文正文。
+# 路径 / 字段 / 必填 / 示例**全部来自英文那份**，所以两份规格不可能漂。
+#
+# ⚠️ 表里没有的键**保留英文原文**（不是留空）—— 漏译的表现是「那一句还是英文」，
+# 而不是「那一节没了」。所以这张表可以**一条一条补**，任何时候产出的规格都是完整的。
+#
+# ⚠️ **不要翻**字段名、枚举值、示例里的数据 —— 那些是标识符或数据，翻了客户端就对不上。
+# 只有 `summary` / `description` 会被这个脚本替换。
+
+# ── 顶部 ──────────────────────────────────────────────────────────────
+info.summary: clip9 Rust 服务端（crates/server）的 REST + WebSocket 契约
+
+info.description: |
+  # clip9 API
+
+  `clip9-server`（`rust/crates/server`）对外提供的 HTTP + WebSocket 接口。
+  它是 Cloud Clipboard 项目的服务端一半：一个**按房间隔离**的剪贴板 ——
+  客户端把文本或文件投进某个房间，房间里其他成员**实时**收到。
+
+  这份文档是照着 Rust 的路由表（`crates/server/src/lib.rs::router`）和各处理器读出来的。
+  ⚠️ 与代码不一致时**以代码为准**；与 Go 版 / Worker 版不一致的地方在正文里用 `NOTE (code)` 标出来。
+
+  ## 路径索引
+
+  | 方法 | 路径 | 干什么 |
+  |---|---|---|
+  | GET | `/server` | 服务能力与当前鉴权状态 |
+  | GET | `/healthz` | 存活探针（**实现附赠**） |
+  | POST | `/auth/token` | 用密码换一个 1 小时的会话令牌 |
+  | POST | `/auth/token/refresh` | 续期会话令牌（不用再给密码） |
+  | POST | `/text` | 发文本（带 `id` 是**原地改**） |
+  | GET | `/content` | 历史分页（游标是 `id`） |
+  | GET | `/content/latest` | 最新一条 |
+  | GET | `/content/{id}` | 按 id 取一条 |
+  | POST | `/content/{id}/column` | 改看板那一列 |
+  | GET | `/rooms` | 房间列表 |
+  | GET | `/stats/daily` | 每天活跃度（热力图数据源） |
+  | POST | `/upload` | 小文件整份上传（multipart） |
+  | POST | `/upload/chunk` · `/upload/chunk/{uuid}` · `/upload/finish/{uuid}` | 分片上传 |
+  | GET/DELETE | `/file/{uuid}` · `/file/{uuid}/{name}` | 下载 / 删 |
+  | POST | `/revoke/{id}` · `/revoke/all` | 撤回一条 / 清空 |
+  | POST/GET | `/share` · `/share/list` · `/share/visit` · `/s/{token}` | 分享链接与落地页 |
+  | GET | `/push` | **WebSocket** |
+  | GET/POST | `/tasks*` | 定时自动化 |
+
+# ── 路径的 summary（列表里最先看到的那一层）────────────────────────────
+paths./server.get.summary: 服务能力与当前鉴权状态
+paths./healthz.get.summary: 存活探针
+paths./auth/token.post.summary: 用密码换会话令牌
+paths./auth/token/refresh.post.summary: 不用密码续期会话令牌
+paths./text.post.summary: 发文本，或原地改一条已存在的
+paths./content.get.summary: 房间历史（游标分页）
+paths./content/latest.get.summary: 房间里最新的一条
+paths./content/{id}.get.summary: 按 id 取一条
+paths./content/{id}/column.post.summary: 把一条挪到看板的某一列
+paths./rooms.get.summary: 房间列表
+paths./stats/daily.get.summary: 房间每天的活跃度
+paths./upload.post.summary: 整份上传（multipart）
+paths./upload/chunk.post.summary: 分片上传 —— 初始化
+paths./upload/chunk/{uuid}.post.summary: 分片上传 —— 追加一片
+paths./upload/finish/{uuid}.post.summary: 分片上传 —— 封口并广播
+paths./file/{uuid}.get.summary: 下载或预览文件
+paths./file/{uuid}.delete.summary: 删文件
+paths./file/{uuid}/{name}.get.summary: 下载或预览文件（带文件名那种写法）
+paths./file/{uuid}/{name}.delete.summary: 删文件（带文件名那种写法）
+paths./revoke/{id}.post.summary: 删掉一条
+paths./revoke/all.post.summary: 清空一个房间
+paths./share.post.summary: 签一个分享令牌
+paths./share.get.summary: 分享的元信息（**不消耗次数**）
+paths./share.head.summary: 分享的元信息（只要响应头）
+paths./share/list.get.summary: 这个房间最近的分享
+paths./share/visit.post.summary: 上报「有人打开了分享」
+paths./s/{token}.get.summary: 分享落地页（HTML）
+paths./push.get.summary: WebSocket 推送通道
+paths./tasks.get.summary: 列出这个房间的定时任务
+paths./tasks.post.summary: 新建或整份替换一个定时任务
+paths./tasks/preview.post.summary: 渲染一个还没保存的定时任务
+paths./tasks/cron.get.summary: 校验一条 cron 表达式
+paths./tasks/cron.post.summary: 校验一条 cron 表达式（POST 形式）
+paths./tasks/rooms.get.summary: 哪些房间有定时任务
+paths./tasks/{id}.delete.summary: 删掉一个定时任务
+paths./tasks/{id}/run.post.summary: 试跑一个任务，或者立刻发一次
+paths./tasks/{id}/toggle.post.summary: 启用 / 停用一个定时任务
+paths./automation.get.summary: 定时任务的管理页（HTML）
