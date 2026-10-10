@@ -42,8 +42,64 @@
 //! 一份缺了扫描页的 Markdown **看起来是成功的**，而它悄悄丢掉了用户以为在里面的内容。
 
 use anydoc::{ConvertError, Format};
+use base64::Engine as _;
+use base64::engine::general_purpose::STANDARD as BASE64;
 
 use crate::error::ActionError;
+
+/// 一次转换的完整结果。
+///
+/// ⚠️ 为什么不只回一个 `String`：`anydoc` 转 Markdown 时会**把内嵌图片整段丢掉**
+/// （`document_to_markdown` 对 `Inline::Image` 什么都不输出 —— 实测过，
+/// 连 `![alt]` 都没有）。而图片的**字节**在文档模型里是**有的**
+/// （`Document::assets`，上游注释原话是 "Bytes are always retained"）。
+/// 所以要多走一次 `to_document` 把它们捞出来，否则用户拖一份带图的产品文档进来，
+/// 只会得到一张没有图的树，**而且不知道少了什么**。
+#[derive(Debug)]
+pub struct Converted {
+    /// 正文的 Markdown（与 [`to_markdown`] 的返回值逐字节相同）。
+    pub markdown: String,
+    /// 文档里的图片。
+    ///
+    /// ⚠️★ **`None` 不是「没有图」，是「这个格式读不出来」** ——
+    /// `to_document` 对 **PDF 不支持**（PDF 直接出 Markdown，没有文档模型形态）。
+    /// 把 `None` 当 0 显示，等于对一份满是插图的 PDF 说「这份文档没有图片」，
+    /// 那是**编造事实**。调用方必须把两者分开说。
+    pub images: Option<ImageSet>,
+}
+
+/// 文档里的图片集合。
+#[derive(Debug)]
+pub struct ImageSet {
+    /// **找到的**图片总数。可能大于 `items.len()`（见 `truncated`）。
+    pub total: usize,
+    /// 真的取出来的那些（按文档顺序）。
+    pub items: Vec<ImageAsset>,
+    /// 因为超出 [`MAX_IMAGE_TOTAL`] 而没取全。
+    pub truncated: bool,
+}
+
+/// 一张取出来的图片。
+#[derive(Debug)]
+pub struct ImageAsset {
+    /// MIME，例如 `image/png`。
+    pub media_type: String,
+    /// 图片原始字节的 **base64**（不带 `data:` 前缀 —— 前缀由调用方拼，
+    /// 因为「怎么用」是调用方的事，这里只管把字节安全地放进 JSON）。
+    pub data_base64: String,
+    /// 原始字节数（给界面显示用，免得前端再解一遍 base64 才知道多大）。
+    pub bytes: usize,
+}
+
+/// 一次转换最多带走多少图片字节。
+///
+/// ⚠️ 这个数管的是**响应体大小**，不是内存：base64 会把体积撑大约 4/3，
+/// 所以 8 MiB 的原图 ≈ 11 MB 的 JSON。再大就不该塞进一个 HTTP 响应里了 ——
+/// 那会让「拖一份带 50 张照片的文档」变成一次超时，而用户只看到「导入失败」。
+///
+/// ⚠️ 超了**不是静默截断**：`ImageSet::truncated` 会如实报出来，
+/// 界面据此说「这份文档有 N 张图，画布上只放了前 M 张」。
+pub const MAX_IMAGE_TOTAL: usize = 8 * 1024 * 1024;
 
 /// 认得的文档扩展名（小写，不带点）。
 ///
@@ -65,46 +121,132 @@ pub fn looks_like_document(filename: &str) -> bool {
     extension_of(filename).is_some_and(|ext| Format::from_extension(ext).is_some())
 }
 
-/// 文档字节 → Markdown。
+/// 文档字节 → Markdown（**不要图片**的那条简路）。
 ///
-/// `filename` 只用来**兜底**：CSV 没有签名（任何字节序列都可能是合法 CSV），
-/// 不给出名字就认不出来。其余格式都从内容里嗅探，改名也照样能转。
+/// 等价于 `convert(bytes, filename)?.markdown`，但**不会**为了图片多解析一遍
+/// （见 [`convert`] 的性能说明）。只想要正文时用它。
 ///
-/// # 格式判定：**内容优先、扩展名兜底**
+/// # Errors
 ///
-/// 与上游 [`anydoc::to_markdown`] 同一条规矩（`Format::from_bytes` 优先，
-/// `Format::from_path` 兜底）。理由：扩展名是**用户可改的**、内容不是 ——
-/// 一份 `.txt` 里装着 docx，按内容转是对的；反过来按扩展名硬套只会得到
-/// 「malformed」这种看不懂的报错。
+/// 同 [`convert`]。
+pub fn to_markdown(bytes: &[u8], filename: Option<&str>) -> Result<String, ActionError> {
+    if bytes.is_empty() {
+        return Err(invalid("文件是空的，没有内容可转"));
+    }
+    let format = detect(bytes, filename);
+    let markdown = anydoc::to_markdown_bytes(bytes, format).map_err(explain)?;
+    reject_empty(&markdown)?;
+    Ok(markdown)
+}
+
+/// 文档字节 → Markdown **+ 内嵌图片**。
+///
+/// # ⚠️ 代价：要解析**两遍**
+///
+/// `to_markdown_bytes` 内部本来就是 `document_to_markdown(to_document(bytes)?)`，
+/// 而 `document_to_markdown` **不是公开 API** —— 拿不到「既给我 Markdown、
+/// 又给我文档模型」的调用方式。所以这里只能解析两次。
+///
+/// 为什么仍然值得：`anydoc` 自己的基准是中位 **4.4 ms**，翻倍也就是 9 ms；
+/// 而**图片静默消失**是用户看不出来的那类损失。真的遇到大文档再说 ——
+/// 那时该做的是给上游提一个「一次解析、两样都要」的 API，而不是在这儿
+/// 手搓一个 Markdown 渲染器（那是第二个实现，必然漂）。
+///
+/// ⚠️ PDF 那条路**只解析一遍**：`to_document` 对它恒回 `Unsupported`，
+/// 所以图片集合是 `None`（读不出来），而不是 `Some(空)`（没有图）。
 ///
 /// # Errors
 ///
 /// 认不出格式、文档加密、结构损坏、超出安全上限、以及**扫描件需要 OCR**
 /// 都会回 [`ActionError::InvalidInput`]（文案是给人看的中文，与 `error.rs` 的约定一致）。
-/// ⚠️ **空的转换结果也算失败**（见函数体末尾那段）：那是「看着成功、其实什么都没拿到」。
-pub fn to_markdown(bytes: &[u8], filename: Option<&str>) -> Result<String, ActionError> {
+/// ⚠️ **空的转换结果也算失败**：那是「看着成功、其实什么都没拿到」。
+pub fn convert(bytes: &[u8], filename: Option<&str>) -> Result<Converted, ActionError> {
     if bytes.is_empty() {
         return Err(invalid("文件是空的，没有内容可转"));
     }
 
-    let format = Format::from_bytes(bytes).or_else(|| {
+    let format = detect(bytes, filename);
+    let markdown = anydoc::to_markdown_bytes(bytes, format).map_err(explain)?;
+    reject_empty(&markdown)?;
+
+    Ok(Converted {
+        markdown,
+        images: extract_images(bytes, format),
+    })
+}
+
+/// 把文档里的图片捞出来（base64）。
+///
+/// ⚠️ 读不出文档模型时回 **`None`**，不回 `Some(空)`：见 [`Converted::images`] 的注释。
+/// ⚠️ 这里**吞掉** `to_document` 的错误是有意的：能走到这一步说明
+/// `to_markdown_bytes` 刚刚成功过，而它内部走的是**同一个** `to_document` ——
+/// 再失败一次只可能是 PDF（`Unsupported`）。把它的错误往上抛，会把
+/// 「图片读不出来」升级成「整份文档转不了」，那是**倒退**。
+fn extract_images(bytes: &[u8], format: Option<Format>) -> Option<ImageSet> {
+    let document = anydoc::to_document(bytes, format).ok()?;
+
+    let images: Vec<&anydoc::model::Asset> = document
+        .assets
+        .iter()
+        .filter(|asset| asset.media_type.starts_with("image/"))
+        .collect();
+
+    let (items, truncated) = cap_images(&images, MAX_IMAGE_TOTAL);
+    Some(ImageSet {
+        total: images.len(),
+        items,
+        truncated,
+    })
+}
+
+/// 按预算把图片转成 base64，装不下就停。
+///
+/// ⚠️★ **一旦有一张装不下就停下**，不再试后面那些更小的 ——
+/// 顺序即文档顺序，跳过一张去装下一张会让「前 M 张」这句话变成谎话，
+/// 而界面上正是这么说的。宁可少带几张，也不要给一句对不上的数。
+///
+/// ⚠️ 单独抽出来是为了**可测**：给一段真的 8 MiB 图片造用例太慢，
+/// 而这段「什么时候停」的逻辑恰恰是最容易写错的地方（差一、越界、算了不收）。
+fn cap_images(assets: &[&anydoc::model::Asset], budget: usize) -> (Vec<ImageAsset>, bool) {
+    let mut items = Vec::new();
+    let mut left = budget;
+    for asset in assets {
+        if asset.bytes.len() > left {
+            return (items, true);
+        }
+        left -= asset.bytes.len();
+        items.push(ImageAsset {
+            media_type: asset.media_type.clone(),
+            data_base64: BASE64.encode(&asset.bytes),
+            bytes: asset.bytes.len(),
+        });
+    }
+    (items, false)
+}
+
+/// 格式判定：**内容优先、扩展名兜底**（与上游 `anydoc::to_markdown` 同一条规矩）。
+///
+/// 理由：扩展名是**用户可改的**、内容不是 —— 一份 `.txt` 里装着 docx，
+/// 按内容转是对的；反过来按扩展名硬套只会得到「malformed」这种看不懂的报错。
+/// ⚠️ CSV 没有签名，所以它**必须**有名字才认得出来。
+fn detect(bytes: &[u8], filename: Option<&str>) -> Option<Format> {
+    Format::from_bytes(bytes).or_else(|| {
         filename
             .and_then(extension_of)
             .and_then(Format::from_extension)
-    });
+    })
+}
 
-    let markdown = anydoc::to_markdown_bytes(bytes, format).map_err(explain)?;
-
-    // ⚠️ 空结果**不能**当成功：一份只有图片的 docx、或一个空表格，转出来就是空串。
-    // 把它当成功会让调用方铺出一张空白白板，而用户以为「转好了」。
-    // 这与 `format.rs` 的 `reject_noop` 同源 —— 静默的「成功」比明确的失败糟得多。
+/// ⚠️ 空结果**不能**当成功：一份只有图片的 docx、或一个空表格，转出来就是空串。
+/// 把它当成功会让调用方铺出一张空白白板，而用户以为「转好了」。
+/// 这与 `format.rs` 的 `reject_noop` 同源 —— 静默的「成功」比明确的失败糟得多。
+fn reject_empty(markdown: &str) -> Result<(), ActionError> {
     if markdown.trim().is_empty() {
         return Err(invalid(
             "没能从这份文档里提取出正文（可能是纯图片或空文档）",
         ));
     }
-
-    Ok(markdown)
+    Ok(())
 }
 
 /// 取小写扩展名（不带点）。没有扩展名、或扩展名不是合法 UTF-8 时回 `None`。
@@ -371,5 +513,195 @@ mod tests {
                 "{ext} 列在 SUPPORTED_EXTENSIONS 里，但 anydoc 不认识它"
             );
         }
+    }
+
+    // ── 内嵌图片 ─────────────────────────────────────────────────────────
+
+    /// ⚠️★ 内嵌图片**必须**被捞出来，因为 Markdown 那条路会把它整个丢掉。
+    ///
+    /// 这条用例同时钉住两件事，而且第二件是**故意**让它红的：
+    ///
+    /// 1. `convert()` 的 `images` 里有那张图（字节、MIME、base64 都对）；
+    /// 2. **Markdown 里没有它** —— 这是上游 `document_to_markdown` 的行为
+    ///    （对 `Inline::Image` 什么都不输出，实测连 `![alt]` 都没有）。
+    ///    哪天上游修好了、开始输出 `![alt]`，这条会红，提醒我们
+    ///    「`extract_images` 这趟多余的解析可以撤了」。
+    ///
+    /// 少了这条用例，症状是**用户拖一份带图的产品文档进来、得到一张没有图的树、
+    /// 而且不知道少了什么** —— 全程没有任何报错。
+    #[test]
+    fn embedded_images_are_extracted_even_though_markdown_drops_them() {
+        let converted = convert(&docx_with_image(), Some("带图.docx")).expect("带图 docx 应当能转");
+
+        assert!(
+            !converted.markdown.contains("!["),
+            "上游开始输出 Markdown 图片了？那 `extract_images` 这趟解析可以撤掉：\n{}",
+            converted.markdown
+        );
+        assert!(
+            converted.markdown.contains("图之后还有一段文字"),
+            "正文不能少"
+        );
+
+        let images = converted
+            .images
+            .expect("docx 应当读得出文档模型（PDF 才是 None）");
+        assert_eq!(images.total, 1, "应当找到 1 张图");
+        assert_eq!(images.items.len(), 1, "预算足够，不该截断");
+        assert!(!images.truncated);
+
+        let image = &images.items[0];
+        assert_eq!(image.media_type, "image/png");
+        assert_eq!(image.bytes, TINY_PNG.len());
+        // ⚠️ base64 要能原样解回那串字节 —— 这是「图片真的能画出来」的前提。
+        let decoded = BASE64
+            .decode(&image.data_base64)
+            .expect("base64 应当能解开");
+        assert_eq!(decoded, TINY_PNG, "解出来的字节与原始 PNG 不一致");
+        // ⚠️ 只认图片：文档里的非图片内嵌资源（嵌入的 Excel 之类）不进这个列表。
+        assert!(image.media_type.starts_with("image/"));
+    }
+
+    /// 没有图片的文档：`images` 是 `Some(空)` 而**不是** `None`。
+    ///
+    /// ⚠️ 这两者必须分开：`Some(空)` = 「读过了，没有图」，
+    /// `None` = 「这个格式读不出文档模型，**不知道**有没有图」（PDF）。
+    /// 混成一个的后果是对一份满是插图的 PDF 说「这份文档没有图片」—— 那是编造事实。
+    #[test]
+    fn a_document_without_images_reports_an_empty_set_not_none() {
+        let converted = convert(&chinese_docx(), Some("需求.docx")).expect("应当能转");
+        let images = converted.images.expect("docx 读得出文档模型");
+        assert_eq!(images.total, 0);
+        assert!(images.items.is_empty());
+        assert!(!images.truncated);
+    }
+
+    /// ⚠️★ 预算不够时**停在那张装不下的图上**，不去试后面更小的那些。
+    ///
+    /// 为什么这条重要：界面拿到 `items.len()` 会说「画布上只放了前 M 张」。
+    /// 如果这里「跳过大的、接着装小的」，那句话就是**谎话**（装上的不是前 M 张）。
+    #[test]
+    fn the_image_budget_stops_at_the_first_one_that_does_not_fit() {
+        let big = vec![0u8; 10];
+        let small = vec![0u8; 1];
+        let assets = [
+            fake_asset("image/png", &big),
+            fake_asset("image/png", &vec![0u8; 100]),
+            fake_asset("image/png", &small),
+        ];
+        let refs: Vec<&anydoc::model::Asset> = assets.iter().collect();
+
+        // 预算 11：第一张（10）装得下，第二张（100）装不下 → 停，**不试第三张**
+        let (items, truncated) = cap_images(&refs, 11);
+        assert!(truncated, "装不下就该报截断");
+        assert_eq!(items.len(), 1, "第二张装不下就停，不该跳过它去装第三张");
+        assert_eq!(items[0].bytes, 10);
+
+        // 预算刚好够：一张都不截
+        let (items, truncated) = cap_images(&refs[..1], 10);
+        assert!(!truncated);
+        assert_eq!(items.len(), 1, "预算正好等于大小应当装得下（边界不是越界）");
+
+        // 预算 0：一张都不装
+        let (items, truncated) = cap_images(&refs, 0);
+        assert!(truncated);
+        assert!(items.is_empty());
+
+        // 空列表：没图也没截断
+        let (items, truncated) = cap_images(&[], 100);
+        assert!(!truncated && items.is_empty());
+    }
+
+    fn fake_asset(media_type: &str, bytes: &[u8]) -> anydoc::model::Asset {
+        anydoc::model::Asset {
+            id: anydoc::model::AssetId(0),
+            media_type: media_type.to_owned(),
+            origin_part: String::new(),
+            bytes: bytes.to_vec(),
+        }
+    }
+
+    /// 4×4 的纯红 PNG（73 字节）。
+    ///
+    /// ⚠️ 直接嵌字节而不是引一个图片编码库：测试只需要**一张真的 PNG**
+    /// （有 PNG 魔数、能被认出来），为它多一个依赖不划算。
+    const TINY_PNG: &[u8] = &[
+        0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d, 0x49, 0x48, 0x44,
+        0x52, 0x00, 0x00, 0x00, 0x04, 0x00, 0x00, 0x00, 0x04, 0x08, 0x02, 0x00, 0x00, 0x00, 0x26,
+        0x93, 0x09, 0x29, 0x00, 0x00, 0x00, 0x10, 0x49, 0x44, 0x41, 0x54, 0x78, 0x9c, 0x63, 0xb8,
+        0xa3, 0xa1, 0x01, 0x47, 0x0c, 0xc4, 0x71, 0x00, 0xf3, 0x03, 0x12, 0xc1, 0x23, 0xd3, 0x82,
+        0x45, 0x00, 0x00, 0x00, 0x00, 0x49, 0x45, 0x4e, 0x44, 0xae, 0x42, 0x60, 0x82,
+    ];
+
+    /// 现造一份**带内嵌图片**的中文 docx。
+    ///
+    /// ⚠️ 图片走 Word 的标准写法：`<w:drawing>` 里一个 `r:embed="rId2"`，
+    /// 指向 `word/_rels/document.xml.rels` 里那条 image 关系，
+    /// 字节放在 `word/media/image1.png`，并在 `[Content_Types].xml` 里声明 png。
+    /// **四样缺一不可** —— 少一样（比如忘了 Content_Types）解析器就找不到这张图，
+    /// 而用例会红在「应当找到 1 张图」上，正好指回这里。
+    fn docx_with_image() -> Vec<u8> {
+        use std::io::{Cursor, Write};
+
+        use zip::write::SimpleFileOptions;
+
+        const CONTENT_TYPES: &str = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">
+  <Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>
+  <Default Extension="xml" ContentType="application/xml"/>
+  <Default Extension="png" ContentType="image/png"/>
+  <Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/>
+</Types>"#;
+
+        const RELS: &str = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+  <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/>
+</Relationships>"#;
+
+        const DOC_RELS: &str = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+  <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="media/image1.png"/>
+</Relationships>"#;
+
+        const DRAWING: &str = r#"<w:p><w:r><w:drawing>
+<wp:inline xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing">
+  <wp:extent cx="457200" cy="457200"/>
+  <wp:docPr id="1" name="图片 1"/>
+  <a:graphic xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main">
+    <a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/picture">
+      <pic:pic xmlns:pic="http://schemas.openxmlformats.org/drawingml/2006/picture">
+        <pic:nvPicPr><pic:cNvPr id="1" name="image1.png"/><pic:cNvPicPr/></pic:nvPicPr>
+        <pic:blipFill><a:blip xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" r:embed="rId1"/><a:stretch><a:fillRect/></a:stretch></pic:blipFill>
+        <pic:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="457200" cy="457200"/></a:xfrm>
+        <a:prstGeom prst="rect"><a:avLst/></a:prstGeom></pic:spPr>
+      </pic:pic>
+    </a:graphicData>
+  </a:graphic>
+</wp:inline>
+</w:drawing></w:r></w:p>"#;
+
+        let document = format!(
+            r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body>
+<w:p><w:r><w:t xml:space="preserve">图之后还有一段文字</w:t></w:r></w:p>
+{DRAWING}
+</w:body></w:document>"#
+        );
+
+        let mut zip = zip::ZipWriter::new(Cursor::new(Vec::new()));
+        let options = SimpleFileOptions::default();
+        for (name, body) in [
+            ("[Content_Types].xml", CONTENT_TYPES.as_bytes()),
+            ("_rels/.rels", RELS.as_bytes()),
+            ("word/_rels/document.xml.rels", DOC_RELS.as_bytes()),
+            ("word/document.xml", document.as_bytes()),
+        ] {
+            zip.start_file(name, options).expect("写 zip 条目");
+            zip.write_all(body).expect("写 zip 内容");
+        }
+        zip.start_file("word/media/image1.png", options)
+            .expect("写图片条目");
+        zip.write_all(TINY_PNG).expect("写图片字节");
+        zip.finish().expect("收尾 zip").into_inner()
     }
 }
