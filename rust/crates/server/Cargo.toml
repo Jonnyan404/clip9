@@ -47,6 +47,20 @@ image = { version = "0.25", default-features = false, features = ["jpeg", "png",
 base64 = "0.23"
 axum-server = { version = "0.8.0", features = ["tls-rustls"] }
 
+[features]
+# ── 文档 → Markdown（`POST /convert/{uuid}`，见 src/convert.rs）────────────
+#
+# ⚠️ **非默认**：anydoc 连带的是一整套解析器（zip / flate2 / quick-xml / cfb /
+# pdf-inspector / encoding_rs），是 OpenWrt（flash 几十 MB）上仅次于 `image` 的体积来源。
+# 判据与 `clip9-actions` 的 `highlight` / `doc` 完全一致 —— 桌面 / Docker 带，OpenWrt 不带。
+#
+# ⚠️ 关着时那条路由**压根不注册**（落到静态资源兜底 = 404），不是「注册了但永远回 500」。
+# 前端据此显隐入口，判据从 `GET /server` 的 `convert.enabled` 读。
+#
+# ⚠️ 它**只是把 `clip9-actions` 的 `doc` feature 转发出来**，不额外开依赖 ——
+# 转换实现只有一份，就在 `clip9-actions` 里（理由见那个 crate 的 src/doc.rs）。
+doc = ["clip9-actions/doc"]
+
 [dev-dependencies]
 # 端到端测试要一个真实的 store 落在临时目录里（分享记录要跨请求存活）。
 tempfile = "3"

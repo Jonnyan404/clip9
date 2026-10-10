@@ -371,7 +371,28 @@ pub async fn server(
         // ⚠️ 这份能力**还必须同时进 WS 握手载荷**（`app.config` 来自握手那条 `config` 事件，
         // 不是这个 HTTP 响应），但那里只需要 `enabled` 一个布尔 —— 入口图标的显隐只看它。
         "automation": crate::automation::capability(&state, &headers, &query),
+        // 文档转换的能力声明（`POST /convert/{uuid}`，见 `convert.rs`）。
+        //
+        // ⚠️ 与上面那条**不同**：`automation` 要算「这个房间能不能用」，因为那是房间级策略；
+        // 而能不能转换只取决于**编译时有没有带 `doc` feature**（部署方的选择）。
+        // 前端据此显隐「导入文档」入口 —— 判据只有这一处，**别在前端猜**。
+        "convert": convert_capability(),
     }))
+}
+
+/// `GET /server` 里 `convert` 那一段（带了 `doc` feature 的部署）。
+#[cfg(feature = "doc")]
+fn convert_capability() -> serde_json::Value {
+    crate::convert::capability()
+}
+
+/// 没带 `doc` feature 的部署。
+///
+/// ⚠️ 仍然回**完整的形状**（`enabled` + `extensions`），而不是一个光秃秃的 `false` ——
+/// 前端只写一条读法，不用为「两种形状」各写一遍。
+#[cfg(not(feature = "doc"))]
+fn convert_capability() -> serde_json::Value {
+    json!({ "enabled": false, "extensions": [] })
 }
 
 // ── 方法不对时的统一响应 ──────────────────────────────────────────────

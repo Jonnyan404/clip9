@@ -51,6 +51,11 @@ pub mod auth_token;
 pub mod automation;
 pub mod automation_page;
 pub mod config_file;
+/// ⚠️ 非默认 feature（`doc`）：anydoc 连带的解析器是几 MB，OpenWrt 那条线默认不带。
+/// 关着时 `POST /convert/{uuid}` **压根不注册**（落到静态资源兜底 = 404），
+/// 而不是「注册了但每次都回 500 说没编进来」。完整理由见模块文档。
+#[cfg(feature = "doc")]
+pub mod convert;
 pub mod cors;
 pub mod error;
 pub mod file_cleanup;
@@ -152,11 +157,12 @@ const _: () = assert!(
 /// GET    /share/list             房间最近的分享记录
 /// POST   /share/visit            分享页被真人打开时上报
 /// GET    /s/<token>              分享页（注入 OG 卡片的那份外壳）
+/// POST   /convert/<uuid>         文档 → Markdown（**仅 `doc` feature**，见 `convert.rs`）
 /// ```
 ///
 /// # 还没做的
 ///
-/// - `/tasks*` + `/automation`（P2 定时自动化）、`/myip`（P3）
+/// - `/myip`（P3）
 ///
 /// ⚠️ `/s/<token>` 必须排在 `fallback_service` **之前**：它是前端路由的深链，
 /// 而静态资源的兜底也会对未知路径回 `index.html` —— 谁先接住，谁说了算。
@@ -334,15 +340,32 @@ pub fn router(state: Arc<AppState>) -> Router {
         // ⚠️ 排在静态资源兜底**之前**（和 `/s/{token}` 同理）：它有自己的 HTML，
         // 落到 SPA 外壳就变成一份没有表单的空白页。
         // ⚠️ 它**不做任何鉴权** —— 能不能建/改任务全由 `/tasks` 决定（页面里也是这么写的）。
-        .route("/automation", get(automation_page::page).fallback(only_get))
-        // Go 的 CORS 是逐个端点手写的（`corsMiddleware` / `authMiddleware`），
-        // 这里用一层统一的代替 —— 差别只是几个 Go 没挂 CORS 的端点上多几个头，
-        // 没有客户端依赖「少了那些头」。
-        //
-        // ⚠️★ **原来是 `CorsLayer::permissive()`（= `Allow-Origin: *`），2026-09-26 收窄了**：
-        // `*` 在本机服务端上是**一个真的洞**（用户访问的任意网站都能把开放房间的内容读走）。
-        // 放行谁、为什么是那三个，以及 `file://` 的 `null` 为什么也不行，全在 `cors` 模块的文档里。
-        .layer(cors::cors());
+        .route("/automation", get(automation_page::page).fallback(only_get));
+
+    // ── 文档 → Markdown（`doc` feature，见 `convert.rs`）────────────────────
+    //
+    // ⚠️★ **条件注册**，而不是「注册了再在 handler 里回 500 说没编进来」：
+    // 关掉 feature 时这条路径**压根不该存在**。一个「永远失败」的端点是那种
+    // 「看着有、其实没有」的假象 —— 而前端要据此显隐入口，判据只能有一条
+    // （`GET /server` 的 `convert.enabled`）。
+    //
+    // ⚠️★ 它**必须排在 `.layer(cors::cors())` 之前**：axum 的 `Router::layer`
+    // 只包住**当时已经加上的**路由。放在后面 = 这条端点上没有 CORS 头，
+    // 而「多几个头」和「少几个头」都不会报错，只会让跨源调用莫名其妙地失败。
+    #[cfg(feature = "doc")]
+    let app = app.route(
+        "/convert/{uuid}",
+        post(convert::document).fallback(only_post),
+    );
+
+    // Go 的 CORS 是逐个端点手写的（`corsMiddleware` / `authMiddleware`），
+    // 这里用一层统一的代替 —— 差别只是几个 Go 没挂 CORS 的端点上多几个头，
+    // 没有客户端依赖「少了那些头」。
+    //
+    // ⚠️★ **原来是 `CorsLayer::permissive()`（= `Allow-Origin: *`），2026-09-26 收窄了**：
+    // `*` 在本机服务端上是**一个真的洞**（用户访问的任意网站都能把开放房间的内容读走）。
+    // 放行谁、为什么是那三个，以及 `file://` 的 `null` 为什么也不行，全在 `cors` 模块的文档里。
+    let app = app.layer(cors::cors());
 
     // ── 前端静态资源 ────────────────────────────────────────────────────
     //

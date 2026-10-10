@@ -60,7 +60,7 @@ fn expire_at(state: &AppState, room: &str) -> i64 {
 ///
 /// ⚠️ 存成 `<uuid>`、**不带扩展名** —— 和 Go 一致。别「顺手」加上原名后缀：
 /// 用户上传的名字里可能有 `/` 或 `..`，那是一个**目录穿越**。
-fn stored_path(state: &AppState, uuid: &str) -> PathBuf {
+pub(crate) fn stored_path(state: &AppState, uuid: &str) -> PathBuf {
     FsPath::new(&state.config.server.storage_dir).join(uuid)
 }
 
@@ -89,7 +89,10 @@ pub(crate) async fn remove_stored_file(state: &AppState, uuid: &str) -> std::io:
 /// 鉴权会去查 default 的策略，而 default 往往没设密码，直接放行。
 ///
 /// 没登记过的 uuid 才回落到 `?room=`（那种情况下下面自己也找不到文件，会 404，不泄字节）。
-fn file_room(state: &AppState, uuid: &str, query: &HashMap<String, String>) -> String {
+///
+/// ⚠️ `pub(crate)`：`convert.rs` 要用同一条判据 —— 转换读的就是这个文件的字节，
+/// 「这个文件属于哪个房间」只能有一处答案。
+pub(crate) fn file_room(state: &AppState, uuid: &str, query: &HashMap<String, String>) -> String {
     if let Ok(Some(file)) = state.store.get_file(uuid) {
         return normalize_room_name(&file.room);
     }
