@@ -723,7 +723,7 @@ pub async fn task_item_fallback(
 ///
 /// ⚠️ 这条路由必须存在：没有它，`/tasks/<id>/whatever` 会落到**静态资源兜底**
 /// （拿到一份 HTML、状态码 200）或 axum 的空 body 404 —— 而「错误响应恒 JSON」
-/// 是这个项目的契约（`tools/compare-with-go.mjs` 里有一整节钉着它）。
+/// 是这个项目的契约（`crates/server/tests/automation_api.rs` 里钉着它）。
 /// 静态段 `/tasks/preview|cron|rooms` 排在它前面，所以不会被这条吞掉。
 pub async fn task_unknown_action(
     State(state): State<Arc<AppState>>,

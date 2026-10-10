@@ -1,10 +1,12 @@
-//! 模板引擎的契约测试：读 Go 跑出来的 `cases/render/render.json`，逐条比对。
+//! 模板引擎的契约测试：读 `cases/render/render.json` 那份**冻结基准**，逐条比对。
 //!
-//! 与动作库的 `go_cases.rs` 同一套思路（见 `action_fixture_test.go` 的文件头注释）：
-//! 期望值是 Go 的 `render.go` 在固定时刻、固定上下文下跑出来的，这里读同一份输入、
-//! 比同一份输出。区别是模板引擎有两个**不确定**变量（`{{uuid}}` / `{{timestamp}}`），
-//! 它们的字面结果不放进 fixture，改用 `uncertain` 标注，这里换成「结果非空 + 形状对」
-//! 这类不依赖字面值的断言。
+//! 与动作库的 `contract_cases.rs` 同一套思路：期望值是**在固定时刻、固定上下文下跑出来的**，
+//! 这里读同一份输入、比同一份输出。区别是模板引擎有两个**不确定**变量（`{{uuid}}` /
+//! `{{timestamp}}`），它们的字面结果不放进 fixture，改用 `uncertain` 标注，这里换成
+//! 「结果非空 + 形状对」这类不依赖字面值的断言。
+//!
+//! ⚠️ fixture 是**冻结的输入**，本仓库是它**唯一的主人**（`cases/README.md`）：
+//! 改它就是一次契约变更，走那里的三条流程。
 
 use chrono::DateTime;
 use clip9_core::{RenderContext, TemplateError, latest_rooms, render, variable_names};
@@ -41,17 +43,17 @@ fn load() -> RenderFile {
     let path = fixture_dir().join("render.json");
     let raw = std::fs::read_to_string(&path).unwrap_or_else(|e| {
         panic!(
-            "读不到 {}（{e}）—— 先在 cloud-clip 里跑 UPDATE_FIXTURES=1 go test ./lib -run TestRenderFixtures",
+            "读不到 {}（{e}）—— 它在仓库根的 cases/render/，那是契约数据，别挪位置",
             path.display()
         )
     });
     serde_json::from_str(&raw).unwrap_or_else(|e| panic!("{} 解析失败: {e}", path.display()))
 }
 
-/// 用 fixture 里的 now 建一个固定上下文（latest 用桩，行为与 Go 的 fixture 上下文一致）。
+/// 用 fixture 里的 now 建一个固定上下文（latest 用桩，与基准的上下文一致）。
 fn context(f: &RenderFile) -> RenderContext<'static> {
     let now = DateTime::parse_from_rfc3339(&f.now).expect("fixture 的 now 必须是合法 RFC3339");
-    // 桩：ops 与 empty 各一种，其余房间回「来自 <room>」—— 与 Go 侧 renderFixtureContext 一致。
+    // 桩：ops 与 empty 各一种，其余房间回「来自 <room>」—— 与基准里的上下文一致。
     let latest = |room: &str| -> Option<String> {
         if room == "empty" {
             return None;
@@ -67,7 +69,7 @@ fn context(f: &RenderFile) -> RenderContext<'static> {
 }
 
 #[test]
-fn behaviour_matches_go_case_by_case() {
+fn behaviour_matches_the_baseline_case_by_case() {
     let fixture = load();
     assert!(!fixture.cases.is_empty(), "fixture 里一条用例都没有");
 
@@ -86,7 +88,7 @@ fn behaviour_matches_go_case_by_case() {
                     (Some(expected), false, _) => {
                         if &actual != expected {
                             failures.push(format!(
-                                "{label}\n    Go  : {expected:?}\n    Rust: {actual:?}{}",
+                                "{label}\n    基准: {expected:?}\n    Rust: {actual:?}{}",
                                 if case.why.is_empty() {
                                     String::new()
                                 } else {
@@ -120,9 +122,9 @@ fn behaviour_matches_go_case_by_case() {
                             _ => failures.push(format!("{label} 未知的 uncertain 标注 {uncertain:?}")),
                         }
                     }
-                    // Go 报错、这边却成功。
+                    // 基准说报错、这边却成功。
                     (None, true, _) => {
-                        failures.push(format!("{label}\n    Go  : <报错>\n    Rust: {actual:?}"));
+                        failures.push(format!("{label}\n    基准: <报错>\n    Rust: {actual:?}"));
                     }
                     // fixture 自相矛盾（没有 expect、没标 error、也没标 uncertain）。
                     (None, false, _) => failures.push(format!(
@@ -141,7 +143,7 @@ fn behaviour_matches_go_case_by_case() {
                     continue;
                 }
                 failures.push(format!(
-                    "{label}\n    Go  : {:?}\n    Rust: 报错了 {e}",
+                    "{label}\n    基准: {:?}\n    Rust: 报错了 {e}",
                     case.expect
                 ));
             }
@@ -151,7 +153,7 @@ fn behaviour_matches_go_case_by_case() {
 
     assert!(
         failures.is_empty(),
-        "和 Go 不一致的有 {} 条（共比了 {checked} 条）：\n  - {}",
+        "和基准不一致的有 {} 条（共比了 {checked} 条）：\n  - {}",
         failures.len(),
         failures.join("\n  - ")
     );

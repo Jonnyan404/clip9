@@ -37,7 +37,7 @@
 //! `id` / `group` / `key` / 参数声明这几样是**跨端契约**：
 //! 管理页拿 `key` 去 locale 里取译文、按 `params` 渲染表单、按 `groupKey` 分组。
 //! 所以它们不能「顺手改一下」—— 由 `cases/actions/registry.json` 钉住
-//! （Go 生成，`tests/go_cases.rs` 逐字段比对）。
+//! （Go 生成，`tests/contract_cases.rs` 逐字段比对）。
 //!
 //! ⚠️ `id` 与前端 `data/actions.js` **逐字一致**。任务里存的就是 id，
 //! 两侧同名才能保证「同一个任务，谁执行结果都一样」。
@@ -508,7 +508,7 @@ pub fn group_enabled(group: &str) -> bool {
 
 /// 这张表里**有、但这边还没接上实现**的动作。
 ///
-/// ⚠️ 它必须**显式**，不能「缺了就是缺了」：`tests/go_cases.rs` 会拿它跟
+/// ⚠️ 它必须**显式**，不能「缺了就是缺了」：`tests/contract_cases.rs` 会拿它跟
 /// `cases/actions/registry.json` 对账（已实现的 ∪ 这份清单 == 当前 feature 下的全集）。
 /// 漏掉一个动作**一定会红** —— 而不是等用户在界面上点到一个「点了没反应」的动作。
 ///

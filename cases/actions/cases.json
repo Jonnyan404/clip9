@@ -1,5 +1,5 @@
 {
-  "note": "期望值是 Go 跑出来的（cloud-clip/lib/render_actions_test.go 的 actionCtx 那套时钟）。报错的用例只有 error，不记文案 —— 两侧措辞本来就可以不同。",
+  "note": "动作行为基准：期望值是**跑出来的**、不是人写的（原由前身实现 cloud-clip/lib/render_actions_test.go 的 actionCtx 那套时钟跑出，2026-10-10 起冻结、归本仓库所有）。报错的用例只有 error，不记文案 —— 措辞本来就可以不同。⚠️ 手改一条期望值必须配一句「为什么新值才是对的」，见 cases/README.md。",
   "context": {
     "now": "2026-09-24T09:30:00+08:00",
     "task": "t",
@@ -116,7 +116,7 @@
       "id": "encode.base64.decode",
       "input": "YR==",
       "expect": "a",
-      "why": "尾比特非零：Go 容忍，Rust 默认不容忍"
+      "why": "尾比特非零：前身实现容忍，Rust 默认不容忍"
     },
     {
       "id": "encode.base64.decode",

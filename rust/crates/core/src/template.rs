@@ -35,7 +35,7 @@
 //!
 //! ```bash
 //! cd <Go 仓库>/cloud-clip && UPDATE_FIXTURES=1 go test ./lib -run TestRenderFixtures
-//! cargo test -p clip9-core --test go_render   # 回到本仓库根跑这个
+//! cargo test -p clip9-core --test contract_render   # 回到本仓库根跑这个
 //! ```
 
 use std::sync::LazyLock;

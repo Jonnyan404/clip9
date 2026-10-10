@@ -46,7 +46,7 @@
 //!
 //! ```bash
 //! cd <Go 仓库>/cloud-clip && UPDATE_FIXTURES=1 go test ./lib -run TestCronFixtures
-//! cargo test -p clip9-core --test go_cron   # 回到本仓库根跑这个
+//! cargo test -p clip9-core --test contract_cron   # 回到本仓库根跑这个
 //! ```
 //!
 //! # ⚠️ 已知限制：时间只看固定偏移，不看时区数据库

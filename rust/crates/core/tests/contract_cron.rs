@@ -1,18 +1,17 @@
-//! 契约测试：拿 **Go 跑出来的** `cases/cron/cron.json` 逐条比对。
+//! 契约测试：拿 `cases/cron/cron.json` 那份**冻结基准**逐条比对。
 //!
-//! `ARCHITECTURE.md` §8 把 cron 列入 P2 的第一项，而验收标准统一是「Go 侧对应测试的行为」——
+//! `ARCHITECTURE.md` §8 把 cron 列入 P2 的第一项，而验收标准是「**冻结用例钉住的语义**」——
 //! 那 682 行自写 cron 的语义里全是「读代码看不出来」的边界（日/周 OR、`?` == `*`、
 //! 7 也是周日、跨月跳步的近似、闰年、迭代上限兜底），只能靠跑同一组输入去比。
 //!
-//! ⚠️ fixture 是**冻结的输入**：拆库时从 Go 实现那边带过来，这边**不再重新生成**
-//! （理由见 `cases/README.md`）。真要重生成得在 **Go 仓库**里跑：
+//! ⚠️ fixture 是**冻结的输入**，本仓库是它**唯一的主人**（`cases/README.md`）：
+//! 没有上游可同步了，所以**改它就是一次契约变更** —— 走那里的三条流程。运行：
 //!
 //! ```bash
-//! cd <Go 仓库>/cloud-clip && UPDATE_FIXTURES=1 go test ./lib -run TestCronFixtures
-//! cargo test -p clip9-core --test go_cron   # 回到本仓库根跑这个
+//! cargo test -p clip9-core --test contract_cron
 //! ```
 //!
-//! ⚠️ 第二个命令红了**不是「测试坏了」**：那是一次行为差异，先想清楚是哪边对。
+//! ⚠️ 它红了**不是「测试坏了」**：那是一次行为差异，先想清楚是哪边对。
 //! 「下一次触发时刻算得不一样」在定时任务上是真事故（同一个任务在切换前后触发的时间不同）。
 
 use std::path::PathBuf;
@@ -43,7 +42,7 @@ struct ParseCase {
 #[derive(Debug, Deserialize)]
 struct DescribeCase {
     expr: String,
-    /// Go marshal 出来的原文 —— 连**键名与 omitempty** 一起比。
+    /// 基准里记的原文 —— 连**键名与 omitempty** 一起比。
     desc: Value,
 }
 
@@ -61,7 +60,7 @@ fn fixture() -> Fixture {
     let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../../cases/cron/cron.json");
     let raw = std::fs::read_to_string(&path).unwrap_or_else(|e| {
         panic!(
-            "读不到 {}（{e}）—— 先在 cloud-clip 里跑 UPDATE_FIXTURES=1 go test ./lib -run TestCronFixtures",
+            "读不到 {}（{e}）—— 它在仓库根的 cases/cron/，那是契约数据，别挪位置",
             path.display()
         )
     });
@@ -73,14 +72,14 @@ fn at(value: &str) -> DateTime<chrono::FixedOffset> {
         .unwrap_or_else(|e| panic!("fixture 里的时刻 {value:?} 不是合法 RFC3339: {e}"))
 }
 
-// ── 1. 解析：哪些输入算错，必须与 Go 一致 ──────────────────────────────
+// ── 1. 解析：哪些输入算错，必须与基准一致 ──────────────────────────────
 
 /// ⚠️ 这条钉的是**接受与拒绝的边界**，不是错误文案。
 ///
 /// 「宽一点」和「严一点」都是真实的差异：Rust 侧多认一种写法，用户就会看到
-/// 「保存成功但永远不触发」；少认一种，用户会看到「Go 那边能存的表达式在这边报错」。
+/// 「保存成功但永远不触发」；少认一种，用户会看到「以前能存的表达式现在报错」。
 #[test]
-fn parse_accepts_and_rejects_exactly_what_go_does() {
+fn parse_accepts_and_rejects_exactly_what_the_baseline_does() {
     let fixture = fixture();
     assert!(!fixture.parse.is_empty(), "fixture 里一条解析用例都没有");
 
@@ -92,7 +91,7 @@ fn parse_accepts_and_rejects_exactly_what_go_does() {
             (Ok(spec), true) => {
                 if spec.expression() != case.normalized {
                     failures.push(format!(
-                        "{:?} 归一化后是 {:?}，Go 是 {:?}{}",
+                        "{:?} 归一化后是 {:?}，基准是 {:?}{}",
                         case.expr,
                         spec.expression(),
                         case.normalized,
@@ -128,7 +127,7 @@ fn parse_accepts_and_rejects_exactly_what_go_does() {
 
     assert!(
         failures.is_empty(),
-        "与 Go 的解析边界不一致的有 {} 条：\n  - {}",
+        "与基准的解析边界不一致的有 {} 条：\n  - {}",
         failures.len(),
         failures.join("\n  - ")
     );
@@ -164,12 +163,12 @@ fn error_labels_something(message: &str) -> bool {
 
 // ── 2. 「翻译」：形状与 JSON 一起比 ────────────────────────────────────
 
-/// ⚠️ 比的是 **Go marshal 出来的 JSON**，不是「结构体看起来差不多」。
+/// ⚠️ 比的是**基准里那串 JSON**，不是「结构体看起来差不多」。
 ///
 /// 那一页读的就是这串 JSON：`mode` 必须**始终**出现、`times` 没有就不许出现（`omitempty`）、
 /// `dayN` 与 `n` 是两个不同的 N。用结构体对比会把这些约定整个漏掉。
 #[test]
-fn description_matches_go_json_exactly() {
+fn description_matches_the_baseline_json_exactly() {
     let fixture = fixture();
     assert!(!fixture.describe.is_empty(), "fixture 里一条描述用例都没有");
 
@@ -181,14 +180,14 @@ fn description_matches_go_json_exactly() {
             .unwrap_or_else(|e| panic!("{:?} 的描述序列化失败: {e}", case.expr));
         if ours != case.desc {
             failures.push(format!(
-                "{:?}\n    Go  : {}\n    Rust: {}",
+                "{:?}\n    基准: {}\n    Rust: {}",
                 case.expr, case.desc, ours
             ));
         }
     }
     assert!(
         failures.is_empty(),
-        "描述与 Go 不一致的有 {} 条：\n  - {}",
+        "描述与基准不一致的有 {} 条：\n  - {}",
         failures.len(),
         failures.join("\n  - ")
     );
@@ -198,7 +197,9 @@ fn description_matches_go_json_exactly() {
 ///
 /// 这是那段「翻译」唯一不能破的规矩 —— 把 `*/3` 说成「每月 */3 日」不是描述，
 /// 是把代码念了一遍；读不出来就该退回 `unknown`，让界面说「请看具体时刻」。
-/// Go 侧也有一条同名测试，这条是它的 Rust 版：**两边都不许漏**。
+///
+/// ⚠️ 基准里其实也钉着这些描述（见上一条），但那条只会告诉你「JSON 不一样」；
+/// 这条给的是**直接的**诊断（漏在哪个字段、漏的是什么），所以两条都留着。
 #[test]
 fn description_never_leaks_expression_syntax() {
     let fixture = fixture();
@@ -230,7 +231,7 @@ fn description_never_leaks_expression_syntax() {
 // ── 3. 求时刻：逐条比对 ───────────────────────────────────────────────
 
 #[test]
-fn next_prev_and_upcoming_times_match_go() {
+fn next_prev_and_upcoming_times_match_the_baseline() {
     let fixture = fixture();
     assert!(
         !fixture.occurrences.is_empty(),
@@ -248,7 +249,7 @@ fn next_prev_and_upcoming_times_match_go() {
         let next = spec.next(from).map(|t| t.to_rfc3339());
         if next != case.next {
             failures.push(format!(
-                "{:?} 从 {} 的 next\n    Go  : {:?}\n    Rust: {:?}",
+                "{:?} 从 {} 的 next\n    基准: {:?}\n    Rust: {:?}",
                 case.expr, case.from, case.next, next
             ));
         }
@@ -261,7 +262,7 @@ fn next_prev_and_upcoming_times_match_go() {
         let prev = spec.prev(from).map(|t| t.to_rfc3339());
         if prev != case.prev {
             failures.push(format!(
-                "{:?} 从 {} 的 prev\n    Go  : {:?}\n    Rust: {:?}",
+                "{:?} 从 {} 的 prev\n    基准: {:?}\n    Rust: {:?}",
                 case.expr, case.from, case.prev, prev
             ));
         }
@@ -275,7 +276,7 @@ fn next_prev_and_upcoming_times_match_go() {
                 .collect();
             if ours != case.next3 {
                 failures.push(format!(
-                    "{:?} 从 {} 的连续 3 个时刻\n    Go  : {:?}\n    Rust: {:?}",
+                    "{:?} 从 {} 的连续 3 个时刻\n    基准: {:?}\n    Rust: {:?}",
                     case.expr, case.from, case.next3, ours
                 ));
             }
@@ -284,7 +285,7 @@ fn next_prev_and_upcoming_times_match_go() {
 
     assert!(
         failures.is_empty(),
-        "与 Go 不一致的有 {} 条：\n  - {}",
+        "与基准不一致的有 {} 条：\n  - {}",
         failures.len(),
         failures.join("\n  - ")
     );
@@ -296,8 +297,8 @@ fn next_prev_and_upcoming_times_match_go() {
 
 /// fixture 里的时刻串必须带**固定**偏移，否则同一份用例会在不同机器上给出不同结论。
 ///
-/// （Go 自己的 `cron_test.go` 用 `time.Local` 是安全的 —— 它比的是墙上时间；
-/// 而 fixture 要把时刻写成 RFC3339 交给这边，跟着机器时区漂就是**假绿**。）
+/// （比的是墙上时间时用本机时区是安全的；而 fixture 要把时刻写成 RFC3339 交给这边，
+/// 跟着机器时区漂就是**假绿**。）
 #[test]
 fn fixture_pins_the_zone_instead_of_using_the_machines() {
     let fixture = fixture();

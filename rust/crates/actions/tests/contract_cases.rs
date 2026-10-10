@@ -1,20 +1,21 @@
-//! 契约测试：拿 **Go 跑出来的** `cases/actions/*.json` 逐条比对。
+//! 契约测试：拿仓库根 `cases/actions/*.json` 里那份**冻结用例**逐条比对。
 //!
 //! 为什么不能只靠 Rust 自己的单测：这个 crate 存在的理由是「一份实现两端跑」，
-//! 而它的**行为基准仍然是 Go**（`ARCHITECTURE.md` §5.4）。自己测自己只能证明「我没改坏」，
-//! 证明不了「和现有的那个实现一样」—— 而后者才是切换时不出现「同一个任务、两个结果」的前提。
+//! 而它的**行为基准是这份冻结用例**，不是实现自己。自己测自己只能证明「我没改坏」，
+//! 证明不了「和钉住的那份行为一样」—— 而后者才是「同一个任务、两个结果」不出现的前提。
 //!
-//! ⚠️ fixture 是**冻结的输入**：拆库时从 Go 实现那边带过来，这边**不再重新生成**
-//! （理由见 `cases/README.md`）。真要重生成得在 **Go 仓库**里跑：
+//! ⚠️ fixture 是**冻结的输入**，本仓库是它**唯一的主人**（`cases/README.md`）：
+//! 没有上游可同步了，所以**改它本身就是一次契约变更** —— 走那里写的三条流程
+//! （先问是不是线上形状 → 要动就单独一个提交并写清谁跟着改 → 改完让这里的用例逐条重跑通过）。
+//! 运行就一条命令，在仓库根：
 //!
 //! ```bash
-//! cd <Go 仓库>/cloud-clip && UPDATE_FIXTURES=1 go test ./lib -run TestActionFixtures
-//! cargo test -p clip9-actions        # 回到本仓库根跑这个
+//! cargo test -p clip9-actions
 //! ```
 //!
-//! ⚠️ 第二个命令红了**不是「测试坏了」**：那是一次行为差异，先想清楚是哪边对。
-//! 左边（Rust）对 → 把差异写成刻意的（并且要在注释里说清为什么）；
-//! 右边（Go）对 → 改这边的实现。
+//! ⚠️ 它红了**不是「测试坏了」**：那是一次行为差异，先想清楚是哪边对。
+//! 实现这边对 → 把差异写成刻意的（并且要在注释里说清为什么），同时按契约变更改 fixture；
+//! 用例那边对 → 改这边的实现。
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
@@ -25,7 +26,7 @@ use clip9_actions::registry::{
 use clip9_actions::{ActionContext, ParamKind};
 use serde::Deserialize;
 
-// ── fixture 的形状（与 Go 那边的结构体一一对应）────────────────────────
+// ── fixture 的形状（camelCase 那几个字段是历史命名，别顺手改成 snake_case）──
 
 #[derive(Debug, Deserialize)]
 struct RegistryFile {
@@ -110,7 +111,7 @@ fn load<T: for<'de> Deserialize<'de>>(name: &str) -> T {
     let path = fixture_dir().join(name);
     let raw = std::fs::read_to_string(&path).unwrap_or_else(|e| {
         panic!(
-            "读不到 {}（{e}）—— 先在 cloud-clip 里跑 UPDATE_FIXTURES=1 go test ./lib -run TestActionFixtures",
+            "读不到 {}（{e}）—— 它在仓库根的 cases/actions/，那是契约数据，别挪位置",
             path.display()
         )
     });
@@ -151,10 +152,10 @@ fn context(fixture: &CasesFile) -> ActionContext {
     }
 }
 
-// ── 1. 元数据：与 Go 逐字段一致 ────────────────────────────────────────
+// ── 1. 元数据：与基准逐字段一致 ────────────────────────────────────────
 
 #[test]
-fn metadata_matches_go_for_every_enabled_action() {
+fn metadata_matches_the_baseline_for_every_enabled_action() {
     let registry: RegistryFile = load("registry.json");
     assert_eq!(
         registry.actions.len(),
@@ -269,7 +270,7 @@ fn metadata_matches_go_for_every_enabled_action() {
     }
 }
 
-/// 用到的 i18n key 必须与 Go 下发的**完全一致**。
+/// 用到的 i18n key 必须与基准下发的**完全一致**。
 ///
 /// 少一个 key，界面上就会冒出一个裸 id（`actionReplaceFind`）；多一个 key，说明这边
 /// 声明了一个前端根本没有文案的参数。两种都要拦住。
@@ -278,7 +279,7 @@ fn metadata_matches_go_for_every_enabled_action() {
 /// 从 fixture 的 `actions` 里按分组筛出来算，而不是直接用那个扁平的 `i18nKeys` 列表 ——
 /// 后者是「全部 34 个动作的 key」，拿它当期望值会把有意的裁剪报成不一致。
 #[test]
-fn i18n_keys_match_go_exactly() {
+fn i18n_keys_match_the_baseline_exactly() {
     let registry: RegistryFile = load("registry.json");
 
     // 先自查 fixture：扁平的 i18nKeys 应当等于全部动作的 key 之并。
@@ -334,9 +335,9 @@ fn i18n_keys_match_go_exactly() {
     let extra: Vec<&String> = ours.difference(&expected).collect();
     assert!(
         missing.is_empty(),
-        "Go 下发了这些 key，这边却没有：{missing:?}"
+        "基准里有这些 key，这边却没有：{missing:?}"
     );
-    assert!(extra.is_empty(), "这边多了这些 key，Go 那边没有：{extra:?}");
+    assert!(extra.is_empty(), "这边多了这些 key，基准里没有：{extra:?}");
 }
 
 // ── 2. 进度的棘轮：实现 ∪ 未实现 == 注册表 ──────────────────────────────
@@ -378,10 +379,10 @@ fn coverage_is_explicit_in_both_directions() {
     // 真正要守的是上面那条 XOR：**注册表里的每一个动作，状态必须是说得清的**。
 }
 
-// ── 3. 行为：逐条跑 Go 记录的期望值 ────────────────────────────────────
+// ── 3. 行为：逐条跑基准记录的期望值 ────────────────────────────────────
 
 #[test]
-fn behaviour_matches_go_case_by_case() {
+fn behaviour_matches_the_baseline_case_by_case() {
     let fixture: CasesFile = load("cases.json");
     let registry: RegistryFile = load("registry.json");
     let ctx = context(&fixture);
@@ -416,17 +417,17 @@ fn behaviour_matches_go_case_by_case() {
             (Ok(actual), Some(expected), false) => {
                 if &actual != expected {
                     failures.push(format!(
-                        "{label}\n    Go  : {expected:?}\n    Rust: {actual:?}{}",
+                        "{label}\n    基准: {expected:?}\n    Rust: {actual:?}{}",
                         if case.why.is_empty() { String::new() } else { format!("\n    备注: {}", case.why) }
                     ));
                 }
             }
             (Err(internal), Some(expected), false) => {
-                failures.push(format!("{label}\n    Go  : {expected:?}\n    Rust: 报错了 {internal}"));
+                failures.push(format!("{label}\n    基准: {expected:?}\n    Rust: 报错了 {internal}"));
             }
             (Ok(actual), None, true) => {
                 failures.push(format!(
-                    "{label}\n    Go  : <报错>\n    Rust: {actual:?}{}",
+                    "{label}\n    基准: <报错>\n    Rust: {actual:?}{}",
                     if case.why.is_empty() { String::new() } else { format!("\n    备注: {}", case.why) }
                 ));
             }
@@ -437,7 +438,7 @@ fn behaviour_matches_go_case_by_case() {
             // 一个成功的用例却没记结果）。这是生成端的 bug，不是实现不一致 ——
             // 分开报，免得误导下一个看日志的人去改实现。
             (actual, expect, flags) => failures.push(format!(
-                "{label}\n    fixture 自相矛盾：expect={expect:?} error={flags}\n    Rust: {actual:?}\n    → 回去看 action_fixture_test.go 的生成逻辑"
+                "{label}\n    fixture 自相矛盾：expect={expect:?} error={flags}\n    Rust: {actual:?}\n    → 这是一次契约变更：按 cases/README.md 的三条流程改 fixture，别绕过它"
             )),
         }
         checked += 1;
@@ -445,7 +446,7 @@ fn behaviour_matches_go_case_by_case() {
 
     assert!(
         failures.is_empty(),
-        "和 Go 不一致的有 {} 条（共比了 {checked} 条）：\n  - {}",
+        "和基准不一致的有 {} 条（共比了 {checked} 条）：\n  - {}",
         failures.len(),
         failures.join("\n  - ")
     );
@@ -533,7 +534,7 @@ fn html_decode_keeps_unknown_entities_verbatim() {
         run("encode.html.decode", "&amp;&nbsp;", &params, &ctx).unwrap(),
         "&\u{a0}"
     );
-    // 非法码点按 U+FFFD 处理（Go / 浏览器都是这个行为）。
+    // 非法码点按 U+FFFD 处理（前身实现 / 浏览器都是这个行为）。
     assert_eq!(
         run("encode.html.decode", "&#x110000;", &params, &ctx).unwrap(),
         "\u{fffd}"
@@ -542,8 +543,8 @@ fn html_decode_keeps_unknown_entities_verbatim() {
 
 /// `encode.url.decode` 对非法 UTF-8 走 lossy：`%FF` 出来是 U+FFFD。
 ///
-/// Go 那边字符串里留的是**原始字节**，但它进 JSON 时同样变成 U+FFFD —— **契约层面一致**，
-/// 只是内存里的表示不同。这条差异不写下来，下次有人对着 Go 的字节调试会白费半天。
+/// 前身实现那边字符串里留的是**原始字节**，但它进 JSON 时同样变成 U+FFFD —— **契约层面一致**，
+/// 只是内存里的表示不同。这条差异不写下来，下次有人对着那串字节调试会白费半天。
 #[test]
 fn url_decode_is_lossy_for_invalid_utf8() {
     if !available("encode.url.decode") {
@@ -557,9 +558,9 @@ fn url_decode_is_lossy_for_invalid_utf8() {
     );
 }
 
-/// `format.json.*` 走 `serde_json` 校验，它对**超出 f64 的数字**比 Go 严。
+/// `format.json.*` 走 `serde_json` 校验，它对**超出 f64 的数字**比前身实现严。
 #[test]
-fn json_actions_reject_huge_numbers_that_go_accepts() {
+fn json_actions_reject_numbers_beyond_f64() {
     if !available("format.json.pretty") {
         return;
     }
@@ -567,7 +568,7 @@ fn json_actions_reject_huge_numbers_that_go_accepts() {
     let params = BTreeMap::new();
     assert!(
         run("format.json.pretty", "{\"a\":1e400}", &params, &ctx).is_err(),
-        "serde_json 会拒绝超出 f64 范围的字面量 —— 这是与 Go 的已知差异（见 format.rs 注释）"
+        "serde_json 会拒绝超出 f64 范围的字面量 —— 这是与前身实现的已知差异（见 format.rs 注释）"
     );
 }
 
@@ -596,27 +597,27 @@ fn a_failing_step_stops_the_chain() {
     );
 }
 
-/// `text.upper` / `text.lower` 走**完整**大小写映射（跟前端 JS），与 Go 的**简单**映射不同。
+/// `text.upper` / `text.lower` 走**完整**大小写映射（跟前端 JS），与前身实现的**简单**映射不同。
 ///
-/// 这条断言的是**差异本身**：哪天有人把这边改成 Go 那种「一个码点对一个码点」，
-/// 或者上游把 Go 换掉了，这里会红，提醒回来重读决策 —— 而不是让差异从「写着」变成「没人知道」。
+/// 这条断言的是**差异本身**：哪天有人把这边改成「一个码点对一个码点」的简单映射，
+/// 这里会红，提醒回来重读决策 —— 而不是让差异从「写着」变成「没人知道」。
 ///
 /// 选边站的理由：这个动作在界面上有**预览区**（JS），用户看到的是 `STRASSE`。
 /// 「预览区 STRASSE、定时任务 STRAßE」正是这个项目最不能接受的那类错。
 #[test]
-fn case_mapping_follows_the_frontend_not_go() {
+fn case_mapping_is_full_not_simple() {
     if !available("text.upper") {
         return;
     }
     let ctx = context(&load::<CasesFile>("cases.json"));
     let params = BTreeMap::new();
-    // Go 给的是 `STRAßE`（ß 没有简单大写映射，原样留着）。
+    // 简单映射给的是 `STRAßE`（ß 没有简单大写映射，原样留着）。
     assert_eq!(
         run("text.upper", "straße", &params, &ctx).unwrap(),
         "STRASSE"
     );
     assert_eq!(run("text.upper", "ﬁ", &params, &ctx).unwrap(), "FI");
-    // Go 给的是 `i`（丢掉了上面那个点）。
+    // 简单映射给的是 `i`（丢掉了上面那个点）。
     assert_eq!(run("text.lower", "İ", &params, &ctx).unwrap(), "i\u{307}");
     // 两边一致的那一档不能坏 —— 否则「刻意的差异」就成了「什么都不干」的借口。
     assert_eq!(
@@ -625,9 +626,9 @@ fn case_mapping_follows_the_frontend_not_go() {
     );
 }
 
-/// 提取 URL 时，`\s` 按**前端**的 Unicode 语义（Go 的 `\s` 是 ASCII）。
+/// 提取 URL 时，`\s` 按**前端**的 Unicode 语义（前身实现的 `\s` 是 ASCII）。
 ///
-/// Go 那边 `https://a.com　后面的字`（全角空格 / 不换行空格）会把**后半句一起吃进 URL**；
+/// 前身实现那边 `https://a.com　后面的字`（全角空格 / 不换行空格）会把**后半句一起吃进 URL**；
 /// 前端与这边停在全角空格。差异来自**同一串 source、不同引擎**，不是谁少做了什么。
 #[test]
 fn url_extraction_stops_at_unicode_spaces_like_the_frontend() {
@@ -641,7 +642,7 @@ fn url_extraction_stops_at_unicode_spaces_like_the_frontend() {
         assert_eq!(
             run("text.extractUrl", &input, &params, &ctx).unwrap(),
             "https://a.com",
-            "U+{:04X} 之后的内容不该被吞进 URL（Go 那边会吞）",
+            "U+{:04X} 之后的内容不该被吞进 URL（前身实现会吞）",
             space as u32
         );
     }
@@ -649,14 +650,14 @@ fn url_extraction_stops_at_unicode_spaces_like_the_frontend() {
 
 /// 日期解析这边**更严格**：时分秒越界直接报错。
 ///
-/// Go 用 `time.Date(...)` 构造，它会把越界值**归一化**（`01:99` → `02:39`），
-/// 而回读校验只比年月日 —— 于是这种输入在 Go 那边**是合法的**。
+/// 前身实现用 `time.Date(...)` 构造，它会把越界值**归一化**（`01:99` → `02:39`），
+/// 而回读校验只比年月日 —— 于是这种输入在那边**是合法的**。
 /// 这边按区间校验，报错。选严格是因为「悄悄给出一个看着合理、其实不对的时间」
-/// 正是 Go 自己那段注释在防的事。
+/// 正是那边自己那段注释在防的事。
 ///
-/// 同一条规则的另一个面：`\s` 按前端（Unicode），所以全角空格分隔的写法在这边能算、Go 报错。
+/// 同一条规则的另一个面：`\s` 按前端（Unicode），所以全角空格分隔的写法在这边能算、前身实现报错。
 #[test]
-fn date_parsing_is_stricter_than_go_about_out_of_range_time() {
+fn date_parsing_rejects_out_of_range_time() {
     if !available("date.add") {
         return;
     }
@@ -665,7 +666,7 @@ fn date_parsing_is_stricter_than_go_about_out_of_range_time() {
     for input in ["2026-09-24 01:99 +1d", "2026-09-24 25:00 +1d"] {
         assert!(
             run("date.add", input, &params, &ctx).is_err(),
-            "{input} 应当报错（Go 会归一化后接受）"
+            "{input} 应当报错（前身实现会归一化后接受）"
         );
     }
     // 但正常的时间必须能算，别把整条路都堵死。
@@ -673,7 +674,7 @@ fn date_parsing_is_stricter_than_go_about_out_of_range_time() {
         run("date.add", "2026-09-24 01:30 +1d", &params, &ctx).unwrap(),
         "2026-09-25 01:30"
     );
-    // 全角空格分隔：Go 报错、前端与这边都能算（同一处 `\s` 差异的另一个面）。
+    // 全角空格分隔：前身实现报错、前端与这边都能算（同一处 `\s` 差异的另一个面）。
     assert_eq!(
         run("date.add", "2026-09-24\u{3000}+1d", &params, &ctx).unwrap(),
         "2026-09-25"

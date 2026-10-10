@@ -1,7 +1,10 @@
-//! 定时任务的契约测试：读 Go 跑出来的 `cases/task/task.json`，逐条比对。
+//! 定时任务的契约测试：读 `cases/task/task.json` 那份**冻结基准**，逐条比对。
 //!
-//! 与 cron / render 的契约测试同一套思路：期望值是 Go 的 `task.go` 在固定时区、
-//! 固定 now 下跑出来的。这里读同一份输入、比同一份输出。
+//! 与 cron / render 的契约测试同一套思路：期望值是**在固定时区、固定 now 下跑出来的**。
+//! 这里读同一份输入、比同一份输出。
+//!
+//! ⚠️ fixture 是**冻结的输入**，本仓库是它**唯一的主人**（`cases/README.md`）：
+//! 改它就是一次契约变更，走那里的三条流程。
 
 use chrono::DateTime;
 use clip9_core::task::{AutomationTask, ChainStep, normalize_and_validate};
@@ -94,7 +97,7 @@ fn load() -> TaskFile {
     let path = fixture_dir().join("task.json");
     let raw = std::fs::read_to_string(&path).unwrap_or_else(|e| {
         panic!(
-            "读不到 {}（{e}）—— 先在 cloud-clip 里跑 UPDATE_FIXTURES=1 go test ./lib -run TestTaskFixtures",
+            "读不到 {}（{e}）—— 它在仓库根的 cases/task/，那是契约数据，别挪位置",
             path.display()
         )
     });
@@ -130,7 +133,7 @@ fn occurrence_task(o: &Occurrence) -> AutomationTask {
 }
 
 #[test]
-fn occurrences_match_go() {
+fn occurrences_match_the_baseline() {
     let fixture = load();
     let now: DateTime<chrono::FixedOffset> =
         DateTime::parse_from_rfc3339(&fixture.now).expect("fixture 的 now 必须是合法 RFC3339");
@@ -151,34 +154,37 @@ fn occurrences_match_go() {
             .unwrap_or_default();
 
         if next != o.next {
-            failures.push(format!("{} 的 next：Go={:?} Rust={next:?}", o.expr, o.next));
+            failures.push(format!(
+                "{} 的 next：基准={:?} Rust={next:?}",
+                o.expr, o.next
+            ));
         }
         if due != o.due {
-            failures.push(format!("{} 的 due：Go={:?} Rust={due:?}", o.expr, o.due));
+            failures.push(format!("{} 的 due：基准={:?} Rust={due:?}", o.expr, o.due));
         }
         if next_key != o.next_key {
             failures.push(format!(
-                "{} 的 nextKey：Go={:?} Rust={next_key:?}",
+                "{} 的 nextKey：基准={:?} Rust={next_key:?}",
                 o.expr, o.next_key
             ));
         }
         if due_key != o.due_key {
             failures.push(format!(
-                "{} 的 dueKey：Go={:?} Rust={due_key:?}",
+                "{} 的 dueKey：基准={:?} Rust={due_key:?}",
                 o.expr, o.due_key
             ));
         }
     }
     assert!(
         failures.is_empty(),
-        "和 Go 不一致的有 {} 条：\n  - {}",
+        "和基准不一致的有 {} 条：\n  - {}",
         failures.len(),
         failures.join("\n  - ")
     );
 }
 
 #[test]
-fn validation_matches_go() {
+fn validation_matches_the_baseline() {
     let fixture = load();
     let mut failures = Vec::new();
 
@@ -219,43 +225,43 @@ fn validation_matches_go() {
             (Ok(()), true) => {
                 if task.freq != v.freq {
                     failures.push(format!(
-                        "{} 的 freq：Go={:?} Rust={:?}",
+                        "{} 的 freq：基准={:?} Rust={:?}",
                         v.name, v.freq, task.freq
                     ));
                 }
                 if task.time != v.time {
                     failures.push(format!(
-                        "{} 的 time：Go={:?} Rust={:?}",
+                        "{} 的 time：基准={:?} Rust={:?}",
                         v.name, v.time, task.time
                     ));
                 }
                 if task.cron != v.cron {
                     failures.push(format!(
-                        "{} 的 cron：Go={:?} Rust={:?}",
+                        "{} 的 cron：基准={:?} Rust={:?}",
                         v.name, v.cron, task.cron
                     ));
                 }
                 if task.by_weekday != v.by_weekday.clone().unwrap_or_default() {
                     failures.push(format!(
-                        "{} 的 byWeekday：Go={:?} Rust={:?}",
+                        "{} 的 byWeekday：基准={:?} Rust={:?}",
                         v.name, v.by_weekday, task.by_weekday
                     ));
                 }
                 if task.run_at != v.run_at {
                     failures.push(format!(
-                        "{} 的 runAt：Go={:?} Rust={:?}",
+                        "{} 的 runAt：基准={:?} Rust={:?}",
                         v.name, v.run_at, task.run_at
                     ));
                 }
                 if task.name != v.name_out {
                     failures.push(format!(
-                        "{} 的 nameOut：Go={:?} Rust={:?}",
+                        "{} 的 nameOut：基准={:?} Rust={:?}",
                         v.name, v.name_out, task.name
                     ));
                 }
                 if task.sender != v.sender_out {
                     failures.push(format!(
-                        "{} 的 senderOut：Go={:?} Rust={:?}",
+                        "{} 的 senderOut：基准={:?} Rust={:?}",
                         v.name, v.sender_out, task.sender
                     ));
                 }
@@ -274,7 +280,7 @@ fn validation_matches_go() {
 
     assert!(
         failures.is_empty(),
-        "和 Go 不一致的有 {} 条：\n  - {}",
+        "和基准不一致的有 {} 条：\n  - {}",
         failures.len(),
         failures.join("\n  - ")
     );

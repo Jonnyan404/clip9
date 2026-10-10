@@ -3,9 +3,9 @@
 // 规格：`dev-docs/specs/ws-live-only.md`（三边同一份契约）。断言照 §5 的验收条目来，
 // 不做「读代码觉得对」那类检查。
 //
-// 为什么 Worker 侧必须自己测一遍：Rust 那边靠「对着 Go 的 fixture 比投影 + 双跑比对」，
-// 而 Worker 既跑不进 `tools/compare-with-go.mjs`（那要起 Go/Rust 两个进程），
-// 又没有 Go 的 fixture 可读（它是 D1，不是 redb）—— 所以这几条只能在
+// 为什么 Worker 侧必须自己测一遍：Rust 那边靠「对着冻结的 fixture 比投影」，
+// 而 Worker 跑不进那套测试（它要 redb 与真 Router），
+// 也没有同一份 fixture 可读（它是 D1，不是 redb）—— 所以这几条只能在
 // 「mock 的 D1 + 真的处理器」上验。这正是 `test/run.sh` 一贯的做法。
 import { TextHandler } from './.build/text.mjs';
 import { WebSocketRoom } from './.build/websocket-room.mjs';

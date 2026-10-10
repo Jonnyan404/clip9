@@ -1,5 +1,5 @@
 {
-  "note": "由 cloud-clip/lib/action_fixture_test.go 生成。id 与前端 web-vue3/src/data/actions.js 逐字一致；服务端只下发 i18n key，译文只在四份 locale 里。",
+  "note": "本仓库的冻结契约基准（原由前身实现 cloud-clip/lib/action_fixture_test.go 导出，2026-10-10 前身实现停维护后归本仓库所有，不再有上游可同步）。id 与前端动作目录 web/src/lib/actions/catalog.json 逐字一致；服务端只下发 i18n key，译文只在四份 locale 里。⚠️ 改它就是契约变更，流程见 cases/README.md。",
   "actions": [
     {
       "id": "format.json.pretty",

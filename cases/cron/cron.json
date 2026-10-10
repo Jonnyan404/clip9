@@ -1,5 +1,5 @@
 {
-  "note": "由 cloud-clip/lib/cron_fixture_test.go 生成。期望值是 Go（cron.go）跑出来的，不是人写的；错误文案不记录 —— 两侧措辞本就可以不同，该对齐的是「哪些输入算错」与「算出来的时刻」。",
+  "note": "cron 语义基准（原由前身实现 cloud-clip/lib/cron_fixture_test.go 跑出，2026-10-10 起冻结、归本仓库所有）。错误文案不记录 —— 该对齐的是「哪些输入算错」与「算出来的时刻」。",
   "zone": "+08:00",
   "parse": [
     {

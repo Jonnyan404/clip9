@@ -13,7 +13,7 @@
 //!
 //! 验证方式不是「读代码觉得对」，而是 `cases/protocol/*.json`：
 //! **从 Go 侧导出的 JSON fixture → 这边反序列化再序列化 → 断言字节一致**。
-//! 见 `tests/go_fixtures.rs`。
+//! 见 `tests/contract_fixtures.rs`。
 //!
 //! # 零 IO
 //!

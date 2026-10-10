@@ -1,19 +1,22 @@
-//! 契约层验收：拿 **Go 导出的 JSON fixture** 校验 Rust 这边。
+//! 契约层验收：拿 `cases/protocol/*.json` 那份**冻结基准**校验 Rust 这边。
 //!
 //! # 为什么不能只写单元测试
 //!
 //! 单元测试是我写什么就测什么 —— 它验证的是「Rust 内部自洽」，
-//! 验证不了「和 Go 一致」。而这份契约的权威是 `dev-docs/api.md`，
-//! 字段名与 `omitempty` 的**实际效果**只有 Go 的 `encoding/json` 说了算。
+//! 验证不了「和线上形状一致」。而这份契约的权威是 `dev-docs/api.md`，
+//! 字段名与 `omitempty` 的**实际效果**只有真跑一遍序列化才说得准。
 //!
-//! 所以：Go 侧 `protocol_fixture_test.go` 生成 `cases/protocol/*.json`
-//! （那就是 Go 真实吐出来的字节），这边读它、反序列化、再序列化、比对。
+//! 所以：`cases/protocol/*.json` 里放的是**真实结构体序列化出来的字节**（不是手抄的），
+//! 这边读它、反序列化、再序列化、比对。
+//!
+//! ⚠️ 它是**本仓库自己的冻结基准**，不是谁导出的期望值 —— 没有上游可同步了。
+//! 改它就是一次**契约变更**，走 `cases/README.md` 的三条流程。
 //!
 //! # 为什么比的是 `Value` 而不是字节
 //!
 //! 两处**故意的**字节差异，都不是契约：
 //!
-//! 1. Go 默认开 HTML 转义（`<` → `\u003c`），serde_json 不转义。两种都是合法 JSON，
+//! 1. 导出时开了 HTML 转义（`<` → `\u003c`），serde_json 不转义。两种都是合法 JSON，
 //!    任何解析器读出来一样。
 //! 2. key 顺序。JSON 对象无序，没人按字节读它。
 //!
@@ -32,9 +35,9 @@ use serde_json::Value;
 
 /// fixture 在仓库根的 `cases/protocol/`。
 ///
-/// ⚠️ 这份数据**属于契约**：它由 Go 侧导出（`UPDATE_FIXTURES=1 go test ./lib -run
-/// TestProtocolFixtures`），这里的测试只**读**它。拆成独立仓库时它跟着一起过来了，
-/// 从此是**冻结的输入** —— 这边不再重新生成它。
+/// ⚠️ 这份数据**属于契约**，本仓库是它**唯一的主人**：这里的测试只**读**它。
+/// 没有上游可以同步了，所以改它 = 一次契约变更（`cases/README.md`），
+/// 而不是「重新生成一下就好」。
 fn fixture_dir() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../cases/protocol")
 }
@@ -48,7 +51,7 @@ where
         .unwrap_or_else(|e| panic!("{name}: fixture 本身不是合法 JSON: {e}"));
 
     let parsed: T = serde_json::from_str(text)
-        .unwrap_or_else(|e| panic!("{name}: Rust 读不了 Go 写出来的形状: {e}\n原文: {text}"));
+        .unwrap_or_else(|e| panic!("{name}: Rust 读不了基准里的形状: {e}\n原文: {text}"));
 
     let mut actual =
         serde_json::to_value(&parsed).unwrap_or_else(|e| panic!("{name}: 回写失败: {e}"));
@@ -59,20 +62,19 @@ where
     assert_eq!(
         actual, expected,
         "\n{name}: 往返之后形状变了 —— 大概率是某个 omitempty 谓词写错了\n\
-         左 = Rust 回写，右 = Go 原始输出\n"
+         左 = Rust 回写，右 = 基准原文\n"
     );
 }
 
-/// Go 写 `null`、Rust 写 `[]` —— **唯一一处刻意的形状不对称**。
+/// 基准里写 `null`、Rust 写 `[]` —— **唯一一处刻意的形状不对称**。
 ///
-/// 为什么 Go 会写 `null`：`saveHistoryData`（`main.go:277`）里是
-/// `var filesForHistory []File` 再 append，`uploadFileMap` 为空时它保持 nil，
-/// 而 nil 切片序列化成 `null` 而不是 `[]`。所以 `history.json` 在「没有文件」时
-/// **真的**会有 `"file": null` —— 这不是我造出来的边角情况。
+/// 为什么基准里是 `null`：老的 `history.json` 在「没有文件」时**真的**会有
+/// `"file": null`（前身实现用 nil 切片落盘，而 nil 切片序列化成 `null` 而不是 `[]`）。
+/// 所以这不是我造出来的边角情况，是**存量数据**，必须读得进来。
 ///
 /// Rust 侧的取舍：用 `Vec<T>` + 读时容忍 null（`de_null_or_default`），写出去一律数组。
 /// 这个不对称是安全的，因为 `History` 在这边**只是「把老数据读进来」的入口** ——
-/// 新存储（redb）不按这个形状存，也不会写回这个文件；而 Go 两种写法都读得进来。
+/// 新存储（redb）不按这个形状存，也不会写回这个文件；而两种写法都读得进来。
 /// 反过来（Rust 也写 `null`）只是没必要的麻烦。
 ///
 /// ⚠️ 归一**只对 `file` / `receive` 这两个 key**。`senderDevice` 的 `null` 不在其列 ——
@@ -126,7 +128,7 @@ fn read_fixture(stem: &str) -> String {
 /// ⚠️ 这个测试**不按固定清单遍历**，而是扫目录 —— 这样「加了 fixture 却忘了接上」
 /// 会直接红，而不是被静默跳过。
 #[test]
-fn every_go_fixture_round_trips() {
+fn every_fixture_round_trips() {
     let mut unhandled = Vec::new();
 
     for stem in fixture_stems() {
@@ -186,7 +188,7 @@ mod semantics {
     /// `omitempty` 的分布：最小文本条目应该只剩 `id` / `type` / `room` / `timestamp` /
     /// `senderIP` / `senderDevice` 六个 key。
     ///
-    /// ⚠️ 少一个 key 就是「Rust 比 Go 更爱省略」，多一个就是「Rust 省略得不够」——
+    /// ⚠️ 少一个 key 就是「Rust 比基准更爱省略」，多一个就是「Rust 省略得不够」——
     /// 两种都会让某个客户端在某些条目上读到 `undefined`。
     #[test]
     fn minimal_text_entry_keeps_exactly_the_non_omittable_keys() {
@@ -226,10 +228,10 @@ mod semantics {
         assert!(actual["senderDevice"].is_null());
     }
 
-    /// `History` 里 Go 写的 `null` 切片必须能读进来（读得宽松），
+    /// `History` 里老数据写的 `null` 切片必须能读进来（读得宽松），
     /// 但写出去是数组 —— 这个不对称是刻意的。
     #[test]
-    fn history_reads_go_nulls_and_writes_arrays() {
+    fn history_reads_nulls_and_writes_arrays() {
         let text = read_fixture("history_empty");
         let parsed: History = serde_json::from_str(&text).unwrap();
         assert!(parsed.file.is_empty());

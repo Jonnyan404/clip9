@@ -1,5 +1,5 @@
 {
-  "note": "模板引擎的行为基准：期望值由 Go 的 render.go 跑出（固定时刻 + 固定上下文）。uuid / timestamp 用 uncertain 标注，见文件头注释。",
+  "note": "模板引擎的行为基准：期望值由前身实现的 render.go 跑出（固定时刻 + 固定上下文），2026-10-10 起冻结、归本仓库所有。uuid / timestamp 用 uncertain 标注，见文件头注释。",
   "now": "2026-09-24T09:30:00+08:00",
   "task": "值班提醒",
   "room": "home",

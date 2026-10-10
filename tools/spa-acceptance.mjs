@@ -23,7 +23,8 @@
 //   浏览器 fetch POST /text → 服务端入库 → **WS 广播** → SPA 收到 receive → 列表渲染
 //
 // 也就是说它同时验证了 HTTP 写接口、存储、WebSocket 握手（`config` 事件）、广播分发、
-// 以及前端的渲染。**比逐个 curl 接口有意义得多** —— 那些 `tools/compare-with-go.mjs` 已经做了。
+// 以及前端的渲染。**比逐个 curl 接口有意义得多** —— 接口那一层由 `cargo test --workspace`
+// 里的服务端测试覆盖（它们起真 Router），这里管的是「真浏览器里跑起来对不对」。
 //
 // ⚠️ 需要真浏览器：`../cloud-clip/tools/page-smoke.mjs` 那套 DOM 桩只适用**服务端渲染页面**
 // （它抽页面里的内联 `<script>`），Vue SPA 是打包出来的模块，桩跑不了。
