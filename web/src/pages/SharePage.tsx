@@ -1,8 +1,8 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { Suspense, lazy, useCallback, useEffect, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useParams, useSearchParams } from 'react-router';
 import {
-    Alert, Box, Button, Card, Chip, CircularProgress, LinearProgress, Stack, TextField, Typography,
+    Alert, Box, Button, Card, Chip, CircularProgress, LinearProgress, Stack, TextField, Typography, useTheme,
 } from '@mui/material';
 import axios from 'axios';
 import { CodeBlock } from '@/components/CodeBlock';
@@ -13,7 +13,21 @@ import {
     copyTextToClipboard, errorMessage, filePreviewKind, formatTimestamp, prettyFileSize,
 } from '@/lib/util';
 import { renderMarkdownHtml as renderMd } from '@/lib/markdown.js';
+import { isWhiteboardName, parseWhiteboard } from '@/lib/whiteboard/document';
 import { reportShareVisit } from '@/services/share';
+
+/**
+ * 白板的**只读**预览。
+ *
+ * ⚠️ 与白板模式用**同一个** `ExcalidrawSurface`（同一个懒加载 chunk）——
+ * 不为分享页单开一份渲染器：两份必然漂，而「分享出去的画布和房间里看到的不一样」
+ * 是这个项目最不能接受的那类错。
+ *
+ * ⚠️ 它是**懒加载**的：分享页的主要用途是「点开一条链接看一眼」，
+ * 而 Excalidraw 是 7.6 MB。只有真的分享了一份白板才会去下它 ——
+ * 分享一条文本的人一个字节都不该多付。
+ */
+const ExcalidrawSurface = lazy(() => import('@/components/whiteboard/ExcalidrawSurface'));
 
 interface ShareInfo {
     kind?: string;
@@ -43,7 +57,8 @@ interface ShareInfo {
  * 否则那条真浏览器验收会红，而**红的原因跟功能无关**，属于最难查的一类。
  */
 export default function SharePage() {
-    const { t } = useTranslation();
+    // ⚠️ 取 `i18n` 是为了传给只读画布（Excalidraw 的界面语言跟着它走，见 ExcalidrawSurface）。
+    const { t, i18n } = useTranslation();
     const { token: tokenParam } = useParams<{ token?: string }>();
     const [searchParams] = useSearchParams();
     const token = String(tokenParam || '');
@@ -59,6 +74,13 @@ export default function SharePage() {
     const [failure, setFailure] = useState('');
     const [fileText, setFileText] = useState('');
     const [previewLoading, setPreviewLoading] = useState(false);
+    /**
+     * 分享的是一份白板时，这里放它的内容。
+     * ⚠️ `files` 也要带上：图片元素只带 `fileId`，字节在 `files` 里 ——
+     * 少了它那些图会渲染成占位框（和保存时同一个坑）。
+     */
+    const [board, setBoard] = useState<{ elements: unknown[]; files: Record<string, unknown> } | null>(null);
+    const theme = useTheme();
 
     // 分享页的 401 是**预期内**的（要密码），不能让全局拦截器弹「房间鉴权」对话框。
     const shareConfig = useCallback((extra: Record<string, unknown> = {}) => ({
@@ -94,6 +116,7 @@ export default function SharePage() {
         setLoading(true);
         setFailure('');
         setFileText('');
+        setBoard(null);
         if (!token) {
             setFailure(t('sharePageInvalid'));
             setLoading(false);
@@ -112,7 +135,27 @@ export default function SharePage() {
                 setText(response.data?.content ?? '');
             } else if (data?.kind === 'file') {
                 const kind = filePreviewKind(data.name);
-                if (kind === 'text') {
+                // ⚠️ 白板**排在文本之前**判：`.excalidraw` 其实是一份 JSON，
+                // 而 `filePreviewKind` 的 TEXT_NAME_RE 里没有它，所以现在走不到文本那支 ——
+                // 但哪天有人往那个正则里加了 `excalidraw`，分享页就会退化成「一大坨 JSON」，
+                // 而那种退化**看起来是正常的**（有内容、能滚动）。先判白板，把这条堵死。
+                if (isWhiteboardName(data.name)) {
+                    setPreviewLoading(true);
+                    try {
+                        const url = `file/${encodeURIComponent(data.uuid)}/${encodeURIComponent(data.name || 'file')}?t=${encodeURIComponent(data.previewToken || token)}`;
+                        const response = await axios.get(url, shareConfig({ responseType: 'text' }));
+                        const parsed = parseWhiteboard(
+                            typeof response.data === 'string' ? response.data : String(response.data ?? ''),
+                        );
+                        // ⚠️ 解析不了就**不**显示画布（`board` 保持 null，界面上退回「下载」）——
+                        // 显示一张空画布会让收件人以为「这份白板本来就是空的」。
+                        setBoard(parsed ? { elements: parsed.elements, files: parsed.files } : null);
+                    } catch (error) {
+                        console.warn('share board preview failed:', errorMessage(error));
+                    } finally {
+                        setPreviewLoading(false);
+                    }
+                } else if (kind === 'text') {
                     setPreviewLoading(true);
                     try {
                         const url = `file/${encodeURIComponent(data.uuid)}/${encodeURIComponent(data.name || 'file')}?t=${encodeURIComponent(data.previewToken || token)}`;
@@ -272,10 +315,32 @@ export default function SharePage() {
                                     {!previewLoading && previewKind === 'video' && <video src={fileUrl} controls preload="metadata" style={{ maxWidth: '100%', maxHeight: '62vh', borderRadius: 8 }} />}
                                     {!previewLoading && previewKind === 'audio' && <audio src={fileUrl} controls preload="metadata" style={{ width: '100%' }} />}
                                     {!previewLoading && previewKind === 'text' && fileText && <CodeBlock text={fileText} name={info.name} />}
+                                    {/*
+                                      白板：只读画布。
+                                      ⚠️ 高度给死（`62vh`）—— Excalidraw 按容器尺寸初始化画布，
+                                      容器高度是 0 的话它就画到 0 高的地方去（白板模式踩过一次，
+                                      见 `CanvasWall` 根元素那段注释）。
+                                      ⚠️ 只读靠 `viewMode`，而且这里**不把 api 存下来**做任何写操作。
+                                    */}
+                                    {!previewLoading && board && (
+                                        <Box sx={{ width: '100%', height: '62vh', border: 1, borderColor: 'divider', borderRadius: 2, overflow: 'hidden' }}>
+                                            <Suspense fallback={<CircularProgress size={28} />}>
+                                                <ExcalidrawSurface
+                                                    theme={theme.palette.mode === 'dark' ? 'dark' : 'light'}
+                                                    locale={i18n.language}
+                                                    elements={board.elements as never}
+                                                    files={board.files}
+                                                    viewMode
+                                                    onReady={() => { /* 只读：不持有 api，见 ExcalidrawSurface 的注释 */ }}
+                                                />
+                                            </Suspense>
+                                        </Box>
+                                    )}
                                 </Box>
 
                                 <Stack direction="row" alignItems="center" spacing={1.75} sx={{ mt: 1.5, p: 2, borderRadius: 2, bgcolor: 'action.hover' }}>
-                                    {!previewKind && <MdiIcon name="mdi-file-outline" size={40} />}
+                                    {/* ⚠️ 白板有预览时不显示那个通用文件图标（`previewKind` 对它恒为空串）。 */}
+                                    {!previewKind && !board && <MdiIcon name="mdi-file-outline" size={40} />}
                                     <Box sx={{ flex: 1, minWidth: 0 }}>
                                         <Typography variant="body2" fontWeight={500} sx={{ wordBreak: 'break-all' }}>{info.name}</Typography>
                                         <Typography variant="caption" color="text.secondary">{prettyFileSize(Number(info.size || 0))}</Typography>
