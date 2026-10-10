@@ -69,6 +69,10 @@ dev-docs/
 
 # 本地运行数据（redb 库、uploads/、config.json）—— 由服务自己创建，不入库
 /data/
+# ⚠️ `clip9-server` 的 `-data` 缺省是 `./data`（**相对当前工作目录**），
+# 所以在 `rust/` 里 `cargo run -p clip9-server` 会造出这一份 —— 与上面那条同一个东西，
+# 只是层级不同。2026-10-10 发现它一直以未跟踪目录的形式躺在工作区里。
+/rust/data/
 *.redb
 *.redb.lock
 config.json
