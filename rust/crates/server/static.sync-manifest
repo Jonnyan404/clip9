@@ -1,5 +1,5 @@
 # clip9 前端产物的同步清单 —— 由 tools/sync-web-assets.mjs 生成，别手改。
-source 481b15a2a9b00d1ec25d70ce899efd79012e2aa8dc1b354a75cea718e9f388f3
+source 1ef6ff387da1ae6ec36ecf0de64b63e6ec7aec2a607ca499c9ab2bf92419a84c
 apple-touch-icon.png
 assets/Assistant-Bold-gm-uSS1B.woff2
 assets/Assistant-Medium-DrcxCXg3.woff2
@@ -8,9 +8,9 @@ assets/Assistant-SemiBold-SCI4bEL9.woff2
 assets/ExcalidrawSurface-YjCZ8N7T.js
 assets/ExcalidrawSurface-YjCZ8N7T.js.br
 assets/ExcalidrawSurface-YjCZ8N7T.js.gz
-assets/SharePage-CNhb7VCf.js
-assets/SharePage-CNhb7VCf.js.br
-assets/SharePage-CNhb7VCf.js.gz
+assets/SharePage-T4aCibRr.js
+assets/SharePage-T4aCibRr.js.br
+assets/SharePage-T4aCibRr.js.gz
 assets/directory-open-01563666-DWU9wJ6I.js
 assets/directory-open-01563666-DWU9wJ6I.js.br
 assets/directory-open-01563666-DWU9wJ6I.js.gz
@@ -35,12 +35,12 @@ assets/highlight-langs-DtWgi42q.js.gz
 assets/i18n-U7Fx4cCl.js
 assets/i18n-U7Fx4cCl.js.br
 assets/i18n-U7Fx4cCl.js.gz
+assets/index-4W7znCqY.js
+assets/index-4W7znCqY.js.br
+assets/index-4W7znCqY.js.gz
 assets/index-DM0Yucg3.css
 assets/index-DM0Yucg3.css.br
 assets/index-DM0Yucg3.css.gz
-assets/index-i5NdBqOF.js
-assets/index-i5NdBqOF.js.br
-assets/index-i5NdBqOF.js.gz
 assets/materialdesignicons-webfont-B7mPwVP_.ttf
 assets/materialdesignicons-webfont-CSr8KVlo.eot
 assets/materialdesignicons-webfont-Dp5v-WZN.woff2
