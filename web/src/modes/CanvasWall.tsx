@@ -318,15 +318,28 @@ export default function CanvasWall() {
                     return;
                 }
                 const result = writeDraft(room, serializeWhiteboard(live, files));
-                // ⚠️ 存不下**只提示一次**：每次画布变化都弹一句会把界面刷屏，
-                // 而这件事的解法只有一个（去点「保存到房间」），说一遍就够。
-                if (result !== 'ok' && !draftWarned.current) {
-                    draftWarned.current = true;
-                    toast(
-                        t(result === 'too-big' ? 'canvasDraftTooBig' : 'canvasDraftUnavailable', {
-                            limit: DRAFT_MAX_BYTES / 1024 / 1024,
-                        }),
-                    );
+                // ⚠️★ 存不下时**必须把旧草稿也清掉**（2026-10-10 补）。
+                //
+                // 不清的话会留下**上一份**草稿：用户往画布上加了一大堆东西 →
+                // 这份太大存不下 → 旧的那份还在 → 刷新后他拿到一张
+                // **看起来正常、其实是更旧的**画布，而且**没有任何迹象**。
+                // 那比一张空画布危险得多：空画布他会去查，一份像模像样的旧画布
+                // 他会直接在上面接着画，然后把旧状态当成当前状态。
+                //
+                // 空画布 + 一句「草稿已停用」是**响亮**的，而旧状态是**沉默**的。
+                // 项目原则（方案 §6.5）是「绝不静默丢」—— 那就选响亮的那种。
+                if (result !== 'ok') {
+                    clearDraft(room);
+                    // 只提示一次：每次画布变化都弹会把界面刷屏，
+                    // 而这件事的解法只有一个（去点「保存到房间」），说一遍就够。
+                    if (!draftWarned.current) {
+                        draftWarned.current = true;
+                        toast(
+                            t(result === 'too-big' ? 'canvasDraftTooBig' : 'canvasDraftUnavailable', {
+                                limit: DRAFT_MAX_BYTES / 1024 / 1024,
+                            }),
+                        );
+                    }
                 }
             }, 800);
         },
