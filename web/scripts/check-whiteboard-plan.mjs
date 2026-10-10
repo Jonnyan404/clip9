@@ -287,6 +287,50 @@ const overlaps = (a, b) => a.y < b.y + b.height && b.y < a.y + a.height;
     );
 }
 
+// ── 10. 白板文档的序列化：写得对、读得宽松 ──────────────────────────────
+//
+// ⚠️★ 这一节盯的是「保存出去的白板，别人（或别的 Excalidraw）打得开吗」。
+// 写错的症状是**静默的**：文件存下来了、大小也对，只是任何地方都打不开。
+//
+// ⚠️ 读的那一侧要**宽松**（判据里那几条「认不出就回 null」），
+// 但**不能只 catch JSON.parse** —— 一份合法的 JSON（`{"hello":1}`）会解析成功，
+// 然后 `elements` 是 undefined，画布被清空而**用户以为加载成功了**。
+{
+    const doc = await import('../src/lib/whiteboard/document.ts');
+
+    // 写出去的东西必须是 Excalidraw 认的形状
+    const payload = JSON.parse(doc.serializeWhiteboard([{ id: 'a' }], '#fff'));
+    check('序列化出来的 type 是 excalidraw（少了它哪都打不开）', payload.type === 'excalidraw', `实际 ${payload.type}`);
+    check('带 schema 版本号', payload.version === 2, `实际 ${payload.version}`);
+    check('elements 是数组', Array.isArray(payload.elements) && payload.elements.length === 1);
+    check('appState 里带了背景色', payload.appState?.viewBackgroundColor === '#fff');
+    check('不缩进（画布 JSON 很容易上 MB，缩进会让体积翻几倍）', !doc.serializeWhiteboard([{}]).includes('\n  '));
+
+    // 往返
+    const back = doc.parseWhiteboard(doc.serializeWhiteboard([{ id: 'x' }], '#123456'));
+    check('往返之后元素还在', back?.elements?.length === 1 && back.elements[0].id === 'x');
+    check('往返之后背景色还在', back?.viewBackgroundColor === '#123456');
+
+    // 读得宽松：认不出的都要回 null，**不能**回一个空画布
+    check('坏 JSON → null', doc.parseWhiteboard('{not json') === null);
+    check('合法 JSON 但不是白板 → null', doc.parseWhiteboard('{"hello":1}') === null);
+    check('type 对但 elements 不是数组 → null', doc.parseWhiteboard('{"type":"excalidraw","elements":"nope"}') === null);
+    check('空串 → null', doc.parseWhiteboard('') === null);
+    check('缺 appState 也能读（老文件可能没有）', doc.parseWhiteboard('{"type":"excalidraw","elements":[]}')?.viewBackgroundColor === 'transparent');
+
+    // 文件名
+    check('认 .excalidraw（大小写都认）', doc.isWhiteboardName('a.EXCALIDRAW') && doc.isWhiteboardName('b.excalidraw'));
+    check('不认别的文件', !doc.isWhiteboardName('a.png') && !doc.isWhiteboardName(undefined) && !doc.isWhiteboardName(''));
+    const name = doc.whiteboardFileName('白板', new Date(2026, 9, 10, 21, 5));
+    check('文件名带本地时间戳', name === '白板-20261010-2105.excalidraw', name);
+    check(
+        '前缀里的空格与斜杠被换掉（文件名会进 URL）',
+        doc.whiteboardFileName('a b/c:d', new Date(2026, 0, 1, 0, 0)) === 'a-b-c-d-20260101-0000.excalidraw',
+        doc.whiteboardFileName('a b/c:d', new Date(2026, 0, 1, 0, 0)),
+    );
+    check('空前缀有兜底', doc.whiteboardFileName('   ', new Date(2026, 0, 1, 0, 0)).startsWith('canvas-'));
+}
+
 // ── 汇总 ──────────────────────────────────────────────────────────────
 
 if (problems.length) {

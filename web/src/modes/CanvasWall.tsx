@@ -1,13 +1,30 @@
-import { Suspense, lazy, useCallback, useEffect, useRef, useState } from 'react';
+import { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Box, Button, Chip, CircularProgress, Stack, Tooltip, Typography, useTheme } from '@mui/material';
+import axios from 'axios';
+import {
+    Box,
+    Button,
+    Chip,
+    CircularProgress,
+    ListItemIcon,
+    ListItemText,
+    Menu,
+    MenuItem,
+    Stack,
+    Tooltip,
+    Typography,
+    useTheme,
+} from '@mui/material';
 import { PageToolbar } from '@/components/AppShell/PageToolbar';
 import { MdiIcon } from '@/components/ui/MdiIcon';
+import { useAppStore } from '@/stores/appStore';
 import { useWebSocketStore } from '@/stores/wsStore';
 import { toast } from '@/stores/toastStore';
-import { ConvertRejected, ConvertUnsupported, convertFile, fetchConvertCapability, uploadDocument, type ConvertCapability } from '@/services/convert';
+import { isFileEntry } from '@/lib/util';
+import { ConvertRejected, ConvertUnsupported, convertFile, fetchConvertCapability, uploadDocument, UploadTooLarge, UPLOAD_SAFE_MAX_MIB, type ConvertCapability } from '@/services/convert';
 import { markdownToPlan } from '@/lib/whiteboard/markdown-plan';
 import { planToExcalidrawElements } from '@/lib/whiteboard/excalidraw-adapter';
+import { isWhiteboardName, parseWhiteboard, serializeWhiteboard, whiteboardFileName } from '@/lib/whiteboard/document';
 import type { ExcalidrawImperativeAPI } from '@/components/whiteboard/ExcalidrawSurface';
 
 /**
@@ -72,6 +89,8 @@ export default function CanvasWall() {
     const { t, i18n } = useTranslation();
     const theme = useTheme();
     const room = useWebSocketStore((s) => s.room);
+    /** 房间里的条目 —— 用来找「已经存在的白板」（见下面的 `boards`）。 */
+    const received = useAppStore((s) => s.received);
 
     const apiRef = useRef<ExcalidrawImperativeAPI | null>(null);
     const fileInputRef = useRef<HTMLInputElement | null>(null);
@@ -85,6 +104,23 @@ export default function CanvasWall() {
         localStorage.setItem(CONVERT_NOTICE_KEY, '1');
         setNoticeDismissed(true);
     }, []);
+
+    /**
+     * 这个房间里**已有的白板** —— 就是「名字以 `.excalidraw` 结尾的文件条目」。
+     *
+     * ⚠️ 用 `isFileEntry` 而不是 `type === 'file'`：那个字段有**两种来源**
+     * （WS 事件给入库类型、历史接口给 MIME 派生类型），直接比 `'file'` 会把
+     * 刷新前后的行为弄成两样。理由写在 `appStore.ts` 的 `ReceivedItem.type` 上。
+     */
+    const boards = useMemo(
+        () =>
+            received
+                .filter((item) => isFileEntry(item) && isWhiteboardName(item.name))
+                .map((item) => ({ uuid: String(item.cache ?? ''), name: String(item.name ?? '') }))
+                .filter((item) => item.uuid),
+        [received],
+    );
+    const [boardMenuAnchor, setBoardMenuAnchor] = useState<HTMLElement | null>(null);
     const dragDepth = useRef(0);
     /** 首帧的元素。⚠️ 只在挂载时读一次 —— 之后画布自己管状态，这里不再回灌。 */
     const initialElements = useRef<readonly never[]>([]);
@@ -166,6 +202,81 @@ export default function CanvasWall() {
         apiRef.current?.updateScene({ elements: [] });
     };
 
+    /**
+     * 把画布存成房间里的**一条文件条目**（方案 §2.4）。
+     *
+     * ⚠️ 服务端**没有「更新一个文件」的接口**，所以这是**新建一条**，不是覆盖。
+     * 同一个白板存三次就是三张卡片 —— 本切片的已知取舍，写在
+     * `lib/whiteboard/document.ts` 的模块文档里。
+     *
+     * ⚠️ `getSceneElements()` 给的是**活的**元素（含 `isDeleted` 的墓碑），
+     * 直接序列化会把删掉的东西也存进去，别人打开时看不到但文件白白变大。
+     */
+    const saveToRoom = useCallback(async () => {
+        const elements = (apiRef.current?.getSceneElements() ?? []).filter((el) => !el.isDeleted);
+        if (!elements.length) {
+            toast(t('canvasNothingToSave'));
+            return;
+        }
+        setBusy(true);
+        try {
+            const name = whiteboardFileName(t('canvasFileName'));
+            // ⚠️ MIME 给一个明确的值（不是默认的空串）：它进的是 multipart 的那一段，
+            // 而服务端 `determine_response_type` 是按**文件名**判类型的，不冲突。
+            const file = new File([serializeWhiteboard(elements)], name, {
+                type: 'application/vnd.excalidraw+json',
+            });
+            await uploadDocument({ file, room });
+            toast(t('canvasSaved', { name }));
+        } catch (error) {
+            if (error instanceof UploadTooLarge) {
+                toast(
+                    t('canvasTooLarge', {
+                        size: (error.bytes / 1024 / 1024).toFixed(1),
+                        limit: UPLOAD_SAFE_MAX_MIB,
+                    }),
+                );
+            } else {
+                toast(t('canvasSaveFailed'));
+            }
+        } finally {
+            setBusy(false);
+        }
+    }, [room, t]);
+
+    /**
+     * 从房间里打开一份白板。
+     *
+     * ⚠️ `responseType: 'text'`：服务端发的是 `application/vnd.excalidraw+json`，
+     * axios 不会自动解析它 —— 不指定的话拿到的是**已经被 axios 猜过一遍**的东西，
+     * 而猜错时的表现是「加载失败」而不是「解析失败」，排查会走弯路。
+     */
+    const openBoard = useCallback(
+        async (uuid: string, name: string) => {
+            setBoardMenuAnchor(null);
+            setBusy(true);
+            try {
+                const response = await axios.get(`file/${uuid}`, {
+                    params: new URLSearchParams([['room', room]]),
+                    responseType: 'text',
+                });
+                const parsed = parseWhiteboard(String(response.data ?? ''));
+                if (!parsed) {
+                    toast(t('canvasNotABoard', { name }));
+                    return;
+                }
+                apiRef.current?.updateScene({ elements: parsed.elements as never });
+                apiRef.current?.scrollToContent(undefined, { fitToContent: true });
+                toast(t('canvasOpened', { name }));
+            } catch {
+                toast(t('canvasOpenFailed'));
+            } finally {
+                setBusy(false);
+            }
+        },
+        [room, t],
+    );
+
     const supported = capability?.enabled === true;
     const accept = capability?.extensions?.length
         ? capability.extensions.map((ext) => `.${ext}`).join(',')
@@ -229,6 +340,25 @@ export default function CanvasWall() {
                 >
                     {t('canvasClear')}
                 </Button>
+                <Button
+                    size="small"
+                    variant="outlined"
+                    disabled={busy}
+                    startIcon={<MdiIcon name="mdi-content-save-outline" />}
+                    onClick={() => void saveToRoom()}
+                >
+                    {t('canvasSave')}
+                </Button>
+                <Button
+                    size="small"
+                    variant="text"
+                    // ⚠️ 没有白板时**不禁用**，而是点开一个写着「这个房间还没有白板」的菜单。
+                    // 禁用的按钮不解释自己为什么是灰的，用户只会以为功能坏了。
+                    startIcon={<MdiIcon name="mdi-folder-open-outline" />}
+                    onClick={(event) => setBoardMenuAnchor(event.currentTarget)}
+                >
+                    {t('canvasOpen')}
+                </Button>
                 {busy && (
                     <Stack direction="row" spacing={1} alignItems="center">
                         <CircularProgress size={14} />
@@ -275,6 +405,30 @@ export default function CanvasWall() {
                     if (file) void importDocument(file);
                 }}
             />
+
+            {/*
+              房间里已有的白板。⚠️ 列表来自**房间条目**（`received`），不是另开一个接口 ——
+              白板就是文件条目，它已经在房间的消息流里了。
+              ⚠️ 只看得到**当前这一屏历史**里的白板：更早的会被 `server.history` 截掉。
+              要「所有白板」得走 `GET /content` 分页，那是另一个切片。
+            */}
+            <Menu
+                anchorEl={boardMenuAnchor}
+                open={Boolean(boardMenuAnchor)}
+                onClose={() => setBoardMenuAnchor(null)}
+            >
+                {boards.length === 0 && (
+                    <MenuItem disabled>{t('canvasNoBoards')}</MenuItem>
+                )}
+                {boards.map((board) => (
+                    <MenuItem key={board.uuid} onClick={() => void openBoard(board.uuid, board.name)}>
+                        <ListItemIcon>
+                            <MdiIcon name="mdi-draw" />
+                        </ListItemIcon>
+                        <ListItemText>{board.name}</ListItemText>
+                    </MenuItem>
+                ))}
+            </Menu>
 
             <Box
                 sx={{

@@ -137,34 +137,78 @@ export async function convertFile(params: {
  * 超了会被框架以**非契约形状**拒掉 —— 所以这里先按 `file.chunk` 之外的宽松值自查一次，
  * 把「太大」变成一句人话，而不是一个看不懂的 413。
  */
+/**
+ * ⚠️★ 单次上传的**客户端**上限。
+ *
+ * 服务端的 `UPLOAD_BODY_HARD_CAP` 是 **16 MiB**，而它拒绝时走的是框架层 ——
+ * 返回的 body **不是契约形状**（不是 `{code,error,message}`），客户端只能吐一句
+ * 没有数字的错。所以这里先拦一道，把「太大」变成一句人话。
+ *
+ * ⚠️ 留 1 MiB 余量：multipart 的边界、每个部分的头、以及文件名都算在请求体里，
+ * 不留的话「正好 16 MiB」的内容会被莫名其妙地拒掉。
+ */
+const UPLOAD_SAFE_MAX = 15 * 1024 * 1024;
+
+/** 给界面看的 MiB 数 —— 提示里要写「上限多少」，别让每个调用点各算一遍。 */
+export const UPLOAD_SAFE_MAX_MIB = UPLOAD_SAFE_MAX / 1024 / 1024;
+
+/** 内容超过单次上传上限时抛的。调用方据此提示「拆小一点」而不是「上传失败」。 */
+export class UploadTooLarge extends Error {
+    constructor(readonly bytes: number) {
+        super('upload payload too large');
+        this.name = 'UploadTooLarge';
+    }
+}
+
+/**
+ * 上传一份文件，回它的 uuid。
+ *
+ * ⚠️★ **走分片那条路（初始化 → 一个分片 → 收尾），不是 `POST /upload`。**
+ *
+ * 为什么不用更简单的 `POST /upload`：它的响应是 `{url, id, type}`，而那个 `url` 是
+ * **内容 URL**（`/content/<id>`，见服务端 `handlers::content_url`）——
+ * **uuid 根本不在里面**。2026-10-10 真浏览器实测才发现：拿 `/file/([^/]+)` 去抠
+ * 永远抠不到，于是「导入文档」在**上传成功之后**静默中止
+ * （文件条目都建好了，画布却什么都没有）。
+ *
+ * 而 `POST /upload/chunk`（**初始化**）的响应里**直接就有 uuid**（`{result:{uuid}}`）。
+ * 服务端对单个分片的大小**没有**约束（只累加查 `file.limit`），所以「一个分片装完整份」
+ * 是合法的 —— 这也是为什么这里不需要自己切 slice。
+ *
+ * ⚠️ 三条都成功才算上传完成：初始化建登记、分片写字节、收尾才入库 + 广播。
+ * 少了收尾，房间里的其他设备**看不到**这条文件。
+ *
+ * ⚠️ 超过 [`UPLOAD_SAFE_MAX`] 的直接拒（见那里的注释）：单次请求体有 16 MiB 硬上限，
+ * 超了服务端会以**非契约形状**回错，客户端只能吐一句没有数字的话。
+ */
 export async function uploadDocument(params: {
     file: File;
     room: string;
 }): Promise<{ uuid: string; name: string }> {
-    const formData = new FormData();
-    formData.set('file', params.file);
+    if (params.file.size > UPLOAD_SAFE_MAX) {
+        throw new UploadTooLarge(params.file.size);
+    }
+    const room = new URLSearchParams([['room', params.room]]);
 
-    const { data } = await axios.postForm('upload', formData, {
-        params: new URLSearchParams([['room', params.room]]),
+    // ① 初始化：body 是**文件名**，回 uuid（这一路不落盘，只登记）
+    const init = await axios.post('upload/chunk', params.file.name, {
+        headers: { 'Content-Type': 'text/plain' },
+        params: room,
+    });
+    const uuid: unknown = init.data?.result?.uuid;
+    if (typeof uuid !== 'string' || !uuid) {
+        throw new ConvertRejected('bad_response', '上传初始化没有返回文件标识，无法继续');
+    }
+
+    // ② 一个分片装完整份
+    await axios.post(`upload/chunk/${uuid}`, params.file, {
+        headers: { 'Content-Type': 'application/octet-stream' },
+        params: room,
     });
 
-    const uuid = fileUuidOf(data?.url);
-    if (!uuid) {
-        throw new ConvertRejected('bad_response', '上传成功但拿不到文件标识，无法转换');
-    }
+    // ③ 收尾：登记消息 + 广播给房间里的其他设备
+    await axios.post(`upload/finish/${uuid}`, null, { params: room });
+
     return { uuid, name: params.file.name };
 }
 
-/**
- * 从 `/file/<uuid>[/<name>]` 这种 url 里抠出 uuid。
- *
- * ⚠️ 名字那段是**可选的**（服务端两条路由都认），所以正则不能要求它存在。
- * ⚠️ uuid 后面可能跟着 `/`、`?`、`#` 或结束 —— 都要能停住。
- */
-export function fileUuidOf(url: unknown): string {
-    if (typeof url !== 'string') {
-        return '';
-    }
-    const match = /\/file\/([^/?#]+)/.exec(url);
-    return match ? decodeURIComponent(match[1]) : '';
-}
