@@ -16,6 +16,31 @@ base64 = { workspace = true }
 sha2 = { workspace = true }
 regex = { workspace = true }
 
+# ── 文档 → Markdown（`doc`，见 src/doc.rs）────────────────────────────
+# doc/docx/odt/rtf/epub/pdf/pptx/xlsx/csv → GitHub-Flavored Markdown，纯 Rust、无 IO。
+#
+# ⚠️ **可选依赖 + 非默认 feature**，判据同下面 `highlight`：它连带的是一整套解析器
+# （zip / flate2 / quick-xml / cfb / pdf-inspector / encoding_rs），
+# 是 OpenWrt（flash 几十 MB）上仅次于 `image` 的体积来源。
+#
+# ⚠️ 它**不是**「动作」：不注册进 `registry`，也就没有对应的 `group`。
+# 完整理由写在 src/doc.rs 的模块文档里（一句话：注册表的 id 是与 Go 冻结的契约，
+# 而这条能力的输入是**字节**、不是 `&str`，塞不进那条 `&str → &str` 的链）。
+anydoc = { version = "0.2", optional = true }
+
+[dev-dependencies]
+# ⚠️ **只给测试用**，而且只在 `doc` feature 下真的被用到（见 src/doc.rs 的中文用例）。
+#
+# 为什么需要它：那份用例要一份**中文 docx**，而 docx 就是一个装着 XML 的 zip。
+# 两条路都不好 —— 往仓库里塞一个二进制 fixture（没法 review、没法看出里面写了什么），
+# 或者干脆不测中文（而 CJK 正是这个项目最不能出错的地方）。
+# 所以第三条路：**在测试里现造一个**（几行 XML 打进 zip），既没有二进制 fixture，
+# 又能一眼看出里面写了什么。
+#
+# ⚠️ 版本跟着 `anydoc` 走（它本来就依赖 `zip`，这里是同一个 4.x）——
+# 不引入新的依赖树。
+zip = "4"
+
 [features]
 # ⚠️ feature 只用来**按部署裁剪体积**，不是「哪些动作能下沉」——Rust 侧两端都能跑。
 # OpenWrt（flash 几十 MB）只带 default；桌面 / Docker 全带。
@@ -42,3 +67,8 @@ zh = []
 markdown = []
 # syntect 语法包几 MB，默认不带
 highlight = []
+# 文档 → Markdown。⚠️ 同 `highlight`：几 MB 的解析器，默认不带。
+# ⚠️ 与上面那组不同，它**没有对应的动作分组**（见 src/doc.rs 的模块文档），
+# 所以 `registry::group_enabled()` 里**不该**出现 `doc` —— 那两处一一对应的规矩只
+# 管注册表里的分组，这条是注册表之外的能力。
+doc = ["dep:anydoc"]

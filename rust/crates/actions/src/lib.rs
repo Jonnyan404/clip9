@@ -18,7 +18,7 @@
 //! 分界线只剩体积（大件用 feature 关，见 `Cargo.toml`）。
 //!
 //! ⚠️ 但**行为基准仍然是 Go**（`ARCHITECTURE.md` §5.4）：`cases/actions/*.json` 里的期望值
-//! 是 Go **跑出来的**，不是人写的。`tests/go_cases.rs` 拿它逐条比对 —— 那才是双跑验证，
+//! 是**跑出来的**，不是人写的。`tests/contract_cases.rs` 拿它逐条比对 —— 那才是双跑验证，
 //! 而不是「读代码觉得一样」。
 //!
 //! # 契约：只给 key，不给译文
@@ -64,6 +64,16 @@ pub mod actions;
 pub mod error;
 pub mod offset;
 pub mod registry;
+
+/// 文档 → Markdown（Word / PPT / Excel / ODF / RTF / EPUB / PDF / CSV）。
+///
+/// ⚠️ 它**不在 [`registry`] 的动作表里**，尽管名字看着像一个分组 —— 理由写在
+/// [`doc`] 的模块文档里（一句话：那张表的 id 是与 Go 冻结的契约，而这里的输入是字节）。
+/// 与 [`offset`] 平级：一个 `pub` 的纯函数模块。
+///
+/// ⚠️ 非默认 feature（`doc`）：anydoc 连带的解析器是几 MB，OpenWrt 那条线默认不带。
+#[cfg(feature = "doc")]
+pub mod doc;
 
 pub use error::ActionError;
 pub use registry::{
