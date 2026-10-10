@@ -23,9 +23,28 @@ import { toast } from '@/stores/toastStore';
 import { isFileEntry } from '@/lib/util';
 import { ConvertRejected, ConvertUnsupported, convertFile, fetchConvertCapability, uploadDocument, UploadTooLarge, UPLOAD_SAFE_MAX_MIB, type ConvertCapability } from '@/services/convert';
 import { markdownToPlan } from '@/lib/whiteboard/markdown-plan';
-import { planToExcalidrawElements } from '@/lib/whiteboard/excalidraw-adapter';
+import { applyScene, planToExcalidrawElements, type CanvasImage } from '@/lib/whiteboard/excalidraw-adapter';
 import { isWhiteboardName, parseWhiteboard, serializeWhiteboard, whiteboardFileName } from '@/lib/whiteboard/document';
 import type { ExcalidrawImperativeAPI } from '@/components/whiteboard/ExcalidrawSurface';
+
+/**
+ * 在浏览器里量一张图片的**原始像素尺寸**。
+ *
+ * ⚠️ 为什么不放在 `excalidraw-adapter` 里：解码是异步的、要 `new Image()`（DOM），
+ * 而那个模块**必须能在纯 node 里跑**（`check-whiteboard-plan.mjs` 靠这条）。
+ * 所以「量尺寸」留在这儿，「排位置」留在那儿 —— 那条边界同时也是「布局是纯函数」的保证。
+ *
+ * ⚠️ 量不出来时回 `null`，**不抛**：一张图坏掉不该让整份文档导不进来。
+ * 调用方跳过它，并把跳过的张数如实报给用户（见 `importDocument` 的提示语）。
+ */
+async function decodeImageSize(dataUrl: string): Promise<{ width: number; height: number } | null> {
+    return new Promise((resolve) => {
+        const image = new Image();
+        image.onload = () => resolve({ width: image.naturalWidth, height: image.naturalHeight });
+        image.onerror = () => resolve(null);
+        image.src = dataUrl;
+    });
+}
 
 /**
  * 白板模式 —— `dev-docs/specs/whiteboard-anydoc-integration.md` 的 P1 切片。
@@ -156,24 +175,71 @@ export default function CanvasWall() {
                 const uploaded = await uploadDocument({ file, room });
                 // ② 服务端转 Markdown
                 const converted = await convertFile({ uuid: uploaded.uuid, room });
-                // ③ 布局（纯函数，前端这一侧唯一的「智能」）
+                // ③ 图片：服务端把内嵌图片的字节一起带回来了（Markdown 里没有它们，
+                //    见 `doc.rs` 的注释 —— 上游转 Markdown 时会把图片整段丢掉）。
+                //    ⚠️ `converted.images === null` 是「这个格式读不出来」（PDF），
+                //    **不是**「没有图」—— 两者在提示语里必须分开说。
+                const images: CanvasImage[] = [];
+                let skipped = 0;
+                for (const item of converted.images?.items ?? []) {
+                    const dataUrl = `data:${item.mime};base64,${item.data}`;
+                    const size = await decodeImageSize(dataUrl);
+                    if (size) {
+                        images.push({ dataUrl, mime: item.mime, ...size });
+                    } else {
+                        skipped += 1;
+                    }
+                }
+
+                // ④ 布局（纯函数，前端这一侧唯一的「智能」）
                 const plan = markdownToPlan(converted.markdown);
-                if (!plan.nodes.length) {
+                if (!plan.nodes.length && !images.length) {
                     toast(t('canvasNothingToLayOut'));
                     return;
                 }
-                if (plan.nodes.length > MAX_BLOCKS) {
-                    toast(t('canvasTooManyBlocks', { count: plan.nodes.length, max: MAX_BLOCKS }));
+                const total = plan.nodes.length + images.length;
+                if (total > MAX_BLOCKS) {
+                    toast(t('canvasTooManyBlocks', { count: total, max: MAX_BLOCKS }));
                     return;
                 }
-                // ④ 铺上去。⚠️ **追加**而不是替换：用户可能是「再导一份接在后面」，
+
+                // ⑤ 铺上去。⚠️ **追加**而不是替换：用户可能是「再导一份接在后面」，
                 //    替换掉他手上正在画的东西是不可逆的（画布没有撤销栈之外的历史）。
-                const existing = apiRef.current?.getSceneElements() ?? [];
-                apiRef.current?.updateScene({
-                    elements: [...existing, ...planToExcalidrawElements(plan)],
+                const scene = planToExcalidrawElements(plan, {
+                    images,
+                    imageGroupLabel: images.length
+                        ? t('canvasImageGroup', { count: images.length })
+                        : '',
                 });
+                applyScene(apiRef.current!, scene, apiRef.current?.getSceneElements() ?? []);
                 apiRef.current?.scrollToContent(undefined, { fitToContent: true });
-                toast(t('canvasImported', { name: converted.name, count: plan.nodes.length }));
+
+                // ⑥ 如实报出「铺了多少、图有没有缺」——**这是这一整条链路里唯一的诚实出口**。
+                const found = converted.images?.total ?? 0;
+                const missing = found - images.length;
+                if (converted.images === null) {
+                    // PDF：读不出文档模型，**不知道**有没有图。不许编造一个数字。
+                    toast(t('canvasImportedUnknownImages', { name: converted.name, count: plan.nodes.length }));
+                } else if (missing > 0 || skipped > 0) {
+                    toast(
+                        t('canvasImportedWithMissing', {
+                            name: converted.name,
+                            count: plan.nodes.length,
+                            found,
+                            placed: images.length,
+                        }),
+                    );
+                } else if (images.length) {
+                    toast(
+                        t('canvasImportedWithImages', {
+                            name: converted.name,
+                            count: plan.nodes.length,
+                            images: images.length,
+                        }),
+                    );
+                } else {
+                    toast(t('canvasImported', { name: converted.name, count: plan.nodes.length }));
+                }
             } catch (error) {
                 if (error instanceof ConvertUnsupported) {
                     toast(t('canvasUnsupported'));
@@ -223,7 +289,7 @@ export default function CanvasWall() {
             const name = whiteboardFileName(t('canvasFileName'));
             // ⚠️ MIME 给一个明确的值（不是默认的空串）：它进的是 multipart 的那一段，
             // 而服务端 `determine_response_type` 是按**文件名**判类型的，不冲突。
-            const file = new File([serializeWhiteboard(elements)], name, {
+            const file = new File([serializeWhiteboard(elements, apiRef.current?.getFiles() ?? {})], name, {
                 type: 'application/vnd.excalidraw+json',
             });
             await uploadDocument({ file, room });
@@ -264,6 +330,13 @@ export default function CanvasWall() {
                 if (!parsed) {
                     toast(t('canvasNotABoard', { name }));
                     return;
+                }
+                // ⚠️★ **先补图片资源，再放元素**（顺序反了图片会画成占位框，而且不会自己补上）。
+                // 这些 `fileId → {dataURL}` 就存在白板 JSON 的 `files` 里 ——
+                // 保存时没带上它的话，这里能补的也是空的。
+                const files = Object.values(parsed.files);
+                if (files.length) {
+                    apiRef.current?.addFiles(files as never);
                 }
                 apiRef.current?.updateScene({ elements: parsed.elements as never });
                 apiRef.current?.scrollToContent(undefined, { fitToContent: true });

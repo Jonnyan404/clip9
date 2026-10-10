@@ -299,15 +299,26 @@ const overlaps = (a, b) => a.y < b.y + b.height && b.y < a.y + a.height;
     const doc = await import('../src/lib/whiteboard/document.ts');
 
     // 写出去的东西必须是 Excalidraw 认的形状
-    const payload = JSON.parse(doc.serializeWhiteboard([{ id: 'a' }], '#fff'));
+    const payload = JSON.parse(doc.serializeWhiteboard([{ id: 'a' }], {}, '#fff'));
     check('序列化出来的 type 是 excalidraw（少了它哪都打不开）', payload.type === 'excalidraw', `实际 ${payload.type}`);
     check('带 schema 版本号', payload.version === 2, `实际 ${payload.version}`);
     check('elements 是数组', Array.isArray(payload.elements) && payload.elements.length === 1);
     check('appState 里带了背景色', payload.appState?.viewBackgroundColor === '#fff');
     check('不缩进（画布 JSON 很容易上 MB，缩进会让体积翻几倍）', !doc.serializeWhiteboard([{}]).includes('\n  '));
 
+    // ⚠️★ 图片资源**必须**一起存：图片元素只带一个 fileId，字节在 `files` 里。
+    // 不存它的话重开时那些元素会渲染成一堆占位框，而**白板 JSON 本身完全合法**。
+    const withFiles = { 'clip9-img-0': { id: 'clip9-img-0', mimeType: 'image/png', dataURL: 'data:image/png;base64,AA', created: 1 } };
+    const saved = doc.parseWhiteboard(doc.serializeWhiteboard([{ id: 'img', fileId: 'clip9-img-0' }], withFiles));
+    check('图片资源跟着存下来了', saved?.files?.['clip9-img-0']?.mimeType === 'image/png', JSON.stringify(saved?.files));
+    check('没有图片时 files 是空对象（不是 undefined）', JSON.stringify(doc.parseWhiteboard(doc.serializeWhiteboard([{}]))?.files) === '{}');
+    check(
+        '老文件缺 files 也能读（回空对象，不是崩）',
+        JSON.stringify(doc.parseWhiteboard('{"type":"excalidraw","elements":[]}')?.files) === '{}',
+    );
+
     // 往返
-    const back = doc.parseWhiteboard(doc.serializeWhiteboard([{ id: 'x' }], '#123456'));
+    const back = doc.parseWhiteboard(doc.serializeWhiteboard([{ id: 'x' }], {}, '#123456'));
     check('往返之后元素还在', back?.elements?.length === 1 && back.elements[0].id === 'x');
     check('往返之后背景色还在', back?.viewBackgroundColor === '#123456');
 

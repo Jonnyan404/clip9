@@ -16,12 +16,40 @@ export interface ConvertCapability {
     extensions: string[];
 }
 
+/** 文档里的一张内嵌图片。 */
+export interface DocumentImage {
+    /** MIME，例如 `image/png`。 */
+    mime: string;
+    /** 原始字节的 **base64**（不带 `data:` 前缀 —— 那层由前端拼）。 */
+    data: string;
+    bytes: number;
+}
+
+/**
+ * 文档里的图片集合。
+ *
+ * ⚠️★ **`null` 不是「没有图」，是「这个格式读不出来」。**
+ *
+ * `anydoc` 的 `to_document` 对 **PDF 不支持**（PDF 直接出 Markdown、没有文档模型形态），
+ * 所以服务端对 PDF 回 `null`。把 `null` 当 0 显示，等于对一份满是插图的 PDF
+ * 说「这份文档没有图片」—— 那是**编造事实**。界面必须把两者分开说。
+ */
+export interface DocumentImages {
+    /** **找到的**图片总数。可能大于 `items.length`（见 `truncated`）。 */
+    total: number;
+    /** 超出服务端的响应预算，只带回了一部分。 */
+    truncated: boolean;
+    items: DocumentImage[];
+}
+
 export interface ConvertResult {
     markdown: string;
     /** 原文件名 —— 溯源要用（白板元素上的 `clip9FileId` 指回这条文件）。 */
     name: string;
     /** Markdown 的**字符数**（不是字节数）。 */
     chars: number;
+    /** 内嵌图片。见 [`DocumentImages`] 关于 `null` 的说明。 */
+    images: DocumentImages | null;
 }
 
 /**
@@ -92,6 +120,23 @@ export async function convertFile(params: {
             markdown: data.markdown,
             name: typeof data.name === 'string' ? data.name : '',
             chars: typeof data.chars === 'number' ? data.chars : data.markdown.length,
+            // ⚠️ `null` 原样带出去，**不**兜成 `{total:0,...}` —— 那会把
+            // 「读不出来」伪装成「没有图」，见 `DocumentImages` 的注释。
+            images:
+                data.images && typeof data.images === 'object'
+                    ? {
+                          total: Number(data.images.total ?? 0),
+                          truncated: data.images.truncated === true,
+                          items: Array.isArray(data.images.items)
+                              ? data.images.items.filter(
+                                    (item: unknown): item is DocumentImage =>
+                                        !!item &&
+                                        typeof (item as DocumentImage).mime === 'string' &&
+                                        typeof (item as DocumentImage).data === 'string',
+                                )
+                              : [],
+                      }
+                    : null,
         };
     } catch (error) {
         if (error instanceof ConvertRejected) {

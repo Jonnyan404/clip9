@@ -42,11 +42,20 @@ const MAGIC_TYPE = 'excalidraw';
 /**
  * 从画布元素造一份可保存的文档。
  *
+ * ⚠️★ `files` **必须一起存**（`api.getFiles()` 拿到的那个）。图片元素只带一个
+ * `fileId`，字节在 `files` 里 —— 不存它的话，重开时那些元素会渲染成
+ * **一堆带警告三角的占位框**，而白板 JSON 本身完全合法、保存也不报错。
+ * 这个字段在 `.excalidraw` 格式里就是 `files`（`Record<fileId, BinaryFileData>`）。
+ *
  * ⚠️ 只留 `viewBackgroundColor` 一个 `appState` 字段：其余（当前选中的工具、
  * 滚动位置、协作状态）都是**这一次会话的**，存下来会让别人打开时莫名其妙地
  * 处于你上次的工具状态里。`viewBackgroundColor` 是唯一一个「属于这份文档」的。
  */
-export function serializeWhiteboard(elements: readonly unknown[], viewBackgroundColor = 'transparent'): string {
+export function serializeWhiteboard(
+    elements: readonly unknown[],
+    files: Record<string, unknown> = {},
+    viewBackgroundColor = 'transparent',
+): string {
     return JSON.stringify(
         {
             type: MAGIC_TYPE,
@@ -54,7 +63,7 @@ export function serializeWhiteboard(elements: readonly unknown[], viewBackground
             source: 'clip9',
             elements,
             appState: { viewBackgroundColor },
-            files: {},
+            files,
         },
         null,
         // ⚠️ 不缩进：这是机器读的文件，缩进会让体积翻几倍（画布 JSON 很容易上 MB），
@@ -64,6 +73,8 @@ export function serializeWhiteboard(elements: readonly unknown[], viewBackground
 
 export interface ParsedWhiteboard {
     elements: unknown[];
+    /** 图片资源：`fileId → {id, mimeType, dataURL, created}`。见 `serializeWhiteboard` 的注释。 */
+    files: Record<string, unknown>;
     viewBackgroundColor: string;
 }
 
@@ -88,13 +99,16 @@ export function parseWhiteboard(text: string): ParsedWhiteboard | null {
     if (!raw || typeof raw !== 'object') {
         return null;
     }
-    const doc = raw as { type?: unknown; elements?: unknown; appState?: unknown };
+    const doc = raw as { type?: unknown; elements?: unknown; appState?: unknown; files?: unknown };
     if (doc.type !== MAGIC_TYPE || !Array.isArray(doc.elements)) {
         return null;
     }
     const appState = (doc.appState ?? {}) as { viewBackgroundColor?: unknown };
     return {
         elements: doc.elements,
+        // ⚠️ 缺 `files` 时回空对象（老文件可能没有）—— 图片元素会退化成占位框，
+        // 但那比「整份文件读不出来」好。
+        files: doc.files && typeof doc.files === 'object' ? (doc.files as Record<string, unknown>) : {},
         viewBackgroundColor:
             typeof appState.viewBackgroundColor === 'string' ? appState.viewBackgroundColor : 'transparent',
     };
