@@ -95,18 +95,34 @@ services:
     ports:
       - "9501:9501"
     environment:
+      # 监听
+      LISTEN_IP: ${LISTEN_IP:-}                # 监听地址，默认 0.0.0.0
+      LISTEN_IP6: ${LISTEN_IP6:-}              # IPv6 地址（如 ::），默认不监听
       LISTEN_PORT: ${LISTEN_PORT:-}            # 监听端口，默认 9501
+      PREFIX: ${PREFIX:-}                      # URL 子路径（配合 nginx），如 /clip9
+      # 访问控制
       AUTH_PASSWORD: ${AUTH_PASSWORD:-}        # 全局访问密码，留空即无需密码
       ROOM_AUTH_JSON: '${ROOM_AUTH_JSON:-{}}'  # 房间密码 JSON，如 {"finance":"finance-pass"}
+      ROOM_LIST: ${ROOM_LIST:-}                # 是否公开房间列表，默认 false
+      # 容量
       MESSAGE_NUM: ${MESSAGE_NUM:-}            # 历史保留条数，默认 50
       TEXT_LIMIT: ${TEXT_LIMIT:-}              # 文本长度上限（字节），默认 4096
       FILE_EXPIRE: ${FILE_EXPIRE:-}            # 文件过期秒数，默认 3600
       FILE_LIMIT: ${FILE_LIMIT:-}              # 文件大小上限（字节），默认 104857600
-      MKCERT_DOMAIN_OR_IP: ${MKCERT_DOMAIN_OR_IP:-}  # 填域名/IP 即自动签发自签证书
+      # 定时自动化
+      AUTOMATION_ENABLED: ${AUTOMATION_ENABLED:-}  # 总开关，默认 true
+      DEFAULT_TZ: ${DEFAULT_TZ:-}              # 默认时区，默认 Asia/Shanghai
+      # TLS —— 优先级：手动路径 > mkcert > 不启用
+      MANUAL_KEY_PATH: ${MANUAL_KEY_PATH:-}    # 手动指定私钥路径（优先级最高）
+      MANUAL_CERT_PATH: ${MANUAL_CERT_PATH:-}  # 手动指定证书路径
+      MKCERT_DOMAIN_OR_IP: ${MKCERT_DOMAIN_OR_IP:-}  # 填域名/IP 即自动签自签证书，多个用空格分隔
     volumes:
       - /path/your/dir/data:/app/server-node/data  # 改成你自己的目录
     image: ghcr.io/jonnyan404/clip9:latest
 ```
+
+> 变量名与 Go 版**完全一致**，切过来不用改。上面这份就是全部（仓库根的 [`docker-compose.yml`](./docker-compose.yml) 还带一个 `healthcheck`）。
+> ⚠️ 直接跑二进制时也可以用环境变量，名字是 `CLIP9_` + 参数名大写（`CLIP9_PORT` / `CLIP9_CONFIG` …）—— 这是本实现额外加的，Go 版没有。
 
 ```bash
 docker compose up -d
