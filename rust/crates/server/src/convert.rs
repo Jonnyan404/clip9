@@ -146,13 +146,33 @@ pub async fn document(
 
     // ⚠️ 扩展名从**登记的名字**来（磁盘上是裸 uuid，见 `stored_path` 的注释）。
     // 它只是兜底：CSV 之外都靠内容嗅探，把 `.docx` 改名成 `.bin` 照样能转。
-    match clip9_actions::doc::to_markdown(&bytes, Some(&info.name)) {
-        Ok(markdown) => json_response(&json!({
-            "markdown": markdown,
-            "name": info.name,
+    match clip9_actions::doc::convert(&bytes, Some(&info.name)) {
+        Ok(converted) => {
+            // ⚠️ 先算字符数再搬走 `markdown`：`json!` 里的表达式是**按值**取的，
+            // 写在 `"markdown"` 之后就是「用了已经搬走的东西」。
             // ⚠️ 字符数不是字节数 —— 前端拿它决定「这份文档铺不铺得下」，而画布上按字符排。
-            "chars": markdown.chars().count(),
-        })),
+            let chars = converted.markdown.chars().count();
+            // 内嵌图片。⚠️ `null` **不是**「没有图」，是「这个格式读不出文档模型」
+            // （`to_document` 对 PDF 不支持）。前端必须把 `null` 和「0 张」分开说 ——
+            // 把 `null` 当 0 等于对一份满是插图的 PDF 说「这份文档没有图片」。
+            let images = converted.images.map(|set| {
+                json!({
+                    "total": set.total,
+                    "truncated": set.truncated,
+                    "items": set.items.iter().map(|image| json!({
+                        "mime": image.media_type,
+                        "data": image.data_base64,
+                        "bytes": image.bytes,
+                    })).collect::<Vec<_>>(),
+                })
+            });
+            json_response(&json!({
+                "markdown": converted.markdown,
+                "name": info.name,
+                "chars": chars,
+                "images": images,
+            }))
+        }
         Err(error) => {
             // ⚠️ 转换失败是**这份文档的问题**（格式不认 / 加密 / 扫描件 / 结构损坏 / 超上限），
             // 所以是 400 而不是 500 —— 客户端据此提示「换一份文件」，而不是「服务端坏了」。

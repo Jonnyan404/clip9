@@ -314,6 +314,34 @@ async fn a_get_on_the_convert_route_is_a_405() {
     assert_eq!(json_of(&body)["code"], "method_not_allowed");
 }
 
+/// ⚠️★ `images` 字段的**三态**必须能分辨：对象（读过、有/没有图）与 `null`（读不出来）。
+///
+/// 这里钉的是「没有图」那一态：CSV 能读出文档模型，所以 `images` 是**对象**、
+/// `total` 是 `0`，**不是** `null`。把两者混起来，界面就会对一份满是插图的 PDF
+/// 说「这份文档没有图片」—— 那是编造事实。
+///
+/// ⚠️ 「读不出来」那一态（PDF → `null`）**没有**在这里钉：那要一份真的 PDF fixture，
+/// 而仓库里不放二进制样本（`doc.rs` 的注释写了理由）。那条路由真浏览器端到端验过
+/// （见 `dev-docs/specs/whiteboard-anydoc-integration.md` 的实测表）。
+#[cfg(feature = "doc")]
+#[tokio::test]
+async fn a_document_that_cannot_have_images_reports_an_empty_object_not_null() {
+    let (app, state, _dir) = app_with_state();
+    put_file(&state, "f8", "fruit.csv", "default", FRUIT_CSV, 22);
+
+    let (status, body) = post_convert(&app, "f8", "").await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+
+    let images = &json_of(&body)["images"];
+    assert!(
+        images.is_object(),
+        "CSV 读得出文档模型，images 应当是对象而不是 null：{body}"
+    );
+    assert_eq!(images["total"], 0, "{body}");
+    assert_eq!(images["truncated"], false, "{body}");
+    assert_eq!(images["items"].as_array().map(Vec::len), Some(0), "{body}");
+}
+
 /// `/server` 要报出**这台部署到底带不带转换能力** —— 前端显隐入口的唯一判据。
 #[cfg(feature = "doc")]
 #[tokio::test]
