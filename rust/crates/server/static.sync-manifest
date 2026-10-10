@@ -1,5 +1,6 @@
 # clip9 前端产物的同步清单 —— 由 tools/sync-web-assets.mjs 生成，别手改。
 source 6f8792fe0c624ec934ed91d5305243fe9030906395a2f23fd7f09a24c8c1a3f5
+apple-touch-icon.png
 assets/Assistant-Bold-gm-uSS1B.woff2
 assets/Assistant-Medium-DrcxCXg3.woff2
 assets/Assistant-Regular-DVxZuzxb.woff2
@@ -7,9 +8,9 @@ assets/Assistant-SemiBold-SCI4bEL9.woff2
 assets/ExcalidrawSurface-CFU8O4kX.js
 assets/ExcalidrawSurface-CFU8O4kX.js.br
 assets/ExcalidrawSurface-CFU8O4kX.js.gz
-assets/SharePage-D3YzjgJ2.js
-assets/SharePage-D3YzjgJ2.js.br
-assets/SharePage-D3YzjgJ2.js.gz
+assets/SharePage-D5gjtMp0.js
+assets/SharePage-D5gjtMp0.js.br
+assets/SharePage-D5gjtMp0.js.gz
 assets/directory-open-01563666-DWU9wJ6I.js
 assets/directory-open-01563666-DWU9wJ6I.js.br
 assets/directory-open-01563666-DWU9wJ6I.js.gz
@@ -34,9 +35,9 @@ assets/highlight-langs-DtWgi42q.js.gz
 assets/i18n-U7Fx4cCl.js
 assets/i18n-U7Fx4cCl.js.br
 assets/i18n-U7Fx4cCl.js.gz
-assets/index-D2w2WFX9.js
-assets/index-D2w2WFX9.js.br
-assets/index-D2w2WFX9.js.gz
+assets/index-C2nOUH9z.js
+assets/index-C2nOUH9z.js.br
+assets/index-C2nOUH9z.js.gz
 assets/index-DM0Yucg3.css
 assets/index-DM0Yucg3.css.br
 assets/index-DM0Yucg3.css.gz
