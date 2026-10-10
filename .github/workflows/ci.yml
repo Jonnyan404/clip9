@@ -65,6 +65,18 @@ jobs:
         working-directory: web
         run: node scripts/check-display-semantics.mjs
 
+      # ⚠️★ 白板的布局映射器（`web/src/lib/whiteboard/markdown-plan.ts`）是**纯数字**逻辑：
+      # 摆错了不会报错，只会让两个块叠在一起、或子树被摆到屏幕外 —— 而那在浏览器里
+      # **看起来就像「用户自己拖的」**，没人会当成 bug 报上来。
+      #
+      # ⚠️ 这一步能直接跑 `.ts`，靠的是 Node ≥ 22.18 默认剥离类型。所以它顺带钉住一条
+      # **代码约束**：`markdown-plan.ts` 只能用可擦除的语法（不许 enum / namespace /
+      # 参数属性，类型导入一律 `import type`）—— 哪天有人加了，这一步会当场炸，
+      # 而不是静默变成「测不了」。
+      - name: 白板映射器自检
+        working-directory: web
+        run: node scripts/check-whiteboard-plan.mjs
+
       # ⚠️★ 唯一能提前问「前端源码改了但没同步进服务端」的地方。
       - name: 入库的前端产物与当前源码是否一致
         run: node tools/sync-web-assets.mjs --check
@@ -180,6 +192,20 @@ jobs:
       - run: cargo clippy -p clip9-actions --no-default-features --all-targets -- -D warnings
 
       - run: cargo test -p clip9-actions --no-default-features
+
+      # ⚠️★ 文档转换那条路（`POST /convert/{uuid}`）只在 `doc` feature 打开时才存在。
+      # 不在这里跑一次的话，那个 feature **没有任何东西编译它** —— 它会慢慢长霉，
+      # 而且长霉的方式最糟：**用户按文档打开它时才发现编不过**。
+      #
+      # 判据与上面那两条同一个道理：**两个方向都要编一次**（不带 / 带）。
+      # 不带的那次由上面所有步骤覆盖（`doc` 不在 default 里）；带的那次就是这两条。
+      #
+      # ⚠️ 代价：这一步要编 `anydoc` 那一整棵解析器树（约 +5 分钟，二进制 +4.73 MiB）。
+      # 值得 —— 它是这条能力**唯一**的编译期保证，而它在 OpenWrt 那条线上默认是关的，
+      # 平时没人会碰到。
+      - run: cargo clippy -p clip9-server --features doc --all-targets -- -D warnings
+
+      - run: cargo test -p clip9-server --features doc
 
   # ── 提交信息：纯英文 conventional commit（`tools/check-commit-msg.mjs`）───────
   #

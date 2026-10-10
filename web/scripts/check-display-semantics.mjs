@@ -55,6 +55,25 @@ function ok(name, condition, detail = '') {
     if (!condition) failed += 1;
 }
 
+/**
+ * 剥掉注释 —— 判「源码里有没有写 X」之前必须先过这一道。
+ *
+ * ⚠️★ 为什么需要它：这个仓库的注释**极其话痨**（这是好事），但那些注释里经常
+ * 原样引用代码片段（「所以 `height: '100dvh'` 会退化成 auto」）。
+ * 判据如果不剥注释，就会被**散文**满足 —— 代码改坏了、注释还写着，判据照样绿。
+ * 2026-10-10 真踩到：白板的 `flex: 1` 判据就是这么假绿的，
+ * 反向验证（把根元素改回 `100%`）**没有变红**才发现。
+ *
+ * ⚠️ 只认**整行**的 `//` 注释（行首、允许前导空白）。行内的 `//` 不剥 ——
+ * 那可能是字符串里的 URL（`'https://…'`），剥了会改坏源码。
+ * 这个取舍对本文件的判据够用（它们盯的都是单独占一行的属性）。
+ */
+function stripComments(source) {
+    return source
+        .replace(/\/\*[\s\S]*?\*\//g, '')
+        .replace(/^\s*\/\/.*$/gm, '');
+}
+
 /** 从源码里抠出一段函数体（花括号配平）。`function name(` / `const name = (` 两种写法都认。
  *
  *  ⚠️ 只在声明之后 200 字符内找 `=> {`：TS 的类型注解里也可能出现 `{`，
@@ -392,7 +411,57 @@ ok(
 );
 for (const problem of i18nProblems) console.log(`      · ${problem}`);
 
-// ── 7. 已构建产物（有就查，没有就跳过）────────────────────────────────
+// ── 7. `flex: 1` 的区域必须有撑满视口的祖先 ────────────────────────────
+//
+// ⚠️★ 2026-10-10 加。这一条是**真出过事**才补的：白板模式（`CanvasWall`）的根 `Box`
+// 写的是 `height: '100%'`，而外壳**不给**模式组件一个确定的高度（普通块级流），
+// 于是它退化成 `auto` = 内容高度（155px），里面那个 `flex: 1` 的画布区随之塌成 **1px**。
+//
+// 症状的隐蔽程度值得写下来：**没有报错、没有警告**，`<canvas>` 元素在 DOM 里、
+// Excalidraw 的容器也在，只是它量到的高度是 0 —— 界面上就是一片空白，
+// 看起来像「还没加载完」或者「这个模式就是这样」。静态读代码看不出来，
+// 必须真浏览器量一次才知道。**这就是为什么这条判据留在这儿而不是只写进注释。**
+//
+// ⚠️★ 判据的形式是「**有 `flex: 1` ⇒ 必须有 `100dvh`**」，不是「每个模式都必须有 `100dvh`」。
+// 这个区别是**验证过的**，不是猜的：`DefaultMode` / `BenchWall` 是滚动列表模式，
+// 一个 `flex: 1` 都没有，靠页面自然滚动 —— 要求它们撑满视口是**错的**
+// （第一版判据就是这么写的，当场误报了两个模式）。
+// 真正的不变式是：**`flex: 1` 只在祖先有确定高度时才有效**。
+//
+// ⚠️ `dvh` 而不是 `vh`：移动端地址栏收起/展开时 `vh` 算的是**最大值**，
+// 底部会被切掉一截；`dvh` 跟当前可视高度走。
+{
+    const modesDir = join(WEB, 'src/modes');
+    const modeFiles = readdirSync(modesDir).filter((f) => f.endsWith('.tsx'));
+    const broken = [];
+    let withFlex = 0;
+    for (const file of modeFiles) {
+        // ⚠️★ 必须**剥掉注释再判**：这个文件的注释里到处在讨论 `100dvh` / `flex: 1`
+        // （上面那段解释就是），不剥的话判据会被**散文**满足 —— 而那是判据失效，
+        // 不是代码正确。第一版就是这么写的，反向验证（把根元素改回 `100%`）**没有变红**，
+        // 才发现它其实在匹配注释。**判据必须能在被破坏时变红，否则等于没有。**
+        const source = stripComments(readFileSync(join(modesDir, file), 'utf8'));
+        if (!/flex:\s*1/.test(source)) {
+            continue;
+        }
+        withFlex += 1;
+        if (!/height:\s*'100dvh'/.test(source)) {
+            broken.push(file);
+        }
+    }
+    // ⚠️ 下限保护：扫不到任何 `flex: 1` 说明判据自己坏了（比如 MUI 换了写法），
+    // 而不是「所有模式都改了」。少了它，判据会在失效时**静默变绿**。
+    ok(
+        `用了 flex:1 的模式都有撑满视口的祖先（${withFlex} 个模式，≥3 说明判据没坏）`,
+        broken.length === 0 && withFlex >= 3,
+        broken.length ? `${broken.join(', ')} 有 flex:1 但没有 100dvh —— 那块区域会塌成 0` : `只扫到 ${withFlex} 个`,
+    );
+    for (const file of broken) {
+        console.log(`      · ${file} 有 flex:1 却没有 100dvh —— 里面的区域会塌成 0 高（不报错，只是空白）`);
+    }
+}
+
+// ── 8. 已构建产物（有就查，没有就跳过）────────────────────────────────
 if (!process.argv.includes('--src')) {
     const assetsDir = join(WEB, 'dist/assets');
     const bundle = existsSync(assetsDir)

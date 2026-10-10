@@ -64,6 +64,9 @@ const STEPS = [
   // 界面语义自检也跟着搬到 `web/scripts/`（2026-10-05）：原来那份跑在 web-vue3 上，
   // 既依赖 `web-vue3/node_modules`（CI 上没有），盯的又是不再发货的源码。
   { job: 'frontend', cwd: 'web', cmd: 'node scripts/check-display-semantics.mjs' },
+  // ⚠️ 白板的布局映射器是纯数字逻辑，摆错了不报错、只会在画布上叠在一起 ——
+  // 而那看起来像「用户自己拖的」。判据在 `web/scripts/check-whiteboard-plan.mjs`。
+  { job: 'frontend', cwd: 'web', cmd: 'node scripts/check-whiteboard-plan.mjs' },
   { job: 'frontend', cmd: 'node tools/sync-web-assets.mjs --check' },
   { job: 'frontend', cmd: 'node tools/sync-action-catalog.mjs --check' },
   { job: 'frontend', cmd: 'node tools/action-catalog-smoke.mjs' },
@@ -92,6 +95,15 @@ const STEPS = [
     cmd: 'cargo clippy -p clip9-actions --no-default-features --all-targets -- -D warnings',
   },
   { job: 'rust', cwd: 'rust', cmd: 'cargo test -p clip9-actions --no-default-features' },
+  // ⚠️★ 文档转换（`POST /convert/{uuid}`）只在 `doc` feature 打开时才存在，而它
+  // **不在 default 里** —— 上面那些步骤一条都不会编它。不在这儿跑一次，它会长霉，
+  // 且长霉的方式是「用户按文档打开它时才发现编不过」。
+  {
+    job: 'rust',
+    cwd: 'rust',
+    cmd: 'cargo clippy -p clip9-server --features doc --all-targets -- -D warnings',
+  },
+  { job: 'rust', cwd: 'rust', cmd: 'cargo test -p clip9-server --features doc' },
 
   // commit-msg 作业：逐条查本次带来的提交（`run:` 里是一段循环，这里自己拼）
   { job: 'commit-msg', cmd: 'node tools/check-commit-msg.mjs', perCommit: true },

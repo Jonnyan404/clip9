@@ -58,11 +58,37 @@ export default defineConfig(({ command }) => {
                 },
                 workbox: {
                     globPatterns: ['**/*.{js,css,html,svg,png,ico,woff2,woff,ttf,eot}'],
+                    // ⚠️★ **白板那一坨不进预缓存**（2026-10-10）。
+                    //
+                    // 为什么要专门排除：`globPatterns` 会把 `dist/assets/` 下**所有** js/css
+                    // 都塞进预缓存 —— 包括懒加载的那些。而 Excalidraw 是个大依赖
+                    // （它自己拖进 mermaid 全套图表 + katex + cytoscape，几 MB），
+                    // 于是「只在白板 mode 才加载」这件事**被 PWA 一笔勾销**：
+                    // 每个用户第一次访问都会在后台把它下完，而且每次发版（hash 变了）
+                    // 都要重下。实测：排除前 `161 entries / 14718 KiB`，
+                    // 排除后见 `web/scripts/check-whiteboard-plan.mjs` 的判据。
+                    //
+                    // ⚠️ 这是「懒加载」这件事**唯一**的牙：`React.lazy` 只保证**执行**推迟，
+                    // 不保证**下载**推迟 —— 下载推迟靠的是「不预缓存 + 用到才 fetch」。
+                    // 漏了这条，构建产物看起来完全正常，只是每个人多下几 MB。
+                    //
+                    // ⚠️★ 有一道**意外的**兜底值得知道：workbox 的
+                    // `maximumFileSizeToCacheInBytes` 默认是 2 MiB，**超了它会让构建直接失败**
+                    // （不是静默跳过）。2026-10-10 实测：把下面这行删掉，`npm run build` 当场报
+                    // 「assets/whiteboard-*.js is 7.63 MB, and won't be precached」并退出 1。
+                    // 所以「忘了排除」这个错**是响的** —— 但只在那一坨**大于 2 MiB** 时响；
+                    // 小于 2 MiB 的残留 chunk 仍会被静默预缓存，那部分靠
+                    // `web/scripts/check-whiteboard-plan.mjs` 的预缓存判据盯着。
+                    globIgnores: ['**/whiteboard-*.js', '**/whiteboard-*.css'],
                     cleanupOutdatedCaches: true,
                     navigateFallback: 'index.html',
-                    // ⚠️★ 这份放行表是**契约**：main.go 里每加一条服务端路由，这里漏了就出故障
+                    // ⚠️★ 这份放行表是**契约**：服务端每加一条路由，这里漏了就出故障
                     // （SW 的导航兜底把点击整个吞掉、返回预缓存里的 index.html）。
-                    // Go 侧有契约测试 TestSpaServiceWorkerCoversEveryServerRoute 盯着这份名单。
+                    //
+                    // ⚠️ 这条契约**现在没有守卫**：原来盯着它的是 Go 侧的
+                    // `TestSpaServiceWorkerCoversEveryServerRoute`，随前身实现一起没了。
+                    // `web/scripts/check-contracts.mjs` 的判据 D 只比「与 web-vue3 的条目集合一致」，
+                    // **它永远发现不了「两边都漏了一条新路由」** —— 加服务端路由时记得手改这里。
                     navigateFallbackDenylist: [
                         /^\/s\//,
                         /^\/server/,
@@ -80,10 +106,14 @@ export default defineConfig(({ command }) => {
                         /^\/push/,
                         /^\/automation/,
                         /^\/tasks/,
+                        // 文档 → Markdown（`POST /convert/{uuid}`，2026-10-10 加）。
+                        // ⚠️ 它**只在服务端带了 `doc` feature 时存在**，但放行表照加不误 ——
+                        // 这份表是「别让 SW 吞掉服务端路径」，与那条路由在不在无关。
+                        /^\/convert/,
                     ],
                     runtimeCaching: [
                         {
-                            urlPattern: /^\/(server|text|auth|upload|push|rooms|share|file|revoke|content|tasks|myip)/,
+                            urlPattern: /^\/(server|text|auth|upload|push|rooms|share|file|revoke|content|tasks|myip|convert)/,
                             handler: 'NetworkOnly',
                             method: 'GET',
                         },
@@ -110,6 +140,33 @@ export default defineConfig(({ command }) => {
                     manualChunks(id: string) {
                         if (!id.includes('node_modules')) {
                             return undefined;
+                        }
+                        // ⚠️★ 白板那一坨**必须排在最前面**，而且要**整个桶装走**（2026-10-10）。
+                        //
+                        // 为什么单独一个 chunk：白板是懒加载的，而懒加载只有在
+                        // 「它能被单独切出去」时才有意义 —— 散成一堆小 chunk 的话，
+                        // 上面 `globIgnores` 的 `whiteboard-*` 前缀就只盖住一部分，
+                        // 剩下的照样进预缓存（症状：构建完全正常，只是每个人多下几 MB）。
+                        //
+                        // ⚠️ 列的是 Excalidraw 拖进来的**全部重货**：它自己 + mermaid
+                        // （以及 mermaid 那一堆按需加载的图表类型）+ katex + cytoscape +
+                        // 手绘相关的 roughjs / perfect-freehand。少列一个，那个包就会
+                        // 以别的名字落到 `assets/` 下，绕开 `globIgnores`。
+                        // ⚠️ 加完记得看构建输出：`precache` 的 KiB 不该跟着涨。
+                        if (
+                            id.includes('/@excalidraw/') ||
+                            id.includes('/mermaid/') ||
+                            id.includes('/katex/') ||
+                            id.includes('/cytoscape/') ||
+                            id.includes('/roughjs/') ||
+                            id.includes('/perfect-freehand/') ||
+                            id.includes('/points-on-curve/') ||
+                            id.includes('/points-on-path/') ||
+                            id.includes('/path-data-parser/') ||
+                            id.includes('/image-blob-reduce/') ||
+                            id.includes('/open-color/')
+                        ) {
+                            return 'whiteboard';
                         }
                         if (id.includes('/@mui/') || id.includes('/@emotion/') || id.includes('/@mdi/') || id.includes('mdi/fonts')) {
                             return 'mui';

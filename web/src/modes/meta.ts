@@ -24,4 +24,7 @@ export const MODES_META: ModeMeta[] = [
     { key: 'bench', labelKey: 'uiModeBench', icon: 'mdi-auto-fix' },
     { key: 'sticky', labelKey: 'uiModeSticky', icon: 'mdi-pin-outline' },
     { key: 'board', labelKey: 'uiModeBoard', icon: 'mdi-view-column-outline' },
+    // ⚠️ `canvas` 排在**最后**：它是 2026-10-10 才加的第 6 个模式，加在中间会让
+    // 已经习惯前五个顺序的人每次切模式都多点一下。顺序不是「按重要性排」的。
+    { key: 'canvas', labelKey: 'uiModeCanvas', icon: 'mdi-draw' },
 ];

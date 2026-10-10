@@ -95,16 +95,23 @@ export default defineConfig(({ command }) => {
                         // 漏一个的后果非常难查：SW 的导航兜底会把点击整个吞掉、
                         // 返回预缓存里的 index.html —— 现象就是「点了定时任务，界面还是 SPA 首页」，
                         // 而且刷新一下有时又好了（SW 生效时机不同），最难查的那种。
-                        // 契约测试 TestSpaServiceWorkerCoversEveryServerRoute 盯着这份名单：
+                        // ⚠️ 契约测试 TestSpaServiceWorkerCoversEveryServerRoute 盯着这份名单：
                         // main.go 里每加一条服务端路由，这里漏了就红。
+                        // ⚠️★ **2026-10-10 起那条契约测试没有了**（前身实现停维护）。
+                        // `web/scripts/check-contracts.mjs` 的判据 D 只比「与 `web/` 的条目集合一致」，
+                        // 发现不了「两边都漏了一条新路由」。加服务端路由时手改这里。
                         /^\/automation/,
                         /^\/tasks/,
+                        // 文档 → Markdown（`POST /convert/{uuid}`，2026-10-10 加）。
+                        // ⚠️ 这份 Vue 版**不再构建**，加它纯粹是为了让判据 D
+                        // （两份 vite 配置的放行表条目集合必须一致）继续成立。
+                        /^\/convert/,
                         // ⚠️ `/myip` 已经删了（2026-09-26）—— 它唯一的消费者是聊天模式，
                         // 而那个模式退役了。这里不再需要它的放行条目。
                     ],
                     runtimeCaching: [
                         {
-                            urlPattern: /^\/(server|text|auth|upload|push|rooms|share|file|revoke|content|tasks|myip)/,
+                            urlPattern: /^\/(server|text|auth|upload|push|rooms|share|file|revoke|content|tasks|myip|convert)/,
                             handler: 'NetworkOnly',
                             method: 'GET',
                         },

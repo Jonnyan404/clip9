@@ -5,12 +5,13 @@ import GlanceWall from './GlanceWall';
 import BenchWall from './BenchWall';
 import StickyWall from './StickyWall';
 import BoardWall from './BoardWall';
+import CanvasWall from './CanvasWall';
 
 /**
  * 界面模式注册表 —— 对应 web-vue3/src/views/modes/registry.js。
  *
  * ⚠️ 元数据（key / labelKey / icon）在 `./meta.ts`：`appStore` 只用元数据，这样就不会
- *    通过 registry 把 5 个模式组件（及其对 store 的依赖）拖进一个模块循环。
+ *    通过 registry 把 6 个模式组件（及其对 store 的依赖）拖进一个模块循环。
  */
 export interface ModeDef extends ModeMeta {
     component: ComponentType;
@@ -23,6 +24,7 @@ const COMPONENTS: Record<string, ComponentType> = {
     bench: BenchWall,
     sticky: StickyWall,
     board: BoardWall,
+    canvas: CanvasWall,
 };
 
 export const MODES: ModeDef[] = MODES_META.map((meta) => ({
