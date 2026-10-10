@@ -1,16 +1,15 @@
 # clip9 前端产物的同步清单 —— 由 tools/sync-web-assets.mjs 生成，别手改。
-source 1ef6ff387da1ae6ec36ecf0de64b63e6ec7aec2a607ca499c9ab2bf92419a84c
-apple-touch-icon.png
+source 3a2f4225f1c1a7b8838c44164be26208acad0641f2d59b5fc15b61c66f888fa9
 assets/Assistant-Bold-gm-uSS1B.woff2
 assets/Assistant-Medium-DrcxCXg3.woff2
 assets/Assistant-Regular-DVxZuzxb.woff2
 assets/Assistant-SemiBold-SCI4bEL9.woff2
-assets/ExcalidrawSurface-YjCZ8N7T.js
-assets/ExcalidrawSurface-YjCZ8N7T.js.br
-assets/ExcalidrawSurface-YjCZ8N7T.js.gz
-assets/SharePage-T4aCibRr.js
-assets/SharePage-T4aCibRr.js.br
-assets/SharePage-T4aCibRr.js.gz
+assets/ExcalidrawSurface-CFU8O4kX.js
+assets/ExcalidrawSurface-CFU8O4kX.js.br
+assets/ExcalidrawSurface-CFU8O4kX.js.gz
+assets/SharePage-D3YzjgJ2.js
+assets/SharePage-D3YzjgJ2.js.br
+assets/SharePage-D3YzjgJ2.js.gz
 assets/directory-open-01563666-DWU9wJ6I.js
 assets/directory-open-01563666-DWU9wJ6I.js.br
 assets/directory-open-01563666-DWU9wJ6I.js.gz
@@ -35,9 +34,9 @@ assets/highlight-langs-DtWgi42q.js.gz
 assets/i18n-U7Fx4cCl.js
 assets/i18n-U7Fx4cCl.js.br
 assets/i18n-U7Fx4cCl.js.gz
-assets/index-4W7znCqY.js
-assets/index-4W7znCqY.js.br
-assets/index-4W7znCqY.js.gz
+assets/index-D2w2WFX9.js
+assets/index-D2w2WFX9.js.br
+assets/index-D2w2WFX9.js.gz
 assets/index-DM0Yucg3.css
 assets/index-DM0Yucg3.css.br
 assets/index-DM0Yucg3.css.gz
