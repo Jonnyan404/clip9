@@ -25,6 +25,7 @@ import { ConvertRejected, ConvertUnsupported, convertFile, fetchConvertCapabilit
 import { markdownToPlan } from '@/lib/whiteboard/markdown-plan';
 import { applyScene, planToExcalidrawElements, type CanvasImage } from '@/lib/whiteboard/excalidraw-adapter';
 import { isWhiteboardName, parseWhiteboard, serializeWhiteboard, whiteboardFileName } from '@/lib/whiteboard/document';
+import { DRAFT_MAX_BYTES, clearDraft, readDraft, writeDraft } from '@/lib/whiteboard/draft';
 import type { ExcalidrawImperativeAPI } from '@/components/whiteboard/ExcalidrawSurface';
 
 /**
@@ -112,6 +113,10 @@ export default function CanvasWall() {
     const received = useAppStore((s) => s.received);
 
     const apiRef = useRef<ExcalidrawImperativeAPI | null>(null);
+    /** 草稿写入的防抖句柄（`onChange` 一秒能来几十次，见 `onSceneChange`）。 */
+    const draftTimer = useRef<number | null>(null);
+    /** 「草稿存不下」只提示一次，别每次画布变化都弹。 */
+    const draftWarned = useRef(false);
     const fileInputRef = useRef<HTMLInputElement | null>(null);
     const [capability, setCapability] = useState<ConvertCapability | null>(null);
     const [busy, setBusy] = useState(false);
@@ -141,9 +146,18 @@ export default function CanvasWall() {
     );
     const [boardMenuAnchor, setBoardMenuAnchor] = useState<HTMLElement | null>(null);
     const dragDepth = useRef(0);
-    /** 首帧的元素。⚠️ 只在挂载时读一次 —— 之后画布自己管状态，这里不再回灌。 */
-    const initialElements = useRef<readonly never[]>([]);
-
+    /**
+     * 首帧的内容 = **本地草稿**（如果有）。
+     *
+     * ⚠️ 按房间读（`draft.ts` 的模块文档解释了为什么不能共用一个键），
+     * 而且画布上挂了 `key={room}` —— 换房间会**重新挂载**画布，
+     * 于是首帧数据跟着换。不重挂的话 `initialData` 只在第一次生效，
+     * 换了房间画布还是上一个房间的内容。
+     */
+    const draft = useMemo(() => {
+        const raw = readDraft(room);
+        return raw ? parseWhiteboard(raw) : null;
+    }, [room]);
     // 能力探测：这台部署到底带不带转换（`doc` feature）。⚠️ 判据只有服务端那一处。
     useEffect(() => {
         let alive = true;
@@ -242,7 +256,18 @@ export default function CanvasWall() {
                 }
             } catch (error) {
                 if (error instanceof ConvertUnsupported) {
-                    toast(t('canvasUnsupported'));
+                    // ⚠️★ 404 有**两种**来路，而它们的修法完全相反：
+                    //
+                    // 1. 服务端真没编 `doc`（路由没注册）；
+                    // 2. **请求没打到服务端** —— dev 下 vite 的代理漏了 `/convert` 时，
+                    //    vite 的 SPA 兜底会回一个**没有 body 的 404**。
+                    //
+                    // 只看状态码分不开（都是 404、都没 JSON），所以用**能力探测的结果**分：
+                    // 服务端刚说过它有这个能力，那 404 就只可能是第 2 种。
+                    // 2026-10-10 实测踩到：服务端 `--all-features`、`convert.enabled: true`，
+                    // 而 dev 下导入报的是「这台服务端没有编译文档转换能力」——
+                    // **把人往「重编服务端」上带，而真正缺的是 vite 配置里一行代理。**
+                    toast(capability?.enabled ? t('canvasConvertUnreachable') : t('canvasUnsupported'));
                 } else if (error instanceof ConvertRejected) {
                     // ⚠️ 直接用服务端那句中文 —— 它是唯一知道「为什么转不了」的地方。
                     toast(error.reason);
@@ -253,7 +278,7 @@ export default function CanvasWall() {
                 setBusy(false);
             }
         },
-        [busy, room, t],
+        [busy, capability, room, t],
     );
 
     const onDrop = (event: React.DragEvent) => {
@@ -266,7 +291,55 @@ export default function CanvasWall() {
 
     const clearCanvas = () => {
         apiRef.current?.updateScene({ elements: [] });
+        // ⚠️★ 草稿**必须一起清**：不清的话刷新会把用户刚删掉的东西**恢复回来**，
+        // 而那是「删了又自己回来」——比「删不掉」更让人不敢相信这个界面。
+        clearDraft(room);
     };
+
+    /**
+     * 画布变了 → 存本地草稿（**防抖**）。
+     *
+     * ⚠️★ Excalidraw 的 `onChange` 在拖动时一秒能调几十次，直接在里面序列化 + 写盘
+     * 会让拖动一顿一顿的。防抖 800 ms 之后才真写。
+     *
+     * ⚠️ 空画布**清掉**草稿而不是存一份空的 —— 存空的会让下次刷新「恢复」出一张空画布，
+     * 还把上一份真草稿覆盖掉。
+     */
+    const onSceneChange = useCallback(
+        (elements: readonly unknown[], files: Record<string, unknown>) => {
+            if (draftTimer.current !== null) {
+                window.clearTimeout(draftTimer.current);
+            }
+            draftTimer.current = window.setTimeout(() => {
+                draftTimer.current = null;
+                const live = (elements as { isDeleted?: boolean }[]).filter((el) => !el.isDeleted);
+                if (!live.length) {
+                    clearDraft(room);
+                    return;
+                }
+                const result = writeDraft(room, serializeWhiteboard(live, files));
+                // ⚠️ 存不下**只提示一次**：每次画布变化都弹一句会把界面刷屏，
+                // 而这件事的解法只有一个（去点「保存到房间」），说一遍就够。
+                if (result !== 'ok' && !draftWarned.current) {
+                    draftWarned.current = true;
+                    toast(
+                        t(result === 'too-big' ? 'canvasDraftTooBig' : 'canvasDraftUnavailable', {
+                            limit: DRAFT_MAX_BYTES / 1024 / 1024,
+                        }),
+                    );
+                }
+            }, 800);
+        },
+        [room, t],
+    );
+
+    // ⚠️ 挂载（或换房间）时如果恢复出了内容，说一句 —— 用户刚刷新完，
+    // 「东西还在」这件事必须**看得见**，否则他会以为又丢了。
+    useEffect(() => {
+        if (draft?.elements?.length) {
+            toast(t('canvasDraftRestored', { count: draft.elements.length }));
+        }
+    }, [draft, t]);
 
     /**
      * 把画布存成房间里的**一条文件条目**（方案 §2.4）。
@@ -525,14 +598,37 @@ export default function CanvasWall() {
                     }
                 >
                     <ExcalidrawSurface
+                        // ⚠️ 换房间要重挂画布（否则 `initialData` 还是上一个房间的草稿）。
+                        key={room}
                         theme={theme.palette.mode === 'dark' ? 'dark' : 'light'}
                         // ⚠️ 必须把 locale 传下去：Excalidraw 的界面（工具栏提示、右键菜单、
                         // 快捷键面板）有**完整的**中文译文，但它默认跟 `navigator.language` 走 ——
                         // 不传的话，用户把 clip9 切成中文、浏览器是英文时，白板会中英混排。
                         locale={i18n.language}
-                        elements={initialElements.current}
+                        elements={(draft?.elements ?? []) as never}
+                        files={draft?.files ?? {}}
+                        onChange={onSceneChange}
                         onReady={(instance) => {
                             apiRef.current = instance;
+                            // ⚠️★ 从草稿恢复时**必须**做一次「适应内容」：
+                            // `initialData` 里的元素是按它们**原来的坐标**画的，
+                            // 而画布刚挂载时视口在原点 —— 于是恢复出来的东西贴在左上角，
+                            // 一多半压在工具栏底下（实测过，看起来像「恢复了一半」）。
+                            //
+                            // ⚠️★ 两个坑，都实测踩过：
+                            // 1. `scrollToContent(undefined, …)` 在这里**等于没调** ——
+                            //    `onReady` 那一刻场景里还没有元素，它对一个空场景做「适应」，
+                            //    结果是 100% 缩放、视口不动。
+                            // 2. 元素**必须显式传**，而且要等一帧（`requestAnimationFrame`）：
+                            //    回调返回时 Excalidraw 才刚拿到 `initialData` 开始渲染。
+                            if (draft?.elements?.length) {
+                                const elements = draft.elements;
+                                requestAnimationFrame(() => {
+                                    apiRef.current?.scrollToContent(elements as never, {
+                                        fitToContent: true,
+                                    });
+                                });
+                            }
                         }}
                     />
                 </Suspense>

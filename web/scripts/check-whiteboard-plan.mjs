@@ -342,6 +342,37 @@ const overlaps = (a, b) => a.y < b.y + b.height && b.y < a.y + a.height;
     check('空前缀有兜底', doc.whiteboardFileName('   ', new Date(2026, 0, 1, 0, 0)).startsWith('canvas-'));
 }
 
+// ── 11. 本地草稿：键要分房间、装不下要说出来 ────────────────────────────
+//
+// ⚠️★ 这一节盯的是「刷新之后画布还在不在」。它坏了**不报错**，只是用户的画布
+// 每次刷新都消失 —— 而用户会以为「这个功能就是这样的」。
+//
+// ⚠️ `draft.ts` 是**零 import** 的，所以 node 能直接跑它（`readDraft` 那三个
+// 碰 `localStorage` 的函数在 node 里会抛，但它们自己 catch 了 —— 这也顺便验了
+// 「环境不允许时不许把白板搞崩」）。
+{
+    const draft = await import('../src/lib/whiteboard/draft.ts');
+
+    // 键必须**分房间**：共用一个键的话，切房间再刷新会把 A 房间的画布恢复进 B 房间。
+    check('不同房间的草稿键不同', draft.draftKey('a') !== draft.draftKey('b'), draft.draftKey('a'));
+    check('房间名相同则键相同（刷新才能找回同一份）', draft.draftKey('work') === draft.draftKey('work'));
+    // ⚠️ 房间还没连上时 `room` 是空串 —— 拼出 `canvasDraft:` 也算「一个键」，
+    // 但显式给 `default` 更不容易和「没写前缀」的键撞上。
+    check('房间为空时回落到 default，而不是拼出一个光秃秃的前缀', draft.draftKey('') === 'canvasDraft:default', draft.draftKey(''));
+
+    // 存不存
+    check('空内容不存（存下去会让下次刷新「恢复」出一张空画布）', draft.shouldKeepDraft('') === false);
+    check('正常内容要存', draft.shouldKeepDraft('{"type":"excalidraw"}') === true);
+    check('正好等于上限要存（边界不是越界）', draft.shouldKeepDraft('x'.repeat(draft.DRAFT_MAX_BYTES)) === true);
+    check('超上限不存', draft.shouldKeepDraft('x'.repeat(draft.DRAFT_MAX_BYTES + 1)) === false);
+
+    // 环境不允许时（node 里没有 localStorage）不许抛 —— 草稿是尽力而为的
+    check('读不到时回 null 而不是抛', draft.readDraft('x') === null);
+    check('写不了时回 unavailable 而不是抛', draft.writeDraft('x', 'hello') === 'unavailable');
+    draft.clearDraft('x');
+    check('清不掉时也不抛', true);
+}
+
 // ── 汇总 ──────────────────────────────────────────────────────────────
 
 if (problems.length) {

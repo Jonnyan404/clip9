@@ -61,22 +61,61 @@ export interface ExcalidrawSurfaceProps {
     locale: string;
     /** 首帧就放上去的元素（从房间加载回来的白板）。 */
     elements: readonly ExcalidrawElement[];
+    /**
+     * 首帧就带上的图片资源（`fileId → BinaryFileData`）。
+     *
+     * ⚠️★ 只在**首帧**有用（走 `initialData`）。画布已经挂载之后再塞图，
+     * 必须用 `api.addFiles()` —— 见 `excalidraw-adapter` 的 `applyScene`。
+     * 这里给分享页用：它一进来就知道全部内容，没有「后加」这回事。
+     */
+    files?: Record<string, unknown>;
     /** 画布就绪 —— 调用方拿这个 api 去做 `updateScene` / `getSceneElements`。 */
     onReady: (api: ExcalidrawImperativeAPI) => void;
+    /**
+     * 画布变了（元素增删改、图片加入……）。
+     *
+     * ⚠️★ **调得很频繁**（拖一个元素就是几十次），所以调用方**必须**自己防抖 ——
+     * 直接在里面做序列化 + 写盘会让拖动变得一顿一顿的。
+     * 白板模式用它来存本地草稿，见 `lib/whiteboard/draft.ts`。
+     */
+    onChange?: (elements: readonly unknown[], files: Record<string, unknown>) => void;
+    /**
+     * 只读（分享页用）。
+     *
+     * ⚠️ 只读是**两件事**，缺一不可：
+     * 1. `viewModeEnabled` 让画布不接受编辑（工具栏收起来、元素拖不动）；
+     * 2. **不暴露写接口** —— 调用方拿到 `onReady` 的 api 依然能 `updateScene`，
+     *    所以分享页那份**不该**把 api 存下来做任何写操作。
+     *    光靠 `viewModeEnabled` 挡的是「用户点出来的改动」，挡不住「我们自己的代码改」。
+     */
+    viewMode?: boolean;
 }
 
 export default function ExcalidrawSurface({
     theme,
     locale,
     elements,
+    files = {},
     onReady,
+    onChange,
+    viewMode = false,
 }: ExcalidrawSurfaceProps) {
     return (
         <Excalidraw
             theme={theme}
             langCode={excalidrawLangCode(locale) as never}
             excalidrawAPI={onReady}
-            initialData={{ elements, appState: { viewBackgroundColor: 'transparent' } }}
+            viewModeEnabled={viewMode}
+            onChange={
+                onChange
+                    ? (elements, _appState, files) => onChange(elements, files as never)
+                    : undefined
+            }
+            initialData={{
+                elements,
+                files: files as never,
+                appState: { viewBackgroundColor: 'transparent' },
+            }}
             // ⚠️ 关掉「库」面板：它列的是 Excalidraw 官方的示例素材，
             // 与 clip9 的房间/文件没有半点关系，开着只会让人以为「这里能拿到别人的东西」。
             UIOptions={{ canvasActions: { loadScene: false, saveToActiveFile: false } }}
