@@ -196,7 +196,40 @@ cd rust && cargo build --release -p clip9-server
 
 > ℹ️ 环境变量名与命令行参数名都与 Go 版**逐一对齐**，换过来通常只需要改 Docker 的 `image` 那一行。
 
-**从 Go 版迁移数据**：把旧的 `data/` 目录指给 `-config`，首次启动会自动导入历史与文件。
+---
+
+## 🔄 从 Go 版迁移
+
+**一条子命令**把 Go 的 `history.json` 与 `uploads/` 搬进数据库。**原始数据一个字节都不动**（回退的唯一依据），**重复跑不会重复导入**。
+
+```bash
+clip9-cli migrate -from /旧的数据目录 -dry-run   # 先试运行：只读、只报告
+clip9-cli migrate -from /旧的数据目录            # 确认无误再真跑
+```
+
+⚠️ **必须在服务停着的时候跑**（redb 独占锁）—— 这也正是它做成子命令、而不是「首次启动自动导入」的原因。
+
+<details>
+<summary><b>细节</b></summary>
+
+- **迁**：`history.json` 的 `receive` → 消息表、`file` → 文件登记表、`uploads/<uuid>` → 原样拷。
+  **不迁** `share-log.json`（短期）与 `tasks.json`（是配置，不是数据）。
+- **幂等**：重复跑**跳过已存在的 id**。⚠️ 重插会让房间计数 +1（`/rooms` 上直接看得出）。
+- **源不动**：工具**只读** Go 那边的目录 —— 要删请你自己确认之后再删。
+- **Docker**：数据目录与 Go 版是同一个，卷不用改；但入口脚本不接受参数，要覆盖 entrypoint：
+
+  ```bash
+  docker stop clip9
+  docker run --rm --entrypoint /app/server-node/clip9-cli \
+    -v /你的/data:/app/server-node/data ghcr.io/jonnyan404/clip9:latest \
+    migrate -from /app/server-node/data -dry-run
+  docker start clip9
+  ```
+
+- ⚠️ **`config.json` 必须是严格 JSON**（Go 那份带 `#` 注释）—— 解析失败**直接退出**。这是刻意的：
+  Go 会打一行日志、然后用默认值继续跑，那等于**一个拼错的配置让服务不带密码地起来**。
+
+</details>
 
 ---
 
@@ -205,7 +238,7 @@ cd rust && cargo build --release -p clip9-server
 - **规格**（Redoc，可切中英）：[jonnyan404.github.io/clip9/spec.html](https://jonnyan404.github.io/clip9/spec.html)
 - **英文原文**：[`docs/openapi/clip9.openapi.yaml`](./docs/openapi/clip9.openapi.yaml)（OpenAPI 3.1，32 条路径）
 - **中文规格**：[`docs/openapi/clip9.openapi.zh.yaml`](./docs/openapi/clip9.openapi.zh.yaml) —— **生成物**，
-  由 [`zh.yaml`](./docs/openapi/zh.yaml) 译文表 + 英文原文拼出；未译到的条目保留英文。
+  由 [`zh.yaml`](./docs/openapi/zh.yaml) 译文表 + 英文原文拼出（散文已全部译完）；结构由生成保证，两份不会漂。
 
 ```bash
 curl http://localhost:9501/content/latest          # 最新一条
