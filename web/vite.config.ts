@@ -207,6 +207,16 @@ export default defineConfig(({ command }) => {
                 // 不代理的话会被 vite 的 SPA 回退接住、回到首页）。
                 '/automation': { target: 'http://localhost:9501/', changeOrigin: true },
                 '/tasks': { target: 'http://localhost:9501/', changeOrigin: true },
+                '/convert': { target: 'http://localhost:9501/', changeOrigin: true },
+                // ⚠️★ 文档 → Markdown（`POST /convert/{uuid}`，2026-10-10 加）。
+                //
+                // 漏了它的症状**只在 dev 下出现**，而且**指向完全错误的方向**：
+                // 请求打到 vite 自己 → SPA 兜底回一个**没有 body 的 404** →
+                // 前端把它当成「这个服务端没编 `doc` feature」，
+                // 于是提示「换一份带它的构建」——而服务端明明编了。
+                // 2026-10-10 实测复现：服务端 `--all-features` 且 `convert.enabled: true`，
+                // dev 下导入仍然报「缺少 doc」。
+                // ⚠️ 判据：`check-contracts.mjs` 的「PWA 放行表里的每条服务端路由都要被代理」。
                 // ⚠️ `/s/` **刻意不代理**（理由见 web-vue3/vite.config.js 那段注释）。
             },
         },

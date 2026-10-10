@@ -85,6 +85,52 @@ if (!mineDenylist) {
     if (extra.length) problems.push(`PWA 放行表多出条目（web-vue3 没有）：${extra.join(', ')}`);
 }
 
+// ── D2. dev 代理：服务端路由一条都不能漏 ─────────────────────────────────
+//
+// ⚠️★ 2026-10-10 加。这一条是**真出过事**才补的，而且那个 bug 的症状特别坏：
+//
+// 加了 `POST /convert` 却忘了往 `server.proxy` 里加一条。dev 下请求打到 vite 自己，
+// 被 SPA 兜底用一个**没有 body 的 404** 接住；前端把「404 且没有 JSON」当成
+// 「这个服务端没编 `doc` feature」，于是提示「换一份带它的构建」——
+// **而服务端明明编了**（`--all-features`、`convert.enabled: true` 都验过）。
+// 一条代理配置的遗漏，把人往「重编服务端」上带。
+//
+// ⚠️ 判据的形式是**单向**的：「PWA 放行表里的每条路由，dev 代理里都要有」。
+// 为什么不要求两边相等：`/s/` 是**刻意不代理**的（它是服务端注入 OG 的外壳，
+// 走 vite 会拿到一份没注入的），而 `/stats` 只在代理里有 —— 两个方向都有正当的例外，
+// 要求相等会立刻误报。真正的不变式是**那条单向的**：
+// 「需要绕开 SPA 兜底的路由」必然也是「dev 下必须转发的路由」。
+{
+    const source = readFileSync(join(WEB, 'vite.config.ts'), 'utf8');
+    // ⚠️ 取 `proxy: {` 到它自己那行收尾 `},` 之间的一段。
+    // ⚠️ 别用「花括号配平」去抠：这段里嵌着每个代理项自己的 `{ … }`，
+    // 而且注释里还有反引号与斜杠 —— 配平写不对时会**静默**把范围截短，
+    // 于是判据看到一份空名单、把每条路由都报成「没代理」（第一版就是这样）。
+    const proxyStart = source.indexOf('proxy: {');
+    const proxyEnd = source.indexOf('\n            },', proxyStart);
+    const proxyBlock = proxyStart >= 0 && proxyEnd > proxyStart ? source.slice(proxyStart, proxyEnd) : null;
+    // ⚠️ 键的形状是 `'/server': {` —— **有**前导斜杠、**没有**尾斜杠。
+    // 两个方向都踩过：按 `'/server/'` 匹配会一条都找不到，
+    // 而按 `'server'` 匹配同样一条都找不到（真踩了，两版都报「全部没代理」）。
+    const proxyNames = new Set(
+        proxyBlock ? [...proxyBlock.matchAll(/'\/?([a-z-]+)':\s*\{/g)].map((m) => m[1]) : [],
+    );
+
+    if (!proxyBlock) {
+        problems.push('vite.config.ts 里找不到 server.proxy');
+    } else if (mineDenylist) {
+        // ⚠️ 去重：放行表里 `/^\/push/` 出现了两次（历史原因），
+        // 不去重的话报错信息里同一条会重复两遍。
+        const mustProxy = [...new Set(mineDenylist)].filter((entry) => entry !== 's');
+        const notProxied = mustProxy.filter((entry) => !proxyNames.has(entry));
+        if (notProxied.length) {
+            problems.push(
+                `这些服务端路由没有配 dev 代理（dev 下会被 SPA 兜底接住）：${notProxied.join(', ')}`,
+            );
+        }
+    }
+}
+
 // ── E. i18n 卫生：4 个 locale 键集合一致 + 没有未被引用的死键 ──────────────
 // ⚠️ 死键是「删了功能但没删文案」的残留 —— 它不会报错，只会让下一个人以为那个功能还在。
 //    2026-10-04 清掉了 59 个（含四个已删除模式的整套文案）。
@@ -149,4 +195,4 @@ if (problems.length) {
     for (const line of problems) console.error(`    ${line}`);
     process.exit(1);
 }
-console.log('✓ 契约守卫通过：零依赖共享模块字节一致 · 外壳形状完整 · PWA 放行表一致 · i18n 无死键 · 已删模式未复活');
+console.log('✓ 契约守卫通过：零依赖共享模块字节一致 · 外壳形状完整 · PWA 放行表一致 · dev 代理覆盖了每条服务端路由 · i18n 无死键 · 已删模式未复活');
