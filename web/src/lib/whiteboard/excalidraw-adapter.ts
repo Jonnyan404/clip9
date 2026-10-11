@@ -94,23 +94,45 @@ export function planToExcalidrawElements(
     const skeletons: ExcalidrawElementSkeleton[] = [];
     const files: BinaryFileData[] = [];
 
+    /**
+     * ⚠️★ 每个块要有**自己给的、这一次导入唯一的 id**，连线才能**绑**上去。
+     *
+     * 2026-10-11 实测发现：原来连线是「两条独立坐标」画出来的，**没有绑定** ——
+     * 于是在画布上**拖动一个节点，连线会留在原地**（节点 0,74 → 33,229，箭头坐标一字未变），
+     * 思维导图一挪就散。修法是给矩形显式 id、给箭头 `start`/`end` 指过去。
+     *
+     * ⚠️ 前缀随机是**必须**的：既然 id 由我们给，就不能再靠 `regenerateIds` 去重
+     * （它会重排 id，而重排后 `start.id` 指向的就不存在了）。两次导入撞 id 的症状是
+     * 「导了两次，画布上只剩一份」—— Excalidraw 对重复 id 是后者覆盖前者。
+     */
+    const idPrefix = `c9-${Math.random().toString(36).slice(2, 10)}`;
+    const elementIdOf = new Map<PlanNode, string>();
+    plan.nodes.forEach((node, index) => elementIdOf.set(node, `${idPrefix}-n${index}`));
+
     // ── 连线先算，但**排在块的后面 push** —— 见上面那条 z 序说明。 ──
-    const edges: ExcalidrawElementSkeleton[] = plan.edges.map(({ from, to }) => ({
-        type: 'arrow',
-        x: from.x + from.width,
-        y: from.y + from.height / 2,
-        points: [
-            [0, 0],
-            [to.x - (from.x + from.width), to.y + to.height / 2 - (from.y + from.height / 2)],
-        ],
-        strokeColor: EDGE_STROKE,
-        strokeWidth: 1,
-        // ⚠️ `endArrowhead` 显式给：不给的话某些版本画出来是光秃秃一条线，
-        // 而「这是父子关系」正是靠箭头读出来的。
-        endArrowhead: 'arrow',
-        // 连线不参与「选中后拖动」的成组语义。
-        groupIds: [],
-    }));
+    const edges: ExcalidrawElementSkeleton[] = plan.edges
+        .filter(({ from, to }) => elementIdOf.has(from) && elementIdOf.has(to))
+        .map(({ from, to }) => ({
+            type: 'arrow',
+            x: from.x + from.width,
+            y: from.y + from.height / 2,
+            points: [
+                [0, 0],
+                [to.x - (from.x + from.width), to.y + to.height / 2 - (from.y + from.height / 2)],
+            ],
+            strokeColor: EDGE_STROKE,
+            strokeWidth: 1,
+            // ⚠️ `endArrowhead` 显式给：不给的话某些版本画出来是光秃秃一条线，
+            // 而「这是父子关系」正是靠箭头读出来的。
+            endArrowhead: 'arrow',
+            // 连线不参与「选中后拖动」的成组语义。
+            groupIds: [],
+            // ⚠️★ 绑定：拖动两端任意一个节点，箭头跟着走。
+            // 这也是**反向导出**（画布 → Markdown）能还原层级的依据 —— 靠坐标去猜
+            // 在用户挪过之后就不准了，而绑定是稳的。
+            start: { type: 'rectangle' as const, id: elementIdOf.get(from)! },
+            end: { type: 'rectangle' as const, id: elementIdOf.get(to)! },
+        }));
 
     for (const node of plan.nodes) {
         const palette = PALETTE[node.kind];
@@ -120,6 +142,7 @@ export function planToExcalidrawElements(
 
         skeletons.push({
             type: 'rectangle',
+            id: elementIdOf.get(node)!,
             x: node.x,
             y: node.y,
             width: node.width,
@@ -156,11 +179,11 @@ export function planToExcalidrawElements(
         skeletons.push(...imageSkeletons(plan, images, options.imageGroupLabel ?? '', files));
     }
 
-    // ⚠️ `regenerateIds: true`：同一次导入里每个块都要有新 id。
-    // 不给的话两次导入会产生**撞 id** 的元素，而 Excalidraw 对重复 id 的处理是
-    // 「后面那个覆盖前面那个」—— 症状是「导了两次，画布上只剩一份」。
+    // ⚠️★ `regenerateIds: false` —— 因为 id 由**我们**给（见上面 `idPrefix` 那段）。
+    // 开着它 Excalidraw 会重排 id，而 `start.id` / `end.id` 指的仍是旧 id →
+    // **绑定全部失效**（症状与没绑定一样：拖动节点连线不跟），而且**不报错**。
     return {
-        elements: convertToExcalidrawElements([...skeletons, ...edges], { regenerateIds: true }),
+        elements: convertToExcalidrawElements([...skeletons, ...edges], { regenerateIds: false }),
         files,
     };
 }
