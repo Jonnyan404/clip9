@@ -32,7 +32,7 @@ import {
   writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { dirname, join, resolve } from 'node:path';
+import { basename, dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -58,7 +58,22 @@ const FE = join(ROOT, 'web');
 // `--check` 会报「前端源码变过了而这份没同步」，而源码一个字都没动，纯属白跑一趟。
 // 2026-10-07 实测：不含它 = `f5032bc8c05b`（正是清单里记的），含它 = `273b8e89976a`。
 const SOURCES = [
-  { label: 'web', dir: FE, skip: ['node_modules', 'dist', '.vite', 'public/shortcuts', 'config.json'] },
+  {
+    label: 'web',
+    dir: FE,
+    skip: ['node_modules', 'dist', '.vite', 'public/shortcuts', 'config.json'],
+    // ⚠️★ 顶层以这些前缀开头的**目录**也跳过（2026-10-11 加）。
+    //
+    // 来由：本机的安全删除钩子会拦住 `vite` 的 `emptyDir`（一次删 76 个文件 > 阈值），
+    // 于是「构建前先把旧 `dist` 改名让开」成了标准做法，留下 `dist.stale-<ts>/`。
+    // 而跳过列表当时只认**恰好叫** `dist` 的那一个 —— `dist.stale-…` 不算，
+    // 它里面的 76 个产物文件就**被当成源码算进了指纹**。
+    //
+    // 症状极其误导：把那个目录挪走（或建出来）都会让指纹变，
+    // `--check` 于是报「dist 是**旧的**：… 重新构建」—— 而**源码一个字都没动**。
+    // 实测踩到：指纹 d3dd4f1b0b53 → dfa74176284c，纯粹是因为我把 `dist.stale-…` 挪进了废纸篓。
+    skipPrefixes: ['dist'],
+  },
   { label: 'shortcuts', dir: join(ROOT, 'shortcuts'), skip: [] },
 ];
 
@@ -66,9 +81,19 @@ const args = process.argv.slice(2);
 const checkOnly = args.includes('--check');
 const source = resolve(args.find((arg) => !arg.startsWith('--')) ?? join(FE, 'dist'));
 
+/**
+ * 永远不参与比对、**也永远不进产物**的文件名。
+ *
+ * ⚠️★ `build-source.json` 是构建盖的章（见 [`BUILD_STAMP`]），它住在 `dist/` 里。
+ * 不排除的话它会被一起拷进 `static/` —— 那是一份**对外的静态目录**，
+ * 于是这个文件的指纹会变成公开可访问的（顺带让每次构建多一个「新增文件」的噪音）。
+ */
+const NEVER_SHIPPED = new Set(['build-source.json']);
+
 /** 目录下的所有文件（相对路径，`/` 分隔）。
- *  ⚠️ 跳过 `.DS_Store`（macOS 的资源分支，编进二进制只会让比对变吵）与 `skip` 里的路径前缀。 */
-function files(dir, skip = []) {
+ *  ⚠️ 跳过 `.DS_Store`（macOS 的资源分支，编进二进制只会让比对变吵）与 `skip` 里的路径前缀。
+ *  ⚠️ `skipPrefixes` 只作用于**顶层目录名**（见 `SOURCES` 里那段来由）。 */
+function files(dir, skip = [], skipPrefixes = []) {
   const out = [];
   const stack = ['.'];
   while (stack.length) {
@@ -76,6 +101,8 @@ function files(dir, skip = []) {
     for (const entry of readdirSync(join(dir, current), { withFileTypes: true })) {
       const rel = current === '.' ? entry.name : `${current}/${entry.name}`;
       if (entry.name === '.DS_Store') continue;
+      if (NEVER_SHIPPED.has(entry.name)) continue;
+      if (current === '.' && skipPrefixes.some((prefix) => entry.name.startsWith(prefix))) continue;
       if (skip.some((p) => rel === p || rel.startsWith(`${p}/`))) continue;
       if (entry.isDirectory()) stack.push(rel);
       else out.push(rel);
@@ -87,9 +114,9 @@ function files(dir, skip = []) {
 /** 前端**源码**的指纹（不含任何产物 —— 产物每次构建都不同，见文件头）。 */
 function sourceFingerprint() {
   const hash = createHash('sha256');
-  for (const { label, dir, skip } of SOURCES) {
+  for (const { label, dir, skip, skipPrefixes } of SOURCES) {
     if (!existsSync(dir)) continue;
-    for (const rel of files(dir, skip)) {
+    for (const rel of files(dir, skip, skipPrefixes)) {
       hash.update(`${label}/${rel}\0`);
       hash.update(readFileSync(join(dir, rel)));
       hash.update('\0');
@@ -105,6 +132,61 @@ function missing(message) {
 
 const short = (hex) => String(hex).slice(0, 12);
 
+/**
+ * 构建时盖在产物上的「我是用哪一份源码构建出来的」标记。
+ *
+ * ⚠️★ 2026-10-11 加。**它堵的是一个真发生过的洞**：
+ *
+ * 清单里记的 `source` 是**同步那一刻**的源码指纹，不是**构建那一刻**的。
+ * 于是「源码改了 → 构建因为任何原因没产出新 `dist` → 同步」这条路上，
+ * 清单会拿到**新的**指纹，`--check` 一路绿 —— 而 `static/` 里装的是**旧产物**。
+ *
+ * 2026-10-11 真踩了：`npm run build` 被本机的安全删除钩子从 `emptyDir` 处打断
+ * （`exit=1`，但前面 tsc / vite 都正常输出，很容易当成「无关紧要的钩子报错」），
+ * `dist` 保持旧的那一份，同步照做，指纹照绿。是**靠比对文件时间戳**才发现的。
+ *
+ * 修法：构建结束时由 [`--stamp`] 把「输入指纹」写进 `dist`，
+ * 同步与 `--check` 都**先核对它** —— 产物陈旧就当场拦住，而不是等谁去看时间戳。
+ */
+const BUILD_STAMP = join(FE, 'dist', 'build-source.json');
+
+/** 读构建盖的章。没盖过 / 读坏了都回 `null`（都按「不是一次成功构建的产物」处理）。 */
+function readBuildStamp() {
+  if (!existsSync(BUILD_STAMP)) return null;
+  try {
+    const parsed = JSON.parse(readFileSync(BUILD_STAMP, 'utf8'));
+    return typeof parsed?.source === 'string' ? parsed.source : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * 断言「这份产物**就是**当前源码构建出来的」。
+ *
+ * ⚠️ 两种失败要分开说：**没盖过章**（不是一次成功构建留下的）与
+ * **章对不上**（构建过，但之后源码又改了）。前者的修法是「去构建」，
+ * 后者是「重新构建」—— 混成一句话会让人白跑一趟。
+ */
+function assertFreshBuild() {
+  const now = sourceFingerprint();
+  const stamp = readBuildStamp();
+  if (stamp === null) {
+    missing(
+      `${BUILD_STAMP} 不在 —— 这一份 dist 不是一次成功的构建留下的。\n` +
+        '    在 web 里构建：npm run build'
+    );
+  }
+  if (stamp !== now) {
+    missing(
+      `dist 是**旧的**：它构建于指纹 ${short(stamp)}，而现在的源码是 ${short(now)}。\n` +
+        '    ⚠️ 这一条以前查不出来 —— 清单记的是「同步那一刻」的指纹，\n' +
+        '    所以「构建没产出新产物」时照样绿，而 static/ 里装的是旧东西。\n' +
+        '    重新构建：cd web && npm run build'
+    );
+  }
+}
+
 function readManifest() {
   if (!existsSync(MANIFEST)) return null;
   const body = readFileSync(MANIFEST, 'utf8')
@@ -115,12 +197,30 @@ function readManifest() {
   return { source: body[0].slice('source '.length).trim(), files: body.slice(1) };
 }
 
+// ─────────────────────────── 盖章（构建结束时） ───────────────────────────
+
+if (args.includes('--stamp')) {
+  // ⚠️ 由 `web/after-build.mjs` 在一次**成功的**构建之后调用（见那里的注释）。
+  // ⚠️ 用 `writeFileSync` 而不是 mkdir 一套：`dist` 那时必然在（构建刚跑完）。
+  const stamp = sourceFingerprint();
+  writeFileSync(
+    BUILD_STAMP,
+    `${JSON.stringify({ source: stamp, builtAt: new Date().toISOString() }, null, 2)}\n`
+  );
+  console.log(`  stamp  构建输入指纹 ${short(stamp)} → web/dist/build-source.json`);
+  process.exit(0);
+}
+
 // ─────────────────────────── 只比对 ───────────────────────────
 
 if (checkOnly) {
   if (!existsSync(DEST)) {
     missing(`${DEST} 不存在 —— 跑一次 node tools/sync-web-assets.mjs`);
   }
+  // ⚠️★ 先核对「产物是不是这一份源码构建出来的」，再比清单。
+  // 顺序有讲究：产物陈旧时，下面那几条清单比对**全都是绿的**
+  // （清单本身就是照着当前源码写的），所以必须**先**拦这一条。
+  assertFreshBuild();
   const manifest = readManifest();
   if (!manifest) {
     missing(
@@ -159,6 +259,14 @@ if (!existsSync(join(source, 'index.html'))) {
   );
 }
 
+// ⚠️★ 同步**之前**也要核对（不只是 `--check`）：这里才是真正会把旧产物拷进去的地方。
+// ⚠️ 只对默认来源（`web/dist`）核对：`source` 可以被命令行指定成别的目录
+// （`web-vue3` 那条路会传自己的 dist），那种情况下 `web/dist/build-source.json`
+// 根本不是它的章 —— 拿它来判会误报。
+if (source === resolve(join(FE, 'dist'))) {
+  assertFreshBuild();
+}
+
 const wanted = files(source);
 const fingerprint = sourceFingerprint();
 
@@ -182,7 +290,14 @@ if (existsSync(DEST)) {
   renameSync(DEST, aside);
   console.log(`· 旧的那一份挪到 ${aside}`);
 }
-cpSync(source, DEST, { recursive: true });
+// ⚠️★ `filter` 是**必须**的，不能只靠 `files()` 里的 `NEVER_SHIPPED`：
+// `files()` 只影响**清单**（哪些文件记进 manifest、参与比对），
+// 而 `cpSync` 是**整个目录照搬** —— 章会照样被拷进对外的 `static/`。
+// 2026-10-11 实测踩到：清单里没有它、但 `static/build-source.json` 真的存在。
+cpSync(source, DEST, {
+  recursive: true,
+  filter: (src) => !NEVER_SHIPPED.has(basename(src)),
+});
 
 const after = files(DEST);
 writeFileSync(MANIFEST, `${MANIFEST_HEADER}\nsource ${fingerprint}\n${after.join('\n')}\n`);

@@ -35,6 +35,19 @@ function compress(dir) {
 compress(distDir);
 console.log('after-build: gz/br generated in dist/.');
 
+// ⚠️★ 盖「构建输入指纹」的章 —— 必须在**所有产物都写完**之后、在同步之前。
+//
+// 它堵的是一个真发生过的洞：`sync-web-assets.mjs` 的清单记的是**同步那一刻**的源码指纹，
+// 所以「源码改了、构建没产出新 dist、同步照做」这条路上，清单拿到的是新指纹、
+// `--check` 一路绿，而 `static/` 里装的是**旧产物**。
+// 2026-10-11 真踩了（构建被本机安全删除钩子从 `emptyDir` 打断，`exit=1` 被当成无关紧要）。
+//
+// ⚠️ 放在 `compress()` 之后：`.gz`/`.br` 也算产物，章要盖在「全都写完」这个时刻。
+// ⚠️ 同步**之前**：`sync-web-assets.mjs` 会核对这个章，盖晚了它就没得核。
+execFileSync(process.execPath, [join(here, '..', 'tools', 'sync-web-assets.mjs'), '--stamp'], {
+    stdio: 'inherit',
+});
+
 if (process.env.DEPLOY_STATIC === '1') {
     execFileSync(process.execPath, [join(here, '..', 'tools', 'sync-web-assets.mjs')], {
         stdio: 'inherit',
