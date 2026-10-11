@@ -89,6 +89,30 @@ async function decodeImageSize(dataUrl: string): Promise<{ width: number; height
 /** Excalidraw 单独一个 chunk —— 见 `ExcalidrawSurface` 的模块文档。 */
 const ExcalidrawSurface = lazy(() => import('@/components/whiteboard/ExcalidrawSurface'));
 
+/**
+ * 窄屏（手机）上按钮**只留图标**。
+ *
+ * ⚠️★ 这 5 个按钮带文字时在手机上会**换行成两行**，吃掉约 100px —— 而 iPhone 13
+ * 的视口一共才 664px，也就是**约 15% 的屏幕**给了一排按钮（2026-10-11 实测）。
+ * 图标本身认得出来（导入 / 适应 / 清空 / 保存 / 打开），所以窄屏去掉文字、宽屏照旧。
+ *
+ * ⚠️ 去掉文字**必须**补 `aria-label`（下面每个按钮都给了）—— 否则读屏软件只会念出
+ * 一个没有名字的按钮。
+ */
+const BUTTON_LABEL_SX = { display: { xs: 'none', sm: 'inline' } } as const;
+
+/**
+ * 只有触屏、没有鼠标的设备。
+ *
+ * ⚠️ 用它来决定**文案**，不用它来决定**功能** —— 带触摸屏的笔记本
+ * （`pointer: coarse` 为假但能触屏）两者都有，按「有没有鼠标」分功能会分错。
+ * ⚠️ 与 `StickyComposer` 用的是同一条判据，改的时候一起改。
+ */
+const isTouchOnly =
+    typeof window !== 'undefined' && typeof window.matchMedia === 'function'
+        ? window.matchMedia('(pointer: coarse)').matches
+        : false;
+
 /** 一份文档最多铺多少个块 —— 超了先拦住，而不是让画布卡死。 */
 const MAX_BLOCKS = 400;
 
@@ -479,16 +503,18 @@ export default function CanvasWall() {
                     disabled={!supported || busy}
                     startIcon={<MdiIcon name="mdi-file-import-outline" />}
                     onClick={() => fileInputRef.current?.click()}
+                    aria-label={t('canvasImportDoc')}
                 >
-                    {t('canvasImportDoc')}
+                    <Box component="span" sx={BUTTON_LABEL_SX}>{t('canvasImportDoc')}</Box>
                 </Button>
                 <Button
                     size="small"
                     variant="text"
                     startIcon={<MdiIcon name="mdi-fit-to-page-outline" />}
                     onClick={() => apiRef.current?.scrollToContent(undefined, { fitToContent: true })}
+                    aria-label={t('canvasFit')}
                 >
-                    {t('canvasFit')}
+                    <Box component="span" sx={BUTTON_LABEL_SX}>{t('canvasFit')}</Box>
                 </Button>
                 <Button
                     size="small"
@@ -496,8 +522,9 @@ export default function CanvasWall() {
                     color="warning"
                     startIcon={<MdiIcon name="mdi-eraser" />}
                     onClick={clearCanvas}
+                    aria-label={t('canvasClear')}
                 >
-                    {t('canvasClear')}
+                    <Box component="span" sx={BUTTON_LABEL_SX}>{t('canvasClear')}</Box>
                 </Button>
                 <Button
                     size="small"
@@ -505,8 +532,9 @@ export default function CanvasWall() {
                     disabled={busy}
                     startIcon={<MdiIcon name="mdi-content-save-outline" />}
                     onClick={() => void saveToRoom()}
+                    aria-label={t('canvasSave')}
                 >
-                    {t('canvasSave')}
+                    <Box component="span" sx={BUTTON_LABEL_SX}>{t('canvasSave')}</Box>
                 </Button>
                 <Button
                     size="small"
@@ -515,8 +543,9 @@ export default function CanvasWall() {
                     // 禁用的按钮不解释自己为什么是灰的，用户只会以为功能坏了。
                     startIcon={<MdiIcon name="mdi-folder-open-outline" />}
                     onClick={(event) => setBoardMenuAnchor(event.currentTarget)}
+                    aria-label={t('canvasOpen')}
                 >
-                    {t('canvasOpen')}
+                    <Box component="span" sx={BUTTON_LABEL_SX}>{t('canvasOpen')}</Box>
                 </Button>
                 {busy && (
                     <Stack direction="row" spacing={1} alignItems="center">
@@ -526,7 +555,7 @@ export default function CanvasWall() {
                 )}
                 {!busy && supported && (
                     <Typography variant="caption" color="text.secondary">
-                        {t('canvasDropHint')}
+                        {t(isTouchOnly ? 'canvasDropHintTouch' : 'canvasDropHint')}
                     </Typography>
                 )}
                 {/*

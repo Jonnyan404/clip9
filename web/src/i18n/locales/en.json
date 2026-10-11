@@ -429,5 +429,6 @@
   "glanceSearchPlaceholder": "Search {count} clipboard items",
   "glanceChars": "{count} chars",
   "glanceFrom": "from {source}",
-  "glanceNothingSelected": "Pick an item on the left to see it here"
+  "glanceNothingSelected": "Pick an item on the left to see it here",
+  "canvasDropHintTouch": "Tap \"Import\" to pick a document"
 }

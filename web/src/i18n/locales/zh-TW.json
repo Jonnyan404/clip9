@@ -429,5 +429,6 @@
   "glanceSearchPlaceholder": "檢索 {count} 則剪貼簿歷史",
   "glanceChars": "{count} 字元",
   "glanceFrom": "來自 {source}",
-  "glanceNothingSelected": "選取左邊一則，這裡顯示完整內容"
+  "glanceNothingSelected": "選取左邊一則，這裡顯示完整內容",
+  "canvasDropHintTouch": "點「匯入文件」選一份文件"
 }

@@ -429,5 +429,6 @@
   "glanceSearchPlaceholder": "检索 {count} 条剪贴板历史",
   "glanceChars": "{count} 字符",
   "glanceFrom": "来自 {source}",
-  "glanceNothingSelected": "选中左边一条，这里显示完整内容"
+  "glanceNothingSelected": "选中左边一条，这里显示完整内容",
+  "canvasDropHintTouch": "点「导入文档」选一份文档"
 }

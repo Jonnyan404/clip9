@@ -429,5 +429,6 @@
   "glanceSearchPlaceholder": "{count} 件のクリップボード履歴を検索",
   "glanceChars": "{count} 文字",
   "glanceFrom": "{source} から",
-  "glanceNothingSelected": "左の項目を選ぶとここに表示されます"
+  "glanceNothingSelected": "左の項目を選ぶとここに表示されます",
+  "canvasDropHintTouch": "「読み込み」をタップしてドキュメントを選択"
 }
