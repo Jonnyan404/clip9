@@ -1,5 +1,5 @@
 # clip9 前端产物的同步清单 —— 由 tools/sync-web-assets.mjs 生成，别手改。
-source d94d241d1292a15f51bc011f5c50dc39ef80a6beb48c24ff20445d7b51510a26
+source 84ab9542ca5ac0a1cbf3c3b55f2679730f4f44eeb44f21c365c00ebe5246cf57
 apple-touch-icon.png
 assets/Assistant-Bold-gm-uSS1B.woff2
 assets/Assistant-Medium-DrcxCXg3.woff2
@@ -8,9 +8,9 @@ assets/Assistant-SemiBold-SCI4bEL9.woff2
 assets/ExcalidrawSurface-DD1EJBGp.js
 assets/ExcalidrawSurface-DD1EJBGp.js.br
 assets/ExcalidrawSurface-DD1EJBGp.js.gz
-assets/SharePage-DcwVC8o0.js
-assets/SharePage-DcwVC8o0.js.br
-assets/SharePage-DcwVC8o0.js.gz
+assets/SharePage-BYPqd1LY.js
+assets/SharePage-BYPqd1LY.js.br
+assets/SharePage-BYPqd1LY.js.gz
 assets/directory-open-01563666-DWU9wJ6I.js
 assets/directory-open-01563666-DWU9wJ6I.js.br
 assets/directory-open-01563666-DWU9wJ6I.js.gz
@@ -38,9 +38,9 @@ assets/i18n-U7Fx4cCl.js.gz
 assets/index-DM0Yucg3.css
 assets/index-DM0Yucg3.css.br
 assets/index-DM0Yucg3.css.gz
-assets/index-DzHXj4tP.js
-assets/index-DzHXj4tP.js.br
-assets/index-DzHXj4tP.js.gz
+assets/index-DjwYabb1.js
+assets/index-DjwYabb1.js.br
+assets/index-DjwYabb1.js.gz
 assets/materialdesignicons-webfont-B7mPwVP_.ttf
 assets/materialdesignicons-webfont-CSr8KVlo.eot
 assets/materialdesignicons-webfont-Dp5v-WZN.woff2
