@@ -388,11 +388,17 @@ fn convert_capability() -> serde_json::Value {
 
 /// 没带 `doc` feature 的部署。
 ///
-/// ⚠️ 仍然回**完整的形状**（`enabled` + `extensions`），而不是一个光秃秃的 `false` ——
+/// ⚠️ 仍然回**完整的形状**（`enabled` + `extensions` + `reason`），而不是一个光秃秃的 `false` ——
 /// 前端只写一条读法，不用为「两种形状」各写一遍。
+///
+/// ⚠️★ `reason` 是 2026-10-12 加的，为的是**别让前端猜原因**：
+/// 「这个部署不支持」和「这个构建没编 `doc`」的**修法完全不同**
+/// （前者去用别的后端，后者去重新构建），而前端只看 `enabled: false` 是分不出来的。
+/// 加之前前端一律说「构建时缺 `doc`」—— **在 Cloudflare Worker 上那是错的**，
+/// 那边压根没有文档解析器，谈不上「没编 doc」（用户会去翻构建配置，白费功夫）。
 #[cfg(not(feature = "doc"))]
 fn convert_capability() -> serde_json::Value {
-    json!({ "enabled": false, "extensions": [] })
+    json!({ "enabled": false, "extensions": [], "reason": "not_built" })
 }
 
 // ── 方法不对时的统一响应 ──────────────────────────────────────────────

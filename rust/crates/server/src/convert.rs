@@ -70,6 +70,9 @@ pub fn capability() -> serde_json::Value {
     json!({
         "enabled": true,
         "extensions": clip9_actions::doc::SUPPORTED_EXTENSIONS,
+        // ⚠️ 开着的时候 `reason` 是 `null`。**形状保持一致**（见 `handlers.rs` 那条注释）：
+        // 前端只写一条读法，不用为「有 reason / 没 reason」各写一遍。
+        "reason": serde_json::Value::Null,
     })
 }
 
