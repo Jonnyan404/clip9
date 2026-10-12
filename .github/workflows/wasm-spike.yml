@@ -115,7 +115,16 @@ jobs:
           # 报 `invalid type: map, expected a sequence`（第一次就是这么挂的）。
           sed -i 's|^\[dev-dependencies\]|getrandom = { version = "0.3", features = ["wasm_js"] }\n\n[dev-dependencies]|' crates/actions/Cargo.toml
           grep -n "getrandom" crates/actions/Cargo.toml
-          RUSTFLAGS='-C opt-level=z -C lto=fat -C strip=symbols --cfg getrandom_backend="wasm_js"' \
+          # ⚠️★ LTO / opt-level / strip **必须走 profile 级的环境变量**，
+          # 不能塞进 `RUSTFLAGS` —— 后者作用到**每一个** crate，
+          # 而 rlib 不能跑 LTO，会报
+          # `error: lto can only be run for executables, cdylibs and static library outputs`
+          # （第三轮就是这么挂的）。profile 级只作用于最终产物，正是我们要的。
+          export CARGO_PROFILE_RELEASE_OPT_LEVEL=z
+          export CARGO_PROFILE_RELEASE_LTO=fat
+          export CARGO_PROFILE_RELEASE_STRIP=symbols
+          # 只有这个 cfg 属于 RUSTFLAGS（它是编译期开关，不是 profile 选项）。
+          RUSTFLAGS='--cfg getrandom_backend="wasm_js"' \
             cargo rustc --release --target wasm32-unknown-unknown -p clip9-actions --features doc \
             --example wasm_size_probe -- --crate-type cdylib
           echo "=== 产出的 .wasm ==="
