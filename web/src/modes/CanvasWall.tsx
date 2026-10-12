@@ -278,6 +278,12 @@ export default function CanvasWall() {
                     );
                 } else {
                     toast(t('canvasImported', { name: converted.name, count: plan.nodes.length }));
+                    // ⚠️★ 多栏 PDF 的文字是**左右交错**的，而铺成树之后**更像正常文档**了 ——
+                    // 必须单独说一句，否则用户以为导对了。见 `services/convert.ts` 的 `PdfLayout`。
+                    const columns = converted.pdf?.multiColumnPages.length ?? 0;
+                    if (columns > 0) {
+                        toast(t('pdfMultiColumn', { count: columns }));
+                    }
                 }
             } catch (error) {
                 if (error instanceof ConvertUnsupported) {

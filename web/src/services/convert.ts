@@ -50,6 +50,26 @@ export interface ConvertResult {
     chars: number;
     /** 内嵌图片。见 [`DocumentImages`] 关于 `null` 的说明。 */
     images: DocumentImages | null;
+    /** PDF 的版面分析。⚠️ `null` = **不是 PDF**（不是「没有多栏」）。 */
+    pdf: PdfLayout | null;
+}
+
+/**
+ * PDF 的版面分析。
+ *
+ * ⚠️★ 它存在的唯一理由是**把静默错误变成显式警告**：
+ * PDF 是打印格式、只有绝对坐标、没有「栏」的概念，所以一份**双栏**排版
+ * （现在的中文简历大半是这样）抽出来是**左右交错**的 ——
+ * 句子被拦腰截断后交叉在一起，而**输出看起来像正常文字**。
+ * 2026-10-12 实测：一份双栏简历转出来 `## 工作经历` 跑到了最前面。
+ *
+ * ⚠️ 上游**可能漏报**（实测：间距较大的双栏没被认出来）——
+ * 所以界面上的文案**不许**承诺「没警告就一定没错行」。
+ */
+export interface PdfLayout {
+    pageCount: number;
+    /** **多栏排版的页**（1 起）。空数组 = 没检测到多栏。 */
+    multiColumnPages: number[];
 }
 
 /**
@@ -122,6 +142,15 @@ export async function convertFile(params: {
             chars: typeof data.chars === 'number' ? data.chars : data.markdown.length,
             // ⚠️ `null` 原样带出去，**不**兜成 `{total:0,...}` —— 那会把
             // 「读不出来」伪装成「没有图」，见 `DocumentImages` 的注释。
+            pdf:
+                data.pdf && typeof data.pdf === 'object'
+                    ? {
+                          pageCount: Number(data.pdf.pageCount ?? 0),
+                          multiColumnPages: Array.isArray(data.pdf.multiColumnPages)
+                              ? data.pdf.multiColumnPages.map(Number)
+                              : [],
+                      }
+                    : null,
             images:
                 data.images && typeof data.images === 'object'
                     ? {

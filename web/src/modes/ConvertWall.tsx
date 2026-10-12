@@ -53,7 +53,7 @@ import {
 /** 一次转换的状态机。⚠️ `failed` 要带**原因**，不能只有一个红点。 */
 type ItemState =
     | { phase: 'converting' }
-    | { phase: 'done'; markdown: string; chars: number; images: number | null; imagesTruncated: boolean }
+    | { phase: 'done'; markdown: string; chars: number; images: number | null; imagesTruncated: boolean; multiColumnPages: number[] }
     | { phase: 'failed'; reason: string };
 
 interface ConvertItem {
@@ -131,6 +131,8 @@ export default function ConvertWall() {
                         // 见 `services/convert.ts` 的 `DocumentImages`。界面必须分开说。
                         images: converted.images ? converted.images.items.length : null,
                         imagesTruncated: converted.images?.truncated === true,
+                        // ⚠️ 非 PDF 时 `pdf` 是 `null` → 空数组（**不是**「没有多栏」的结论）。
+                        multiColumnPages: converted.pdf?.multiColumnPages ?? [],
                     });
                 } catch (error) {
                     settle({ phase: 'failed', reason: reasonOf(error, t) });
@@ -321,6 +323,14 @@ function ItemCard({
             {item.state.phase === 'failed' && (
                 <Alert severity="warning" sx={{ borderRadius: 0 }}>
                     {item.state.reason}
+                </Alert>
+            )}
+
+            {/* ⚠️★ 这条警告是这次改动的**重点**：双栏 PDF 抽出来的文字是**左右交错**的，
+                而它**看起来像正常文字** —— 不警告就是静默出错，用户不会发现读错了。 */}
+            {done && done.multiColumnPages.length > 0 && (
+                <Alert severity="warning" sx={{ borderRadius: 0 }}>
+                    {t('pdfMultiColumn', { count: done.multiColumnPages.length })}
                 </Alert>
             )}
 

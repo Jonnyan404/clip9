@@ -447,5 +447,6 @@
   "glanceChars": "{count} 文字",
   "glanceFrom": "{source} から",
   "glanceNothingSelected": "左の項目を選ぶとここに表示されます",
-  "canvasDropHintTouch": "「読み込み」をタップしてドキュメントを選択"
+  "canvasDropHintTouch": "「読み込み」をタップしてドキュメントを選択",
+  "pdfMultiColumn": "⚠️ この PDF は {count} ページが**段組み**です。抽出したテキストは左右が交互に混ざります — 普通の文章のように見えますが順序が違います。docx の原本があればそちらは正しく変換できます"
 }

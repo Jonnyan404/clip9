@@ -66,6 +66,32 @@ pub struct Converted {
     /// 把 `None` 当 0 显示，等于对一份满是插图的 PDF 说「这份文档没有图片」，
     /// 那是**编造事实**。调用方必须把两者分开说。
     pub images: Option<ImageSet>,
+    /// **PDF 的版面分析**（哪些页是多栏排版）。非 PDF 一律 `None`。
+    ///
+    /// ⚠️★ 为什么要有这个：PDF 是**打印格式**，只有绝对坐标、没有「栏」的概念。
+    /// 一份**双栏**排版（现在的中文简历大半是这样）按坐标抽文本会**左右交错拼接** ——
+    /// 句子被拦腰截断后交叉在一起，而**输出看起来像正常文字**。
+    /// 2026-10-12 实测：一份双栏简历转出来 `## 工作经历` 跑到了最前面、
+    /// `# 张三` 夹在中间、左右栏正文交错。**用户不会发现读错了。**
+    ///
+    /// 上游 `pdf-inspector` **本来就算了这件事**（`PdfProcessResult::layout`），
+    /// 但 anydoc 的 PDF 那条路只回一个 Markdown 字符串，把它**吞掉了** ——
+    /// 所以这里直接调 `pdf-inspector` 把结论拿回来，交给界面去警告用户。
+    ///
+    /// ⚠️ 代价：PDF **再解析一遍**（`anydoc::to_markdown_bytes` 内部已经解析过一次）。
+    /// 与图片那条路是同一个取舍 —— 换来「不静默出错」，划算。
+    /// ⚠️ 它**可能漏报**（实测：一份间距较大的双栏没被认出来）——
+    /// 所以「没警告」**不等于**「一定没交错」，文案里不许这么承诺。
+    pub pdf: Option<PdfLayout>,
+}
+
+/// PDF 的版面分析结论。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PdfLayout {
+    /// 总页数。
+    pub page_count: u32,
+    /// **多栏排版的页**（1 起）。空 = 没检测到多栏。
+    pub multi_column_pages: Vec<u32>,
 }
 
 /// 文档里的图片集合。
@@ -172,6 +198,21 @@ pub fn convert(bytes: &[u8], filename: Option<&str>) -> Result<Converted, Action
     Ok(Converted {
         markdown,
         images: extract_images(bytes, format),
+        pdf: pdf_layout(bytes, format),
+    })
+}
+
+/// PDF 的版面分析。⚠️ 非 PDF 回 `None`；解析失败也回 `None` ——
+/// 走到这一步说明 `to_markdown_bytes` 刚刚成功过，这里再失败只可能是内部怪状态，
+/// **不值得**把一次成功的转换变成失败（那才是倒退）。
+fn pdf_layout(bytes: &[u8], format: Option<Format>) -> Option<PdfLayout> {
+    if format != Some(Format::Pdf) {
+        return None;
+    }
+    let result = pdf_inspector::process_pdf_mem(bytes).ok()?;
+    Some(PdfLayout {
+        page_count: result.page_count,
+        multi_column_pages: result.layout.pages_with_columns,
     })
 }
 
@@ -568,6 +609,29 @@ mod tests {
     /// `None` = 「这个格式读不出文档模型，**不知道**有没有图」（PDF）。
     /// 混成一个的后果是对一份满是插图的 PDF 说「这份文档没有图片」—— 那是编造事实。
     #[test]
+    /// ⚠️★ 非 PDF **必须**回 `None`，不能回一个空的多栏列表 ——
+    /// 那会把「不是 PDF」伪装成「这份 PDF 没有多栏」，而界面正是靠这个区分
+    /// 「该不该提多栏这回事」。与 `images` 那条是同一条规矩。
+    #[test]
+    fn a_non_pdf_reports_no_pdf_layout() {
+        let converted = convert(&chinese_docx(), Some("中文标题.docx")).expect("docx 应当能转");
+        assert!(
+            converted.pdf.is_none(),
+            "docx 不该有 PDF 版面分析，实际拿到 {:?}",
+            converted.pdf
+        );
+    }
+
+    /// 没有文件名的字节不该被当成 PDF 去分析版面（认不出格式时 `format` 是 `None`）。
+    #[test]
+    fn an_unrecognized_format_reports_no_pdf_layout() {
+        let converted = convert(b"just some plain bytes, not a document", None);
+        // 认不出格式本来就该失败；这里只断言「失败路径不会顺手产出版面分析」。
+        if let Ok(converted) = converted {
+            assert!(converted.pdf.is_none());
+        }
+    }
+
     fn a_document_without_images_reports_an_empty_set_not_none() {
         let converted = convert(&chinese_docx(), Some("需求.docx")).expect("应当能转");
         let images = converted.images.expect("docx 读得出文档模型");

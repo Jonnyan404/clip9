@@ -447,5 +447,6 @@
   "glanceChars": "{count} chars",
   "glanceFrom": "from {source}",
   "glanceNothingSelected": "Pick an item on the left to see it here",
-  "canvasDropHintTouch": "Tap \"Import\" to pick a document"
+  "canvasDropHintTouch": "Tap \"Import\" to pick a document",
+  "pdfMultiColumn": "⚠️ {count} page(s) of this PDF use a multi-column layout, so the extracted text interleaves the columns — it reads like normal prose but the order is wrong. If you can get the original docx, that one converts correctly"
 }

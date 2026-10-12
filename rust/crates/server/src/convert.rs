@@ -166,11 +166,21 @@ pub async fn document(
                     })).collect::<Vec<_>>(),
                 })
             });
+            // PDF 的版面分析。⚠️ `null` = **不是 PDF**（不是「没有多栏」）。
+            // ⚠️ 前端**必须**把「检测到多栏」变成一句显式警告：双栏 PDF 抽出来的
+            // 文字是**左右交错**的，而它**看起来像正常文字** —— 不警告就是静默出错。
+            let pdf = converted.pdf.map(|layout| {
+                json!({
+                    "pageCount": layout.page_count,
+                    "multiColumnPages": layout.multi_column_pages,
+                })
+            });
             json_response(&json!({
                 "markdown": converted.markdown,
                 "name": info.name,
                 "chars": chars,
                 "images": images,
+                "pdf": pdf,
             }))
         }
         Err(error) => {

@@ -447,5 +447,6 @@
   "glanceChars": "{count} 字元",
   "glanceFrom": "來自 {source}",
   "glanceNothingSelected": "選取左邊一則，這裡顯示完整內容",
-  "canvasDropHintTouch": "點「匯入文件」選一份文件"
+  "canvasDropHintTouch": "點「匯入文件」選一份文件",
+  "pdfMultiColumn": "⚠️ 這份 PDF 有 {count} 頁是**多欄排版**，抽出來的文字會左右交錯 —— 讀起來像正常文字，但順序是錯的。如果拿得到 docx 原件，那一份轉出來是對的"
 }

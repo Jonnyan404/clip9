@@ -27,6 +27,12 @@ regex = { workspace = true }
 # 完整理由写在 src/doc.rs 的模块文档里（一句话：注册表的 id 是与 Go 冻结的契约，
 # 而这条能力的输入是**字节**、不是 `&str`，塞不进那条 `&str → &str` 的链）。
 anydoc = { version = "0.2", optional = true }
+# ⚠️★ 直接依赖它（而不是只让 anydoc 内部用）是为了拿 `PdfProcessResult::layout` ——
+# 它带着 `pages_with_columns`（**哪些页是多栏排版**）。anydoc 的 PDF 那条路只回
+# Markdown 字符串，把这份布局分析**吞掉了**，于是「双栏被交错拼接」这件事
+# 到不了用户面前（2026-10-12 实测：一份双栏简历转出来左右栏完全交错，而且**不报错**）。
+# ⚠️ 版本跟着 anydoc 走（它本来就依赖 pdf-inspector），不引入新的依赖树。
+pdf-inspector = { version = "1", optional = true }
 
 [dev-dependencies]
 # ⚠️ **只给测试用**，而且只在 `doc` feature 下真的被用到（见 src/doc.rs 的中文用例）。
@@ -71,4 +77,4 @@ highlight = []
 # ⚠️ 与上面那组不同，它**没有对应的动作分组**（见 src/doc.rs 的模块文档），
 # 所以 `registry::group_enabled()` 里**不该**出现 `doc` —— 那两处一一对应的规矩只
 # 管注册表里的分组，这条是注册表之外的能力。
-doc = ["dep:anydoc"]
+doc = ["dep:anydoc", "dep:pdf-inspector"]
