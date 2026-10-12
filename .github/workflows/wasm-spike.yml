@@ -98,7 +98,20 @@ jobs:
               }
           }
           RS
-          RUSTFLAGS="-C opt-level=z -C lto=fat -C strip=symbols" \
+          # ⚠️★ 第一次跑撞到的**真障碍**：`getrandom` 在 `wasm32-unknown-unknown` 上
+          # **默认拒绝编译**（`error: ... you may need to enable the "wasm_js"
+          # configuration flag`）。它来自**加密文档**那条支路
+          # （日志里能看到 aes / pbkdf2 / cipher）。
+          #
+          # 绕过要**两样一起**（只加 feature 不够，上游文档原话）：
+          #   ① 这个 `--cfg`；
+          #   ② `getrandom` 的 `wasm_js` feature —— 而它是**传递依赖**，
+          #      要在本 crate 里显式声明一次才能给它开 feature。
+          #
+          # ⚠️ ③ 还差一样**这里量不出来**：跑起来时 `wasm_js` 需要一个 JS 侧的
+          # `crypto.getRandomValues` 垫片。也就是说这条路**不是白拿的**。
+          echo 'getrandom = { version = "0.3", features = ["wasm_js"] }' >> crates/actions/Cargo.toml
+          RUSTFLAGS='-C opt-level=z -C lto=fat -C strip=symbols --cfg getrandom_backend="wasm_js"' \
             cargo rustc --release --target wasm32-unknown-unknown -p clip9-actions --features doc \
             --example wasm_size_probe -- --crate-type cdylib
           echo "=== 产出的 .wasm ==="
