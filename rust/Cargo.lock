@@ -858,6 +858,7 @@ dependencies = [
  "anydoc",
  "base64 0.23.1",
  "chrono",
+ "pdf-inspector",
  "regex",
  "serde",
  "serde_json",
