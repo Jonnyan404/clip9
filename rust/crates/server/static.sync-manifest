@@ -1,5 +1,5 @@
 # clip9 前端产物的同步清单 —— 由 tools/sync-web-assets.mjs 生成，别手改。
-source bb600c9229310601f81371ccf1ced9fc5c4806680ed10248a5132be02572d1b4
+source 7109ed89992f33620103a5e5867e5cdfb5ed2e6e0cfe8dbbb9fa4dbc6d224b6d
 apple-touch-icon.png
 assets/Assistant-Bold-gm-uSS1B.woff2
 assets/Assistant-Medium-DrcxCXg3.woff2
@@ -8,9 +8,9 @@ assets/Assistant-SemiBold-SCI4bEL9.woff2
 assets/ExcalidrawSurface-CFU8O4kX.js
 assets/ExcalidrawSurface-CFU8O4kX.js.br
 assets/ExcalidrawSurface-CFU8O4kX.js.gz
-assets/SharePage-BaIqQLks.js
-assets/SharePage-BaIqQLks.js.br
-assets/SharePage-BaIqQLks.js.gz
+assets/SharePage-DrskIj_k.js
+assets/SharePage-DrskIj_k.js.br
+assets/SharePage-DrskIj_k.js.gz
 assets/directory-open-01563666-DWU9wJ6I.js
 assets/directory-open-01563666-DWU9wJ6I.js.br
 assets/directory-open-01563666-DWU9wJ6I.js.gz
@@ -35,9 +35,9 @@ assets/highlight-langs-DtWgi42q.js.gz
 assets/i18n-U7Fx4cCl.js
 assets/i18n-U7Fx4cCl.js.br
 assets/i18n-U7Fx4cCl.js.gz
-assets/index-B2DlHl4l.js
-assets/index-B2DlHl4l.js.br
-assets/index-B2DlHl4l.js.gz
+assets/index-CHU4H8hC.js
+assets/index-CHU4H8hC.js.br
+assets/index-CHU4H8hC.js.gz
 assets/index-DM0Yucg3.css
 assets/index-DM0Yucg3.css.br
 assets/index-DM0Yucg3.css.gz
