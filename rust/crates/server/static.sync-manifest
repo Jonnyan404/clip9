@@ -1,5 +1,5 @@
 # clip9 前端产物的同步清单 —— 由 tools/sync-web-assets.mjs 生成，别手改。
-source 1f04c60f475ad0f1e72f52df40ed94685f235650f27fae8ac6825ca1eda312cc
+source d94d241d1292a15f51bc011f5c50dc39ef80a6beb48c24ff20445d7b51510a26
 apple-touch-icon.png
 assets/Assistant-Bold-gm-uSS1B.woff2
 assets/Assistant-Medium-DrcxCXg3.woff2
@@ -8,9 +8,9 @@ assets/Assistant-SemiBold-SCI4bEL9.woff2
 assets/ExcalidrawSurface-DD1EJBGp.js
 assets/ExcalidrawSurface-DD1EJBGp.js.br
 assets/ExcalidrawSurface-DD1EJBGp.js.gz
-assets/SharePage-CC0vTxBz.js
-assets/SharePage-CC0vTxBz.js.br
-assets/SharePage-CC0vTxBz.js.gz
+assets/SharePage-DcwVC8o0.js
+assets/SharePage-DcwVC8o0.js.br
+assets/SharePage-DcwVC8o0.js.gz
 assets/directory-open-01563666-DWU9wJ6I.js
 assets/directory-open-01563666-DWU9wJ6I.js.br
 assets/directory-open-01563666-DWU9wJ6I.js.gz
@@ -35,12 +35,12 @@ assets/highlight-langs-DtWgi42q.js.gz
 assets/i18n-U7Fx4cCl.js
 assets/i18n-U7Fx4cCl.js.br
 assets/i18n-U7Fx4cCl.js.gz
-assets/index-A8gfsjMA.js
-assets/index-A8gfsjMA.js.br
-assets/index-A8gfsjMA.js.gz
 assets/index-DM0Yucg3.css
 assets/index-DM0Yucg3.css.br
 assets/index-DM0Yucg3.css.gz
+assets/index-DzHXj4tP.js
+assets/index-DzHXj4tP.js.br
+assets/index-DzHXj4tP.js.gz
 assets/materialdesignicons-webfont-B7mPwVP_.ttf
 assets/materialdesignicons-webfont-CSr8KVlo.eot
 assets/materialdesignicons-webfont-Dp5v-WZN.woff2
