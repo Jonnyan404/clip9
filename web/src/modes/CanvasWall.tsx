@@ -20,12 +20,13 @@ import { MdiIcon } from '@/components/ui/MdiIcon';
 import { useAppStore } from '@/stores/appStore';
 import { useWebSocketStore } from '@/stores/wsStore';
 import { toast } from '@/stores/toastStore';
-import { isFileEntry } from '@/lib/util';
+import { copyTextToClipboard, isFileEntry } from '@/lib/util';
 import { ConvertRejected, ConvertUnsupported, convertFile, fetchConvertCapability, uploadDocument, UploadTooLarge, UPLOAD_SAFE_MAX_MIB, type ConvertCapability } from '@/services/convert';
 import { markdownToPlan } from '@/lib/whiteboard/markdown-plan';
 import { applyScene, planToExcalidrawElements, type CanvasImage } from '@/lib/whiteboard/excalidraw-adapter';
 import { isWhiteboardName, parseWhiteboard, serializeWhiteboard, whiteboardFileName } from '@/lib/whiteboard/document';
 import { DRAFT_MAX_BYTES, clearDraft, readDraft, writeDraft } from '@/lib/whiteboard/draft';
+import { elementsToMarkdown } from '@/lib/whiteboard/to-markdown';
 import type { ExcalidrawImperativeAPI } from '@/components/whiteboard/ExcalidrawSurface';
 
 /**
@@ -313,6 +314,30 @@ export default function CanvasWall() {
         if (file) void importDocument(file);
     };
 
+    /**
+     * 把画布导出成 Markdown 大纲（复制到剪贴板）。
+     *
+     * ⚠️ 层级**靠连线的绑定**还原，不靠坐标 —— 见 `to-markdown.ts` 的模块文档。
+     * ⚠️ 它是**有损**的（手绘、图片收不进去），而 `to-markdown.ts` 会在结果里
+     * 留一句注释说明丢了几张图；这里只管把结果交出去，不额外美化。
+     */
+    const exportMarkdown = useCallback(async () => {
+        const elements = apiRef.current?.getSceneElements() ?? [];
+        const markdown = elementsToMarkdown(elements);
+        if (!markdown) {
+            toast(t('canvasNothingToExport'));
+            return;
+        }
+        // ⚠️ `copyTextToClipboard` 失败时**抛**（不是回 false）——
+        // 它内部有 `execCommand` 的降级路径，两条都失败才抛。
+        try {
+            await copyTextToClipboard(markdown);
+            toast(t('canvasExported', { lines: markdown.trimEnd().split('\n').length }));
+        } catch {
+            toast(t('canvasExportFailed'));
+        }
+    }, [t]);
+
     const clearCanvas = () => {
         apiRef.current?.updateScene({ elements: [] });
         // ⚠️★ 草稿**必须一起清**：不清的话刷新会把用户刚删掉的东西**恢复回来**，
@@ -525,6 +550,15 @@ export default function CanvasWall() {
                     aria-label={t('canvasClear')}
                 >
                     <Box component="span" sx={BUTTON_LABEL_SX}>{t('canvasClear')}</Box>
+                </Button>
+                <Button
+                    size="small"
+                    variant="text"
+                    startIcon={<MdiIcon name="mdi-language-markdown-outline" />}
+                    onClick={() => void exportMarkdown()}
+                    aria-label={t('canvasExport')}
+                >
+                    <Box component="span" sx={BUTTON_LABEL_SX}>{t('canvasExport')}</Box>
                 </Button>
                 <Button
                     size="small"

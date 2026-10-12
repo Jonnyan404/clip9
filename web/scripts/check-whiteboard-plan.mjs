@@ -373,6 +373,84 @@ const overlaps = (a, b) => a.y < b.y + b.height && b.y < a.y + a.height;
     check('清不掉时也不抛', true);
 }
 
+// ── 12. 画布 → Markdown（反向导出） ──────────────────────────────────────
+//
+// ⚠️★ 这一节盯的是「白板上的东西能不能原样收回去」。
+// 它坏了**不报错**：导出来一份看着挺正常的 Markdown，只是**少了几块**。
+{
+    const toMd = await import('../src/lib/whiteboard/to-markdown.ts');
+
+    // 造一份最小的画布：父矩形（带绑定的文字）+ 子矩形 + 一条**绑定的**箭头
+    const rect = (id, x, y, labelId) => ({ id, type: 'rectangle', x, y, boundElements: [{ type: 'text', id: labelId }] });
+    const label = (id, text) => ({ id, type: 'text', text });
+    const arrow = (from, to) => ({ id: `a-${from}-${to}`, type: 'arrow', startBinding: { elementId: from }, endBinding: { elementId: to } });
+
+    // ⚠️★ 这几条用**逐字精确比对**，不用 `includes`。
+    //
+    // 教训（2026-10-11，两次反向验证都白做）：
+    // 「子块是二级标题」用 `includes('## 背景')` 写时，**把「谁是子」那段逻辑删掉也照样绿** ——
+    // 因为那时子节点既被当成根输出一次、又被父节点递归输出一次，
+    // 输出里**多出来一份** `## 背景`，正好把 `includes` 喂饱。
+    // 也就是说：**弱断言会被「多出来的东西」满足**，而 bug 恰恰常表现为多出来。
+    // 改成精确比对之后，破坏一次就红（验证过）。
+    const tree = [rect('p', 0, 0, 'lp'), label('lp', '产品需求文档'), rect('c', 300, 0, 'lc'), label('lc', '背景'), arrow('p', 'c')];
+    const md = toMd.elementsToMarkdown(tree);
+    check('两层树逐字对得上', md === '# 产品需求文档\n\n## 背景\n', JSON.stringify(md));
+    check('以换行结尾（贴到哪里都不会粘住下一行）', md.endsWith('\n'), JSON.stringify(md.slice(-8)));
+
+    // ⚠️ 子节点画在**父上方**：层级看绑定、不看谁在上面。
+    // 这条是专门补的 —— 它才能区分「有没有记父」（子在上时，谁是根决定输出顺序）。
+    const above = [rect('p', 0, 300, 'lp'), label('lp', '父'), rect('c', 300, 0, 'lc'), label('lc', '子'), arrow('p', 'c')];
+    const aboveMd = toMd.elementsToMarkdown(above);
+    check('子画在父上方时，仍是「父先、子后、子为二级」', aboveMd === '# 父\n\n## 子\n', JSON.stringify(aboveMd));
+
+    // ⚠️★ 正文卡片要导出成**段落**，不是标题。
+    // 不读 `customData.clip9Kind` 的话，一份文档往返一圈会把所有段落变成标题
+    // （2026-10-12 实测踩到，见 `CanvasNode.kind` 的注释）。
+    const cardRect = { id: 'c', type: 'rectangle', x: 300, y: 0, customData: { clip9Kind: 'card' }, boundElements: [{ type: 'text', id: 'lc' }] };
+    const cardMd = toMd.elementsToMarkdown([rect('p', 0, 0, 'lp'), label('lp', '标题'), cardRect, label('lc', '这是一段正文'), arrow('p', 'c')]);
+    check('正文卡片导出成段落、不是标题', cardMd === '# 标题\n\n这是一段正文\n', JSON.stringify(cardMd));
+
+    // ⚠️ 绑定才是父子依据：把箭头换成**没有绑定**的（坐标看着还连着），不该凭空造出层级
+    const loose = [rect('p', 0, 0, 'lp'), label('lp', 'A'), rect('c', 300, 0, 'lc'), label('lc', 'B'), { id: 'a1', type: 'arrow', x: 200, y: 10 }];
+    const looseMd = toMd.elementsToMarkdown(loose);
+    check('没有绑定的箭头不产生层级（两块都是根）', looseMd.includes('# A') && looseMd.includes('# B'), JSON.stringify(looseMd));
+
+    // 同层按视觉位置排（先上后左）
+    const sib = [
+        rect('r', 0, 0, 'lr'), label('lr', '根'),
+        rect('b2', 300, 200, 'lb2'), label('lb2', '下面的'),
+        rect('b1', 300, 50, 'lb1'), label('lb1', '上面的'),
+        arrow('r', 'b2'), arrow('r', 'b1'),
+    ];
+    const sibMd = toMd.elementsToMarkdown(sib);
+    check('同层按视觉位置排（先上后左）', sibMd.indexOf('上面的') < sibMd.indexOf('下面的'), JSON.stringify(sibMd));
+
+    // 被绑定的文字元素**不能**自己单独成一块（否则每块都出现两遍）
+    check('容器的文字只出现一次', (md.match(/产品需求文档/g) || []).length === 1, JSON.stringify(md));
+
+    // 独立的文字元素算一块（用户自己贴的说明）
+    const lone = [rect('p', 0, 0, 'lp'), label('lp', '根'), { id: 't9', type: 'text', x: 0, y: 200, text: '我贴的一句说明' }];
+    check('独立的文字元素也算一块', toMd.elementsToMarkdown(lone).includes('# 我贴的一句说明'));
+
+    // ⚠️★ 环不能把导出卡死，更不能**把块丢掉**
+    const cyc = [rect('a', 0, 0, 'la'), label('la', '甲'), rect('b', 300, 0, 'lb'), label('lb', '乙'), arrow('a', 'b'), arrow('b', 'a')];
+    const cycMd = toMd.elementsToMarkdown(cyc);
+    check('成环时两块都在（不许死循环、也不许丢）', cycMd.includes('甲') && cycMd.includes('乙'), JSON.stringify(cycMd));
+    check('成环时也能返回（没卡死）', cycMd.length > 0 && cycMd.endsWith('\n'));
+
+    // 图片：Markdown 里放不下，但**必须说一句**
+    const withImg = [...tree, { id: 'i1', type: 'image', x: 0, y: 400, fileId: 'f' }];
+    check('图片不静默丢（留一句说明）', toMd.elementsToMarkdown(withImg).includes('1 张图片没有导出'), JSON.stringify(toMd.elementsToMarkdown(withImg).slice(-90)));
+
+    // 删除掉的元素不参与
+    check('已删除的元素不收进去', !toMd.elementsToMarkdown([...tree, { id: 'x', type: 'rectangle', x: 0, y: 0, isDeleted: true, boundElements: [{ type: 'text', id: 'lx' }] }, label('lx', '删掉的')]).includes('删掉的'));
+
+    // 空画布
+    check('空画布回空串（调用方据此提示）', toMd.elementsToMarkdown([]) === '');
+    check('只有图片的画布回一句说明（不是空串）', toMd.elementsToMarkdown([{ id: 'i', type: 'image', fileId: 'f' }]).includes('1 张图片没有导出'));
+}
+
 // ── 汇总 ──────────────────────────────────────────────────────────────
 
 if (problems.length) {

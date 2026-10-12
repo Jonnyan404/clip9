@@ -143,6 +143,12 @@ export function planToExcalidrawElements(
         skeletons.push({
             type: 'rectangle',
             id: elementIdOf.get(node)!,
+            // ⚠️★ 把「这是标题还是正文卡片」**存进元素**。
+            // 不存的话反向导出（画布 → Markdown）只能看到「一个矩形 + 一段文字」，
+            // 于是**正文段落会被导出成 `##` 标题** —— 2026-10-12 实测踩到：
+            // 一份文档往返一圈，所有段落都变成了标题。
+            // `customData` 是 Excalidraw 专门留给调用方塞自定义数据的字段，正合适。
+            customData: { clip9Kind: node.kind },
             x: node.x,
             y: node.y,
             width: node.width,
