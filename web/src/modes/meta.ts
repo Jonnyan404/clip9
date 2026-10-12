@@ -27,4 +27,8 @@ export const MODES_META: ModeMeta[] = [
     // ⚠️ `canvas` 排在**最后**：它是 2026-10-10 才加的第 6 个模式，加在中间会让
     // 已经习惯前五个顺序的人每次切模式都多点一下。顺序不是「按重要性排」的。
     { key: 'canvas', labelKey: 'uiModeCanvas', icon: 'mdi-draw' },
+    // ⚠️ 同样**排在最后**（理由同上）：加在中间会让已经习惯顺序的人每次切模式多点一下。
+    // ⚠️ 它和 `canvas` 用的是**同一条**转换管线（`services/convert.ts`），
+    // 只是白板要布局、这个只要文本 —— 别在这里另写一套转换。
+    { key: 'convert', labelKey: 'uiModeConvert', icon: 'mdi-language-markdown-outline' },
 ];

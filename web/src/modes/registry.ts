@@ -6,6 +6,7 @@ import BenchWall from './BenchWall';
 import StickyWall from './StickyWall';
 import BoardWall from './BoardWall';
 import CanvasWall from './CanvasWall';
+import ConvertWall from './ConvertWall';
 
 /**
  * 界面模式注册表 —— 对应 web-vue3/src/views/modes/registry.js。
@@ -25,6 +26,7 @@ const COMPONENTS: Record<string, ComponentType> = {
     sticky: StickyWall,
     board: BoardWall,
     canvas: CanvasWall,
+    convert: ConvertWall,
 };
 
 export const MODES: ModeDef[] = MODES_META.map((meta) => ({
