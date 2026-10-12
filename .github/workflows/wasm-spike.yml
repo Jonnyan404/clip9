@@ -1,0 +1,101 @@
+name: WASM spike
+
+# 一次性技术验证（方案 §P0 的第一条）——**只手动触发**，不挂任何自动触发。
+#
+# 它回答两个问题，这两个数决定「浏览器 WASM 那条路」有没有资格排期：
+#
+#   A. **anydoc 能不能编到 `wasm32-unknown-unknown`** —— 编不过就没什么可谈的。
+#   B. **编出来多大** —— 这决定它是「像 Excalidraw 那样懒加载一个 chunk」，
+#      还是「根本放不进前端，只能放弃」。
+#
+# 顺带量一个对照：**同一份源码编进服务端二进制**的增量（`doc` feature 的开与关）——
+# 那是方案 §P0 原本就要的那个数，而 OpenWrt 那类几十 MB flash 的部署正看着它。
+#
+# ⚠️★ 为什么这件事必须在 CI 里做、不能在本机：这台开发机的 `rustc` 是 **Homebrew** 的
+# （`/usr/local/bin/rustc`），而 `rustup target add` 装到的是 rustup 那条链 ——
+# 两边不是一个工具链，本机跑必然报 `can't find crate for core` 或链接器找不到 `libLLVM.dylib`。
+# CI 这边由 `rust/rust-toolchain.toml` 统一装，`targets` 里本来就列了 `wasm32-unknown-unknown`。
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  wasm:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: rust
+    steps:
+      - uses: actions/checkout@v7
+
+      # ⚠️ 不写 toolchain 版本：`rust/rust-toolchain.toml` 已经是唯一一处真相，
+      # 这里再写一遍就会有第二个地方要跟着改。
+      - name: 装 wasm 目标
+        run: rustup target add wasm32-unknown-unknown
+
+      # ⚠️ 用 `Swatinem/rust-cache` 而不是手写 `actions/cache`：
+      # 仓库里其他 Rust job 用的就是它（它知道 target 目录、注册表、以及哪些目录不该缓存）。
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: rust
+
+      # ── A. 能不能编过 ────────────────────────────────────────────────
+      #
+      # ⚠️ `--release`：体积要看的是**发布形态**，debug 的体积没有参考价值。
+      - name: A. anydoc 编到 wasm
+        id: build
+        run: |
+          set +e
+          cargo build --release --target wasm32-unknown-unknown -p clip9-actions --features doc
+          echo "exit=$?" >> "$GITHUB_OUTPUT"
+
+      # ── B. 编出来多大 ────────────────────────────────────────────────
+      #
+      # ⚠️★ 量的是 `.rlib`，**不是最终的 `.wasm`** —— 那需要一个带 `#[wasm_bindgen]`
+      # 导出的 `cdylib` 才做得出来，而那是「确定要做之后」的事。
+      # `.rlib` 是**上界**（没经过 LTO、没 strip、带调试信息），真实的 `.wasm`
+      # 会小不少（通常腰斩甚至更多）。所以这个数只能用来判**量级**：
+      # 「几十 MB」⇒ 危险；「几 MB」⇒ 有戏。
+      - name: B. 体积（rlib 上界）
+        run: |
+          echo "=== doc 相关 crate 的 rlib 体积 ==="
+          for c in anydoc pdf_inspector clip9_actions; do
+            find target/wasm32-unknown-unknown/release -name "lib${c}*.rlib" -exec ls -la {} \; 2>/dev/null
+          done
+          echo
+          echo "=== 全部 wasm rlib 合计 ==="
+          find target/wasm32-unknown-unknown/release -name '*.rlib' -exec du -bc {} + 2>/dev/null | tail -1
+
+      # ── 对照：原生二进制的增量 ──────────────────────────────────────
+      - name: C. 服务端二进制的增量（开/关 doc）
+        run: |
+          cargo build --release -p clip9-server >/dev/null 2>&1
+          cp target/release/clip9-server /tmp/server-nodoc
+          cargo build --release -p clip9-server --all-features >/dev/null 2>&1
+          cp target/release/clip9-server /tmp/server-doc
+          echo "=== 二进制体积 ==="
+          ls -la /tmp/server-nodoc /tmp/server-doc
+          echo
+          echo "=== doc feature 的增量 ==="
+          python3 - <<'PY'
+          import os
+          a = os.path.getsize('/tmp/server-nodoc')
+          b = os.path.getsize('/tmp/server-doc')
+          print(f"不带 doc: {a/1024/1024:.1f} MB")
+          print(f"带   doc: {b/1024/1024:.1f} MB")
+          print(f"增量:     {(b-a)/1024/1024:.1f} MB")
+          PY
+
+      - name: 汇总
+        run: |
+          echo "## WASM spike 结果" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          if [ "${{ steps.build.outputs.exit }}" = "0" ]; then
+            echo "- ✅ **anydoc 能编到 \`wasm32-unknown-unknown\`**" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "- ❌ **编不过**（exit=${{ steps.build.outputs.exit }}）—— 这条路到此为止，除非换解析器" >> "$GITHUB_STEP_SUMMARY"
+          fi
+          echo "- 体积看上面的日志（rlib 上界，不是最终 .wasm）" >> "$GITHUB_STEP_SUMMARY"
