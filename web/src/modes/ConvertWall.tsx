@@ -19,6 +19,7 @@ import { useWebSocketStore } from '@/stores/wsStore';
 import { toast } from '@/stores/toastStore';
 import { copyTextToClipboard, prettyFileSize } from '@/lib/util';
 import {
+    convertUnsupportedKey,
     ConvertRejected,
     ConvertUnsupported,
     convertFile,
@@ -91,7 +92,7 @@ export default function ConvertWall() {
                 if (alive) setCapability(value);
             })
             .catch(() => {
-                if (alive) setCapability({ enabled: false, extensions: [] });
+                if (alive) setCapability({ enabled: false, extensions: [], reason: null });
             });
         return () => {
             alive = false;
@@ -214,7 +215,7 @@ export default function ConvertWall() {
             <Box sx={{ flex: 1, minHeight: 0, overflow: 'auto', px: 1.5, pb: 3 }}>
                 {!supported && capability && (
                     <Alert severity="info" sx={{ mb: 2 }}>
-                        {t('canvasUnsupported')}
+                        {t(convertUnsupportedKey(capability.reason))}
                     </Alert>
                 )}
 

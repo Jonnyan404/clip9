@@ -21,7 +21,7 @@ import { useAppStore } from '@/stores/appStore';
 import { useWebSocketStore } from '@/stores/wsStore';
 import { toast } from '@/stores/toastStore';
 import { copyTextToClipboard, isFileEntry } from '@/lib/util';
-import { ConvertRejected, ConvertUnsupported, convertFile, fetchConvertCapability, uploadDocument, UploadTooLarge, UPLOAD_SAFE_MAX_MIB, type ConvertCapability } from '@/services/convert';
+import { ConvertRejected, ConvertUnsupported, convertFile, convertUnsupportedKey, fetchConvertCapability, uploadDocument, UploadTooLarge, UPLOAD_SAFE_MAX_MIB, type ConvertCapability } from '@/services/convert';
 import { markdownToPlan } from '@/lib/whiteboard/markdown-plan';
 import { applyScene, planToExcalidrawElements, type CanvasImage } from '@/lib/whiteboard/excalidraw-adapter';
 import { isWhiteboardName, parseWhiteboard, serializeWhiteboard, whiteboardFileName } from '@/lib/whiteboard/document';
@@ -193,7 +193,7 @@ export default function CanvasWall() {
             .catch(() => {
                 // 探测失败（老服务端 / 网络）→ 当成「没有这个能力」，不弹错。
                 // 猜成「有」的后果是界面上出现一个点进去必然失败的入口。
-                if (alive) setCapability({ enabled: false, extensions: [] });
+                if (alive) setCapability({ enabled: false, extensions: [], reason: null });
             });
         return () => {
             alive = false;
@@ -298,7 +298,7 @@ export default function CanvasWall() {
                     // 2026-10-10 实测踩到：服务端 `--all-features`、`convert.enabled: true`，
                     // 而 dev 下导入报的是「这台服务端没有编译文档转换能力」——
                     // **把人往「重编服务端」上带，而真正缺的是 vite 配置里一行代理。**
-                    toast(capability?.enabled ? t('canvasConvertUnreachable') : t('canvasUnsupported'));
+                    toast(capability?.enabled ? t('canvasConvertUnreachable') : t(convertUnsupportedKey(capability?.reason ?? null)));
                 } else if (error instanceof ConvertRejected) {
                     // ⚠️ 直接用服务端那句中文 —— 它是唯一知道「为什么转不了」的地方。
                     toast(error.reason);

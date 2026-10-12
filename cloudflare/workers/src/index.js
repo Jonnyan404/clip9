@@ -227,6 +227,14 @@ async function handleServer(request, env) {
     // 显式声明之后，Cloudflare 部署里那个图标会稳定地不出现，而不是先闪出来再消失。
     // ⚠️ 哪天 Worker 侧真的实现了，记得连同 dev-docs/api*.md §8 的「仅 Go 实现」一起改。
     automation: { enabled: false },
+    // 文档转换：Worker 侧**没有实现**（整个 Worker 里没有 `/convert` ——
+    // 它是 JS 运行时，里面没有文档解析器）。同样**显式声明**，理由与上面 `automation` 一样。
+    //
+    // ⚠️★ 关键是那个 `reason`：**「这个后端不支持」和「这个构建没带 doc」是两件事，
+    // 修法也不同**（后者去重新构建，前者只能换后端）。以前前端只看 `enabled: false`，
+    // 于是**一律**说「构建时缺 doc」—— 在 Cloudflare 上那是错的，
+    // 用户会去翻构建配置白费功夫。现在服务端把原因说出来，前端不再猜。
+    convert: { enabled: false, extensions: [], reason: 'unsupported' },
   }), {
     headers: {
       'Content-Type': 'application/json',

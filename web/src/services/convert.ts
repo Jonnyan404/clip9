@@ -9,11 +9,36 @@
 import axios from 'axios';
 
 /** `GET /server` 里 `convert` 那一段的形状。 */
+/**
+ * 「为什么用不了」→ i18n key。
+ *
+ * ⚠️★ 放这里而不是散在两个组件里：`reason` 是**服务端给的**，
+ * 解释它属于「读响应」这件事，不属于界面。两处各写一遍必然漂 ——
+ * 而漂的表现是「白板里说的原因和转 Markdown 页说的不一样」。
+ */
+export function convertUnsupportedKey(reason: ConvertCapability['reason']): string {
+    if (reason === 'not_built') return 'canvasUnsupportedNotBuilt';
+    if (reason === 'unsupported') return 'canvasUnsupportedDeployment';
+    // ⚠️ 不知道就说不知道，**不兜成 `not_built`** —— 那正是这次要修的毛病。
+    return 'canvasUnsupportedUnknown';
+}
+
 export interface ConvertCapability {
     /** 这台部署带不带转换能力（= 服务端编译时有没有 `doc` feature）。 */
     enabled: boolean;
     /** 认得的扩展名（小写、不带点）。⚠️ 只是**提示**，给 `<input accept>` 用。 */
-    extensions: string[];
+    extensions: string[];    /**
+     * **为什么不可用** —— 服务端说了算，前端不许猜。
+     *
+     * ⚠️★ 2026-10-12 加。以前前端只看 `enabled: false`，于是**一律**说
+     * 「构建时缺 `doc`」。在 Cloudflare Worker 上那是**错的** ——
+     * 那边压根没有文档解析器，谈不上「没编 doc」，用户会去翻构建配置白费功夫。
+     *
+     * - `'not_built'` —— 这是个 Rust 服务端，但构建时没带 `doc` feature → 重新构建
+     * - `'unsupported'` —— 这个后端不提供文档转换（Cloudflare Worker）→ 换后端
+     * - `null` —— 可用，或服务端没给（老版本）
+     */
+    reason: 'not_built' | 'unsupported' | null;
 }
 
 /** 文档里的一张内嵌图片。 */
@@ -114,6 +139,12 @@ export async function fetchConvertCapability(room: string): Promise<ConvertCapab
     return {
         enabled: convert?.enabled === true,
         extensions: Array.isArray(convert?.extensions) ? convert.extensions : [],
+        // ⚠️ 认不出的取值一律 `null`（当「不知道」），**不兜成 `'not_built'`** ——
+        // 那正是这次要修的那个「把猜测当事实」。
+        reason:
+            convert?.reason === 'not_built' || convert?.reason === 'unsupported'
+                ? convert.reason
+                : null,
     };
 }
 
