@@ -127,7 +127,10 @@ impl ServerProcess {
         {
             return Some(cached);
         }
-        let output = child_process::hidden(&self.binary).arg("-v").output().ok()?;
+        let output = child_process::hidden(&self.binary)
+            .arg("-v")
+            .output()
+            .ok()?;
         // ⚠️ 只认**成功退出**的：失败时 stdout 可能是别的程序写的垃圾。
         if !output.status.success() {
             return None;

@@ -125,7 +125,10 @@ mod tests {
     /// 而日志里什么都没有，那比多报一次假失败更坏。
     #[test]
     fn an_unreadable_state_still_tries() {
-        assert!(needs_change(None, false), "读不出来 ≠ 已经关了：这一支要照旧尝试");
+        assert!(
+            needs_change(None, false),
+            "读不出来 ≠ 已经关了：这一支要照旧尝试"
+        );
     }
 
     /// ⚠️★ 想**开**时永远照做，**哪怕系统里已经开着** —— 那句 `enable()` 每次都把
