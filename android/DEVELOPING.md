@@ -174,8 +174,17 @@ NDK 里没有那个 clang / `.so` 没搬进 `jniLibs/`」说清楚）：
 bash tools/build-android.sh               # 三个 ABI 的 .so → jniLibs/ → assembleDebug
 bash tools/build-android.sh --release     # 换成 assembleRelease
 bash tools/build-android.sh --abi arm64-v8a   # 只编一个 ABI 的冒烟
+bash tools/build-android.sh --skip-web    # 跳过前端构建（产物已由别处准备好时用）
 bash tools/build-android.sh --print       # 只把要跑的命令打出来，先看一眼
 ```
+
+⚠️★ **它现在会先构建前端**（2026-10-13 起）：`crates/android` 直接依赖 `clip9-server`，
+APK 里内嵌一份服务端，手机上的「本机界面」就是它 —— 而服务端把前端**编进二进制**。
+前端产物不再入库之后，少了这一步 `build.rs` 会内嵌一个**占位页**，而那是**看不出来**的：
+编得过、签得出、装得上、图标点得开，只有界面上是一片说明。
+⚠️ v0.1.5 的 APK 就是这么坏的（`libclip9_android.so` 里有 `clip9-no-embedded-frontend`、
+没有 `id="app"`）。现在有两道闸：脚本里那道 `sync-web-assets.mjs --check`，
+以及 `android.yml` 收包时对 `.so` 的 `strings` 自检。
 
 ⚠️★ **别在 WorkBuddy 的沙箱里跑**（见 §二.4 末尾那条）；在**普通终端**里跑。
 

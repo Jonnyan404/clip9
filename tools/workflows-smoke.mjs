@@ -30,7 +30,7 @@
 //   node tools/workflows-smoke.mjs
 //   node tools/workflows-smoke.mjs --root <别的仓库根>    # 变异验证用
 
-import { readFileSync, existsSync, mkdirSync, writeFileSync } from 'node:fs';
+import { readFileSync, existsSync, mkdirSync, readdirSync, writeFileSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
@@ -1233,6 +1233,64 @@ const pkgApk = read('openwrt/scripts/package-openwrt-apk.sh');
   }
 
   if (!problems.length) ok(label);
+  if (problems.length) fail(label, problems.join('\n    '));
+}
+
+// ── 判据 12：要编服务端的 workflow，都得自己准备前端 ─────────────────────────
+//
+// ⚠️★ 2026-10-13 加。前端产物**不再入库**（`.gitignore` 里那两条）之后，
+//    「谁要编服务端，谁就得先把它准备好」成了一条**跨文件的约定** ——
+//    而漏掉它**没有任何症状**：`build.rs` 会内嵌一个会说话的占位页，
+//    二进制 / APK 照样编得过、签得出、跑得起来，只有界面不对。
+//
+//    ⚠️★ v0.1.5 的 **Android APK 就是这么坏的**：`crates/android` 直接依赖
+//    `clip9-server`（APK 里内嵌一份服务端），而 `android.yml` 从来没有前端步骤 ——
+//    以前 `static/` 是入库的，它就悄悄用上了；产物不入库之后就变成了占位页。
+//    实测：v0.1.5 的 `libclip9_android.so` 里有 `clip9-no-embedded-frontend`、
+//    没有 `id="app"`；v0.1.4 那份正好相反。
+//
+// ⚠️ 判据刻意**只到文件级**：要求这些 workflow 里出现 `actions/setup-node`
+//    （那是「这台 runner 上有没有 node 可用」的唯一标志）。
+//    至于「装了依赖之后有没有真的 build + sync」，由各脚本自己的 `--check` 硬闸
+//    （`openwrt/scripts/build.sh`、`tools/build-android.sh`）与**产物那一侧**的自检
+//    （`release.yml` 的 `strings`、`android.yml` 的「收 APK」）兜底 ——
+//    静态判据管到「有没有这个入口」就够，再往下就变成在 YAML 上重写 shell 了。
+{
+  const label = '要编服务端的 workflow 都准备了前端（有 actions/setup-node）';
+  const problems = [];
+  // 认「这个文件里有没有会编到 clip9-server 的动作」。
+  // ⚠️ 两个脚本是**间接**编：`build-android.sh` 编 `crates/android`（它依赖 clip9-server），
+  //    `openwrt/scripts/build.sh` 编 clip9-server 本体。
+  const COMPILES_SERVER = new RegExp(
+    [
+      'tools/build-android\\.sh',
+      'openwrt/scripts/build\\.sh',
+      'cross build[^\\n]*-p \\$BIN',
+      'cargo (?:build|test|clippy)[^\\n]*(?:-p clip9-server|\\$BIN|--workspace)',
+    ].join('|'),
+  );
+  const files = readdirSync(join(ROOT, '.github/workflows'))
+    .filter((name) => name.endsWith('.yml'))
+    .sort();
+  let seen = 0;
+  for (const name of files) {
+    const text = read(join('.github/workflows', name));
+    if (text === null) continue;
+    if (!COMPILES_SERVER.test(text)) continue;
+    seen += 1;
+    if (!/uses: actions\/setup-node@/.test(text)) {
+      problems.push(
+        `${name} 会编到 clip9-server，却没有 \`actions/setup-node\` —— ` +
+          '前端产物不再入库，没有 node 就构建不出前端，`build.rs` 会内嵌那个占位页，' +
+          '而产物照样编得过（症状是「界面不对」，不是报错）。',
+      );
+    }
+  }
+  // ⚠️ 一条都没匹配到 = 提取器被写坏了，别报绿（与 shell-smoke 的判据 2 同一条规矩）。
+  if (seen === 0) {
+    problems.push('一个「会编到 clip9-server」的 workflow 都没认出来 —— 这个判据的正则失效了');
+  }
+  if (!problems.length) ok(`${label} —— ${seen} 个 workflow`);
   if (problems.length) fail(label, problems.join('\n    '));
 }
 

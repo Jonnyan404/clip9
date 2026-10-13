@@ -10,6 +10,7 @@
 #   bash tools/build-android.sh --release            # 换成 assembleRelease
 #   bash tools/build-android.sh --abi arm64-v8a      # 只编一个 ABI（最快的冒烟）
 #   bash tools/build-android.sh --no-gradle          # 只编 .so 并同步，不叫 Gradle
+#   bash tools/build-android.sh --skip-web           # 跳过前端构建（产物已由别处准备好时用）
 #   bash tools/build-android.sh --print              # 只把要跑的命令打出来，什么都不做
 #   bash tools/build-android.sh --release --require-all
 #                                                    # ⚠️ **CI 用这个**：范围内的 ABI
@@ -58,6 +59,9 @@ PRINT_ONLY=0
 # ⚠️ 默认 0 = 本机口径（缺 target 就跳过那个 ABI，方便只为冒烟编一个）。
 #    CI 一律传 `--require-all`。见文件抬头那段。
 REQUIRE_ALL=0
+# ⚠️ 前端产物**不再入库**（2026-10-13，见 `.gitignore`）：默认在这里构建 + 同步。
+#    见下面「前端产物」那一节 —— 少了它 APK 里内嵌的是占位页，而那是**看不出来**的。
+SKIP_WEB=0
 GRADLE_ARGS=()
 
 # ⚠️ 用**两个锚点**取用法，别写行号 —— 加一行表头就会让 `--help` 少印一段，
@@ -85,6 +89,10 @@ while [ $# -gt 0 ]; do
             ;;
         --no-gradle)
             RUN_GRADLE=0
+            shift
+            ;;
+        --skip-web)
+            SKIP_WEB=1
             shift
             ;;
         --require-all)
@@ -183,6 +191,41 @@ if [ -z "$NDK_BIN" ] || [ ! -x "$NDK_BIN/llvm-ar" ]; then
 fi
 echo "NDK      $NDK"
 echo "cargo    $CARGO_BIN"
+
+# ── 前端产物 ─────────────────────────────────────────────────────────────────
+#
+# ⚠️★ 这一段是**必须的**，不是「顺手优化」：`crates/android` 直接依赖 `clip9-server`
+#    （见那个 crate 的 Cargo.toml），而服务端把前端**编进二进制**（`crates/server/build.rs`）。
+#    产物没准备好时，`build.rs` 内嵌的是那个「没有内嵌前端」的**占位页** ——
+#    APK 照样编得过、签得出、装得上、图标点得开，只是手机上那个「本机界面」是一片说明。
+#
+# ⚠️★ 这个洞 2026-10-13 之前**一直没暴露**：那时 `rust/crates/server/static/` 是**入库**的，
+#    这个脚本什么都不做就恰好用上了那份。产物不再入库之后，它就成了一个洞 ——
+#    v0.1.5 的 APK 就是这么带着占位页发出去的。
+#    （实测：v0.1.5 的 `libclip9_android.so` 里有 `clip9-no-embedded-frontend`、没有 `id="app"`；
+#      v0.1.4 那份正好相反。APK 里那条硬闸在 `android.yml` 的「收 APK」那一步。）
+if [ "$SKIP_WEB" = 0 ] && [ "$PRINT_ONLY" = 0 ]; then
+    if [ -d "$ROOT/web" ] && command -v node >/dev/null 2>&1 && command -v npm >/dev/null 2>&1; then
+        say "构建前端（web）"
+        # ⚠️ `CODEBUDDY_SAFE_DELETE_ENABLED=0`：构建要清 `dist/`，不给这个变量会被删除守卫拦下来。
+        ( cd "$ROOT/web" && CODEBUDDY_SAFE_DELETE_ENABLED=0 npm run build )
+        ( cd "$ROOT" && node tools/sync-web-assets.mjs )
+    else
+        echo "! 跳过前端构建（没有 web/ 或没有 node/npm）—— 下面那道 --check 会拦住「产物没准备好」的情况"
+    fi
+fi
+
+# ⚠️★ 这道闸必须留着，而且**要在编 .so 之前**：上面那段没跑成时，产物要么不在、要么是旧的，
+#    而这两种情况编出来的 APK 都是「看着正常、界面不对」。见文件头。
+# ⚠️ `--print` 时不真跑它 —— 打印模式承诺的是「什么都不做」，这里只把它会跑的命令打出来。
+if [ "$PRINT_ONLY" = 1 ]; then
+    printf '(cd %s && npm run build)\n' "$ROOT/web"
+    printf '(cd %s && node tools/sync-web-assets.mjs)\n' "$ROOT"
+    printf '(cd %s && node tools/sync-web-assets.mjs --check)\n' "$ROOT"
+else
+    say "校验前端产物与源码指纹一致"
+    ( cd "$ROOT" && node tools/sync-web-assets.mjs --check )
+fi
 
 # ── 交叉编 .so ───────────────────────────────────────────────────────────────
 # ⚠️ 一律 `--release`：Rust 的 profile 与 Gradle 的 debug/release **没有关系**，

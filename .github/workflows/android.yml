@@ -166,6 +166,21 @@ jobs:
           # ⚠️ 只报大小，**不**报内容，也不 echo 任何密码。
           ls -l "$KEYSTORE_PATH"
 
+      # ⚠️★ 前端产物**不再入库**（2026-10-13），而 `crates/android` 直接依赖 `clip9-server`
+      #    ——APK 里内嵌一份服务端，手机上的「本机界面」就是它，而它把前端**编进二进制**。
+      #    所以这里要先有 node 与依赖：`build-android.sh` 只跑 `npm run build`，不替你 `npm ci`。
+      #    ⚠️ v0.1.5 就是漏了这一步：APK 里内嵌的是 `build.rs` 的**占位页**
+      #    （实测 `libclip9_android.so` 里有 `clip9-no-embedded-frontend`、没有 `id="app"`）。
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: 装前端依赖（编 .so 前要用）
+        working-directory: web
+        run: npm ci
+
       # ── 一条命令：三个 ABI 的 .so → jniLibs/ → assembleRelease ────────────
       #
       # ⚠️★ `--require-all` 是**必须的**：不加的话「某个 target 没装」只会被**跳过**，
@@ -267,7 +282,7 @@ jobs:
           #    而本机 macOS 自带的是 **bash 3.2** —— 用上之后这一段就**没法在本机验**，
           #    只能推上去等 CI 给答案。中间结果落在一个临时 TSV 里，一样清楚。
           rows="$(mktemp)"
-          trap 'rm -f "$rows"' EXIT
+          trap 'rm -f "$rows" "$rows.raw" "$rows.txt"' EXIT
 
           n_expected="$(printf '%s\n' $expected | wc -l | tr -d ' ')"
           for apk in "${apks[@]}"; do
@@ -290,6 +305,38 @@ jobs:
               echo "::error::$(basename "$apk") 里有 ${n_abi_in_apk} 个 ABI（${abis}）—— 只允许两种形状：单个（拆分包）或全部 ${n_expected} 个（合并包）"
               exit 1
             fi
+
+            # ── 内嵌的前端**必须是真的**（2026-10-13 加）─────────────────────
+            #
+            # ⚠️★ v0.1.5 就是这么坏掉的：`crates/android` 直接依赖 `clip9-server`，APK 里
+            #    内嵌一份服务端（手机上那个「本机界面」就是它），而它把前端编进二进制。
+            #    前端产物**不再入库**之后，`build-android.sh` 没构建前端 → `build.rs` 内嵌了
+            #    那个「没有内嵌前端」的占位页 —— 而**上面每一条判据都不会红**：
+            #    编得过、签得出、装得上、图标点得开，只有界面上是一片说明。
+            #
+            # ⚠️★ 正向标记用 `id="app"`，**不能用** `data-build-id`：那个字面量在
+            #    `static_files.rs` 的 `extract_build_id` 里也有，占位页那份二进制照样 grep
+            #    得到它 —— 判据会**永远绿**（实测过）。
+            if ! command -v unzip >/dev/null 2>&1; then
+              echo "::error::runner 上没有 unzip —— 没法把 .so 取出来核对内嵌的前端，这条判据不能跳过"
+              exit 1
+            fi
+            for so in $(zip_list "$apk" | grep 'libclip9_android\.so$'); do
+              # ⚠️ 先落成文件再 `grep -q`：`unzip -p … | strings | grep -q` 在 `pipefail` 下
+              #    会因为 grep 提前退出、上游吃 SIGPIPE 而**假红**（这个仓库记过两次）。
+              unzip -p "$apk" "$so" > "$rows.raw"
+              strings -a "$rows.raw" > "$rows.txt"
+              if grep -qF 'clip9-no-embedded-frontend' "$rows.txt"; then
+                echo "::error::$(basename "$apk") 的 $so 内嵌的是 build.rs 的**占位页** —— 编 .so 之前没有构建前端（见 tools/build-android.sh 的「前端产物」那一节）"
+                exit 1
+              fi
+              if ! grep -qF 'id="app"' "$rows.txt"; then
+                echo "::error::$(basename "$apk") 的 $so 里找不到 id=\"app\" —— 它内嵌的不是一份真前端产物"
+                exit 1
+              fi
+              echo "✓ $(basename "$apk")  $so  内嵌的是真前端"
+            done
+
             printf '%s\t%s\n' "$abis" "$apk" >> "$rows"
           done
 
