@@ -659,6 +659,47 @@ mod tests {
         path.join("clip9-server")
     }
 
+    /// 内嵌的那份前端产物在不在（`rust/crates/server/static/` **不再入库** ——
+    /// 见 `.gitignore` 与 `crates/server/build.rs` 的抬头）。
+    ///
+    /// ⚠️★ 路径是**跨 crate** 的（`crates/desktop` → `../server/static`）：这里要判的不是
+    /// 「本 crate 的什么东西」，而是「我们要起的那个 `clip9-server` 有没有内嵌一份**真**前端」。
+    fn web_artifact_present() -> bool {
+        Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../server/static/index.html")
+            .is_file()
+    }
+
+    /// 下面那两条要**真的起一个 `clip9-server`**，而且它得答得出自己在发哪一版前端 ——
+    /// `served_build` 读的是 `/server` 的 `staticBuild`，那来自内嵌外壳里的 `data-build-id`。
+    ///
+    /// ⚠️★ 前端产物**不再入库**（2026-10-13）：没有它时 `build.rs` 内嵌的是一个占位页，
+    /// 服务端就**报不出** `staticBuild` —— 用例里那条「该把它在发哪一版一起报出来」必然失败，
+    /// 于是「本机不构建前端」这句话就不成立了。
+    /// 所以这里与 `crates/server/tests/static_files.rs` 用**同一套开关**：本机没有产物就跳过
+    /// 并说明原因；`CLIP9_REQUIRE_WEB_ARTIFACT=1`（CI 设的）时**不许跳** ——
+    /// 不这么做的话，「CI 漏了构建前端」会表现成**一片绿**。
+    fn server_binary_for_served_build(test: &str) -> Option<PathBuf> {
+        let binary = test_binary();
+        if !binary.is_file() {
+            eprintln!("跳过 {test}：{} 不在", binary.display());
+            return None;
+        }
+        if !web_artifact_present() {
+            assert!(
+                std::env::var_os("CLIP9_REQUIRE_WEB_ARTIFACT").is_none(),
+                "{test}：没有前端产物，但 CLIP9_REQUIRE_WEB_ARTIFACT 要求必须有 —— \
+                 CI 漏了「构建前端」那一步（或它上传/下载的产物没到位）"
+            );
+            eprintln!(
+                "跳过 {test}：本机没有前端产物（`static/` 不再入库，见 .gitignore）—— \
+                 服务端报不出 staticBuild。要跑它：cd web && npm run deploy"
+            );
+            return None;
+        }
+        Some(binary)
+    }
+
     /// ⚠️★ 探测**不能只连 TCP** —— 这一条就是钉这个的：
     /// 随便开一个只会 accept、不会答 HTTP 的监听端口，`probe` 必须返回 `false`。
     /// 只 connect 的写法在这里会返回 `true`，而后果是「界面上说服务端在跑」，
@@ -848,11 +889,11 @@ mod tests {
     /// 用户看到的是「这个功能怎么没了」，而代码一行没丢。
     #[test]
     fn start_refuses_a_server_it_did_not_start() {
-        let binary = test_binary();
-        if !binary.is_file() {
-            eprintln!("跳过：{} 不在", binary.display());
+        let Some(binary) =
+            server_binary_for_served_build("start_refuses_a_server_it_did_not_start")
+        else {
             return;
-        }
+        };
         let dir = tempfile::tempdir().expect("建临时目录");
         let port = free_port();
 
@@ -892,11 +933,11 @@ mod tests {
     ///「界面怎么是旧的」的原路。
     #[test]
     fn a_dead_child_does_not_make_us_claim_the_port() {
-        let binary = test_binary();
-        if !binary.is_file() {
-            eprintln!("跳过：{} 不在", binary.display());
+        let Some(binary) =
+            server_binary_for_served_build("a_dead_child_does_not_make_us_claim_the_port")
+        else {
             return;
-        }
+        };
         let dir = tempfile::tempdir().expect("建临时目录");
         let port = free_port();
 
