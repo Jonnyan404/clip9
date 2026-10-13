@@ -14,6 +14,7 @@ import { SLASH_TEMPLATES, resolveSlashText, slashMenuShouldOpen, slashMenuShould
 import { runActionById } from '@/lib/actions/index.js';
 import { ComposerSlashMenu, type SlashTemplate } from '@/components/ComposerSlashMenu';
 import { TraditionalColorDialog } from '@/components/AppShell/TraditionalColorDialog';
+import { DonateDialog } from '@/components/AppShell/DonateDialog';
 import { ShortcutsDialog } from '@/components/ShortcutsDialog';
 import { MdiIcon } from '@/components/ui/MdiIcon';
 
@@ -475,27 +476,16 @@ export const UnifiedComposer = forwardRef<UnifiedComposerHandle>(function Unifie
                 </DialogContent>
             </Dialog>
 
-            {/* 赞助 */}
-            <Dialog open={rewardDialog} onClose={() => setRewardDialog(false)} maxWidth="xs" fullWidth>
-                <DialogTitle>{t('rewardTitle')}</DialogTitle>
-                <DialogContent sx={{ textAlign: 'center' }}>
-                    <Stack direction="row" spacing={2} justifyContent="center">
-                        <div>
-                            <Typography variant="caption" display="block">微信</Typography>
-                            <img src="/reward-wechat.png" alt="WeChat Reward QR" style={{ maxWidth: 140, borderRadius: 8 }} />
-                        </div>
-                        <div>
-                            <Typography variant="caption" display="block">支付宝</Typography>
-                            <img src="/reward-alipay.png" alt="Alipay Reward QR" style={{ maxWidth: 140, borderRadius: 8 }} />
-                        </div>
-                    </Stack>
-                    <Typography variant="body2" color="text.secondary" sx={{ mt: 2, whiteSpace: 'pre-line' }}>{t('rewardHint')}</Typography>
-                    <Button sx={{ mt: 2, bgcolor: '#ff5f5f', color: '#fff' }} fullWidth href="https://ko-fi.com/jonnyan404" target="_blank" rel="noopener" startIcon={<MdiIcon name="mdi-coffee" />}>
-                        Buy Me a Coffee
-                    </Button>
-                    <Typography variant="body2" color="text.secondary" sx={{ mt: 3, whiteSpace: 'pre-line' }}>{t('cloudPromoHint')}</Typography>
-                </DialogContent>
-            </Dialog>
+            {/* 赞助 —— 与设置里那个入口**共用一份定义**（见 DonateDialog 的注释）。
+                ⚠️ 这里曾有一份手抄的副本，漏掉了腾讯云 / 阿里云两个按钮，
+                于是 `cloudPromoHint` 的「可以看看这些活动价 👇」指向空气。
+                `showSectionTitle={false}`：标题已经就是 `rewardTitle`，不再重复一条同义的分组标题。 */}
+            <DonateDialog
+                open={rewardDialog}
+                onClose={() => setRewardDialog(false)}
+                titleKey="rewardTitle"
+                showSectionTitle={false}
+            />
 
             <TraditionalColorDialog open={colorDialog} onClose={() => setColorDialog(false)} />
             <ShortcutsDialog open={shortcutsDialog} onClose={() => setShortcutsDialog(false)} />
