@@ -848,7 +848,7 @@ jobs:
             "clip9-cli-${tag}-macos-x86_64.tar.gz|homebrew formula 的 macOS/intel"
             "clip9-desktop-${tag}-macos-aarch64.dmg|homebrew cask 的 macOS/arm"
             "clip9-desktop-${tag}-macos-x86_64.dmg|homebrew cask 的 macOS/intel"
-            "clip9-web-${tag}.tar.gz|给用户下载的那一份前端产物（`-static <目录>` 用；前端不再入库之后，这是拿到某一版界面的唯一途径）"
+            "clip9-web-${tag}.tar.gz|给用户下载的那一份前端产物（-static 指过去用；前端不再入库之后，这是拿到某一版界面的唯一途径）"
           )
           ok=1
           # ⚠️★ 变量后面跟非 ASCII 字符时**必须写 `${}`**：`$who）` 里的全角括号会被 bash
