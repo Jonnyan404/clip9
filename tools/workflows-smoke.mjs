@@ -1369,6 +1369,46 @@ const pkgApk = read('openwrt/scripts/package-openwrt-apk.sh');
   if (problems.length) fail(label, problems.join('\n    '));
 }
 
+// ── 判据 14：桌面端**不传**独立的 `.sig` 资产（签名已经内联在 `latest.json` 里）────
+//
+// ⚠️★ 2026-10-13 加。签名值住在 `latest.json` 的 `signature` 字段里，而 app 的更新端点就是
+//    `releases/latest/download/latest.json`（`tauri.conf.json` 的 `plugins.updater`）——
+//    **客户端从不下载 `.sig` 文件**。原来那份「自己 `gh release upload`」的理由是
+//    「谁都能拿它对安装包独立验一次」，而它站不住：那副本与 `latest.json` 在**同一个 Release**
+//    （同一个信任边界），真正的信任锚是**编进 app 的公钥** —— 能改一个的人就能改另一个。
+//    代价却是实的：每次发布多出 5 份名字很长的资产，把用户在 Releases 页面要看的东西淹掉。
+//
+// ⚠️★ 两条都要钉，缺一条它们就会**静默回来**：
+//    ① `uploadUpdaterSignatures: false` —— **上游默认是 `true`**，删掉这一行 `.sig` 就回来了
+//       （而且它自己的模板只到 `[ext]`，同平台好几份签名会撞名 → 先删后传 → 静默少几份）；
+//    ② `release.yml` 里任何**非注释行**都不许出现 `.sig` —— 加回一段上传同样是静默的。
+{
+  const label = '桌面端不传独立的 `.sig` 资产（签名已内联在 `latest.json` 里）';
+  const problems = [];
+  const rel = read(RELEASE);
+  if (rel === null) {
+    problems.push(`读不到 ${RELEASE}`);
+  } else {
+    if (!/uploadUpdaterSignatures:\s*false\b/.test(rel)) {
+      problems.push(
+        '`uploadUpdaterSignatures` 不是显式的 false —— 上游默认 true，那些 `.sig` 会**静默**回到 Release，' +
+          '而它的模板只到 `[ext]`，同平台多份签名会撞名（先删后传 → 静默少几份）',
+      );
+    }
+    // ⚠️ 只看**代码行**：这一版关于 `.sig` 的解释全在 `#` 注释里，所以先把注释摘掉再查
+    //    （行内注释也摘）。本文件里没有带 `#` 的字符串字面量，摘注释是安全的。
+    const sigLines = rel
+      .split('\n')
+      .map((line) => line.replace(/\s+#.*$/, ''))
+      .filter((line) => /\.sig\b/.test(line));
+    for (const line of sigLines) {
+      problems.push(`还有一行在动 .sig：${line.trim()}`);
+    }
+  }
+  if (!problems.length) ok(label);
+  if (problems.length) fail(label, problems.join('\n    '));
+}
+
 // ── 输出 ────────────────────────────────────────────────────────────────────
 
 if (failures.length) {
