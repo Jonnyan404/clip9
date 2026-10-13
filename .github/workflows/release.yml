@@ -725,9 +725,12 @@ jobs:
           #    ⚠️ 平台那一格**不取 `[platform]`**：上游对 macOS 给的是 `darwin`，而我们（以及
           #    homebrew cask、`assets` 那条判据）认的是 `macos` —— 这里用矩阵的 `label`。
           releaseAssetNamePattern: clip9-desktop-${{ needs.info.outputs.tag }}-${{ matrix.label }}[ext]
-          # ⚠️★ 签名文件**不让它传**：模板只到 `[ext]`，而 `.sig` 的 ext 就是 `.sig` —— 同一个平台
-          #    有好几份签名（`deb.sig` / `AppImage.tar.gz.sig`…），模板会把它们**撞成同一个名字**，
-          #    而它遇到重名是「先删后传」→ 会**静默少几份**。下面那一步自己传（名字带原包名，天然唯一）。
+          # ⚠️★ 独立签名文件**一个都不传**（2026-10-13 起，见下面「收好产物」那一步的长注释：
+          #    签名值已内联在 `latest.json` 里、客户端从不下载 `.sig`）。这里**显式写 `false`**
+          #    是因为**上游默认是 `true`** —— 一旦漏掉这一行，`.sig` 就会**静默回来**；
+          #    而且它自己的模板只到 `[ext]`，同一平台好几份签名（`deb.sig` / `AppImage.tar.gz.sig`…）
+          #    会**撞成同一个名字**，它遇重名是「先删后传」→ **静默少几份**。
+          #    这条由 `tools/workflows-smoke.mjs` 的判据 14 钉着。
           uploadUpdaterSignatures: false
           # ⚠️★ Windows 上 msi 与 nsis **都打了**，而 updater 要用哪一个必须明说：
           # 默认（`false`）会给 `.msi`，而 NSIS 那条路更适合静默安装
@@ -745,10 +748,8 @@ jobs:
       # ⚠️ 扩展名从文件名上取（`${f##*.}`），所以这里不写死 dmg/deb/AppImage 之外的清单，
       #    加一个平台只要往上面那个 for 里添一格。
       # ⚠️ `shell: bash`：Windows runner 上默认是 pwsh，这段是 bash（Git Bash 在 runner 上有）。
-      - name: 收好产物，并把签名传上去
+      - name: 收好产物
         shell: bash
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
           out="rust/target/desktop-release"
@@ -765,17 +766,18 @@ jobs:
             cp "$f" "$out/clip9-desktop-${{ needs.info.outputs.tag }}-${{ matrix.label }}.${f##*.}"
           done
 
-          # ── 签名：自己传（名字带上原包名，天然唯一）────────────────────────
-          # ⚠️ 签名值其实**内联在 `latest.json` 的 `signature` 字段里**，少了它们不影响更新；
-          #    但发出来的话，谁都能拿它对安装包独立验一次。
-          # ⚠️ 用 `gh release upload`：Release 此时已经存在（上一步建的）。
-          for f in "$base"/dmg/*.dmg.sig "$base"/deb/*.deb.sig "$base"/appimage/*.AppImage.sig \
-                   "$base"/msi/*.msi.sig "$base"/nsis/*-setup.exe.sig; do
-            [ -e "$f" ] || continue
-            name="clip9-desktop-${{ needs.info.outputs.tag }}-${{ matrix.label }}-$(basename "$f")"
-            gh release upload "${{ needs.info.outputs.tag }}" "$f#$name" --clobber
-          done
-
+          # ── `.sig`：**一份都不传**（2026-10-13 撤掉了原来那条自己 `gh release upload`）──
+          # ⚠️★ 签名值已经**内联在 `latest.json` 的 `signature` 字段里**，而 app 的更新端点就是
+          #    `releases/latest/download/latest.json`（`tauri.conf.json` 的 `plugins.updater`）——
+          #    **客户端从不下载 `.sig` 文件**。
+          # ⚠️ 那为什么原来传？当时的理由是「谁都能拿它对安装包独立验一次」。它站不住：
+          #    这份 `.sig` 与 `latest.json` 在**同一个 Release** 上（同一个信任边界），
+          #    真正的信任锚是**编进 app 的那把公钥** —— 能改一个的人就能改另一个，
+          #    所以这副本并没有提供更强的保证，只是把用户要在 Releases 页面看的东西淹掉
+          #    （每次发布多出 5 份名字很长的资产）。
+          # ⚠️★ 别在 `tauri-action` 上把 `uploadUpdaterSignatures` 打开把它带回来 ——
+          #    见上面那个 `with:` 里那行的注释（它的模板会**撞名**，先删后传 → 静默少几份）。
+          #    这条决定由 `tools/workflows-smoke.mjs` 的判据 14 钉着，两条路都会红。
           ls -l "$out"
 
       - uses: actions/upload-artifact@v7
