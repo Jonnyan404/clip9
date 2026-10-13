@@ -4,6 +4,11 @@
 // ⚠️★ 2026-10-04 起**生产前端是 `web/`（React 版）**；`web-vue3/`（Vue 版）只留作比对，不再入库。
 // 切换那一次改了本文件的 `FE` 与 `SOURCES`，并重跑了同步（`static/` 与清单都跟着换了一份）。
 //
+// ⚠️★ 2026-10-13：产物与清单（`static/`、`static.sync-manifest`）**不再入库**（见 `.gitignore`）。
+// 构建与同步全部由**线上**执行 —— `ci.yml` 的 frontend 作业构建 + 同步 + 上传，
+// `rust` 作业与 `release.yml` / `openwrt.yml` 的编译作业下载它。本机**不再跑**这一步：
+// 只用 `npm run dev`（vite 供页面），`build.rs` 缺产物时内嵌一个会说话的占位页。
+//
 // 用法：
 //   node tools/sync-web-assets.mjs            # 从 web/dist 同步
 //   node tools/sync-web-assets.mjs <源目录>    # 指定别的源

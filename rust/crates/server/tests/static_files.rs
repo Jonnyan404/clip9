@@ -85,6 +85,40 @@ fn static_dir() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("static")
 }
 
+/// 真的前端产物在不在。
+///
+/// ⚠️★ 2026-10-13 起 `static/` **不再入库**（见 `.gitignore`）：前端由**构建时现生成** ——
+/// 线上 CI 构建 + 同步后再编服务端，本机**不需要**跑 `npm run build`。
+/// 所以「一棵刚 clone 的树」上这个目录是空的，缺产物时 `build.rs` 内嵌的是**占位页**。
+///
+/// ⚠️ 判据必须是**文件系统**，不能是「内嵌表里有没有 index.html」—— 占位页也在表里，
+/// 拿它当判据会变成「拿占位页去验真产物」，一路绿而什么都没验到。
+fn web_artifact_present() -> bool {
+    static_dir().join("index.html").is_file()
+}
+
+/// 要真产物的用例统一从这里过一道。返回 `false` = **跳过**。
+///
+/// ⚠️★ 「跳过」必须说得出口，而且 **CI 里不许跳**：CI 的 rust 作业设了
+/// `CLIP9_REQUIRE_WEB_ARTIFACT=1`，那种情况下没有产物直接 panic。
+/// 不这么做的话，「CI 漏了构建前端 / 产物没传到编译作业」会表现成**一片绿** ——
+/// 而那正是这次改动最容易坏的地方。
+fn require_web_artifact(test: &str) -> bool {
+    if web_artifact_present() {
+        return true;
+    }
+    assert!(
+        std::env::var_os("CLIP9_REQUIRE_WEB_ARTIFACT").is_none(),
+        "{test}：没有前端产物，但 CLIP9_REQUIRE_WEB_ARTIFACT 要求必须有 —— \
+         CI 漏了「构建前端」那一步（或它上传/下载的产物没到位）"
+    );
+    eprintln!(
+        "跳过 {test}：本机没有前端产物（`static/` 不再入库，见 .gitignore）。\
+         要跑它：cd web && npm run build && node tools/sync-web-assets.mjs"
+    );
+    false
+}
+
 /// 外壳里引用的那个入口 bundle（`./assets/index-<hash>.js` → `assets/index-<hash>.js`）。
 ///
 /// ⚠️ 不写死名字：前端一改，hash 就变，而写死的名字会把「产物换了」误报成「服务端坏了」。
@@ -100,6 +134,9 @@ fn entry_bundle() -> String {
 /// ⚠️★ 这一条就是那个 404 的回归测试：**一个 `-static` 都不给，根路径也得有界面**。
 #[tokio::test]
 async fn the_bundled_server_serves_the_front_end_without_any_flag() {
+    if !require_web_artifact("the_bundled_server_serves_the_front_end_without_any_flag") {
+        return;
+    }
     let (app, _dir) = bundled_app("");
     let (status, content_type, body) = get(&app, "/", Some("text/html")).await;
     assert_eq!(status, StatusCode::OK, "根路径不该是 404：{body:.80}");
@@ -117,6 +154,9 @@ async fn the_bundled_server_serves_the_front_end_without_any_flag() {
 /// ⚠️ 这条测试第一版就是这么栽的（用 `/rooms`，拿到 403）。
 #[tokio::test]
 async fn a_front_end_deep_link_gets_the_shell() {
+    if !require_web_artifact("a_front_end_deep_link_gets_the_shell") {
+        return;
+    }
     let (app, _dir) = bundled_app("");
     let (status, content_type, body) = get(&app, "/board", Some("text/html")).await;
     assert_eq!(status, StatusCode::OK);
@@ -127,6 +167,9 @@ async fn a_front_end_deep_link_gets_the_shell() {
 /// 真产物照发，MIME 按扩展名给。
 #[tokio::test]
 async fn real_products_are_served_with_their_mime() {
+    if !require_web_artifact("real_products_are_served_with_their_mime") {
+        return;
+    }
     let (app, _dir) = bundled_app("");
     // 名字稳定的那一个。
     let (status, content_type, body) = get(&app, "/favicon.svg", None).await;
@@ -178,7 +221,15 @@ async fn an_unknown_api_path_is_not_answered_with_a_page() {
     // ⚠️ 非 GET/HEAD 一律 404（不是 405，也不是外壳）。
     // ⚠️★ 两条都要发：**不存在的路径**与**真实存在的产物** —— 只发前者的话这道闸**打不红**
     // （后面 `wants_html` 也会拦下它），而少了它 `POST /favicon.svg` 会真的把文件发回去。
-    for uri in ["/nope", "/favicon.svg"] {
+    //
+    // ⚠️ 但 `"/favicon.svg"` 那一条要**真的产物**才成立：本机没编前端时它压根不在内嵌表里，
+    //    断言会退化成「本来就没有这个文件」（一个恒绿的假判据）。所以只在有产物时发它 ——
+    //    CI 一定有产物，这道闸在 CI 上是满的。
+    let mut uris = vec!["/nope"];
+    if web_artifact_present() {
+        uris.push("/favicon.svg");
+    }
+    for uri in uris {
         let mut request = Request::builder()
             .uri(uri)
             .method("POST")
@@ -247,6 +298,9 @@ async fn an_external_dir_overrides_the_embedded_copy() {
 /// 只能退回通用卡片：症状是「分享出去的链接没有摘要」，而它不报错。
 #[tokio::test]
 async fn the_share_landing_page_gets_the_shell_from_the_embedded_copy() {
+    if !require_web_artifact("the_share_landing_page_gets_the_shell_from_the_embedded_copy") {
+        return;
+    }
     let (app, _dir) = bundled_app("");
     let (status, content_type, body) = get(&app, "/s/nonsense", Some("text/html")).await;
     assert_eq!(status, StatusCode::OK);
@@ -268,6 +322,9 @@ async fn the_share_landing_page_gets_the_shell_from_the_embedded_copy() {
 /// 写死的值会把「产物换了」误报成「服务端坏了」（`entry_bundle()` 就是同一个理由）。
 #[tokio::test]
 async fn the_server_reports_which_front_end_build_it_serves() {
+    if !require_web_artifact("the_server_reports_which_front_end_build_it_serves") {
+        return;
+    }
     let (app, _dir) = bundled_app("");
     let (status, _content_type, body) = get(&app, "/server", Some("application/json")).await;
     assert_eq!(status, StatusCode::OK);
@@ -315,6 +372,9 @@ async fn the_server_reports_which_front_end_build_it_serves() {
 /// ⚠️ 期望值是**字面量**，不从被测代码里取（不给它自我印证的机会）。
 #[tokio::test]
 async fn the_shell_and_the_service_worker_are_never_cached_blindly() {
+    if !require_web_artifact("the_shell_and_the_service_worker_are_never_cached_blindly") {
+        return;
+    }
     const FOREVER: &str = "public, max-age=31536000, immutable";
     const REVALIDATE: &str = "no-cache";
     let (app, _dir) = bundled_app("");
@@ -396,6 +456,9 @@ async fn cache_control(app: &Router, uri: &str) -> Option<String> {
 /// **不在 `static/` 里面** —— 放进去会被 `build.rs` 编进二进制并对外提供。
 #[test]
 fn the_shipped_copy_matches_its_sync_manifest() {
+    if !require_web_artifact("the_shipped_copy_matches_its_sync_manifest") {
+        return;
+    }
     let manifest = Path::new(env!("CARGO_MANIFEST_DIR")).join("static.sync-manifest");
     let raw = std::fs::read_to_string(&manifest).unwrap_or_else(|err| {
         panic!(

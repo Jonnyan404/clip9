@@ -99,6 +99,18 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
+      # ⚠️★ 前端产物**不再入库**（2026-10-13）—— 这个 job 自己构建它（见下面那步）。
+      #    所以要先有 node 与依赖：`build.sh` 只跑 `npm run build`，不替你 `npm ci`。
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: 装前端依赖
+        working-directory: web
+        run: npm ci
+
       - uses: taiki-e/install-action@v2
         with:
           tool: cross
@@ -116,18 +128,16 @@ jobs:
           VERSION: ${{ needs.version.outputs.version }}
         run: |
           set -euo pipefail
-          # ⚠️ `--skip-web`：前端产物**已入库**（`rust/crates/server/static/`），这里只把
-          #    它编进二进制。⚠️ 但 `build.sh` 里那道 `sync-web-assets.mjs --check` 照样是
-          #    **硬闸** —— 它保证入库的那份与当前源码指纹一致（不同步的话编出来的是旧界面，
-          #    而编译与测试都不会红）。
-          # ⚠️ 不传 `--skip-web` 它会去跑 `npm run build`，而 runner 上
-          #    `web-vue3/node_modules` 不存在 → 那一步必挂。
+          # ⚠️★ **不传 `--skip-web`**：前端产物不再入库，这里必须自己 `npm run build` + 同步
+          #    （`build.sh` 第 1 节）。⚠️ 它里面那道 `sync-web-assets.mjs --check` 是**硬闸** ——
+          #    前端没构建成功时当场红，而不是静默编出一个「内嵌占位页」的二进制
+          #    （二进制那一侧还有 `strings` 自检兜底，见 `build.sh` 第 4 节）。
           # ⚠️★ 三个 target 串在**这一个 job** 里跑（`release.yml` 是**一个 target 一个 job**），
           #    所以 `build.sh` 必须给每个 target 单独的 target 目录 —— 共用 `target/` 会让
           #    宿主构建脚本跨镜像复用，第二个 target 起报 `GLIBC_2.28 not found`（cross#724）。
           #    那段推理写在 `openwrt/scripts/build.sh` 第 3 节，判据是
           #    `tools/workflows-smoke.mjs` 的第 9 条。⚠️ 报出来的**是某个依赖的名字**。
-          ./openwrt/scripts/build.sh "$VERSION" --skip-web
+          ./openwrt/scripts/build.sh "$VERSION"
 
       - uses: actions/upload-artifact@v7
         with:

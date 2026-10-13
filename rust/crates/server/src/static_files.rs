@@ -40,8 +40,11 @@ enum Source {
     Dir(PathBuf),
     /// `build.rs` 编进来的那一份（**默认**）。
     ///
-    /// ⚠️ 它恒在：`build.rs` 找不到 `static/index.html` 时会**直接让构建失败**。
-    /// 那个 panic 是故意的 —— 静默编出一个没有前端的二进制，与那个 404 是同一个病。
+    /// ⚠️ 它恒在：没有前端产物时 `build.rs` 内嵌的是**占位页**（见那个文件的抬头），
+    /// 不是「什么都没有」。所以 [`has_source`] 永远为真、根路径永远不会退回
+    /// 2026-09-28 那个**空白 404** —— 那个病不该因为「产物不再入库」而回来。
+    /// ⚠️ 但占位页**不是**一份前端：发货路径靠 `strings` 找占位标记把它拦下来
+    /// （`release.yml` / `openwrt/scripts/build.sh` 里那道自检）。
     Embedded,
 }
 
@@ -407,11 +410,47 @@ fn hex_byte(hi: u8, lo: u8) -> Option<u8> {
 mod tests {
     use super::*;
 
+    /// 真的前端产物在不在。
+    ///
+    /// ⚠️★ 判据是**文件系统**，不是 `embedded(INDEX)` —— `static/` 不再入库（2026-10-13），
+    /// 缺产物时 `build.rs` 内嵌的是**占位页**，那个也 `is_some()`。
+    /// 拿内嵌表当判据会变成「拿占位页去验真产物」，一路绿而什么都没验到。
+    fn web_artifact_present() -> bool {
+        Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("static/index.html")
+            .is_file()
+    }
+
+    /// 要真产物的用例统一从这里过一道。返回 `false` = **跳过**。
+    ///
+    /// ⚠️★ 「跳过」必须**说得出口**，而且 **CI 里不许跳**：CI 的 rust 作业设了
+    /// `CLIP9_REQUIRE_WEB_ARTIFACT=1`，那种情况下没有产物直接 panic。
+    /// 不这么做的话，「CI 忘了构建前端」会表现成**一片绿** ——
+    /// 而这正是这次改动最容易坏的地方（判据被悄悄削弱比判据变红糟得多）。
+    fn require_web_artifact(test: &str) -> bool {
+        if web_artifact_present() {
+            return true;
+        }
+        assert!(
+            std::env::var_os("CLIP9_REQUIRE_WEB_ARTIFACT").is_none(),
+            "{test}：没有前端产物，但 CLIP9_REQUIRE_WEB_ARTIFACT 要求必须有 —— \
+             CI 漏了「构建前端」那一步（或它上传/下载的产物没到位）"
+        );
+        eprintln!(
+            "跳过 {test}：本机没有前端产物（`static/` 不再入库，见 .gitignore）。\
+             要跑它：cd web && npm run build && node tools/sync-web-assets.mjs"
+        );
+        false
+    }
+
     /// 内嵌的那一份必须是**一份真的前端产物**，不是一个空壳。
     ///
     /// ⚠️ 这条挡的是「同步进来的是一个半成品」（`build.rs` 只保证 `index.html` 存在）。
     #[test]
     fn the_embedded_copy_is_a_real_front_end() {
+        if !require_web_artifact("the_embedded_copy_is_a_real_front_end") {
+            return;
+        }
         let index = embedded(INDEX).expect("内嵌里必须有 index.html");
         let html = String::from_utf8_lossy(index);
         assert!(html.contains("<body>"), "外壳得有 body：{}", &html[..80]);
@@ -436,6 +475,9 @@ mod tests {
     /// ——判据要成对才有意义：这一条守「认得出」，`extract_build_id` 那条守「认不出时给 None」。
     #[test]
     fn the_embedded_copy_carries_a_build_id() {
+        if !require_web_artifact("the_embedded_copy_carries_a_build_id") {
+            return;
+        }
         let id = build_id(None).expect("内嵌那份外壳里必须有 data-build-id");
         assert!(id.len() >= 8, "build id 看着不像一个构建标识：{id:?}");
 

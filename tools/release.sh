@@ -218,12 +218,17 @@ else
 fi
 
 # ── 4. 静态自检 ──────────────────────────────────────────────────────────────
+#
+# ⚠️★ 2026-10-13：这里**不再**跑 `sync-web-assets.mjs --check`。前端产物不入库了
+#    （`.gitignore` 里那两条），本机没有产物可核对 —— 留着它只会让每一次发版都红在
+#    「本机没构建前端」上，而那是**设计如此**。产物那一侧现在由 CI 守：
+#    `ci.yml` / `release.yml` 的 frontend / web-assets 作业构建 + 同步 + 自查，
+#    编译作业再把 `strings` 自检一遍**二进制**（确认内嵌的是真界面而不是占位页）。
 head1 '4/6 静态自检'
 if [ "$SKIP_GATES" = 1 ]; then
   note '⚠️ --skip-gates：跳过了（CI 会跑，但那时 tag 已经推出去了）'
 elif [ "$DRY" = 1 ]; then
   for s in $GATES; do run "$NODE" "$ROOT/tools/${s}.mjs"; done
-  run "$NODE" "$ROOT/tools/sync-web-assets.mjs" --check
 else
   for s in $GATES; do
     if ! out="$("$NODE" "$ROOT/tools/${s}.mjs" 2>&1)"; then
@@ -232,11 +237,6 @@ else
     fi
     note "${s} ✓"
   done
-  if ! out="$("$NODE" "$ROOT/tools/sync-web-assets.mjs" --check 2>&1)"; then
-    printf '%s\n' "$out"
-    die '入库的前端产物与当前源码不一致（sync-web-assets --check 红）'
-  fi
-  note 'sync-web-assets --check ✓'
 fi
 
 # ⚠️ 自检不许改工作区：改了说明有产物该提交（那正是「本次发布少了什么」的信号）。

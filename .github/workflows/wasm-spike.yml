@@ -130,6 +130,30 @@ jobs:
           echo "=== 产出的 .wasm ==="
           find target/wasm32-unknown-unknown/release -name '*.wasm' -exec ls -la {} \;
 
+      # ── 前端产物：C 步要编服务端，先把它准备好 ──────────────────────
+      #
+      # ⚠️★ 2026-10-13：前端产物**不再入库**（`.gitignore` 里有那两条），所以这里要自己构建。
+      #    不构建的话 `build.rs` 会内嵌那个「没有内嵌前端」的占位页 —— 量出来的**绝对值**
+      #    会比真实发布小一截（⚠️ 增量本身不受影响：两次构建内嵌的是同一份，但报出来的数
+      #    得能跟真实发布对得上，否则这个 spike 的结论就没法拿去比）。
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: 装前端依赖
+        working-directory: web
+        run: npm ci
+
+      - name: 构建前端并同步
+        # ⚠️ 这个 job 的 `defaults.run.working-directory` 是 `rust`，这里必须显式回到仓库根。
+        working-directory: .
+        run: |
+          set -euo pipefail
+          ( cd web && npm run build )
+          node tools/sync-web-assets.mjs
+
       # ── 对照：原生二进制的增量 ──────────────────────────────────────
       - name: C. 服务端二进制的增量（开/关 doc）
         run: |

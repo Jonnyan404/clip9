@@ -93,6 +93,20 @@ config.json
 /rust/dist/
 /rust/cross.log
 
+# ── 前端产物：**不再入库**（2026-10-13）──
+#
+# ⚠️★ `rust/crates/server/static/` 与它那份同步清单以前是**提交进仓库**的
+#    （「本地 build → 同步 → 提交」那条链路）。现在改成**构建时现生成**：
+#      · 线上：CI 先构建前端 + 同步，再编服务端（`ci.yml` 的 frontend 作业把它
+#        上传成 workflow artifact，`release.yml` / `openwrt.yml` 的编译作业下载它）；
+#      · 本机：**不再需要**跑 `npm run build` —— `build.rs` 在缺产物时会内嵌一个
+#        会说话的占位页（见那个文件的注释），dev 用 `npm run dev`（vite 自己供页面）。
+#
+# ⚠️ 清单 `static.sync-manifest` 必须跟着一起忽略：它是同步脚本写的，两者是一对，
+#    只忽略 `static/` 会留下一个「记着上一份产物」的孤儿文件。
+/rust/crates/server/static/
+/rust/crates/server/static.sync-manifest
+
 # ── 顶层摆法：`rust/` 一格里是**全部 Rust**，其余各占一格（2026-09-28）──
 #
 #   clip9/

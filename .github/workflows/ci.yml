@@ -2,15 +2,18 @@ name: CI
 
 # 提交前那串门禁（`dev-docs/CONTRIBUTING.md` §2）在这之前全靠人记着跑 —— 这是它的唯一一份自动化。
 #
-# ⚠️ 两个 job **互不依赖**，可以并行：
-#   · `frontend` 只管前端源码与「入库的那份产物」；
+# ⚠️★ 2026-10-13：前端产物（`rust/crates/server/static/`）**不再入库** —— 它的构建与同步
+# 全部由线上执行（本机不再跑 `npm run build`）。`frontend` 作业构建 + 同步 + 上传产物，
+# `rust` 作业下载它之后再编。所以两个作业**不再并行**，`rust` 需要 `frontend`。
+#   · `frontend` 只管前端源码与那份产物；
 #   · `rust` 只管 cargo 那套（⚠️ `cargo` 只能在 `rust/` 里跑）。
 #
-# ⚠️★ 「入库的前端产物 vs 前端源码」**不能逐字节比构建产物**：
+# ⚠️★ 「产物 vs 前端源码」**不能逐字节比构建产物**：
 # `web/vite.config.ts` 每次构建都注入一个**随机** build id（故意的 —— 让 PWA 缓存失效、
 # 并能核对线上跑的是哪次构建），入口 chunk 又与 SharePage chunk 互相引用对方带 hash 的文件名，
 # 于是每次构建的文件名都不一样，逐字节比就是**每次必红**。所以那道判据比的是**源码指纹**
-# （`tools/sync-web-assets.mjs --check`），Rust 侧那条测试守的是另一半（`static/` 与同步清单）。
+# （`tools/sync-web-assets.mjs --check`，外加产物自带的构建印章），Rust 侧那条测试守的是另一半
+# （`static/` 与同步清单）。
 #
 # ⚠️★ 2026-10-04 起**生产前端是 `web/`（React 版）**：这个 job 编的是 `web/`，
 # 入库的产物也由它同步。`web-vue3/`（Vue 版）只留作比对 —— **不再构建、不装依赖**
@@ -30,7 +33,7 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  # ── 前端：编得出来 + 「入库的那份产物是从当前源码同步出来的吗」 ──────────
+  # ── 前端：编得出来 + 产出一份「与当前源码一致」的产物交给 rust 作业 ──────────
   frontend:
     runs-on: ubuntu-latest
     steps:
@@ -77,9 +80,47 @@ jobs:
         working-directory: web
         run: node scripts/check-whiteboard-plan.mjs
 
-      # ⚠️★ 唯一能提前问「前端源码改了但没同步进服务端」的地方。
-      - name: 入库的前端产物与当前源码是否一致
-        run: node tools/sync-web-assets.mjs --check
+      # ⚠️★ 2026-10-13：`rust/crates/server/static/` **不再入库** —— 前端产物的构建与同步
+      # 全部搬到这里（本机不再跑 `npm run build`）。产物以 workflow artifact 交给下面的
+      # `rust` 作业；`release.yml` / `openwrt.yml` 的编译作业用同一套命令各取一份。
+      #
+      # ⚠️ 先同步、再 `--check`：`--check` 在产物不存在时会直接报错，所以**顺序不能反**。
+      # ⚠️ `--check` 在这里仍然有牙 —— 它比的是「dist 自带的构建印章 vs 当前源码指纹」，
+      # 拦的是「构建被中途打断、同步却照做」那条路（2026-10-11 真踩过）。
+      - name: 同步进服务端目录（同步 + 自查）
+        run: |
+          node tools/sync-web-assets.mjs
+          node tools/sync-web-assets.mjs --check
+
+      # ⚠️ 上传前**收拢成一个目录**：`upload-artifact` 是按所有 path 的最近公共祖先存相对路径的，
+      #    直接把 `static/` 与 `static.sync-manifest` 两条路径传上去时那份结构容易和下载端对不上。
+      - name: 收拢产物（上传用）
+        run: |
+          mkdir -p /tmp/web-assets
+          cp -r rust/crates/server/static /tmp/web-assets/static
+          cp rust/crates/server/static.sync-manifest /tmp/web-assets/static.sync-manifest
+
+      # ⚠️★ 产物本身也要过一道：它必须是一份**真的前端**（外壳带 `data-build-id`、
+      # 入口 bundle 在），而不是 `build.rs` 那个「没有内嵌前端」的占位页。
+      # 这一步查的是**文件**；二进制那一侧由 release.yml / openwrt 的 `strings` 自检兜底。
+      - name: 产物必须是一份真前端（不是占位页）
+        run: |
+          set -euo pipefail
+          test -f rust/crates/server/static/index.html
+          if ! grep -q 'data-build-id' rust/crates/server/static/index.html; then
+            echo "::error::同步出来的 index.html 里没有 data-build-id —— 它不是一次真构建的产物"
+            exit 1
+          fi
+          if grep -rq 'clip9-no-embedded-frontend' rust/crates/server/static/; then
+            echo "::error::产物里出现了 build.rs 的占位标记 —— 前端构建没真的跑"
+            exit 1
+          fi
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: web-static
+          path: /tmp/web-assets/
+          if-no-files-found: error
 
       # ⚠️★ 动作库拆成了四份文件（目录 / 零依赖实现 / 带库实现 / 桌面那份逐字节拷贝），
       # 它们之间靠**字符串名字**连着（`run: "runUpper"` 指的是另一份文件里的导出）。
@@ -160,12 +201,28 @@ jobs:
   #
   # ubuntu 上要装 Tauri 的系统库：缺 webkit2gtk 时 `tauri-build` 会直接失败，报错与「代码写错了」很像。
   rust:
+    # ⚠️★ 2026-10-13：前端产物不再入库，编服务端前必须先从 `frontend` 作业把它取回来。
+    # 代价是两个作业从**并行**变成**串行**（+3 分钟左右）—— 换来的是「本机不用 build 前端」。
+    needs: frontend
     runs-on: ubuntu-latest
     defaults:
       run:
         working-directory: rust
+    env:
+      # ⚠️★ 这个变量让 static_files 那几条用例**不许跳过**：没有产物就 panic。
+      # 不设的话，「前端作业漏了 / 产物没传到编译作业」会表现成**一片绿** ——
+      # 而那正是这次改动最容易坏的地方。
+      CLIP9_REQUIRE_WEB_ARTIFACT: 1
     steps:
       - uses: actions/checkout@v7
+
+      # ⚠️★ 下载路径是 `rust/crates/server`（相对 `GITHUB_WORKSPACE`，**不受**上面那个
+      # `defaults.run.working-directory` 影响）—— 产物解出来就是 `static/` 与
+      # `static.sync-manifest` 两样，正好落在 `build.rs` 与那几条用例要找的地方。
+      - uses: actions/download-artifact@v7
+        with:
+          name: web-static
+          path: rust/crates/server
 
       - name: Tauri 的系统依赖
         run: |

@@ -28,11 +28,14 @@
 #      所以这里只负责「先把前端产物同步好」，剩下的交给 cargo。
 #      ⚠️★ 忘了同步**完全没有症状**（编得过、测试也基本绿）—— 唯一钉着它的是
 #      `tools/sync-web-assets.mjs --check`，所以下面把 `--check` 当成一道硬闸。
+#      ⚠️★ 2026-10-13：产物**不再入库**（见 `.gitignore`）—— 不传 `--skip-web` 时这里
+#      自己 `npm run build` + 同步；传了就必须有人**先把产物准备好**，否则下面那道
+#      `--check` 会红（这正是它该有的行为）。
 #
 # 用法:
 #   ./build.sh                          # 版本号取 rust/Cargo.toml 的 [workspace.package]
 #   ./build.sh 0.1.0-beta2              # 指定版本号（发布用）
-#   ./build.sh 0.1.0-beta2 --skip-web   # 跳过前端构建（产物已经同步过时用，快很多）
+#   ./build.sh 0.1.0-beta2 --skip-web   # 跳过前端构建（产物已经由别处准备好时用，快很多）
 
 set -euo pipefail
 
@@ -99,6 +102,8 @@ fi
 
 # ⚠️★ 这道闸必须留着：前端产物**编在二进制里**，不同步的话编出来的是旧界面，
 # 而编译、测试全都不会红 —— 见文件头第 4 条。
+# ⚠️ 产物不再入库（2026-10-13），所以走到这里它**必须**已经存在：要么上面第 1 节刚构建过，
+# 要么 `--skip-web` 的调用方已经准备好。不存在时它当场红，不会静默编出一个没界面的二进制。
 echo "--- 校验前端产物与源码指纹一致 ---"
 ( cd "$REPO_DIR" && node tools/sync-web-assets.mjs --check )
 
@@ -197,6 +202,22 @@ for entry in "${ARCH_MAP[@]}"; do
         echo "错误: $src 里找不到版本号 $VERSION —— CLIP9_VERSION 没生效" >&2
         echo "  这个二进制会回落成 rust/Cargo.toml 里那个常量（见 clip9_server::VERSION 的注释）" >&2
         exit 1
+    fi
+    # ⚠️★ 同一个道理，而且更要命：前端产物**不再入库**（2026-10-13），前端没构建成功时
+    #    `build.rs` 会内嵌那个「没有内嵌前端」的占位页 —— 二进制照样编得过、包装得出来、
+    #    也装得上路由器，只是打开是一片「没有内嵌前端」。所以在这里按**二进制**验一次。
+    #    ⚠️★ 正向那条**不能用 `data-build-id`**：`static_files.rs` 的 `extract_build_id` 里
+    #    就有那个字面量，占位页那份二进制照样 grep 得到它 —— 判据会**永远绿**（实测过）。
+    #    `id="app"` 才是干净的：真外壳里有 `<div id="app">`，占位页与全部 `.rs` 源码里都没有。
+    if [ -n "$src" ]; then
+        if strings -a "$src" | grep -qF 'clip9-no-embedded-frontend'; then
+            echo "错误: $src 内嵌的是占位页 —— 前端产物没构建出来（见上面第 1 节）" >&2
+            exit 1
+        fi
+        if ! strings -a "$src" | grep -qF 'id="app"'; then
+            echo "错误: $src 里找不到 id=\"app\" —— 它内嵌的不是一份真前端产物" >&2
+            exit 1
+        fi
     fi
     dst="$OUTPUT_DIR/clip9-server-v$VERSION-$arch"
     if [ -z "$src" ]; then

@@ -177,12 +177,21 @@ opkg install ./clip9_<版本>_<架构>.ipk                # OpenWrt 24.10 及更
 > 前置：Node.js ≥ 22、Rust stable。
 
 ```bash
-cd web && npm install && npm run build    # 前端产物
-node tools/sync-web-assets.mjs            # 同步进 rust/crates/server/static/（会被编进二进制）
 cd rust && cargo build --release -p clip9-server
 ```
 
 ⚠️ **`cargo` 只能在 `rust/` 里跑** —— 仓库根没有 `Cargo.toml`。
+
+⚠️★ 前端产物**不在仓库里**（`rust/crates/server/static/` 已 gitignore）—— 上面这条命令编出来的
+服务端**没有内嵌界面**，浏览器打开会看到一页说明。要一份**带界面**的二进制，先把前端构建并同步进去：
+
+```bash
+cd web && npm install && npm run deploy    # 构建 + 同步进 rust/crates/server/static/（会被编进二进制）
+cd ../rust && cargo build --release -p clip9-server
+```
+
+本地开发**不需要**这一步：`npm run dev`（vite）直接供页面，服务端只当接口用。
+CI 与发版链会自己做「构建 + 同步」。
 </details>
 
 ---

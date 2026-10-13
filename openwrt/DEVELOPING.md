@@ -51,9 +51,14 @@ version GLIBC_2.28 not found`（exit 101）。这是 **cross-rs/cross#724** 的�
 
 - **`openwrt/build/` 在 git 里不存在**（整个 gitignore）→ `luci` 那个 job 里那两个打包脚本
   会往里面写，所以它前一步得先 `mkdir -p openwrt/build`。
-- `build.sh` **必须带 `--skip-web`**：不带它会去跑 `npm run build`，而 runner 上
-  `web-vue3/node_modules` 不存在 —— 那一步必挂。（前端产物已入库，本来就只需要编进二进制。）
-  ⚠️ 但 `build.sh` 里那道 `sync-web-assets.mjs --check` 照样是**硬闸**，`--skip-web` 关不掉它。
+- ⚠️★ 2026-10-13 起 `build.sh` **不再带 `--skip-web`**：前端产物**不再入库**
+  （`.gitignore` 里有那两条），所以这个 job 自己 `npm run build` + 同步。
+  为此上面多了一步 `actions/setup-node` + `npm ci` —— `build.sh` 只跑 `npm run build`，
+  **不替你装依赖**（runner 上 `web/node_modules` 不存在时那一步会挂）。
+  ⚠️ 它里面那道 `sync-web-assets.mjs --check` 是**硬闸**：前端没构建成功时当场红。
+  ⚠️ 收尾还会 `strings` 一次**二进制**：`clip9-no-embedded-frontend`（`build.rs` 的占位标记）
+  不许出现，`id="app"` 必须有 —— 少了这道闸，一个「内嵌占位页」的二进制照样能打包、能装、
+  能启动，只是路由器上打开是一片说明。
 - **三个数字是跨文件的**：`release.yml` 的 `publish-openwrt` 里写着
   `[ "$n_ipk" = 10 ]` / `[ "$n_apk" = 8 ]` / `[ "$n_luci" = 2 ]`，它们必须与上面那个文件里
   两个矩阵的条目数一致。改矩阵而没改那边 → **只在发布时**才红。
