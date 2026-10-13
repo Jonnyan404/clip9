@@ -1,16 +1,16 @@
 # clip9 前端产物的同步清单 —— 由 tools/sync-web-assets.mjs 生成，别手改。
-source 28c26ac129e5f84a52c73fbcd9e88e0e19864be39d427e54dacb298e7c13ace8
+source 77bdd598f45db5bc7a5ed3a19c298ef3dde21b3bbfae6e0d84203a6a6f3b0f96
 apple-touch-icon.png
 assets/Assistant-Bold-gm-uSS1B.woff2
 assets/Assistant-Medium-DrcxCXg3.woff2
 assets/Assistant-Regular-DVxZuzxb.woff2
 assets/Assistant-SemiBold-SCI4bEL9.woff2
-assets/ExcalidrawSurface-DD1EJBGp.js
-assets/ExcalidrawSurface-DD1EJBGp.js.br
-assets/ExcalidrawSurface-DD1EJBGp.js.gz
-assets/SharePage-DJn3NlYG.js
-assets/SharePage-DJn3NlYG.js.br
-assets/SharePage-DJn3NlYG.js.gz
+assets/ExcalidrawSurface-DkAMg7Hp.js
+assets/ExcalidrawSurface-DkAMg7Hp.js.br
+assets/ExcalidrawSurface-DkAMg7Hp.js.gz
+assets/SharePage-GWYITEq4.js
+assets/SharePage-GWYITEq4.js.br
+assets/SharePage-GWYITEq4.js.gz
 assets/directory-open-01563666-DWU9wJ6I.js
 assets/directory-open-01563666-DWU9wJ6I.js.br
 assets/directory-open-01563666-DWU9wJ6I.js.gz
@@ -38,19 +38,19 @@ assets/i18n-U7Fx4cCl.js.gz
 assets/index-DM0Yucg3.css
 assets/index-DM0Yucg3.css.br
 assets/index-DM0Yucg3.css.gz
-assets/index-M9te5YMV.js
-assets/index-M9te5YMV.js.br
-assets/index-M9te5YMV.js.gz
+assets/index-bFw_tRRn.js
+assets/index-bFw_tRRn.js.br
+assets/index-bFw_tRRn.js.gz
 assets/materialdesignicons-webfont-B7mPwVP_.ttf
 assets/materialdesignicons-webfont-CSr8KVlo.eot
 assets/materialdesignicons-webfont-Dp5v-WZN.woff2
 assets/materialdesignicons-webfont-PXm3-2wK.woff
+assets/mui-BSF2ELME.js
+assets/mui-BSF2ELME.js.br
+assets/mui-BSF2ELME.js.gz
 assets/mui-f3sFGprf.css
 assets/mui-f3sFGprf.css.br
 assets/mui-f3sFGprf.css.gz
-assets/mui-yxodDL2j.js
-assets/mui-yxodDL2j.js.br
-assets/mui-yxodDL2j.js.gz
 assets/opencc-C0Rr6T_I.js
 assets/opencc-C0Rr6T_I.js.br
 assets/opencc-C0Rr6T_I.js.gz
@@ -72,9 +72,9 @@ assets/vendor-DtNXHvN0.js.gz
 assets/whiteboard-C6xAThXA.css
 assets/whiteboard-C6xAThXA.css.br
 assets/whiteboard-C6xAThXA.css.gz
-assets/whiteboard-CZZaE1jz.js
-assets/whiteboard-CZZaE1jz.js.br
-assets/whiteboard-CZZaE1jz.js.gz
+assets/whiteboard-CEj2wonJ.js
+assets/whiteboard-CEj2wonJ.js.br
+assets/whiteboard-CEj2wonJ.js.gz
 favicon.ico
 favicon.svg
 favicon.svg.br
