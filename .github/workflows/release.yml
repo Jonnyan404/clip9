@@ -35,6 +35,13 @@ name: Release
 #        sha256 的（formula/cask 里的 `sha256` 字段是**必填**，与「发不发校验文件」是两件事）。
 #   桌面端（**含服务端**，见 desktop job 的注释）：
 #     `clip9-desktop-v<版本>-<平台>-<架构>.<dmg|deb|AppImage|msi|exe>`
+#   前端产物（**单独发一份给用户下载**，2026-10-13 加）：
+#     `clip9-web-v<版本>.tar.gz`               里面是 `clip9-web-v<版本>/`，内容与**编进二进制的
+#                                             那一份逐字节相同**（从 `static/` 打，不从 `web/dist`）。
+#                                             用途是 `-static <目录>`。⚠️★ 前端产物不再入库
+#                                             之后，这是用户拿到「某一版服务端**实际在用的**
+#                                             那份界面」的唯一途径（跑起来抓、或自己重编都不
+#                                             保证一致 —— vite 每次构建都注入随机 build id）。
 #   `clip9:…`（容器镜像）                          由 Release 里那份二进制做的，**镜像里不编译**
 #   Formula/clip9.rb + Casks/clip9.rb            Homebrew tap（二进制与桌面端各一份）
 #   OpenWrt 服务端包（7 个架构 / 8 个设备架构）：
@@ -51,7 +58,8 @@ name: Release
 #      它**曾经真的被当资产传上去过**（v0.1.0-beta3 那次）：`publish` 的
 #      `download-artifact` 原来不带 `pattern`，会把整次运行里**所有** artifact 都拖下来，
 #      而 `openwrt.yml` 的 `binaries` job 正好在那一刻已经跑完了（时序问题）。
-#      现在那里写死成 `clip9-*`（cli / desktop 那两套），中间产物进不来。
+#      现在那里是**两个** `download-artifact`：`clip9-cli-*` 与 `clip9-web-*`，
+#      中间产物进不来（`tools/workflows-smoke.mjs` 的判据 1b 盯着这个集合）。
 #   ⚠️ artifact 名（`upload-artifact` 的 `name:`）**不带版本号** —— 那是 CI 内部的通道，
 #      **不是**用户看到的资产。改它要连 `download-artifact` 那边一起改，没必要。
 #   ⚠️ 后面那几组由 `openwrt.yml` / `android.yml` 两个**可复用工作流**构建（它们也能单独
@@ -118,6 +126,100 @@ jobs:
           echo "prerelease=${pre:-false}" >> "$GITHUB_OUTPUT"
           echo "tag=${tag}  prerelease=${pre:-false}"
 
+  # ── 前端产物：**构建时现生成**（2026-10-13 起它不再入库）────────────────────
+  #
+  # ⚠️★ `rust/crates/server/static/` 以前是**提交进仓库**的，所以下面每个编译作业直接
+  # `cargo build` 就有界面。现在产物不入库了 —— 谁要编服务端，谁就得先拿到它。
+  #
+  # ⚠️★ 刻意**只在这里构建一次**再往下传：下面四个编译作业（linux / macos / windows /
+  # desktop）各跑一遍 `npm ci` + `vite build` 是白烧十几分钟，而且四份产物还可能不一致。
+  #
+  # ⚠️ 命令与 `ci.yml` 的 frontend 作业**同一套**（构建 → 同步 → 自查 → 收拢上传）——
+  #    别在这里另写一份，那是「同一个动作两处实现」的老毛病。
+  #
+  # ⚠️★ 它产出**两份**东西，别混：
+  #    · `web-static`（artifact）—— 给下面四个编译作业用，不发布；
+  #    · `clip9-web-v<版本>.tar.gz`（资产）—— **发给用户**，见下面那步的说明。
+  web-assets:
+    # ⚠️ 要 `info` 里的 tag 拼资产名（`clip9-web-v<版本>.tar.gz`）。
+    needs: info
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: 装依赖
+        working-directory: web
+        run: npm ci
+
+      - name: 构建前端
+        working-directory: web
+        run: npm run build
+
+      - name: 同步进服务端目录（同步 + 自查）
+        run: |
+          node tools/sync-web-assets.mjs
+          node tools/sync-web-assets.mjs --check
+
+      # ⚠️★ 产物本身先过一道：它必须是一份**真的前端**，不是 `build.rs` 那个
+      #    「没有内嵌前端」的占位页。下面的编译作业还会在**二进制**上再查一次。
+      - name: 产物必须是一份真前端（不是占位页）
+        run: |
+          set -euo pipefail
+          grep -q 'data-build-id' rust/crates/server/static/index.html
+          if grep -rq 'clip9-no-embedded-frontend' rust/crates/server/static/; then
+            echo "::error::产物里出现了 build.rs 的占位标记 —— 前端构建没真的跑"
+            exit 1
+          fi
+
+      - name: 收拢产物（上传用）
+        run: |
+          mkdir -p /tmp/web-assets
+          cp -r rust/crates/server/static /tmp/web-assets/static
+          cp rust/crates/server/static.sync-manifest /tmp/web-assets/static.sync-manifest
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: web-static
+          path: /tmp/web-assets/
+          if-no-files-found: error
+
+      # ── 给用户下载的那一份 ────────────────────────────────────────────────
+      #
+      # ⚠️★ 为什么发它（2026-10-13 定）：这次改动把前端产物**从仓库里拿掉了**
+      #    （`rust/crates/server/static/` 不再入库）—— 于是「拿到某一版服务端**实际在用的**
+      #    那份界面」就没有别的途径了：只能把它跑起来抓，或者自己重编（而重编**不保证**
+      #    逐字节一致，vite 每次构建都注入随机 build id）。
+      #    ⚠️ 而 `-static <目录>` 是一条**正式支持**的用法（README / API 文档里都有）——
+      #    给一份现成的包，让它不必依赖 Node 工具链。
+      #
+      # ⚠️★ 从 `static/` 打包、**不从 `web/dist`**：前者刚过完上面那道「必须是真前端」的闸，
+      #    而且**与编进二进制的那一份逐字节相同** —— 「下载到的就是服务端在发的那一份」。
+      #    （顺带：`web/dist/build-source.json` 那个构建印章也不会跟过来，`static/` 里没有它。）
+      #
+      # ⚠️ 名字按全仓库那条规则：`v<版本>` **紧跟**在 `clip9-web` 之后；它没有平台/架构后缀
+      #    （SPA 与平台无关）。⚠️ 改这个名字要同步改 `assets` 作业的期望清单与 `publish`
+      #    的下载 pattern —— `tools/workflows-smoke.mjs` 的判据 1b 会盯着那两处。
+      - name: 打包给用户下载的那一份
+        run: |
+          set -euo pipefail
+          name="clip9-web-${{ needs.info.outputs.tag }}"
+          mkdir -p "rust/dist/$name"
+          cp -r rust/crates/server/static/. "rust/dist/$name/"
+          tar -C rust/dist -czf "rust/dist/$name.tar.gz" "$name"
+          ls -l "rust/dist/$name.tar.gz"
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: clip9-web-${{ needs.info.outputs.tag }}
+          path: rust/dist/clip9-web-*.tar.gz
+          if-no-files-found: error
+
   # ── 命令行 / 服务端：一个静态二进制，五个平台 ────────────────────────────
   #
   # ⚠️★ 服务端**不需要系统库**：前端产物已编在二进制里，没有运行时要跟着走的资源 ——
@@ -134,7 +236,8 @@ jobs:
   linux:
     # ⚠️★ 产物名里要带版本号（Jonny 2026-09-29：「release 产物要么都带版本号要么都不」）
     #    → 这一格需要 `info` 里的 tag。`info` 是秒级的（一次 `gh api`），不拖慢构建。
-    needs: info
+    # ⚠️★ `web-assets` 也在这里：前端产物不再入库，编之前必须先把那一份取回来（见那个作业）。
+    needs: [info, web-assets]
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -152,6 +255,26 @@ jobs:
             label: linux-armv7
     steps:
       - uses: actions/checkout@v7
+
+      # ⚠️★ 前端产物不再入库（2026-10-13）—— 编之前必须先取回来。少了这一步，`build.rs`
+      #    会内嵌那个「没有内嵌前端」的占位页，而这个作业产出的包是**用户直接下载**的。
+      - uses: actions/download-artifact@v7
+        with:
+          name: web-static
+          path: rust/crates/server
+
+      - name: 前端产物必须是一份真前端
+        shell: bash
+        run: |
+          set -euo pipefail
+          if ! grep -q 'data-build-id' rust/crates/server/static/index.html; then
+            echo "::error::取到的前端产物不是一次真构建的产物（外壳里没有 data-build-id）"
+            exit 1
+          fi
+          if grep -rq 'clip9-no-embedded-frontend' rust/crates/server/static/; then
+            echo "::error::取到的产物里有 build.rs 的占位标记 —— 前端构建没真的跑"
+            exit 1
+          fi
 
       - uses: taiki-e/install-action@v2
         with:
@@ -197,6 +320,23 @@ jobs:
             echo "::error::版本号没注进二进制（CLIP9_VERSION=${CLIP9_VERSION}）—— 它回落到 Cargo.toml 那个常量了"
             exit 1
           fi
+          # ⚠️★ 同一个道理：前端产物**不再入库**（2026-10-13），编之前要是没取到，`build.rs`
+          #    会内嵌那个「没有内嵌前端」的占位页 —— 二进制照样编得过、跑得起来，只是界面没了，
+          #    而**没有任何东西会红**。所以发货前在**二进制**上再查一次
+          #    （`web-assets` 查的是文件那一侧，这一条查的是真正发出去的那一份）。
+          #
+          # ⚠️★ 正向那条**必须挑一个只可能来自真产物的字符串**：`data-build-id` **不行** ——
+          #    `static_files.rs` 的 `extract_build_id` 里就有这个字面量，占位页那份二进制
+          #    照样能 grep 到它，判据会**永远绿**（实测过）。`id="app"` 才是干净的：
+          #    真外壳里有 `<div id="app">`，占位页与全部 `.rs` 源码里都没有。
+          if strings "target/${{ matrix.target }}/release/$BIN" | grep -qF 'clip9-no-embedded-frontend'; then
+            echo "::error::这个二进制内嵌的是占位页 —— 前端产物没取到（看 web-assets 作业与上面那步下载）"
+            exit 1
+          fi
+          if ! strings "target/${{ matrix.target }}/release/$BIN" | grep -qF 'id="app"'; then
+            echo "::error::二进制里找不到 id=\"app\" —— 它内嵌的不是一份真前端产物"
+            exit 1
+          fi
 
       - name: 打包
         working-directory: rust
@@ -222,7 +362,7 @@ jobs:
 
   macos:
     # ⚠️ 同 `linux`：产物名里带版本号，所以要 tag。
-    needs: info
+    needs: [info, web-assets]
     runs-on: macos-latest
     strategy:
       fail-fast: false
@@ -234,6 +374,25 @@ jobs:
             label: macos-x86_64
     steps:
       - uses: actions/checkout@v7
+
+      # ⚠️★ 前端产物不再入库（2026-10-13）—— 编之前必须先取回来（见 web-assets 作业）。
+      - uses: actions/download-artifact@v7
+        with:
+          name: web-static
+          path: rust/crates/server
+
+      - name: 前端产物必须是一份真前端
+        shell: bash
+        run: |
+          set -euo pipefail
+          if ! grep -q 'data-build-id' rust/crates/server/static/index.html; then
+            echo "::error::取到的前端产物不是一次真构建的产物（外壳里没有 data-build-id）"
+            exit 1
+          fi
+          if grep -rq 'clip9-no-embedded-frontend' rust/crates/server/static/; then
+            echo "::error::取到的产物里有 build.rs 的占位标记 —— 前端构建没真的跑"
+            exit 1
+          fi
 
       - run: rustup target add ${{ matrix.target }}
         working-directory: rust
@@ -279,7 +438,7 @@ jobs:
   #    ⚠️ 别的平台这个变量不起作用（只在 `target_os == windows && target_arch == x86_64` 读）。
   windows:
     # ⚠️ 同 `linux`：产物名里带版本号，所以要 tag。
-    needs: info
+    needs: [info, web-assets]
     runs-on: windows-latest
     strategy:
       fail-fast: false
@@ -299,6 +458,25 @@ jobs:
       AWS_LC_SYS_PREBUILT_NASM: "1"
     steps:
       - uses: actions/checkout@v7
+
+      # ⚠️★ 前端产物不再入库（2026-10-13）—— 编之前必须先取回来（见 web-assets 作业）。
+      - uses: actions/download-artifact@v7
+        with:
+          name: web-static
+          path: rust/crates/server
+
+      - name: 前端产物必须是一份真前端
+        shell: bash
+        run: |
+          set -euo pipefail
+          if ! grep -q 'data-build-id' rust/crates/server/static/index.html; then
+            echo "::error::取到的前端产物不是一次真构建的产物（外壳里没有 data-build-id）"
+            exit 1
+          fi
+          if grep -rq 'clip9-no-embedded-frontend' rust/crates/server/static/; then
+            echo "::error::取到的产物里有 build.rs 的占位标记 —— 前端构建没真的跑"
+            exit 1
+          fi
 
       # ⚠️ 这一格与别的 job 一样用 `bash`（Windows runner 上有 Git Bash）：
       #    换成默认的 pwsh 就得把下面每一条都重写成 PowerShell，两份脚本迟早会漂。
@@ -371,7 +549,9 @@ jobs:
   # （`rust/crates/desktop/binaries/clip9-server[.exe]`，已 gitignore），再让 tauri 打包。
   desktop:
     # ⚠️ 同 `linux`：产物名里带版本号，所以要 tag。
-    needs: info
+    # ⚠️★ 这个作业**自己编一份服务端**（见下面「编服务端并暂存到 bundle 取件的位置」），
+    #    所以同样需要 `web-assets` —— 少了它 bundle 里那个服务端会内嵌占位页。
+    needs: [info, web-assets]
     strategy:
       fail-fast: false
       matrix:
@@ -405,6 +585,27 @@ jobs:
       AWS_LC_SYS_PREBUILT_NASM: "1"
     steps:
       - uses: actions/checkout@v7
+
+      # ⚠️★ 前端产物不再入库（2026-10-13）—— 这个作业**自己编一份服务端**塞进 bundle，
+      #    所以同样要先把它取回来（见 web-assets 作业）。少了这一步，用户装出来的桌面端
+      #    自带的服务端会内嵌那个「没有内嵌前端」的占位页。
+      - uses: actions/download-artifact@v7
+        with:
+          name: web-static
+          path: rust/crates/server
+
+      - name: 前端产物必须是一份真前端
+        shell: bash
+        run: |
+          set -euo pipefail
+          if ! grep -q 'data-build-id' rust/crates/server/static/index.html; then
+            echo "::error::取到的前端产物不是一次真构建的产物（外壳里没有 data-build-id）"
+            exit 1
+          fi
+          if grep -rq 'clip9-no-embedded-frontend' rust/crates/server/static/; then
+            echo "::error::取到的产物里有 build.rs 的占位标记 —— 前端构建没真的跑"
+            exit 1
+          fi
 
       # ⚠️ 缺 webkit2gtk 时 `tauri-build` 会直接失败，报错与「代码写错了」很像。
       - name: Tauri 的系统依赖（Linux）
@@ -618,7 +819,8 @@ jobs:
   # 能验）。⚠️ 也正因为不写 `if:`，它是唯一一个在两种触发下都跑的「产物」job。
   assets:
     # ⚠️★ `info` 也在这里：下面那份「资产名对不对」的期望清单是拿 tag 拼出来的。
-    needs: [info, linux, macos, windows, desktop]
+    # ⚠️★ `web-assets` 也在：它产出的 `clip9-web-v<版本>.tar.gz` 是**发布资产**（清单里有它）。
+    needs: [info, linux, macos, windows, desktop, web-assets]
     # ⚠️ 与 `publish` 同一个条件。手动跑且**没填 tag** 时产物名里没有版本号（tag 是空的），
     #    而那时也没有资产要发布 → 这份清单无从校验，别让它报一堆假错。
     if: github.event_name == 'release' || inputs.tag != ''
@@ -646,6 +848,7 @@ jobs:
             "clip9-cli-${tag}-macos-x86_64.tar.gz|homebrew formula 的 macOS/intel"
             "clip9-desktop-${tag}-macos-aarch64.dmg|homebrew cask 的 macOS/arm"
             "clip9-desktop-${tag}-macos-x86_64.dmg|homebrew cask 的 macOS/intel"
+            "clip9-web-${tag}.tar.gz|给用户下载的那一份前端产物（`-static <目录>` 用；前端不再入库之后，这是拿到某一版界面的唯一途径）"
           )
           ok=1
           # ⚠️★ 变量后面跟非 ASCII 字符时**必须写 `${}`**：`$who）` 里的全角括号会被 bash
@@ -713,7 +916,20 @@ jobs:
           merge-multiple: true
           pattern: clip9-cli-*
 
-      - name: 待传清单（只该有 cli）
+      # ⚠️★ 第二个 pattern：**前端产物**那一份（`clip9-web-v<版本>.tar.gz`）也要发 ——
+      #    前端不再入库之后，这是用户拿到「某一版服务端实际在用的那份界面」的唯一途径。
+      #    ⚠️★ **不能**把上面那个 pattern 放宽成 `clip9-*`：那会把 `clip9-desktop-*` 一起取走，
+      #    而桌面端的资产由 tauri-action 在建 Release 时就传好了，`latest.json` 里每一格的 url
+      #    用的是**资产 id**；这里再传一次同名文件会「先删后换」→ 所有平台的「检查更新」404，
+      #    而 Release 页面看不出任何异常。下面「待传清单」那道反向检查与
+      #    `tools/workflows-smoke.mjs` 的判据 1b 都盯着这件事。
+      - uses: actions/download-artifact@v8
+        with:
+          path: artifacts
+          merge-multiple: true
+          pattern: clip9-web-*
+
+      - name: 待传清单（只该有 cli 与 web）
         run: |
           set -euo pipefail
           ls -l artifacts
@@ -722,7 +938,7 @@ jobs:
           [ "$n" -gt 0 ] || { echo "::error::一个产物都没取到，别去动 Release"; exit 1; }
           # ⚠️★ 反向再判一次：`pattern` 要是被人删了（或写宽了），这里会红 ——
           #    而不是等它悄悄把中间产物传上去（那件事**没有别的症状**）。
-          stray="$(find artifacts -type f ! -name 'clip9-cli-*')"
+          stray="$(find artifacts -type f ! -name 'clip9-cli-*' ! -name 'clip9-web-*')"
           if [ -n "$stray" ]; then
             echo "::error::这些不该出现在待传清单里（中间产物 / 别人的包）："
             echo "$stray"

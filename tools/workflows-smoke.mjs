@@ -236,6 +236,29 @@ function downloadSelector(body) {
   return null;
 }
 
+/**
+ * 一个 job 里**所有** `download-artifact` 的选择器。
+ *
+ * ⚠️★ 2026-10-13 起 `release.yml` 的 `publish` 有**两个**（cli 与 web），`downloadSelector`
+ * 只回第一个 —— 拿它判「取的集合对不对」会漏掉后面那个。判据 1b 用这个。
+ *
+ * ⚠️ 每段**切到下一个 `download-artifact` 为止**（不是固定 900 字符）：否则前一个没有
+ * `pattern:` 时，那 900 字符的窗口会捞到**后一个**的 `pattern:`，判据对着错的字符串下结论。
+ */
+function downloadSelectors(body) {
+  if (body === null) return [];
+  const marks = [...body.matchAll(/uses: actions\/download-artifact@v\d+/g)].map((m) => m.index);
+  return marks.map((start, i) => {
+    const end = i + 1 < marks.length ? marks[i + 1] : Math.min(start + 900, body.length);
+    const seg = body.slice(start, end);
+    const pat = /^\s+pattern: (.+)$/m.exec(seg);
+    if (pat) return { kind: 'pattern', value: pat[1].trim() };
+    const name = /^\s+name: (.+)$/m.exec(seg);
+    if (name) return { kind: 'name', value: name[1].trim() };
+    return null;
+  });
+}
+
 // ── 读四个文件 ───────────────────────────────────────────────────────────────
 
 const release = read(RELEASE);
@@ -301,7 +324,7 @@ const pkgApk = read('openwrt/scripts/package-openwrt-apk.sh');
   else ok(label);
 }
 
-// ── 判据 1b：`publish` 取的范围**只有 cli / desktop**（中间产物不许混进去）────
+// ── 判据 1b：`publish` 取的范围**只有 cli 与 web**（中间产物不许混进去）────────
 //
 // ⚠️★ 2026-09-29 加的。它判的是一件**真发生过**的事：v0.1.0-beta3 那个 Release 里躺着
 //    7 个 `clip9-server-<版本>-<架构>` —— 那是 OpenWrt 的**裸二进制**，只是给 ipk / apk
@@ -310,51 +333,72 @@ const pkgApk = read('openwrt/scripts/package-openwrt-apk.sh');
 //    已经跑完了（**时序问题** —— 换个顺序可能就不出现，这正是它难查的地方）。
 //    ⚠️★ 它的症状是「**没有症状**」：多出来的资产要等有人去翻 Release 页面才看得到。
 //    ⚠️ 所以这里不只判「有没有 pattern」，还判那个 pattern **确实把中间产物排除在外**。
+//
+// ⚠️★ 2026-10-13 起 `publish` 有**两个** `download-artifact`（cli 与 web），所以这里判的是
+//    **那个集合必须恰好是 `{clip9-cli-*, clip9-web-*}`**：少一个（有人删了 web 那步）会红，
+//    多一个（有人把 pattern 放宽了）也会红 —— 两个方向都得有牙。
 {
-  const label = 'release.yml 的 publish 只取 cli（不带 pattern 会拖中间产物；带上 desktop 会让更新 404）';
+  const label =
+    'release.yml 的 publish 恰好取 cli + web（不带 pattern 会拖中间产物；带上 desktop 会让更新 404）';
   const problems = [];
   const pub = release === null ? null : jobBlock(release, 'publish');
-  const sel = downloadSelector(pub);
+  const sels = downloadSelectors(pub);
+  // ⚠️ 尾部通配去掉，剩下的前缀才是「可能匹配到谁」的那个东西（见下面 desktop 那段）。
+  const globBase = (v) => (v.endsWith('*') ? v.slice(0, -1) : v);
+  const WANT = ['clip9-cli-', 'clip9-web-'];
   if (pub === null) {
     problems.push('读不到 release.yml 的 publish job');
-  } else if (sel === null) {
-    problems.push('publish 里的 download-artifact 没解析出来（改名了？少了？）');
-  } else if (sel.kind !== 'pattern') {
-    problems.push(
-      `publish 的 download-artifact 是 ${JSON.stringify(sel)} —— 不带 pattern 会把整次运行的` +
-        '**所有** artifact 都拖下来（含 `openwrt-binaries` 那种中间产物）。应当写 `clip9-*`。',
-    );
+  } else if (sels.length === 0) {
+    problems.push('publish 里的 download-artifact 一个都没解析出来（改名了？删了？）');
   } else {
-    // ⚠️ 前缀得是 `clip9-`：cli（`clip9-cli-*`）在它下面，
-    //    而中间产物 `openwrt-binaries` / `openwrt-pkg-*` 与 `android-apk` 都不在。
-    for (const bad of ['openwrt', 'android']) {
-      if (sel.value.includes(bad)) {
-        problems.push(`publish 的 pattern ${JSON.stringify(sel.value)} 会连 ${bad} 的 artifact 一起取走`);
+    for (const sel of sels) {
+      if (sel === null || sel.kind !== 'pattern') {
+        problems.push(
+          `publish 里有一个 download-artifact 是 ${JSON.stringify(sel)} —— 不带 pattern 会把整次运行的` +
+            '**所有** artifact 都拖下来（含 `openwrt-binaries` 那种中间产物）。应当写 `clip9-*`。',
+        );
+        continue;
+      }
+      // ⚠️ 中间产物（`openwrt-binaries` / `openwrt-pkg-*` / `android-apk`）都不以 `clip9-` 开头。
+      for (const bad of ['openwrt', 'android']) {
+        if (sel.value.includes(bad)) {
+          problems.push(`publish 的 pattern ${JSON.stringify(sel.value)} 会连 ${bad} 的 artifact 一起取走`);
+        }
+      }
+      if (!sel.value.startsWith('clip9-')) {
+        problems.push(`publish 的 pattern 是 ${JSON.stringify(sel.value)}，应当以 \`clip9-\` 开头`);
+      }
+      // ⚠️★ 2026-10-07 起**不许碰桌面端**：桌面端的资产已经由 tauri-action 在建 Release 时传好，
+      //    而 `latest.json` 里每一格的 `url` 用的是**资产 id**（`releases/assets/<id>`）。
+      //    这里再传一次同名文件的话，`action-gh-release` 会**先删后换** —— 新 id、旧地址全 404。
+      //    ⚠️ 这条错**没有任何症状**：Release 页面一切正常，只有用户的「检查更新」拿到 404。
+      //
+      // ⚠️★ 判「它会不会匹配到桌面端」**不能搜 `desktop` 这个词**：`clip9-*` 是**前缀通配**，
+      //    文本里一个 `desktop` 都没有，却把 `clip9-desktop-*` 全匹配进来了 ——
+      //    第一版就是这么写的，变异验证（把 pattern 改回 `clip9-*`）**没抓住**（判据没牙）。
+      //    正确判法：把尾部通配去掉，看剩下的前缀**只可能**匹配哪一类。
+      if (globBase(sel.value).startsWith('clip9-desktop')) {
+        problems.push(
+          `publish 的 pattern ${JSON.stringify(sel.value)} 会把桌面端的 artifact 也取走 —— ` +
+            '那些资产会被**重传**（同名先删后换、换掉资产 id），而 `latest.json` 里的 url 正是按 id ' +
+            '写的 → 所有平台的「检查更新」404，页面看不出异常。',
+        );
       }
     }
-    if (!sel.value.startsWith('clip9-')) {
-      problems.push(`publish 的 pattern 是 ${JSON.stringify(sel.value)}，应当以 \`clip9-\` 开头`);
-    }
-    // ⚠️★ 2026-10-07 起**必须只取 cli**：桌面端的资产已经由 tauri-action 在建 Release 时传好，
-    //    而 `latest.json` 里每一格的 `url` 用的是**资产 id**（`releases/assets/<id>`）。
-    //    这里再传一次同名文件的话，`action-gh-release` 会**先删后换** —— 新 id、旧地址全 404。
-    //    ⚠️ 这条错**没有任何症状**：Release 页面一切正常，只有用户的「检查更新」拿到 404。
-    //
-    // ⚠️★ 判「它会不会匹配到桌面端」**不能搜 `desktop` 这个词**：`clip9-*` 是**前缀通配**，
-    //    文本里一个 `desktop` 都没有，却把 `clip9-desktop-*` 全匹配进来了 ——
-    //    第一版就是这么写的，变异验证（把 pattern 改回 `clip9-*`）**没抓住**（判据没牙）。
-    //    正确判法：把尾部通配去掉，看剩下的前缀**只可能**匹配 cli。
-    const globBase = sel.value.endsWith('*') ? sel.value.slice(0, -1) : sel.value;
-    if (!globBase.startsWith('clip9-cli')) {
+    const bases = sels
+      .filter((s) => s && s.kind === 'pattern')
+      .map((s) => globBase(s.value))
+      .sort();
+    if (bases.join(',') !== [...WANT].sort().join(',')) {
       problems.push(
-        `publish 的 pattern ${JSON.stringify(sel.value)} 不只匹配 cli（clip9-cli-*）—— ` +
-          '若它把桌面端的 artifact 也取走，那些资产会被**重传**（同名先删后换、换掉资产 id），' +
-          '而 `latest.json` 里的 url 正是按 id 写的 → 所有平台的「检查更新」404，页面看不出异常。',
+        `publish 取的类别是 ${JSON.stringify(bases)}，应当**恰好**是 ${JSON.stringify([...WANT].sort())} —— ` +
+          '少一个 = 有资产没发出去（例如 web 那一步被删了）；多一个 = 有人把 pattern 放宽了' +
+          '（中间产物会跟着上去）。⚠️ 要改这个集合就**故意**改这一行，别绕过它。',
       );
     }
   }
   if (problems.length) fail(label, problems.join('\n    '));
-  else ok(`${label} —— pattern ${sel.value}`);
+  else ok(`${label} —— ${sels.map((s) => s.value).join(' + ')}`);
 }
 
 // ── 判据 1c：OpenWrt 包名**前缀**三处一致 ──────────────────────────────────
