@@ -308,7 +308,7 @@ jobs:
           # ⚠️ 去掉开头的 `v`：与包版本 / `opkg list-installed` 里那个值同形。
           export CLIP9_VERSION="${{ needs.info.outputs.tag }}"
           export CLIP9_VERSION="${CLIP9_VERSION#v}"
-          cross build --release -p $BIN --target ${{ matrix.target }} 2>&1 | tee cross.log
+          cross build --release -p $BIN --target ${{ matrix.target }} --features doc 2>&1 | tee cross.log
           if grep -q 'Falling back to `cargo` on the host' cross.log; then
             echo "::error::cross 没有起容器（拿不到 workspace metadata，多半是 registry 连不上），\
           它改成在宿主机上编了 —— 宿主机上没有 musl 工具链，这一格的产物一定是错的"
@@ -335,6 +335,17 @@ jobs:
           fi
           if ! strings "target/${{ matrix.target }}/release/$BIN" | grep -qF 'id="app"'; then
             echo "::error::二进制里找不到 id=\"app\" —— 它内嵌的不是一份真前端产物"
+            exit 1
+          fi
+          # ⚠️★ 文档转换（`doc` feature）必须在**发出去的**二进制里（2026-10-13 加）。
+          #    加 `--features doc` 之前，全仓**没有任何一条发货路径**开过它 ——
+          #    v0.1.5 的更新日志宣布了这个功能，而实测已发布的 CLI 里 `/convert/{uuid}` 是 0，
+          #    用户点进那个模式只会看到「这个二进制没编 doc」。
+          #    ⚠️★ 标记用那条**路由路径**：它只在 doc 打开时才注册（见 `server/src/lib.rs`）。
+          #    **不能**用 `not_built` —— 那个字符串在**没带** doc 的产物里反而有
+          #    （它是「为什么不可用」的答案），两边都 grep 得到，判据会永远绿。
+          if ! strings "target/${{ matrix.target }}/release/$BIN" | grep -qF '/convert/{uuid}'; then
+            echo "::error::二进制里没有 /convert/{uuid} —— 这一份没带 doc feature（文档转换整条能力）"
             exit 1
           fi
 
@@ -404,7 +415,7 @@ jobs:
 
       - name: 构建
         working-directory: rust
-        run: cargo build --release -p $BIN --target ${{ matrix.target }}
+        run: cargo build --release -p $BIN --target ${{ matrix.target }} --features doc
 
       - name: 打包
         working-directory: rust
@@ -492,7 +503,7 @@ jobs:
       - name: 构建
         working-directory: rust
         shell: bash
-        run: cargo build --release -p $BIN --target ${{ matrix.target }}
+        run: cargo build --release -p $BIN --target ${{ matrix.target }} --features doc
 
       # ⚠️ 打包这一步用 pwsh：`Compress-Archive` 是系统自带的，不用赌 runner 的 PATH 里
       #    有没有 `zip`（Git Bash 不带你；而 Windows 那个 `tar.exe` 是 bsdtar，Git Bash 里
@@ -637,7 +648,7 @@ jobs:
             *windows*) exe=".exe" ;;
             *)         exe="" ;;
           esac
-          cargo build --release -p $BIN --target ${{ matrix.target }}
+          cargo build --release -p $BIN --target ${{ matrix.target }} --features doc
           mkdir -p crates/desktop/binaries
           cp "target/${{ matrix.target }}/release/$BIN$exe" "crates/desktop/binaries/$BIN$exe"
 

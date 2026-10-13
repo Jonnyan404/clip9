@@ -11,6 +11,7 @@
 #   bash tools/build-android.sh --abi arm64-v8a      # 只编一个 ABI（最快的冒烟）
 #   bash tools/build-android.sh --no-gradle          # 只编 .so 并同步，不叫 Gradle
 #   bash tools/build-android.sh --skip-web           # 跳过前端构建（产物已由别处准备好时用）
+#   bash tools/build-android.sh --skip-doc           # 不带文档转换（小一点、快 ~11 分钟）
 #   bash tools/build-android.sh --print              # 只把要跑的命令打出来，什么都不做
 #   bash tools/build-android.sh --release --require-all
 #                                                    # ⚠️ **CI 用这个**：范围内的 ABI
@@ -62,7 +63,19 @@ REQUIRE_ALL=0
 # ⚠️ 前端产物**不再入库**（2026-10-13，见 `.gitignore`）：默认在这里构建 + 同步。
 #    见下面「前端产物」那一节 —— 少了它 APK 里内嵌的是占位页，而那是**看不出来**的。
 SKIP_WEB=0
+# ⚠️★ 文档转换（`doc` feature）：**默认带** —— 手机上的「全功能」是明确要求
+#    （2026-10-13，Jonny：「Android 要支持 doc，也就是全功能」）。
+#    ⚠️ 代价是实的：`anydoc` 那棵解析器树约 +5 MB/ABI（三个 ABI 合计 ~15 MB），
+#    而且每个 ABI 多编 ~11 分钟。冒烟时用 `--skip-doc` 省掉。
+#    ⚠️ 实测过它能交叉编到 Android（arm64，11m33s），C 依赖走 NDK 的 clang。
+SKIP_DOC=0
 GRADLE_ARGS=()
+
+# ⚠️ 拼成一个字符串而不是数组：这个脚本要能在 **bash 3.2**（macOS 自带那版）上跑，
+#    而空数组的 `"${arr[@]}"` 在 `set -u` 下会炸（bash 3.2 的老毛病）。
+#    这里只有一个固定的、不含空格的字面量，所以故意不引号展开。
+DOC_FEATURE=''
+[ "$SKIP_DOC" = 0 ] && DOC_FEATURE='--features clip9-server/doc'
 
 # ⚠️ 用**两个锚点**取用法，别写行号 —— 加一行表头就会让 `--help` 少印一段，
 # 而那是个不会响的错（`tools/shell-smoke.mjs` 里那条判据就是为这类事设的）。
@@ -93,6 +106,10 @@ while [ $# -gt 0 ]; do
             ;;
         --skip-web)
             SKIP_WEB=1
+            shift
+            ;;
+        --skip-doc)
+            SKIP_DOC=1
             shift
             ;;
         --require-all)
@@ -272,7 +289,7 @@ while IFS='|' read -r abi target clang; do
         printf 'export %s=%s\n' "$cc_var" "$clang_path"
         printf 'export %s=%s\n' "$ar_var" "$NDK_BIN/llvm-ar"
         printf 'export %s=%s\n' "$linker_var" "$clang_path"
-        printf 'cargo build -p clip9-android --release --target %s\n' "$target"
+        printf 'cargo build -p clip9-android --release --target %s %s\n' "$target" "$DOC_FEATURE"
         if [ "$installed" = 0 ]; then
             echo "⚠️  这个 target 没装：rustup target add $target"
         fi
@@ -298,7 +315,9 @@ while IFS='|' read -r abi target clang; do
     export "$ar_var"="$NDK_BIN/llvm-ar"
     export "$linker_var"="$clang_path"
 
-    if ! (cd "$ROOT/rust" && cargo build -p clip9-android --release --target "$target"); then
+    # ⚠️ `$DOC_FEATURE` **故意不加引号**：空的时候要展开成「什么都没有」。
+    #    它只有一个固定值、不含空格（见上面那段）。
+    if ! (cd "$ROOT/rust" && cargo build -p clip9-android --release --target "$target" $DOC_FEATURE); then
         echo "✗ ${abi}（${target}）编不过 —— 上面就是 cargo 的原话。" >&2
         exit 1
     fi

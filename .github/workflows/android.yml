@@ -334,6 +334,20 @@ jobs:
                 echo "::error::$(basename "$apk") 的 $so 里找不到 id=\"app\" —— 它内嵌的不是一份真前端产物"
                 exit 1
               fi
+              # ── 文档转换（`doc` feature）必须在这一版里 ────────────────────
+              #
+              # ⚠️★ 2026-10-13：Android 要的是**全功能**（Jonny 的要求），所以
+              #    `build-android.sh` 默认带 `--features clip9-server/doc`。
+              #    ⚠️ 漏掉它**也没有症状**：编得过、装得上，只是用户在「文档转换」那个模式里
+              #    会看到「这个二进制没编 doc」—— 而那看起来像「这个功能还没做」。
+              # ⚠️★ 标记用 `/convert/{uuid}`（那条路由只在 doc 打开时才注册，见 `server/src/lib.rs`）。
+              #    实测：带 doc 的 `.so` 里是 1，不带的宿主二进制里是 0。
+              #    ⚠️ **不能**用 `not_built` 当标记 —— 那个字符串在**没带** doc 的产物里反而有
+              #    （它是「为什么不可用」的答案），两边都 grep 得到。
+              if ! grep -qF '/convert/{uuid}' "$rows.txt"; then
+                echo "::error::$(basename "$apk") 的 $so 里没有 /convert/{uuid} —— 这个包没带文档转换（doc feature），不是「全功能」那一版"
+                exit 1
+              fi
               echo "✓ $(basename "$apk")  $so  内嵌的是真前端"
             done
 
