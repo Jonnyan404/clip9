@@ -227,13 +227,26 @@ export function PageToolbar({ variant = 'default' }: { variant?: string }) {
                             size="small"
                             variant="outlined"
                             onClick={(e) => setModeMenuAnchor(e.currentTarget)}
+                            aria-label={`${t('uiMode')}：${t(currentMode.labelKey)}`}
                             label={
                                 <Stack direction="row" alignItems="center" spacing={0.5}>
-                                    <Box component="span" sx={{ fontSize: 13 }}>{t(currentMode.labelKey)}</Box>
+                                    {/* ⚠️★ 窄屏**只显示图标**（2026-10-13，Jonny 要求）：
+                                        模式名（「标准」「动作台」…）是这一栏里最长的一段文字，
+                                        而手机上的顶栏本来就挤。图标每个模式一个，够辨识；
+                                        真认不出时点开菜单就有名字（菜单里图标与文字是并排的）。
+                                        ⚠️ 桌面端**保持纯文字、不加图标** —— 与 Vue 版同一条理由
+                                        （那个版本的注释写着：旁边那几个都是纯图标按钮，
+                                        这里再放一个图标只是多一层信息）。
+                                        ⚠️ 箭头两边都留着：它是「这里能点开一个菜单」的唯一提示，
+                                        去掉之后这个胶囊就长得跟旁边的纯图标按钮一样了。 */}
+                                    <Box component="span" sx={{ display: { xs: 'inline', sm: 'none' } }}>
+                                        <MdiIcon name={currentMode.icon} size={18} />
+                                    </Box>
+                                    <Box component="span" sx={{ fontSize: 13, display: { xs: 'none', sm: 'inline' } }}>{t(currentMode.labelKey)}</Box>
                                     <MdiIcon name="mdi-chevron-down" size={14} />
                                 </Stack>
                             }
-                            title={t('uiMode')}
+                            title={`${t('uiMode')}：${t(currentMode.labelKey)}`}
                         />
                         )}
                         <Menu anchorEl={modeMenuAnchor} open={Boolean(modeMenuAnchor)} onClose={() => setModeMenuAnchor(null)}>
