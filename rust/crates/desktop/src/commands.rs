@@ -26,6 +26,7 @@ use clip9_client::Msg;
 // ⚠️ `Manager` 是为了 `app.state::<…>()`（`pick_files` 从 `app` 上取字典，见那条注释）。
 use tauri::{Manager, State};
 
+use crate::child_process;
 use crate::model::{ResourceSample, ShareLinkView, UpdatePhase};
 use crate::runtime::{Ask, Runtime};
 use crate::server_config::ServerConfigFile;
@@ -1307,23 +1308,28 @@ fn openable_url(url: &str) -> Result<String, Msg> {
 ///
 /// ⚠️ 参数**逐个传**（不拼成一条命令字符串）：拼字符串 = 过一遍 shell，
 /// 而这里的地址来自用户的配置文件。
+///
+/// ⚠️★ 三个平台都从 [`child_process`] 起（**不是** `Command::new`）：Windows 那支用的是
+/// `cmd.exe`，它是**控制台**程序 —— 直接起就是「点一下打开浏览器，黑窗闪一下」。
+/// mac 上的 `open` / Linux 上的 `xdg-open` 本来不需要那面旗子，但也照样走这个漏斗：
+/// 规矩定成「只有一处能起子进程」，就不用每次加平台时再去想一遍（判据 44 逐文件盯着）。
 fn open_in_system_browser(url: &str) -> Result<(), Msg> {
     #[cfg(target_os = "macos")]
     let mut command = {
-        let mut command = std::process::Command::new("open");
+        let mut command = child_process::hidden("open");
         command.arg(url);
         command
     };
     #[cfg(target_os = "windows")]
     let mut command = {
-        let mut command = std::process::Command::new("cmd");
+        let mut command = child_process::hidden("cmd");
         // ⚠️ `start` 把第一个引号当成窗口标题，所以要给一个空标题占位。
         command.args(["/C", "start", "", url]);
         command
     };
     #[cfg(all(not(target_os = "macos"), not(target_os = "windows")))]
     let mut command = {
-        let mut command = std::process::Command::new("xdg-open");
+        let mut command = child_process::hidden("xdg-open");
         command.arg(url);
         command
     };
@@ -1345,22 +1351,26 @@ fn open_in_system_browser(url: &str) -> Result<(), Msg> {
 /// 去接一整套 DBus 的 FileManager1 调用不划算。
 /// ⚠️ 参数**逐个传**（不拼成一条命令字符串）：拼字符串 = 过一遍 shell，而这条路
 /// 上的字符串来自**网络**（谁都可以往房间里发一个奇怪的文件名）。
+///
+/// ⚠️ Windows 那支的 `explorer.exe` 是**GUI 子系统**程序，它本来就不弹控制台 ——
+/// 走 [`child_process`] 是为了「这仓库里只有一处起子进程」这一条规矩
+///（否则判据 44 会把它当成漏网的那一处，而它其实只是**不需要**）。
 fn reveal_in_file_manager(path: &std::path::Path) -> Result<(), Msg> {
     #[cfg(target_os = "macos")]
     let mut command = {
-        let mut command = std::process::Command::new("open");
+        let mut command = child_process::hidden("open");
         command.arg("-R").arg(path);
         command
     };
     #[cfg(target_os = "windows")]
     let mut command = {
-        let mut command = std::process::Command::new("explorer");
+        let mut command = child_process::hidden("explorer");
         command.arg(format!("/select,{}", path.display()));
         command
     };
     #[cfg(all(not(target_os = "macos"), not(target_os = "windows")))]
     let mut command = {
-        let mut command = std::process::Command::new("xdg-open");
+        let mut command = child_process::hidden("xdg-open");
         command.arg(path.parent().unwrap_or(path));
         command
     };

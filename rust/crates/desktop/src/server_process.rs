@@ -32,11 +32,17 @@
 use std::io::{Read, Write};
 use std::net::{Ipv4Addr, SocketAddr, TcpStream};
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command, Stdio};
+use std::process::{Child, Stdio};
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
 use clip9_client::Msg;
+
+// ⚠️★ 这里的子进程一律从 [`child_process`] 起（别处不许 `Command::new`）：壳自己
+// **不带控制台**，而 `clip9-server.exe` 是控制台程序 —— 直接起会在 Windows 上给它
+// 新分配一个控制台窗口，而服务端是**常驻**的：那个黑窗会一直挂着（理由见
+// `child_process` 的模块文档，判据 44 盯着这件事）。
+use crate::child_process;
 
 // ⚠️★ 报错一律是 [`Msg`]（键 + 参数），**不是成文的中文** —— 与 `store` / `commands` 同一条规矩
 // （理由见 [`crate::commands`] 的模块文档）。这几条错误会走到界面上
@@ -121,7 +127,7 @@ impl ServerProcess {
         {
             return Some(cached);
         }
-        let output = Command::new(&self.binary).arg("-v").output().ok()?;
+        let output = child_process::hidden(&self.binary).arg("-v").output().ok()?;
         // ⚠️ 只认**成功退出**的：失败时 stdout 可能是别的程序写的垃圾。
         if !output.status.success() {
             return None;
@@ -268,7 +274,9 @@ impl ServerProcess {
             .try_clone()
             .map_err(|reason| Msg::key("serverLogCloneFailed").param("reason", reason))?;
 
-        let child = Command::new(&self.binary)
+        // ⚠️⚠️ 从 [`child_process`] 起（不是 `Command::new`）：这一个进程是**常驻**的，
+        // 直接起的话 Windows 会为它在任务栏上留一个黑窗，一直挂到退出。
+        let child = child_process::hidden(&self.binary)
             // ⚠️ 显式给 `-port`：与刚写下的那份配置**同一个值**（`port` 是上面读出来的）。
             // 给的是**配置里那个**，不是某个常量 —— 命令行覆盖配置（`apply_flags`），
             // 所以这里写错就等于用户改的端口不生效。
@@ -959,7 +967,7 @@ mod tests {
         let port = free_port();
         let data = dir.path().join("no-variable");
         std::fs::create_dir_all(&data).expect("建目录");
-        let mut raw = Command::new(&binary)
+        let mut raw = child_process::hidden(&binary)
             .arg("-port")
             .arg(port.to_string())
             .arg("-data")
