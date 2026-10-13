@@ -52,7 +52,10 @@ axum-server = { version = "0.8.0", features = ["tls-rustls"] }
 #
 # ⚠️ **非默认**：anydoc 连带的是一整套解析器（zip / flate2 / quick-xml / cfb /
 # pdf-inspector / encoding_rs），是 OpenWrt（flash 几十 MB）上仅次于 `image` 的体积来源。
-# 判据与 `clip9-actions` 的 `highlight` / `doc` 完全一致 —— 桌面 / Docker 带，OpenWrt 不带。
+# ⚠️ 它与 `clip9-actions` 的 `doc` 是**同一条判据的两半**：桌面 / Docker / Android 带，OpenWrt 不带
+#    （发货路径的清单与静态判据见 `tools/workflows-smoke.mjs` 的判据 13）。
+# ⚠️ 别拿它跟 `clip9-actions` 里那些**分组 feature** 类比 —— 那些是「哪些动作注册」，
+#    关掉是少几个动作；这里的 `doc` 是一条**路由**，关掉是那条路由不存在（404）。
 #
 # ⚠️ 关着时那条路由**压根不注册**（落到静态资源兜底 = 404），不是「注册了但永远回 500」。
 # 前端据此显隐入口，判据从 `GET /server` 的 `convert.enabled` 读。
