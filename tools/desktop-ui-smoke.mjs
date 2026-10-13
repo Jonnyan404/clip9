@@ -333,6 +333,35 @@ const [
   sayFixturePath = join(root, 'rust/crates/desktop/tests/fixtures/say-cases.json'),
 ] = cliArgs;
 
+/** ⚠️★ `:` 分隔的目录表要**认得出 Windows 的盘符** —— 它里面也有一个 `:`。
+ *
+ * 直接 `spec.split(':')` 会把 `C:\…` 切成 `C` 与 `\…`，于是 `walk` 去找一个叫 `C`
+ * 的目录：实测就是 `ENOENT … scandir 'C:\…\clip9\C'` —— **整个自检在 Windows 上跑不起来**
+ *（2026-10-13 在 Windows 上跑这一条时才发现的；CI 是 Linux，所以它一直没暴露）。
+ *
+ * 判据：**段首**那一个字母后面紧跟 `:` 且再后面是路径分隔符的，是盘符；其余的都是分隔符。
+ * ⚠️ 只多认这一种形状 —— POSIX 上的绝对路径以 `/` 开头，永远落不进这一支。
+ */
+function splitDirSpec(spec) {
+  const parts = [];
+  let current = '';
+  let start = 0;
+  for (let i = 0; i < spec.length; i++) {
+    const isDrive = i - start === 1
+      && /[A-Za-z]/.test(spec[start])
+      && (spec[i + 1] === '\\' || spec[i + 1] === '/');
+    if (spec[i] === ':' && !isDrive) {
+      parts.push(current);
+      current = '';
+      start = i + 1;
+      continue;
+    }
+    current += spec[i];
+  }
+  parts.push(current);
+  return parts.filter(Boolean);
+}
+
 /** `:` 分隔的目录表 → 里面所有 `.rs` 的绝对路径（**排序**：报告要稳定，变异验证要能逐条对）。 */
 function rustSources(spec) {
   const found = [];
@@ -343,7 +372,7 @@ function rustSources(spec) {
       else if (entry.endsWith('.rs')) found.push(path);
     }
   };
-  for (const dir of spec.split(':').filter(Boolean)) walk(dir);
+  for (const dir of splitDirSpec(spec)) walk(dir);
   return found;
 }
 
@@ -3889,6 +3918,162 @@ if (entryViewFiles.length !== 1) {
   } else {
     console.log(`· 判据 43：版本号与更新都在 pane-about 里（${abIds.length} 个 id），`
       + '且「没查过」与「已是最新」是两句。');
+  }
+}
+
+// ── 判据 44：Windows 上不该有黑窗（理由见下）──────────────────────────────────
+//
+// ⚠️★ 这一条钉的是 2026-10-13 Jonny 报的「Windows 桌面端打开就弹个黑窗」。
+// 黑窗有**两个**来源，同一件事的两半：
+//   · 壳自己是 console 子系统（`main.rs` 缺 `windows_subsystem` 那一行）→ 双击就分配
+//     一个控制台，里面是壳那批 log-only 的 `eprintln!`；
+//   · 把上一条修好之后，壳**没有**控制台了，而它起的子进程（`clip9-server.exe` 的 bin、
+//     `cmd.exe`）**都是** console 子系统 —— Windows 会给它们**各分配一个新窗口**。
+//     `clip9-server` 那个是**常驻**的：黑窗会一直挂在任务栏上。
+//
+// ⚠️★ 为什么必须是一条判据：这两个错**只在 Windows 上看得见**，而 CI 与开发机是
+// Linux / macOS —— 编译过、测试全绿、界面一切正常，唯一能发现它的地方就是用户双击那一下。
+//
+// ⚠️ 判在 `scanRust(…).blanked` 上（**注释与字符串已经擦掉**）：上面这些注释里到处写着
+// `Command::new`，拿原文判的话**注释就能满足判据**（判据 8 / 36 都在这上面栽过）。
+// ⚠️ 反过来，`"windows"` 这个**值**是字符串、在 `blanked` 里已经变成空格 —— 所以那一处
+// 改判在「只去注释、保留字符串」的那一份上（`withoutComments`，见下）。
+{
+  const problems = [];
+  const srcDir = join(root, 'rust/crates/desktop/src');
+  const files = rustSources(srcDir);
+  /** ⚠️ 与 `scanRust` 同源，但**把字符串字面量还原回来** —— 这里要看 `"windows"` 这个值。
+   *  判据 36 为同一件事写过一个 `fnSlice`，两条都是「判据得落在代码上、而值住在字符串里」。 */
+  const withoutComments = (source) => {
+    const { blanked, literals } = scanRust(source);
+    const out = blanked.split('');
+    for (const one of literals) {
+      for (let k = one.start; k < one.end; k++) out[k] = source[k];
+    }
+    return out.join('');
+  };
+  if (files.length === 0) {
+    problems.push('`rust/crates/desktop/src` 里一个 .rs 都没扫到 —— 这条判据要跟着仓库结构改');
+  } else {
+    const read = (path) => readFileSync(path, 'utf8');
+    const base = (path) => path.slice(srcDir.length + 1).replace(/\\/g, '/');
+    const blankedOf = new Map(files.map((path) => [path, scanRust(read(path)).blanked]));
+
+    // ① 壳自己得是 GUI 子系统
+    const mainPath = join(srcDir, 'main.rs');
+    const mainCode = blankedOf.get(mainPath) ?? '';
+    if (!/#!\[cfg_attr\(not\(debug_assertions\), windows_subsystem = "windows"\)\]/
+      .test(withoutComments(read(mainPath)))) {
+      problems.push('`main.rs` 顶上没有 `#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]`'
+        + ' —— release 上 Windows 会**给壳分配一个控制台窗口**：双击图标先弹一个黑窗，'
+        + '里面是壳那批 log-only 的 `eprintln!`。'
+        + '（⚠️ `cfg_attr` 那一层别省：写成裸的 `windows_subsystem` 会让 `cargo tauri dev` 也没有控制台，'
+        + '开发时的日志全丢）');
+    }
+    // ⚠️ 反向：那条属性得真的在**代码**里，不是在注释里（`blanked` 里只剩 `windows_subsystem` 这个名字）。
+    if (!/windows_subsystem/.test(mainCode)) {
+      problems.push('`main.rs` 的代码里没有 `windows_subsystem` —— 只在注释里写了不算');
+    }
+
+    // ② 子进程只许从**一个**地方起 —— 就是那个给 `creation_flags` 的文件
+    const spawners = files.filter((path) => /Command::new\s*\(/.test(blankedOf.get(path)));
+    const flaggers = files.filter((path) => /creation_flags\s*\(/.test(blankedOf.get(path)));
+    if (flaggers.length !== 1) {
+      problems.push(`给子进程挂 \`creation_flags\` 的文件有 ${flaggers.length} 个`
+        + `（${flaggers.map(base).join('、') || '一个都没有'}）—— 这条判据认的是**恰好一处**：`
+        + '两处就是「同一个决定写在两个地方」，早晚有一处变旧');
+    } else {
+      const funnel = flaggers[0];
+      const funnelCode = blankedOf.get(funnel);
+      // ⚠️★ 值也要钉：`0x0800` 之类照样编译得过、**什么也不做**，而症状还是那个黑窗。
+      if (!/CREATE_NO_WINDOW/.test(funnelCode) || !/0x0800_0000/.test(funnelCode)) {
+        problems.push(`\`${base(funnel)}\` 里没有 \`CREATE_NO_WINDOW = 0x0800_0000\` 那一串`
+          + ' —— 值写错了编译照样过，只是黑窗还在');
+      }
+      if (!/#\[cfg\(windows\)\]/.test(funnelCode)) {
+        problems.push(`\`${base(funnel)}\` 里那面旗子没有 \`#[cfg(windows)]\` 兜着 ——`
+          + ' `CommandExt` 只在 Windows 上存在，别的平台会**编不过**');
+      }
+      const rogue = spawners.filter((path) => path !== funnel);
+      if (rogue.length) {
+        problems.push('这些文件自己 `Command::new` 起子进程了（该走那个漏斗）：'
+          + rogue.map(base).join('、') + ' —— 它们起的进程在 Windows 上会弹自己的黑窗');
+      }
+      // ⚠️ 反向：漏斗得**真的有人走**。否则「只剩一处」可以是因为**没人起子进程了** ——
+      // 参考物不在时报绿，是这个仓库最不想要的那种绿。
+      const callers = files.filter((path) => /child_process::hidden\s*\(/.test(blankedOf.get(path)));
+      if (callers.length === 0) {
+        problems.push('一个走 `child_process::hidden` 的地方都没有 —— 这条判据的参考物没了');
+      }
+      // 起子进程的那两个文件必须都在名单里（少一个 = 有一处漏了）。
+      for (const must of ['server_process.rs', 'commands.rs']) {
+        if (!callers.some((path) => base(path) === must)) {
+          problems.push(`\`${must}\` 没走那个漏斗 —— 它里面起子进程的那几处漏了`);
+        }
+      }
+    }
+  }
+  if (problems.length) {
+    failed = true;
+    console.error(`✗ 判据 44：Windows 上会有黑窗（${problems.length} 处）：`);
+    for (const one of problems) console.error(`    · ${one}`);
+  } else {
+    console.log('· 判据 44：壳是 GUI 子系统、子进程全部走 `child_process::hidden`（Windows 上不弹黑窗）。');
+  }
+}
+
+// ── 判据 45：关自启之前先问系统里那一项在不在（理由见下）──────────────────────
+//
+// ⚠️★ 这一条钉的是同一个黑窗里的**第二半**：
+// 「设置开机自启失败（想要 false）：系统找不到指定的文件。(os error 2)」。
+// 它**每次启动**都报一次，而用户什么都没做错 —— 是**假失败**。
+//
+// 链路：默认配置的自启是**关**的（`ClientConfig::enable_autostart` 默认 `false`）→
+// 启动那句 `autostart::apply(app, false)` 走 `disable()` → 而 `auto-launch` 在 Windows 上
+// 只有一句 `RegDeleteValueW`：删一条**不存在**的值回 `ERROR_FILE_NOT_FOUND(2)`，
+// 插件把它折叠成一句中文错误文本（`raw_os_error` 到这一层已经没了）→ `apply` 原样 `eprintln!`。
+//
+// ⚠️★ 要的就是那句「先问 `needs_change(is_enabled(app), wanted)`」别被省掉：
+// 省掉**不报错**、测试也不红，只是用户每次开机都看见一句红字。
+// ⚠️ 这里只能钉**接线**（那句判断还在不在）；`needs_change` 自己的四条分支
+//（本来就没开 / 真的开着 / 读不出来 / 想要开）由 `cargo test` 钉
+//（`autostart.rs` 末尾那个 `mod tests`）。
+{
+  const problems = [];
+  const autostartPath = join(root, 'rust/crates/desktop/src/autostart.rs');
+  const raw = existsSync(autostartPath) ? readFileSync(autostartPath, 'utf8') : '';
+  if (!raw) {
+    problems.push('读不到 `autostart.rs` —— 这条判据要跟着仓库结构改');
+  } else {
+    const blanked = scanRust(raw).blanked;
+    // ⚠️ 停在**第一个顶格的 `}`** 上：里面那几个嵌套块都是缩进的，所以那一个就是函数末尾。
+    const body = /pub fn apply\([\s\S]*?\n\}/.exec(blanked)?.[0] ?? '';
+    if (!body) {
+      problems.push('读不到 `autostart::apply` —— 这条判据要跟着代码改');
+    } else {
+      if (!/needs_change\s*\(/.test(body)) {
+        problems.push('`autostart::apply` 里没有 `needs_change(…)` —— 于是「想关、而系统里'
+          + '本来就没开」这一拍会照样去删一次：Windows 上每次启动报一句假失败'
+          + '（「设置开机自启失败（想要 false）：系统找不到指定的文件」）');
+      }
+      // ⚠️★ 输入必须是**问出来的**（`is_enabled`），不许拿配置里的意图顶上 ——
+      // 「拿意图当系统里的真相」正是这个文件（与托盘那个勾）存在的理由。
+      if (!/is_enabled\s*\(/.test(body)) {
+        problems.push('`autostart::apply` 没有问系统（`is_enabled`）—— 只拿配置里的意图'
+          + '当「系统里那一项在不在」，那正是界面骗人的老毛病（见 `is_enabled` 的文档）');
+      }
+    }
+    if (!/#\[cfg\(test\)\]/.test(blanked)) {
+      problems.push('`autostart.rs` 里没有测试 —— `needs_change` 那四条分支'
+        + '（本来就没开 / 真的开着 / 读不出来 / 想要开）就没人守着');
+    }
+  }
+  if (problems.length) {
+    failed = true;
+    console.error(`✗ 判据 45：关自启之前没先问系统（${problems.length} 处）：`);
+    for (const one of problems) console.error(`    · ${one}`);
+  } else {
+    console.log('· 判据 45：关自启之前先问系统里那一项（「本来就没开」不再报假失败）。');
   }
 }
 
