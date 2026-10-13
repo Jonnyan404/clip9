@@ -1294,6 +1294,81 @@ const pkgApk = read('openwrt/scripts/package-openwrt-apk.sh');
   if (problems.length) fail(label, problems.join('\n    '));
 }
 
+// ── 判据 13：发出去的服务端二进制都带 doc（OpenWrt 那份是明说不带的例外）──────
+//
+// ⚠️★ 2026-10-13 加。`doc`（文档转换，`POST /convert/{uuid}`）是**非默认** feature：
+//    关着时那条路由**压根不注册**（落到静态资源兜底 = 404，见 `server/src/lib.rs`）。
+//    于是「漏带」的症状是**静默**的 —— 二进制编得过、发得出、跑得起来，
+//    只是用户点进那个模式看到「这个二进制没编 doc」，而那看起来像「这个功能还没做」。
+//
+//    ⚠️★ 这条真的发生过：v0.1.5 的更新日志宣布了文档转换，而**全仓没有任何一条
+//    发货路径**开过 doc —— 实测已发布的 CLI 里 `/convert/{uuid}` 是 0。
+//    所以判据要盯的**不是某一个文件**，而是「所有发货路径」这个集合：
+//    以后新加一条发布路径、忘了带 feature，这里必须红。
+//
+//    ⚠️ 三处，判法各不相同（因为「带」这件事在每一处长得不一样）：
+//      ① `release.yml`：所有编 `$BIN`（= clip9-server）的命令行都得含 `--features doc`；
+//      ② Android：`tools/build-android.sh` **默认**带（Jonny 的明确要求「全功能」），
+//         所以盯的是它那个**默认值**，不是某个调用点；
+//      ③ OpenWrt：**故意不带**（给的是 flash 几十 MB 的设备，见 `android/DEVELOPING.md`）——
+//         反过来钉住它「不许带」，免得有人照抄 Android 那条。
+{
+  const label = '发出去的服务端二进制都带 doc（OpenWrt 那份故意不带）';
+  const problems = [];
+  // ⚠️ 不带 `g` 标志：`.test()` 才不会在多次调用间推进 `lastIndex`。
+  const DOC = /--features\s+doc\b/;
+
+  // ① release.yml：逐条「编 $BIN」的命令
+  const rel = read(RELEASE);
+  let relBuilds = 0;
+  if (rel === null) {
+    problems.push(`读不到 ${RELEASE}`);
+  } else {
+    // ⚠️ 结尾那个 `[^\n]*` 不能省：少了它，匹配到 `$BIN` 就截断，
+    //    `--features doc` 根本不在取到的子串里 —— 判据会**永远红**（第一次就踩了）。
+    const builds = rel.match(/(?:cross|cargo)\s+build[^\n]*-p\s+\$BIN[^\n]*/g) || [];
+    relBuilds = builds.length;
+    // ⚠️ 一条都没匹配到 = 提取器被写坏了，别报绿（与判据 12 同一条规矩）。
+    if (relBuilds === 0) {
+      problems.push('release.yml 里一条「编 $BIN」的命令都没认出来 —— 这个判据的正则失效了');
+    }
+    for (const b of builds) {
+      if (!DOC.test(b)) {
+        problems.push(`这一条没带 --features doc：${b.trim()}`);
+      }
+    }
+  }
+
+  // ② Android：build-android.sh 的**默认值**要带 doc
+  const android = read('tools/build-android.sh');
+  if (android === null) {
+    problems.push('读不到 tools/build-android.sh');
+  } else {
+    if (!/--features clip9-server\/doc/.test(android)) {
+      problems.push('tools/build-android.sh 里找不到 `--features clip9-server/doc` —— Android 的「默认全功能」没了');
+    }
+    if (!/^SKIP_DOC=0\s*$/m.test(android)) {
+      problems.push('tools/build-android.sh 的 `SKIP_DOC` 默认不再是 0 —— doc 变成默认不带，而 Jonny 要的是默认全功能');
+    }
+  }
+
+  // ③ OpenWrt：**故意不带** —— 反过来钉住，免得照抄 Android 那条
+  const openwrt = read('openwrt/scripts/build.sh');
+  if (openwrt === null) {
+    problems.push('读不到 openwrt/scripts/build.sh');
+  } else if (DOC.test(openwrt)) {
+    problems.push(
+      'openwrt/scripts/build.sh 带了 doc —— 那一条线给的是 flash 几十 MB 的设备，' +
+        '**故意不带**（见 `android/DEVELOPING.md`）',
+    );
+  }
+
+  if (!problems.length) {
+    ok(`${label} —— release ${relBuilds} 处 / android 默认带 / openwrt 不带`);
+  }
+  if (problems.length) fail(label, problems.join('\n    '));
+}
+
 // ── 输出 ────────────────────────────────────────────────────────────────────
 
 if (failures.length) {
