@@ -50,6 +50,7 @@
   "composerSlashHint": "/ 可觸發 markdown 模板插入",
   "fullscreenCloseAfterSendOn": "傳送後自動收起全螢幕",
   "fullscreenCloseAfterSendOff": "傳送後保持全螢幕開啟",
+  "fullscreenOpacity": "全螢幕輸入框背景透明度",
   "reward": "贊賞支持",
   "rewardTitle": "給作者一點支持",
   "rewardHint": "喜歡就用，方便就行。\n如果這個免費工具幫到了你，一杯奶茶就是最大的鼓勵 🍵",

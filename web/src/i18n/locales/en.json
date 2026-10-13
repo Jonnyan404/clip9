@@ -50,6 +50,7 @@
   "composerSlashHint": "/ to insert a markdown template",
   "fullscreenCloseAfterSendOn": "Auto-close fullscreen after sending",
   "fullscreenCloseAfterSendOff": "Keep fullscreen open after sending",
+  "fullscreenOpacity": "Fullscreen input background opacity",
   "reward": "Support / Reward",
   "rewardTitle": "Support the author",
   "rewardHint": "Enjoy it and hope it helps.\nIf this free tool made your day,a cup of coffee is the best encouragement 🍵",

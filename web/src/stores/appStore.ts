@@ -44,6 +44,31 @@ function loadShareDefaults(): ShareDefaults {
     }
 }
 
+/**
+ * 全屏输入框的**背景**不透明度（%，30–100）。
+ *
+ * ⚠️ 有下限 30：再低，输入的文字就会和背后的页面糊在一起 ——「自己写的东西始终看得清」
+ * 是这个功能的前提，不是可选项。默认 100 = 完全不透明，与加这个功能之前完全一样。
+ *
+ * ⚠️ 只作用于**面板底色**，不动文字/按钮的 opacity：目的是「透过面板看见背后的内容」，
+ * 不是「把整个窗口调淡」。
+ */
+export const FULLSCREEN_OPACITY_MIN = 30;
+export const FULLSCREEN_OPACITY_MAX = 100;
+const FULLSCREEN_OPACITY_DEFAULT = 100;
+
+function clampFullscreenOpacity(value: number): number {
+    return Math.min(FULLSCREEN_OPACITY_MAX, Math.max(FULLSCREEN_OPACITY_MIN, Math.round(value)));
+}
+
+function loadFullscreenOpacity(): number {
+    const stored = localStorage.getItem('fullscreenOpacity');
+    if (stored === null) return FULLSCREEN_OPACITY_DEFAULT;
+    const parsed = Number(stored);
+    if (!Number.isFinite(parsed)) return FULLSCREEN_OPACITY_DEFAULT;
+    return clampFullscreenOpacity(parsed);
+}
+
 function loadDisplayByMode(): Record<string, Record<string, boolean>> {
     const raw = localStorage.getItem('displayByMode');
     if (!raw) return {};
@@ -129,6 +154,8 @@ export interface AppState {
     shareDefaults: ShareDefaults;
     composerPrimary: string;
     fullscreenSendClose: boolean;
+    /** 全屏输入框的背景不透明度（30–100，%）。见 `FULLSCREEN_OPACITY_MIN` 的说明。 */
+    fullscreenOpacity: number;
     uiMode: string;
     embedded: boolean;
 
@@ -137,6 +164,7 @@ export interface AppState {
     setConfig: (config: AppConfig) => void;
     toggleComposerPrimary: () => void;
     toggleFullscreenSendClose: () => void;
+    setFullscreenOpacity: (value: number) => void;
     setUiMode: (mode: string) => void;
     setDisplayToggle: (key: string, value: boolean) => void;
 }
@@ -177,6 +205,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     fullscreenSendClose: localStorage.getItem('fullscreenSendClose') !== null
         ? localStorage.getItem('fullscreenSendClose') === 'true'
         : true,
+    fullscreenOpacity: loadFullscreenOpacity(),
     // 界面模式：**地址里的 `?mode=` 优先**，其次是上次用过的，最后是标准模式。
     // 这样「一个 tab 一个模式」——每个 tab 有自己的地址，就互不干扰。
     uiMode: readLocationParam('mode') || localStorage.getItem('uiMode') || 'default',
@@ -206,6 +235,13 @@ export const useAppStore = create<AppState>((set, get) => ({
         const next = !get().fullscreenSendClose;
         set({ fullscreenSendClose: next });
         localStorage.setItem('fullscreenSendClose', String(next));
+    },
+
+    // 与 `toggleFullscreenSendClose` 同一套写法：改 store 与落盘**同一拍**。
+    setFullscreenOpacity: (value) => {
+        const next = clampFullscreenOpacity(Number(value));
+        set({ fullscreenOpacity: next });
+        localStorage.setItem('fullscreenOpacity', String(next));
     },
 
     setUiMode: (mode) => {

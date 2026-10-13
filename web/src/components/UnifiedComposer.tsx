@@ -1,10 +1,10 @@
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import {
-    Box, Button, Chip, Dialog, DialogContent, DialogTitle, IconButton, Stack, TextField, Tooltip, Typography, useMediaQuery,
+    Box, Button, Chip, Dialog, DialogContent, DialogTitle, IconButton, Slider, Stack, TextField, Tooltip, Typography, useMediaQuery,
 } from '@mui/material';
 import axios from 'axios';
-import { useAppStore } from '@/stores/appStore';
+import { FULLSCREEN_OPACITY_MAX, FULLSCREEN_OPACITY_MIN, useAppStore } from '@/stores/appStore';
 import { useWebSocketStore } from '@/stores/wsStore';
 import { toast } from '@/stores/toastStore';
 import { useDisplaySettings } from '@/hooks/useDisplaySettings';
@@ -38,6 +38,7 @@ export const UnifiedComposer = forwardRef<UnifiedComposerHandle>(function Unifie
     const config = useAppStore((s) => s.config);
     const composerPrimary = useAppStore((s) => s.composerPrimary);
     const fullscreenSendClose = useAppStore((s) => s.fullscreenSendClose);
+    const fullscreenOpacity = useAppStore((s) => s.fullscreenOpacity);
     const connected = useWebSocketStore((s) => s.websocket !== null);
 
     const [dragover, setDragover] = useState(false);
@@ -427,10 +428,54 @@ export const UnifiedComposer = forwardRef<UnifiedComposerHandle>(function Unifie
             </Box>
 
             {/* 全屏输入窗 */}
-            <Dialog open={textFullscreen} onClose={() => setTextFullscreen(false)} fullWidth maxWidth="md">
-                <DialogTitle sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+            {/* ⚠️ 透明度**只做在面板底色**上（文字/按钮不跟着淡），目的是「透过面板看见背后的内容」。
+                ⚠️★ `backgroundImage: 'none'` 不能省：暗色主题下 MUI 的 Paper 会叠一层 elevation
+                提亮渐变，不关掉的话改 `backgroundColor` 根本看不出来。
+                ⚠️ 遮罩（backdrop）跟着同一个比例变淡 —— 只调面板的话，背后仍压着一层 50% 黑，
+                「能看清背后」就落空了。 */}
+            <Dialog
+                open={textFullscreen}
+                onClose={() => setTextFullscreen(false)}
+                fullWidth
+                maxWidth="md"
+                slotProps={{
+                    paper: {
+                        sx: {
+                            backgroundColor: `color-mix(in srgb, var(--mui-palette-background-paper) ${fullscreenOpacity}%, transparent)`,
+                            backgroundImage: 'none',
+                        },
+                    },
+                    backdrop: {
+                        sx: { backgroundColor: `rgba(0, 0, 0, ${0.5 * (fullscreenOpacity / 100)})` },
+                    },
+                }}
+            >
+                {/* ⚠️★ 窄屏这一行塞不下 5 个东西（返回 / 标题 / 滑块 / 收起开关 / 发送）——
+                    实测 360px 下标题被挤到只剩 **7px**（等于没有标题）。所以让它**换行**：
+                    xs 下把滑块 `order` 排到最后并占满一整行，第一行就腾出来给标题了。
+                    （`Tooltip` 不产生 DOM 节点，flex 子项仍是那个 `Box`，`order` 因此生效。） */}
+                <DialogTitle sx={{ display: 'flex', alignItems: 'center', gap: 1, flexWrap: 'wrap' }}>
                     <IconButton size="small" onClick={() => setTextFullscreen(false)}><MdiIcon name="mdi-arrow-left" size={18} /></IconButton>
-                    <span style={{ flex: 1 }}>{t('enterTextToSend')}</span>
+                    <span style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{t('enterTextToSend')}</span>
+                    {/* 透明度滑块：只调面板**底色**（见上面 `slotProps.paper` 的说明）。 */}
+                    <Tooltip title={t('fullscreenOpacity')}>
+                        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, flex: '0 0 auto', width: { xs: '100%', sm: 200 }, order: { xs: 1, sm: 0 } }}>
+                            <MdiIcon name="mdi-opacity" size={18} />
+                            <Slider
+                                size="small"
+                                value={fullscreenOpacity}
+                                min={FULLSCREEN_OPACITY_MIN}
+                                max={FULLSCREEN_OPACITY_MAX}
+                                step={5}
+                                aria-label={t('fullscreenOpacity')}
+                                onChange={(_event, value) => useAppStore.getState().setFullscreenOpacity(value as number)}
+                                sx={{ flex: 1 }}
+                            />
+                            <Typography variant="caption" color="text.secondary" sx={{ width: 34, textAlign: 'right' }}>
+                                {fullscreenOpacity}%
+                            </Typography>
+                        </Box>
+                    </Tooltip>
                     <Tooltip title={fullscreenSendClose ? t('fullscreenCloseAfterSendOn') : t('fullscreenCloseAfterSendOff')}>
                         <IconButton size="small" aria-label={t('enterTextToSend')} onClick={() => useAppStore.getState().toggleFullscreenSendClose()}>
                             <MdiIcon name={fullscreenSendClose ? 'mdi-chevron-down-circle' : 'mdi-window-restore'} size={18} />
