@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useColorScheme } from '@mui/material/styles';
 import {
@@ -12,7 +12,11 @@ import { useDisplaySettings } from '@/hooks/useDisplaySettings';
 import { useThemeStore } from '@/stores/themeStore';
 import { buildId } from '@/services/swUpdate';
 import { MdiIcon } from '@/components/ui/MdiIcon';
-import { API_BASE_STORAGE_KEY, API_BASE_URL } from '@/lib/base';
+import {
+    API_BASE_LIST_MAX, API_BASE_URL, apiBaseLabel, normalizeApiBase,
+    readActiveApiBase, readSavedApiBases, writeActiveApiBase, writeSavedApiBases,
+    type SavedApiBase,
+} from '@/lib/base';
 import { toast } from '@/stores/toastStore';
 import i18n from '@/i18n';
 
@@ -94,44 +98,62 @@ export function SettingsDialog({
     };
 
     /**
-     * 「后端地址」—— 前后端分离部署时用（`lib/base.ts` 的 `API_BASE_URL`）。
+     * 「后端地址」—— 前后端分离部署 / 多个后端来回切时用（`lib/base.ts` 的 `API_BASE_URL`）。
      *
      * ⚠️★ 嵌在桌面客户端的网页视图里时**不显示这一段**：那里连的必须是**本机**那个服务端
      * （桌面端自己的配置页才是改这个的地方）。在这儿改了，网页视图会静默变成另一个服务端的
      * 数据，而桌面自己的列表还是本机的 —— 两边对不上且没有任何提示。
      */
     const embedded = typeof window !== 'undefined' && window.self !== window.top;
-    // 留空 = 不覆盖（回落到 `config.js` / 同源）。显示的是**用户填过的**那个值，不是生效值。
-    const [apiBase, setApiBase] = useState(() => {
-        try {
-            return localStorage.getItem(API_BASE_STORAGE_KEY) || '';
-        } catch {
-            return '';
-        }
-    });
-    const apiBaseInvalid = Boolean(apiBase.trim()) && !/^https?:\/\//i.test(apiBase.trim());
+    // ⚠️ 列表与「当前选中」是两件事（见 `lib/base.ts` 里两个 key 的注释）：切换只改后者。
+    const [savedBases, setSavedBases] = useState<SavedApiBase[]>(() => readSavedApiBases());
+    // ⚠️ 不做 `setActiveBase`：切换 = 写存储 + 整页 reload（见 `switchTo`），
+    // 组件里再维护一份「当前值」只会多一处可能与存储不一致的状态。
+    const [activeBase] = useState<string>(() => readActiveApiBase());
+    const [draftUrl, setDraftUrl] = useState('');
+    const [draftName, setDraftName] = useState('');
+    const draftInvalid = Boolean(draftUrl.trim()) && !normalizeApiBase(draftUrl);
 
-    const saveApiBase = () => {
-        const text = apiBase.trim();
-        // ⚠️ 必须带协议：`new URL('api.example.com', location.href)` 会把裸主机名当成
-        // 同源下的一个**路径**，于是每条请求都 404，而设置看起来填过了。
-        if (text && !/^https?:\/\//i.test(text)) {
-            toast(t('serverAddressInvalid'));
+    // ⚠️★ 只有**一个**地址的老用户（键里存着一个值、列表还是空的）：把它收进列表。
+    // 不做这一步的话，列表里看不到它，切走一次就再也找不回来（切换会覆盖同一个键）。
+    useEffect(() => {
+        if (!open || !activeBase || savedBases.some((entry) => entry.url === activeBase)) {
             return;
         }
-        try {
-            if (text) {
-                localStorage.setItem(API_BASE_STORAGE_KEY, text);
-            } else {
-                localStorage.removeItem(API_BASE_STORAGE_KEY);
-            }
-        } catch {
-            toast(t('serverAddressInvalid'));
-            return;
-        }
-        // ⚠️ 重新加载而不是就地改 axios/WS：接口地址、WebSocket、缓存与已建的分享链接
-        // 全都挂在它上面，就地改一半的形态最容易出现「有的请求打到旧的、有的打到新的」。
+        const seeded = [{ name: apiBaseLabel(activeBase), url: activeBase }, ...savedBases].slice(0, API_BASE_LIST_MAX);
+        writeSavedApiBases(seeded);
+        setSavedBases(seeded);
+    }, [open, activeBase, savedBases]);
+
+    /**
+     * 切到一个后端 / 回到默认。
+     *
+     * ⚠️★ 整页 reload 而不是就地改 axios + WS：接口地址、WebSocket、房间里缓存的令牌、
+     * 已建好的分享链接全都挂在它上面。就地改一半的形态最容易出现「有的请求打到旧的、
+     * 有的打到新的」，而那类问题几乎没法从界面上看出来。
+     */
+    const switchTo = (url: string) => {
+        writeActiveApiBase(url);
         window.location.reload();
+    };
+
+    const addAndSwitch = () => {
+        const url = normalizeApiBase(draftUrl);
+        if (!url) {
+            toast(t('serverAddressInvalid'));
+            return;
+        }
+        const name = draftName.trim().slice(0, 40) || apiBaseLabel(url);
+        // ⚠️ 同一个地址重复添加 = 更新名字（按 url 去重），不是多出一行。
+        const next = [{ name, url }, ...savedBases.filter((entry) => entry.url !== url)].slice(0, API_BASE_LIST_MAX);
+        writeSavedApiBases(next);
+        switchTo(url);
+    };
+
+    const removeActive = () => {
+        writeSavedApiBases(savedBases.filter((entry) => entry.url !== activeBase));
+        // 删掉正在用的那个 = 回到「默认」（`config.js` / 同源）。
+        switchTo('');
     };
 
     return (
@@ -259,19 +281,66 @@ export function SettingsDialog({
                                         />
                                     </ListItem>
                                 </List>
+                                {/* 切换：改一行就生效（整页重新加载），不需要再点保存。
+                                    ⚠️ 空值 = 「默认」，即 `config.js` / 同源 —— 与没配过一样。 */}
+                                <Stack direction="row" spacing={1} alignItems="center">
+                                    <Select
+                                        size="small"
+                                        fullWidth
+                                        value={activeBase}
+                                        onChange={(e) => switchTo(e.target.value)}
+                                        inputProps={{ 'aria-label': t('serverAddress') }}
+                                    >
+                                        <MenuItem value="">
+                                            <em>{t('serverDefault')}</em>
+                                        </MenuItem>
+                                        {savedBases.map((entry) => (
+                                            <MenuItem key={entry.url} value={entry.url}>
+                                                {entry.name || apiBaseLabel(entry.url)}
+                                            </MenuItem>
+                                        ))}
+                                    </Select>
+                                    <Button
+                                        size="small"
+                                        color="error"
+                                        variant="outlined"
+                                        onClick={removeActive}
+                                        // 只有「当前用的是列表里那条」才删得掉：默认那条不是列表项。
+                                        disabled={!activeBase || !savedBases.some((entry) => entry.url === activeBase)}
+                                        sx={{ flexShrink: 0 }}
+                                    >
+                                        {t('serverRemove')}
+                                    </Button>
+                                </Stack>
+
+                                {/* 添加一条：填完点一下就直接切过去（否则还要再选一次，多余）。 */}
                                 <Stack direction="row" spacing={1} alignItems="flex-start">
                                     <TextField
                                         size="small"
                                         fullWidth
-                                        value={apiBase}
+                                        value={draftUrl}
                                         placeholder="https://api.example.com/"
-                                        onChange={(e) => setApiBase(e.target.value)}
-                                        error={apiBaseInvalid}
-                                        helperText={apiBaseInvalid ? t('serverAddressInvalid') : t('serverAddressExample')}
+                                        onChange={(e) => setDraftUrl(e.target.value)}
+                                        error={draftInvalid}
+                                        helperText={draftInvalid ? t('serverAddressInvalid') : t('serverAddressExample')}
                                         slotProps={{ htmlInput: { 'aria-label': t('serverAddress') } }}
                                     />
-                                    <Button size="small" variant="outlined" onClick={saveApiBase} sx={{ flexShrink: 0 }}>
-                                        {t('saveAndReload')}
+                                    <TextField
+                                        size="small"
+                                        value={draftName}
+                                        onChange={(e) => setDraftName(e.target.value)}
+                                        placeholder={t('serverNamePlaceholder')}
+                                        slotProps={{ htmlInput: { 'aria-label': t('serverNamePlaceholder'), maxLength: 40 } }}
+                                        sx={{ maxWidth: 132, flexShrink: 0 }}
+                                    />
+                                    <Button
+                                        size="small"
+                                        variant="outlined"
+                                        onClick={addAndSwitch}
+                                        disabled={!draftUrl.trim() || draftInvalid}
+                                        sx={{ flexShrink: 0 }}
+                                    >
+                                        {t('serverAdd')}
                                     </Button>
                                 </Stack>
                             </>

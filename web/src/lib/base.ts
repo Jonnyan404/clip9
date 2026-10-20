@@ -44,8 +44,27 @@ export const APP_BASE_URL = typeof window === 'undefined'
     ? APP_BASE
     : new URL(APP_BASE, window.location.origin).href;
 
-/** 「后端地址」的本地存储键（用户在设置里填的那个）。 */
+/** 「**当前在用**的后端地址」的本地存储键（空/没有 = 用 `config.js` 或同源）。 */
 export const API_BASE_STORAGE_KEY = 'clip9ApiBase';
+
+/**
+ * 「**保存过的后端地址列表**」（JSON 数组，`{name, url}`）—— 多后端切换用。
+ *
+ * ⚠️★ 为什么是**两个**键而不是一个对象：`API_BASE_URL` 在模块求值时就要定下来（axios 与
+ * 路由都依赖它），而「列表」只有设置页用。把当前值放在单独的键里，`config.js` / 同源
+ * 那些既有路径就完全不用知道「列表」这回事；坏掉的列表（手改 localStorage）也只影响设置页，
+ * 不会让整页连不上后端。
+ */
+export const API_BASE_LIST_KEY = 'clip9ApiBases';
+
+/** 一个保存过的后端。`name` 只用于显示（空 = 用主机名）。 */
+export interface SavedApiBase {
+    name: string;
+    url: string;
+}
+
+/** 列表最多留几条 —— 它是给人**切换**用的，不是收藏夹。超了丢最旧的（追加时）。 */
+export const API_BASE_LIST_MAX = 12;
 
 /**
  * 把「用户/部署方填的后端地址」归一成 `https://host[:port][/path]/`；不是个能用的地址就回 `null`。
@@ -56,7 +75,7 @@ export const API_BASE_STORAGE_KEY = 'clip9ApiBase';
  *
  * ⚠️ 查询串与片段一律丢掉：base 不是一条链接，带上它们会给**每个**请求挂一截尾巴。
  */
-function normalizeApiBase(raw: unknown): string | null {
+export function normalizeApiBase(raw: unknown): string | null {
     const text = String(raw ?? '').trim();
     if (!text || !/^https?:\/\//i.test(text)) {
         return null;
@@ -80,6 +99,80 @@ function readStoredApiBase(): string {
         return localStorage.getItem(API_BASE_STORAGE_KEY) || '';
     } catch {
         return '';
+    }
+}
+
+/**
+ * 显示用的名字：`https://api.example.com/clip/` → `api.example.com`。
+ *
+ * ⚠️ 带上路径（`api.example.com/clip`）是有意的：同一个域名下不同子路径是**两个**后端，
+ * 只显示主机名会让列表里出现两行一模一样的东西，切换起来完全靠猜。
+ */
+export function apiBaseLabel(url: string): string {
+    try {
+        const parsed = new URL(url);
+        const path = parsed.pathname.replace(/\/+$/, '');
+        return `${parsed.host}${path}`;
+    } catch {
+        return url;
+    }
+}
+
+/**
+ * 读保存过的后端列表。
+ *
+ * ⚠️★ 这里对**坏数据一律宽容**（回空列表），不抛：这个函数在设置页渲染时调用，
+ * 抛出去就是整页白屏 —— 而用户能自己修的东西（清 localStorage）不该被一屏白挡着。
+ * 同理，列表里不合规的条目**逐条丢弃**，别一条坏的把整份列表作废。
+ */
+export function readSavedApiBases(): SavedApiBase[] {
+    let raw: unknown;
+    try {
+        raw = JSON.parse(localStorage.getItem(API_BASE_LIST_KEY) || '[]');
+    } catch {
+        return [];
+    }
+    if (!Array.isArray(raw)) {
+        return [];
+    }
+    const out: SavedApiBase[] = [];
+    for (const item of raw) {
+        // 兼容「只存了字符串」的写法（手改 localStorage 时很常见）。
+        const url = normalizeApiBase(typeof item === 'string' ? item : (item as SavedApiBase)?.url);
+        if (!url || out.some((saved) => saved.url === url)) {
+            continue;
+        }
+        const name = typeof item === 'object' && item ? String((item as SavedApiBase).name || '') : '';
+        out.push({ name: name.trim().slice(0, 40), url });
+    }
+    return out.slice(0, API_BASE_LIST_MAX);
+}
+
+/** 写回列表。写不进去（隐私模式 / 配额满）就安静放弃 —— 调用方紧接着会整页 reload。 */
+export function writeSavedApiBases(list: SavedApiBase[]): void {
+    try {
+        localStorage.setItem(API_BASE_LIST_KEY, JSON.stringify(list.slice(0, API_BASE_LIST_MAX)));
+    } catch {
+        /* 忽略：下一句是 reload，写不进去也只是这条没记住 */
+    }
+}
+
+/** 当前选中的那个（归一化后的 URL；空串 = 「默认」，即 `config.js` / 同源）。 */
+export function readActiveApiBase(): string {
+    return normalizeApiBase(readStoredApiBase()) || '';
+}
+
+/** 切到某个后端。传空串 = 回到「默认」。 */
+export function writeActiveApiBase(url: string): void {
+    try {
+        const normalized = normalizeApiBase(url);
+        if (normalized) {
+            localStorage.setItem(API_BASE_STORAGE_KEY, normalized);
+        } else {
+            localStorage.removeItem(API_BASE_STORAGE_KEY);
+        }
+    } catch {
+        /* 同上 */
     }
 }
 

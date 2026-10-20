@@ -305,6 +305,31 @@ for (const name of ['revoke', 'update']) {
         problems.push('`src/lib/base.ts` 里没有 `API_BASE_URL` —— 后端地址这一份解析不见了');
     }
 
+    // ⚠️★ 「多个后端」是**两个键**（当前选中 + 保存的列表），而这件事一旦退化成单值
+    // 不会有任何报错：设置页只是少一行能选而已。这里钉住「列表这套还在」。
+    if (
+        !/export\s+const\s+API_BASE_LIST_KEY\b/.test(base) ||
+        !/export\s+function\s+readSavedApiBases\b/.test(base) ||
+        !/export\s+function\s+writeSavedApiBases\b/.test(base)
+    ) {
+        problems.push(
+            '`src/lib/base.ts` 里没有 `API_BASE_LIST_KEY` / `readSavedApiBases` / `writeSavedApiBases` —— ' +
+                '「多个后端来回切」退化成单值了',
+        );
+    }
+    const settings = readFileSync(join(WEB, 'src/components/AppShell/SettingsDialog.tsx'), 'utf8');
+    // ⚠️★ 必须**先剥 import** 再查用法：光有 `import { writeSavedApiBases }` 说明不了任何人
+    // 调用它（同一个坑在判据 I 的分享页那条已经踩过一次 —— 变异删掉用法、判据照绿）。
+    // ⚠️ 这里的 import 是**跨行**的，`split('\n').filter(startsWith('import'))` 去不干净。
+    const settingsCode = settings.replace(/^import[\s\S]*?from\s+'[^']+';[ \t]*$/gm, '');
+    for (const call of ['readSavedApiBases(', 'writeSavedApiBases(', 'writeActiveApiBase(', 'API_BASE_LIST_MAX']) {
+        if (!settingsCode.includes(call)) {
+            problems.push(
+                `设置页里没有**调用** \`${call}\` —— 多后端列表那一套不完整（切不过去 / 存不下来）`,
+            );
+        }
+    }
+
     // axios 的 baseURL 必须是**后端**地址。
     const http = readFileSync(join(WEB, 'src/services/http.ts'), 'utf8');
     if (!/axios\.defaults\.baseURL\s*=\s*API_BASE_URL\b/.test(http)) {
