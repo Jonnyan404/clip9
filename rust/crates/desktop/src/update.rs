@@ -58,6 +58,46 @@ pub struct UpdateState {
     store: std::sync::Arc<crate::store::Store>,
 }
 
+/// 下载进度：把插件回调里的**块大小**累成**已下载字节数**，并只在整数百分比变化时放行。
+///
+/// ⚠️★ `tauri-plugin-updater` 的回调是 `on_chunk(chunk.len(), content_length)`
+///（见插件 `updater.rs` 的 `while let Some(chunk)`）—— 第一个参数是**本次读到的块**，
+/// **不是累计已下载**。直接拿它当 `received` 用，分母几十 MB、分子永远只有一个块（几十 KB），
+/// 百分比就**永远停在 0%** —— 2026-10-20 用户报的正是这个。
+///
+/// 单独抽出来是为了能单测：`chunk()` 的入参形状与插件一致，累加与去重在这里钉住。
+struct Progress {
+    received: u64,
+    /// 上一次**推给界面**的百分比（`u64::MAX` = 还没推过）。
+    last_percent: u64,
+}
+
+impl Progress {
+    fn new() -> Self {
+        Self {
+            received: 0,
+            last_percent: u64::MAX,
+        }
+    }
+
+    /// 吃掉一块。返回 `Some((累计已下载, total))` = 「这一块让百分比变了、该推一次」。
+    ///
+    /// ⚠️ 界面每 500ms 才拉一次快照，而回调一秒能来几十次 —— 不按百分比去重的话，
+    /// 快照版本号会被推得飞涨，而屏幕上真正变的只有那一格数字。
+    fn chunk(&mut self, chunk_len: usize, total: Option<u64>) -> Option<(u64, Option<u64>)> {
+        self.received = self.received.saturating_add(chunk_len as u64);
+        let percent = match total {
+            Some(total) if total > 0 => self.received.saturating_mul(100) / total,
+            // 对面没给 `Content-Length` 时没有百分比可比 —— 按 64 KB 去重。
+            _ => self.received / 65536,
+        };
+        if std::mem::replace(&mut self.last_percent, percent) == percent {
+            return None;
+        }
+        Some((self.received, total))
+    }
+}
+
 impl UpdateState {
     /// 从盘上读回标记与偏好。读不出来就用默认值 —— **不因为一个记录文件坏了就不启动**。
     #[must_use]
@@ -187,32 +227,23 @@ impl UpdateState {
             received: 0,
             total: None,
         });
-        // ⚠️★ 回调一秒能来几十次，**只在整数百分比变了才推**：
-        // 每次都推的话快照版本号会飞涨，而屏幕上真正变的只有那一格数字。
-        // 用 `Cell` 是因为回调是 `FnMut` 但被 `download_and_install` 按值拿走 ——
-        // 一个 `Cell<u64>` 就够，不需要锁。
-        let last_percent = std::cell::Cell::new(u64::MAX);
+        // ⚠️★ 回调一秒能来几十次，**只在整数百分比变了才推**（去重在 `Progress::chunk` 里）。
+        // 用 `&mut` 是因为回调是 `FnMut`，状态天然只属于这一次下载。
+        let mut progress = Progress::new();
         let store = std::sync::Arc::clone(&self.store);
         let version_for_progress = version.clone();
         let result = found
             .download_and_install(
-                move |received, total| {
-                    // ⚠️ 回调是**同步**的、而且在下载任务里跑 —— 只做一次比较 + 一次赋值，
+                move |chunk_len, total| {
+                    // ⚠️ 回调是**同步**的、而且在下载任务里跑 —— 只做一次累加 + 一次赋值，
                     // 别在这儿做 IO 或发通知（那会把下载拖慢）。
-                    let received = received as u64;
-                    let percent = match total {
-                        Some(total) if total > 0 => received.saturating_mul(100) / total,
-                        // 对面没给 `Content-Length` 时没有百分比可比 —— 那就按字节数去重。
-                        _ => received / 65536,
-                    };
-                    if last_percent.replace(percent) == percent {
-                        return;
+                    if let Some((received, total)) = progress.chunk(chunk_len, total) {
+                        store.set_update(Phase::Downloading {
+                            version: version_for_progress.clone(),
+                            received,
+                            total,
+                        });
                     }
-                    store.set_update(Phase::Downloading {
-                        version: version_for_progress.clone(),
-                        received,
-                        total,
-                    });
                 },
                 || {},
             )
@@ -296,3 +327,38 @@ struct Saved {
 
 /// 记录文件的名字（数据目录下）。
 const FILE: &str = "update.json";
+
+#[cfg(test)]
+mod tests {
+    use super::Progress;
+
+    /// ⚠️★ 2026-10-20「下载进度永远 0%」的回归测试：
+    /// 插件的回调给的是**块大小**，必须累加成「已下载」才对。
+    #[test]
+    fn chunks_accumulate_instead_of_replacing_received() {
+        let mut progress = Progress::new();
+        let total = Some(1_000_000);
+
+        // 第一块：100_000 / 1_000_000 = 10%
+        assert_eq!(progress.chunk(100_000, total), Some((100_000, total)));
+        // 同一百分点里的块不重复推，但**依然要累加** —— 这一步就是当初漏掉的那半。
+        assert_eq!(progress.chunk(1_000, total), None);
+        assert_eq!(progress.received, 101_000);
+
+        // 跨过 50% 时再推一次。
+        for _ in 0..5 {
+            progress.chunk(80_000, total);
+        }
+        assert_eq!(progress.received, 501_000);
+        assert_eq!(progress.last_percent, 50);
+    }
+
+    /// 对面没给 `Content-Length` 时没有百分比可比 —— 按 64 KB 去重（但照样累加）。
+    #[test]
+    fn without_content_length_it_dedupes_by_64k() {
+        let mut progress = Progress::new();
+        assert_eq!(progress.chunk(10_000, None), Some((10_000, None)));
+        assert_eq!(progress.chunk(10_000, None), None);
+        assert_eq!(progress.chunk(50_000, None), Some((70_000, None)));
+    }
+}
