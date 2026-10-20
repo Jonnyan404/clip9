@@ -20,6 +20,23 @@ const DEFAULT_ROOM_KEY = '__default__';
 const GLOBAL_ROOM_KEY = '__global__';
 
 /**
+ * 条目的 id —— **一律归一成字符串**。
+ *
+ * ⚠️★ 线上契约里 id 有**两种形状**（Go 导出的冻结用例就是证据）：
+ *   · WS 事件（`receive` / `update` / `revoke`）：**数字** —— `cases/protocol/text_receive.json` 的 `"id":7`；
+ *   · HTTP 历史（`/content`、`/content/latest`）：**字符串** —— `cases/protocol/content_list.json` 的 `"id":"7"`。
+ * 而 `ReceivedItem.id` 声明的是 `string`。
+ *
+ * ⚠️★ 所以**任何拿事件里的 id 去和列表比**的地方都必须先过这里。不过的后果是**静默**的：
+ * 刷新之后列表来自历史（字符串），`e.id === data.id`（数字）永远不成立 →
+ * 删除**成功了**但卡片不消失、要再刷新一次；`update` 事件同理不生效。
+ * （2026-10-20 修的就是这个。Vue 版当年也是同一个写法，所以这 bug 一直都在。）
+ */
+function itemId(item: { id?: unknown } | null | undefined): string {
+    return String(item?.id ?? '');
+}
+
+/**
  * 原生外壳交给页面的那个对象名。
  * ⚠️★ 必须与 `WebAppActivity.AUTH_BRIDGE`（以及 `AuthBridge.roomAuth()` 这个方法名）
  * **逐字一致**。对不上的症状是**什么都没发生** —— 不报错、不提示，只是又被问了一次密码。
@@ -527,15 +544,20 @@ export const useWebSocketStore = create<WsState>((set, get) => ({
             return;
         }
         const app = useAppStore.getState();
-        const currentList = [...app.received];
-        const existingIdMap = new Map<unknown, number>();
+        // ⚠️★ 顺手把**已有条目**的 id 也归一（老缓存里可能是数字）——
+        //    否则列表会长期混着两种形状，去重与 `findIndex` 都会漏。
+        const currentList = app.received.map((item) =>
+            typeof item.id === 'string' ? item : { ...item, id: itemId(item) },
+        );
+        const existingIdMap = new Map<string, number>();
         currentList.forEach((item, index) => {
-            existingIdMap.set(item.id, index);
+            existingIdMap.set(itemId(item), index);
         });
 
-        for (const item of incomingItems) {
-            if (existingIdMap.has(item.id)) {
-                const idx = existingIdMap.get(item.id)!;
+        for (const raw of incomingItems) {
+            const item = { ...raw, id: itemId(raw) };
+            const idx = existingIdMap.get(item.id);
+            if (idx !== undefined) {
                 currentList[idx] = { ...currentList[idx], ...item };
             } else {
                 currentList.push(item);
@@ -594,7 +616,9 @@ export const useWebSocketStore = create<WsState>((set, get) => ({
                 get().flushPendingReceives();
                 const app = useAppStore.getState();
                 const received = [...app.received];
-                const index = received.findIndex((e) => e.id === (data as ReceivedItem).id);
+                // ⚠️ 事件里是数字、历史里是字符串 —— 必须过 `itemId`（见它的注释）。
+                const targetId = itemId(data as { id?: unknown });
+                const index = received.findIndex((e) => itemId(e) === targetId);
                 if (index !== -1) {
                     received.splice(index, 1);
                     useAppStore.setState({ received });
@@ -631,9 +655,14 @@ export const useWebSocketStore = create<WsState>((set, get) => ({
                 get().flushPendingReceives();
                 const app = useAppStore.getState();
                 const received = [...app.received];
-                const index = received.findIndex((e) => e.id === (data as ReceivedItem).id);
+                // ⚠️ 与 revoke 同一条：事件里是数字，必须归一。
+                const targetId = itemId(data as { id?: unknown });
+                const index = received.findIndex((e) => itemId(e) === targetId);
                 if (index !== -1) {
-                    received.splice(index, 1, { ...received[index], ...(data as ReceivedItem) });
+                    // ⚠️★ `id: targetId` 必须放在最后：`...(data as ReceivedItem)` 里那个 id
+                    //    是数字，展开回来会把刚归一好的字符串又盖掉 —— 于是下一次 `update`
+                    //    或 `revoke` 又匹配不上（同一条 bug 换个入口复发）。
+                    received.splice(index, 1, { ...received[index], ...(data as ReceivedItem), id: targetId });
                     useAppStore.setState({ received });
                     get().saveRoomCache();
                 }
