@@ -34,6 +34,18 @@ end
 
 local CONFIG_DIR = "/etc/clip9"
 local DEFAULT_DATA = CONFIG_DIR .. "/data"
+
+-- ⚠️★ `noui` 变体（不带内嵌前端的那一份）**安装时留下这个标记**，
+-- 由 `openwrt/scripts/package-openwrt*.sh` 写进包里。判据是「文件在不在」而不是
+-- 「包名是什么」：两个变体装到路由器之后**文件路径完全一样**（同一个 `Package` 的两个
+-- 版本，靠 `Provides` / `Conflicts` 互斥），包名在设备上根本读不到 —— 而
+-- `opkg list-installed` / `apk info` 两套命令还不一样。
+--
+-- ⚠️ 为什么不去问服务端（`GET /server` 的 `staticBuild`）：那要服务**正在跑**，
+-- 而「打开网页」这个按钮在服务停着的时候本来就该是灰的 —— 两条判据会在
+-- 「服务没起」时混成一条，说不清到底是哪个原因。
+local NOUI_MARKER = "/usr/share/clip9/noui"
+
 -- ⚠️ 这两个名字**必须与 `clip9-core` 的 `ServerConfig::default()` 一致**
 -- （`dbPath = "clip9.redb"`、`storageDir = "uploads"`）—— 配置里写的是**相对路径**时
 -- 服务端按「相对数据目录」解析（`resolve_against`），这里要按同一套算，否则
@@ -67,6 +79,80 @@ local function parse_json(text)
     end)
     if not ok then return nil end
     return obj
+end
+
+-- 把一条「允许跨源的前端来源」归一成 `scheme://host[:port]`。
+--
+-- ⚠️★ **规则必须与 `clip9-core` 的 `normalize_origin` 逐条一致**（那份是唯一权威，
+-- 这里只是照抄 —— 路由器上没法调 Rust）。两边不一致的症状很难看：
+-- LuCI 放行、服务端拒 → 保存成功但服务端起不来；LuCI 拒、服务端收 →
+-- 用户被告知「这条用不了」，而它其实能用。
+--
+-- 归一规则（都是无歧义的那几种）：
+--   · scheme 只认 http / https（`tauri://localhost` 是内置的，不走这里）；
+--   · scheme 与 host 转小写（`Origin` 本来就大小写不敏感）；
+--   · 结尾**一个** `/` 可以接受并去掉；
+--   · 端口必须是数字、且不超过 65535（Rust 那边用 `u16` 解析，所以 `:0` 也过）；
+--   · 带路径 / 查询 / `#` / 用户信息的**一律拒绝** —— 浏览器从不发那种形状。
+local function normalize_origin(raw)
+    if type(raw) ~= "string" then
+        return nil, "来源必须是一段文字"
+    end
+    local text = raw:match("^%s*(.-)%s*$")
+    if text == "" then
+        return nil, "来源不能是空字符串"
+    end
+    local scheme, rest = text:match("^([%a][%w%+%.%-]*)://(.*)$")
+    if not scheme then
+        return nil, text .. " 缺协议头 —— 要写成 scheme://host[:port]（例如 https://clip.example.com）"
+    end
+    scheme = scheme:lower()
+    if scheme ~= "http" and scheme ~= "https" then
+        return nil, text .. " 的协议是 " .. scheme .. " —— 只接受 http / https（浏览器页面就这两种）"
+    end
+    -- ⚠️ 只去掉**一个**结尾斜杠（`https://a.example//` 多半是手滑，不该被当成合法来源）。
+    rest = rest:gsub("/$", "")
+    if rest == "" then
+        return nil, text .. " 没有主机名"
+    end
+    if rest:find("[/?#@]") then
+        return nil, text .. " 带了路径 / 查询 / 用户信息 —— 来源只写到端口为止（Origin 头就是这个形状）"
+    end
+    -- ⚠️ 贪婪匹配 = 从**最后一个**冒号拆，与 Rust 的 `rsplit_once(':')` 同一个意思。
+    --    这样 `example.com:`（空端口）和 `example.com:abc` 都会被判成「端口不对」，
+    --    而不是被当成「主机名里带冒号」放过去。
+    local host, port = rest:match("^(.*):(.*)$")
+    if not host then
+        host, port = rest, nil
+    end
+    if host == "" then
+        return nil, text .. " 没有主机名"
+    end
+    if port then
+        if port == "" or not port:match("^%d+$") then
+            return nil, text .. " 的端口 " .. port .. " 不是数字"
+        end
+        local n = tonumber(port)
+        -- ⚠️ 只卡 u16 的上限，**不**额外要求 `>= 1`：Rust 那边是 `port.parse::<u16>()`，
+        --    它接受 `0`。这里若多拒一个 `:0`，就会出现「LuCI 说这条用不了、
+        --    而服务端其实收」—— 虽然 `:0` 作为 Origin 毫无意义，但**两边必须同一条线**。
+        if not n or n > 65535 then
+            return nil, text .. " 的端口超出 65535"
+        end
+    end
+    host = host:lower()
+    if port then
+        return scheme .. "://" .. host .. ":" .. port
+    end
+    return scheme .. "://" .. host
+end
+
+-- 统一回一个 JSON 对象。⚠️ 这几个接口全都是「一句话 + 一个 ok」的形状，
+-- 分散写 `prepare_content` + `write_json` 的后果是某一条忘了 prepare，
+-- 浏览器那边拿到的是 `text/html` —— 前端 `JSON.parse` 直接抛，用户看到的是一句空白错误。
+local function json_reply(e)
+    luci.http.prepare_content("application/json")
+    luci.http.write_json(e)
 end
 
 local function default_config()
@@ -236,6 +322,11 @@ function act_status()
     local e = {
         running = running,
         pid = get_pid(),
+        -- ★ 这个二进制里**有没有内嵌前端**。`false` = 装的是 noui 变体：
+        --   服务端只发 API，`http://路由器IP:9501` 打开的是一个**占位页**
+        --   （它会自己解释这件事，但用户点「打开」之前不知道）。
+        --   ⚠️ 所以总览页那个「打开」按钮要据此置灰 —— 而不是让用户点进去看占位页。
+        ui = not nixio.fs.access(NOUI_MARKER),
         host = host,
         port = port,
         auth = (auth ~= "" or srv.auth == true),
@@ -337,9 +428,70 @@ function act_saveconfig()
 
     local obj = parse_json(body)
     if not obj or type(obj) ~= "table" then
-        luci.http.prepare_content("application/json")
-        luci.http.write_json({ ok = false, error = "无效的 JSON 格式" })
+        json_reply({ ok = false, error = "无效的 JSON 格式" })
         return
+    end
+
+    -- ── 跨源白名单：**归一化 + 逐条校验**，写歪一条就整份拒绝 ────────────────
+    --
+    -- ⚠️★ 为什么在这里拦，而不是交给服务端：服务端对 `allowOrigins` 里的非法条目
+    -- 只是**启动时 warn 一句然后忽略**（`ServerConfig::normalized_origins`）——
+    -- 于是「配置页上明明写了、浏览器里还是 blocked by CORS policy」，而路由器日志
+    -- 里那句话没人会去翻。这正是本项目最忌讳的「配了不生效」。
+    --
+    -- ⚠️ 空数组**要删掉这个键**，不能留一个空 table：`luci.jsonc` 的 stringify
+    -- 分不清 `[]` 与 `{}`，会把空数组写成 `{}` —— 而服务端那边 `Vec<String>`
+    -- 遇到 `{}` 是**整个配置解析失败、服务起不来**（procd 会反复重启它）。
+    -- 删掉之后 `#[serde(default)]` 补一个空 Vec，语义完全相同。
+    local srv = obj.server
+    if type(srv) == "table" and srv.allowOrigins ~= nil then
+        if type(srv.allowOrigins) ~= "table" then
+            json_reply({ ok = false, error = "跨源白名单（server.allowOrigins）必须是一个字符串数组" })
+            return
+        end
+        local normalized = {}
+        -- ⚠️★ 用 `pairs` 收集键、再按顺序走，**不用 `ipairs`**：JSON 里的 `null` 在
+        -- `luci.jsonc` 里会变成一个 nil 元素，而 `ipairs` 遇到「洞」就**停在那儿** ——
+        -- 后面的条目会被静默跳过（保存成功、配置少了一条，谁都不会发现）。
+        -- 收集键之后还能顺手判「是不是一个从 1 开始的连续数组」。
+        local keys = {}
+        for k in pairs(srv.allowOrigins) do
+            if type(k) ~= "number" then
+                json_reply({
+                    ok = false,
+                    error = "跨源白名单（server.allowOrigins）必须是一个字符串数组，现在是一个对象"
+                })
+                return
+            end
+            keys[#keys + 1] = k
+        end
+        table.sort(keys)
+        for i, k in ipairs(keys) do
+            if k ~= i then
+                json_reply({
+                    ok = false,
+                    error = string.format(
+                        "跨源白名单第 %d 条是空的（null）—— 删掉那一行，或者填一个来源",
+                        i
+                    )
+                })
+                return
+            end
+            local origin, why = normalize_origin(srv.allowOrigins[k])
+            if not origin then
+                json_reply({
+                    ok = false,
+                    error = string.format("跨源白名单第 %d 条用不了：%s", i, why)
+                })
+                return
+            end
+            normalized[#normalized + 1] = origin
+        end
+        if #normalized == 0 then
+            srv.allowOrigins = nil
+        else
+            srv.allowOrigins = normalized
+        end
     end
 
     local j = nil
@@ -355,12 +507,10 @@ function act_saveconfig()
 
     local wok, werr = pcall(nixio.fs.writefile, p, text)
     if not wok then
-        luci.http.prepare_content("application/json")
-        luci.http.write_json({ ok = false, error = "写入失败: " .. tostring(werr) })
+        json_reply({ ok = false, error = "写入失败: " .. tostring(werr) })
         return
     end
-    luci.http.prepare_content("application/json")
-    luci.http.write_json({ ok = true, path = p })
+    json_reply({ ok = true, path = p })
 end
 
 -- 读取基本设置（UCI）

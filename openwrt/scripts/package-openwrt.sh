@@ -116,6 +116,25 @@ else
     exit 1
 fi
 
+# ── noui 标记：LuCI 靠它把总览页的「打开」置灰 ──────────────────────────────
+#
+# ⚠️★ 两个变体装到路由器之后**文件路径完全一样**（同一个 `Package` 的两个版本），
+#    包名在设备上读不到 —— `opkg list-installed` 与 `apk info` 两套命令还不一样，
+#    而 LuCI 不该为了这一个判断去猜用户装的是哪个包管理器。所以让**安装包自己**
+#    留下一个文件当判据。
+#
+# ⚠️ 只给 noui 建：ui 那一份多一个空目录没有意义，而「没有标记 = 有界面」
+#    这条默认对**老版本**的包也成立（它们本来就有界面）。
+if [ "$VARIANT" = "noui" ]; then
+    mkdir -p "$PKG_DIR/usr/share/clip9"
+    {
+        echo "这个包是 clip9 的 noui 变体：二进制里没有内嵌前端，只提供 API。"
+        echo "界面要放在别处，并在服务端配好 server.allowOrigins"
+        echo "（LuCI：高级设置 → 跨源来源）。"
+    } > "$PKG_DIR/usr/share/clip9/noui"
+    echo "✓ 已写入 noui 标记（/usr/share/clip9/noui）"
+fi
+
 echo "准备控制文件..."
 if [ -f "$CONTROL_DIR/control" ]; then
     sed "s/{{VERSION}}/$VERSION/g; s/{{ARCH}}/$PACKAGE_ARCH/g" \

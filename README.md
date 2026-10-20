@@ -184,8 +184,11 @@ opkg install ./clip9-openwrt-v<版本>-<架构>.ipk
 
 > ⚠️ 两个变体**互斥**（装的文件路径完全一样）：换用要先卸掉另一个
 > （`opkg remove clip9` / `apk del clip9`）。noui 那份声明了 `Provides: clip9`，
-> 所以 `luci-app-clip9` 照常能装 —— 但 LuCI 里「打开网页版」之类的入口会点到一个没有界面的服务端。
+> 所以 `luci-app-clip9` 照常能装 —— LuCI 总览页会认出 noui 变体（包里带
+> `/usr/share/clip9/noui` 标记），把「打开」按钮置灰并说明原因。
 > ⚠️ noui 那份要在服务端配 `allowOrigins`（前端所在的那个来源），否则浏览器会拦跨源请求。
+> 位置：LuCI **高级设置 → 跨源来源**，每行一个、只写到端口为止（例如 `https://clip.example.com`）。
+> 也可以用命令行 `-allow-origin` 或配置文件里的 `server.allowOrigins`。
 </details>
 
 <details>

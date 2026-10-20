@@ -44,6 +44,11 @@
   .cc-url code { font-size: 13px; color: #1677d0; flex: 1; word-break: break-all; }
   .cc-lock { color: #8b93a1; font-size: 12px; white-space: nowrap; }
 
+  /* noui 变体的说明条：只在「这个包里没有前端」时出现。 */
+  .cc-noui { display: none; margin-top: 12px; background: #fdfbf5; border: 1px solid #eee3c4; border-radius: 9px; padding: 11px 14px; font-size: 12.5px; color: #7b6b3d; line-height: 1.7; }
+  .cc-noui b { color: #6b5a2b; }
+  .cc-noui a { color: #1677d0; }
+
   .cc-pills { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 12px; }
   .cc-pill { background: #eef4fc; color: #1677d0; font-size: 12px; padding: 3px 11px; border-radius: 14px; }
 
@@ -117,7 +122,16 @@
         <code id="ccUrl">http://—:—</code>
         <span class="cc-lock" id="ccLock" style="display:none">🔒 <%:需密码%></span>
         <button class="cc-btn primary sm" onclick="ccCopyAddr()"><%:复制%></button>
-        <button class="cc-btn neutral sm" onclick="window.open(document.getElementById('ccUrl').textContent, '_blank')"><%:打开%></button>
+        <button class="cc-btn neutral sm" id="ccBtnOpen" onclick="ccOpenWeb()"><%:打开%></button>
+      </div>
+      <!-- ⚠️ 装的是 noui 变体（包里没有内嵌前端）时，上面那个「打开」会被置灰，
+           这个条子顶上来说明原因 —— 否则用户看到的是一个灰按钮，而唯一的线索
+           是「点进去会看到一个占位页」，得先点一次才知道。 -->
+      <div class="cc-noui" id="ccNoUi">
+        <b><%:这个包不带界面（noui 变体）。%></b>
+        <%:服务端只提供 API，所以这个地址上没有可以打开的页面。把前端部署到别处（本地静态服务、CDN 或反代），再把它的来源写进%>
+        <a href="<%=luci.dispatcher.build_url("admin", "services", "clip9", "advanced")%>"><%:高级设置 → 跨源来源%></a>
+        <%:，否则浏览器会把跨源请求全部拦下。%>
       </div>
       <div class="cc-pills">
         <span class="cc-pill"><%:房间列表:%> <span id="ccPillRoomList">—</span></span>
@@ -239,6 +253,16 @@
       document.getElementById('ccUrl').textContent = 'http://' + host + ':' + s.port;
       document.getElementById('ccLock').style.display = s.auth ? '' : 'none';
 
+      // ⚠️★ `ui === false` 才置灰 —— 字段缺失时按「有界面」处理。
+      //    这里**不能用真值判断**（`!s.ui`）：那样一个还没带上这个字段的响应
+      //    （比如浏览器缓存了旧的 controller）会把所有部署的按钮都变成灰的，
+      //    而症状是「升级完之后打不开界面了」—— 正好是最容易报上来的那种。
+      var hasUi = (s.ui !== false);
+      var openBtn = document.getElementById('ccBtnOpen');
+      openBtn.disabled = !hasUi;
+      openBtn.textContent = hasUi ? '<%:打开%>' : '<%:未内置界面%>';
+      document.getElementById('ccNoUi').style.display = hasUi ? 'none' : '';
+
       document.getElementById('ccPillRoomList').textContent = s.summary.roomList ? '<%:开启%>' : '<%:关闭%>';
       document.getElementById('ccPillHistory').textContent = s.summary.history;
       document.getElementById('ccPillText').textContent = ccFormatBytes(s.summary.textLimit);
@@ -267,6 +291,14 @@
       }).join('');
       el.innerHTML = html || '<%:日志为空%>';
     });
+  }
+
+  function ccOpenWeb() {
+    var btn = document.getElementById('ccBtnOpen');
+    // ⚠️ 置灰的按钮在有的浏览器里 `onclick` 仍然会触发（disabled 只挡默认行为那一套），
+    //    所以这里自己再判一次 —— 否则 noui 部署点一下就开了个占位页。
+    if (btn && btn.disabled) return;
+    window.open(document.getElementById('ccUrl').textContent, '_blank');
   }
 
   function ccCopyAddr() {

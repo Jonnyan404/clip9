@@ -27,6 +27,15 @@
   }
   input:focus, select:focus { border-color: #1677d0; box-shadow: 0 0 0 3px rgba(22,119,208,.12); }
 
+  /* 跨源白名单：一条一行，所以是等宽字体的多行框（斜杠、冒号在比例字体里不好认）。
+     ⚠️ 只认 `#fAllowOrigins` 这一个：本页还有一个 textarea（专家模式的 JSON 编辑器），
+     它有自己那套深色样式 —— 写成裸 `textarea` 会把浅色边框和蓝色 focus 光晕带过去。 */
+  #fAllowOrigins {
+    width: 100%; border: 1px solid #d5dce6; border-radius: 8px; padding: 8px 11px; background: #fff; color: #22304a; outline: none;
+    font: 12.5px/1.7 ui-monospace, SFMono-Regular, Menlo, monospace; resize: vertical;
+  }
+  #fAllowOrigins:focus { border-color: #1677d0; box-shadow: 0 0 0 3px rgba(22,119,208,.12); }
+
   .cc-switch { position: relative; display: inline-block; width: 44px; height: 24px; }
   .cc-switch input { opacity: 0; width: 0; height: 0; }
   .cc-switch .slider { position: absolute; inset: 0; background: #cdd4df; border-radius: 24px; transition: .2s; cursor: pointer; }
@@ -114,6 +123,26 @@
     <div class="cc-field compact">
       <div class="label"><b><%:Web 前缀%></b><small><%:如 /clipboard%></small></div>
       <div class="ctrl" style="max-width:220px"><input type="text" id="fPrefix" placeholder="<%=translate("留空 = 根路径")%>" /></div>
+    </div>
+
+    <!-- ── 跨源白名单（`server.allowOrigins`）──────────────────────────────
+         ⚠️★ 这一格是给**前后端分离部署**用的：前端放在别处（本地静态服务、CDN、
+         反代后面的另一台机器），浏览器直接跨源调这个服务端的接口。
+         没有它，浏览器的每一条接口都会被 CORS 拦下，而**服务端日志里什么都没有** ——
+         这是最难查的一类「看起来没坏」。
+
+         ⚠️ 与「打开网页」那个按钮的关系：装了 noui 变体时服务端不发界面，
+         用户**只能**用分离部署，所以总览页在那种情况下会把「打开」置灰、
+         把人引到这一格来。 -->
+    <div class="cc-field" style="align-items:flex-start">
+      <div class="label"><b><%:跨源来源%></b><small><%:前后端分离时，前端所在的地址%></small></div>
+      <div class="ctrl">
+        <textarea id="fAllowOrigins" rows="3" spellcheck="false" autocapitalize="off" autocomplete="off"
+          placeholder="https://clip.example.com&#10;http://192.168.1.10:8080"></textarea>
+        <div class="cc-hint" style="margin-top:6px">
+          <%:每行一个，只写到端口为止（不带路径）。留空 = 只放行桌面端与本机回环；填了也只多放行这几条，不会变成 *。%>
+        </div>
+      </div>
     </div>
 
     <div class="cc-sub">
@@ -273,6 +302,12 @@
     document.getElementById('fRoomCleanup').value = (typeof s.roomCleanup === 'number' && s.roomCleanup > 0) ? s.roomCleanup : '';
     document.getElementById('fHistory').value = (typeof s.history === 'number' && s.history > 0) ? s.history : '';
     document.getElementById('fPrefix').value = s.prefix || '';
+    // ⚠️ 原样显示（不做归一化）：配置文件可能是手改的，里面写着什么就让人看见什么。
+    //    归一化发生在**保存**那一步（Lua 那边逐条校验并改写），非法值会在那里被点名。
+    // ⚠️ 只认**数组**：手改坏了的（写成字符串 / 对象）画成空框 —— 摊成一行只会让人
+    //    以为它是个合法来源，而它其实会让服务端整份配置解析失败。
+    var origins = Array.isArray(s.allowOrigins) ? s.allowOrigins : [];
+    document.getElementById('fAllowOrigins').value = origins.join('\n');
     var t = CC_ADV.config.text || {};
     document.getElementById('fTextLimit').value = (typeof t.limit === 'number' && t.limit > 0) ? t.limit : '';
     var f = CC_ADV.config.file || {};
@@ -400,6 +435,14 @@
     var hs = ccCollectInt('fHistory');
     if (hs !== undefined) s.history = hs; else delete s.history;
     s.prefix = document.getElementById('fPrefix').value.trim();
+    // 每行一个；**也认逗号**（用户多半是从别处粘一行 `a,b` 进来）。
+    // ⚠️ 空 → 空数组。Lua 那边会把这个键整个删掉 —— 理由见 `act_saveconfig`：
+    //    `luci.jsonc` 的 stringify 分不清 `[]` 与 `{}`，空数组会被写成 `{}`，
+    //    而服务端那边 `Vec<String>` 遇到 `{}` 是**整个配置解析失败**。
+    s.allowOrigins = document.getElementById('fAllowOrigins').value
+      .split(/[\n,]+/)
+      .map(function(x) { return x.trim(); })
+      .filter(function(x) { return x !== ''; });
     if (s.roomAuth === undefined) s.roomAuth = {};
     s.roomAuth = ccCollectRooms();
     CC_ADV.config.text = CC_ADV.config.text || {};

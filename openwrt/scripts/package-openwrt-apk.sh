@@ -171,6 +171,20 @@ else
     exit 1
 fi
 
+# ── noui 标记：LuCI 靠它把总览页的「打开」置灰 ──────────────────────────────
+# ⚠️★ 与 `package-openwrt.sh` 那一段**必须一致**（同一个文件名、同一个位置）：
+#    LuCI 只认 `/usr/share/clip9/noui` 这一个路径，两套包各写各的路径就等于
+#    「ipk 用户能看到置灰、apk 用户看不到」—— 而这种差异没有任何报错。
+if [ "$VARIANT" = "noui" ]; then
+    mkdir -p "$PKG_DIR/usr/share/clip9"
+    {
+        echo "这个包是 clip9 的 noui 变体：二进制里没有内嵌前端，只提供 API。"
+        echo "界面要放在别处，并在服务端配好 server.allowOrigins"
+        echo "（LuCI：高级设置 → 跨源来源）。"
+    } > "$PKG_DIR/usr/share/clip9/noui"
+    echo "✓ 已写入 noui 标记（/usr/share/clip9/noui）"
+fi
+
 if [ ! -f "$CONTROL_DIR/postinst" ] || [ ! -f "$CONTROL_DIR/prerm" ]; then
     echo "错误: 找不到安装脚本模板" >&2
     exit 1

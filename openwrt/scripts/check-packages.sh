@@ -142,8 +142,23 @@ chk "★ noui 的二进制仍在 usr/bin/clip9-server" "$(perms "$N/data.tar.gz"
 # ⚠️★ 文件列表必须**逐行相同**（两个变体装上去长得一样，只有二进制内容不同）：
 #    这里比的是**路径清单**，不是内容。多/少一个文件都说明有人只改了一边 ——
 #    那种漂移不会报错，只会在路由器上表现为「noui 装完少了 /etc/config」。
-chk "★ 与 ui 变体的文件清单完全一致" \
-    "$(diff <(tar -tzf "$D/data.tar.gz" | sort) <(tar -tzf "$N/data.tar.gz" | sort) | wc -l | tr -d ' ')" "0"
+#
+# ⚠️★ **唯一的例外**是 `/usr/share/clip9/noui`（LuCI 靠它把总览页的「打开」置灰）：
+#    它**只该在 noui 那份里**，所以两边都比对「排除掉 usr/share/ 之后」的清单 ——
+#    直接比全量的话，这条判据会因为那个标记而红，而它本来要守的是别的东西。
+#    ⚠️ 排除的是**前缀**而不是那一个文件名：`mkdir -p` 让 noui 那份多出
+#    `./usr/share/` 与 `./usr/share/clip9/` 两条**目录**记录，只过滤文件会漏掉它们。
+#    ⚠️ 代价：将来 ui 那份若也往 `/usr/share/` 放东西，这条判据看不见 —— 目前没有。
+chk "★ 与 ui 变体的文件清单一致（除 noui 标记外）" \
+    "$(diff <(tar -tzf "$D/data.tar.gz" | grep -v '^\./usr/share/' | sort) \
+             <(tar -tzf "$N/data.tar.gz" | grep -v '^\./usr/share/' | sort) | wc -l | tr -d ' ')" "0"
+# ⚠️★ 两条**方向相反**的判据，缺一不可：
+#    · noui 少了标记 → LuCI 认为它有界面，「打开」不置灰，点进去是个占位页；
+#    · ui 带了标记 → 所有正常部署的「打开」都被置灰，而症状是「升级完打不开界面了」。
+chk "★ noui 带 LuCI 认的标记文件" \
+    "$(tar -tzf "$N/data.tar.gz" | grep -c '^\./usr/share/clip9/noui$')" "1"
+chk "★ ui 变体**不带**那个标记" \
+    "$(tar -tzf "$D/data.tar.gz" | grep -c '^\./usr/share/clip9/noui$')" "0"
 chk "noui 的 postinst 权限"       "$(perms "$N/control.tar.gz" "./postinst")" "-rwxr-xr-x"
 
 echo
