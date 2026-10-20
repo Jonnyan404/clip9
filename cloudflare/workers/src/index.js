@@ -64,18 +64,23 @@ router.post('/upload', FileHandler.upload);
 router.get('/file/:uuid/:filename?', FileHandler.download);
 router.delete('/file/:uuid', FileHandler.delete);
 
-// ── 删除消息 ────────────────────────────────────────────────────────────────
-// ⚠️★ 2026-10-20：**POST 与 DELETE 都要认**。
-//    · 网页版在同一天统一改成了 POST —— 自建服务端（Rust）只接受 POST
-//      （`post(handlers::revoke).fallback(only_post)`；破坏性操作必须是显式 POST）。
-//      这里原来只有 DELETE，不补 POST 的话 Cloudflare 部署上**一条都删不掉** ——
-//      请求会落到下面那条 SPA 兜底，拿回一份 HTML，前端只会报「删除失败」。
-//    · 保留 DELETE 不是洁癖：老 SPA 可能还被 Service Worker 缓存着，换掉 SW 之前它还在发 DELETE。
-//    · 不补 GET：删一条消息不该是「打开一个链接」就能做到的事（与自建服务端同一条理由）。
+// ── 删除消息：**只认 POST** ────────────────────────────────────────────────
+// ⚠️★ 2026-10-20：两个后端统一成 POST-only。
+//    · 自建服务端（Rust）只注册 POST（`post(handlers::revoke).fallback(only_post)`），
+//      理由：破坏性操作必须是**显式 POST** —— Go 那边不检查方法，浏览器打开 `/revoke/5`
+//      就能删掉 5 号条目。
+//    · 这里原来只有 DELETE，网页版改成 POST 之后两边对不上 → 现在只留 POST。
+//    · 其它方法回 **405 `method_not_allowed`**，不是让兜底回 404 `route_not_found`：
+//      Rust 那边就是这个形状（"Only POST is allowed" / "仅允许 POST 请求"），
+//      客户端靠码区分「方法不对」与「路由不存在」。
+//    ⚠️ 代价：**被 Service Worker 缓存的老页面**还会发 DELETE → 收到 405、看到「删除失败」。
+//       刷新一次拿到新 SW 就好。这是「只留 POST」的必然代价，不是 bug。
+const onlyPost = () =>
+  errorResponse(405, 'method_not_allowed', 'Only POST is allowed', '仅允许 POST 请求');
 router.post('/revoke/all', ContentHandler.revokeAll);
-router.delete('/revoke/all', ContentHandler.revokeAll);
+router.all('/revoke/all', onlyPost);
 router.post('/revoke/:id', ContentHandler.revoke);
-router.delete('/revoke/:id', ContentHandler.revoke);
+router.all('/revoke/:id', onlyPost);
 
 // WebSocket 连接
 router.get('/push', WebSocketHandler.connect);
