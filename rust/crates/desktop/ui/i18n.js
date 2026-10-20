@@ -864,7 +864,6 @@
       '有新版可用': 'An update is available',
       '下载并重启': 'Download and restart',
       '跳过这一版': 'Skip this version',
-      '确认安装并重启': 'Install and restart',
       '已是最新': 'Up to date',
       '正在检查…': 'Checking…',
       '发现新版本 {version}': 'Version {version} is available',

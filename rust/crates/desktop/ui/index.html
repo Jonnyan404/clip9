@@ -1908,12 +1908,11 @@ table.ra td input[type='checkbox'] { margin: 0; }
                         <button class="btn" id="ab-update-check" data-i18n="检查更新">检查更新</button>
                         <button class="btn primary" id="ab-update-install" hidden data-i18n="下载并重启">下载并重启</button>
                         <button class="btn" id="ab-update-skip" hidden data-i18n="跳过这一版">跳过这一版</button>
-                        <!-- ⚠️★ 确认是**第二步**、而且就地换按钮，不用原生 `confirm()`：
-                             那个在 webview 里能不能弹、返回值是什么都取决于平台，
-                             而它一旦返回假值就是「点了没反应」—— 正是这个项目最忌讳的静默失败。
-                             ⚠️ 标签要把**后果**写出来（会重启），别只写「确定」。 -->
-                        <button class="btn danger" id="ab-update-confirm" hidden data-i18n="确认安装并重启">确认安装并重启</button>
-                        <button class="btn" id="ab-update-cancel" hidden data-i18n="取消">取消</button>
+                        <!-- ⚠️★ **一次点击就够**（2026-10-20）：按钮已经写明「下载并重启」，
+                             再补一步「确认安装并重启」只是多一次点击 —— 用户报的就是「要点 2 次」。
+                             ⚠️ 仍然不用原生 `confirm()`：它在 webview 里能不能弹、返回值是什么
+                             都取决于平台，而它一旦返回假值就是「点了没反应」——
+                             正是这个项目最忌讳的静默失败。 -->
                     </div>
                     <!-- 发布说明摆在**按钮下面**（它来自 `latest.json` 的 `notes`，
                          内容就是 CHANGELOG 那一段）—— 「要装的是什么」不该让用户去猜。

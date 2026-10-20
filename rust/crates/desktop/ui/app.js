@@ -2712,19 +2712,14 @@ function renderResources(sample) {
  * 判据 9 盯着这件事）—— 下面几个按钮调的都是壳自己的命令。
  */
 
-/** 「下载并重启」按过第一下之后、等用户确认的那一步。
- *  ⚠️ 它是**模块级**的，不是每次渲染重置的：`render` 会因为别的原因（来了一条消息、
- *  下载进度变了）被调用，把确认状态重置掉的话，用户点完「下载并重启」会发现按钮
- *  自己又变回去了 —— 看起来就是「点了没反应」。 */
-let updateConfirming = false;
-/** 上一次画出来的那份更新状态。
- *  ⚠️★ 「下载并重启」按第一下之后要**就地重画一次**（把确认露出来），而那次重画
- *  不该依赖 `lastState` 还在不在 —— 它是 tick 的产物，而按钮的点击与 tick 无关。
- *  记住它自己那一份，重画就只依赖自己。 */
-let lastUpdate = null;
+/** 「下载并重启」已经按过、正在下载 —— 挡住连点造成的两次下载。
+ *  ⚠️ 它是**模块级**的，不是每次渲染重置的：`renderUpdate` 会因为别的原因（来了一条消息、
+ *  下载进度变了）被调用；每一拍都重置的话，「点了下载」这件事会被下一拍抹掉 ——
+ *  用户看到按钮又亮起来，再点一次就是第二个下载。
+ *  ⚠️ 解锁写在 `renderUpdate` 里（状态不再是 `available` 时），不在这儿。 */
+let installing = false;
 
 function renderUpdate(update) {
-  lastUpdate = update || null;
   // ⚠️★ 侧栏那一行也要跟着变：只在设置页里显示「有新版」的话，用户不点进去就永远不知道 ——
   // 那把这颗按钮放到侧栏的意义就没有了。
   // ⚠️ 只认**确实有新版**那几态（`available` / `downloading` / `ready`）：
@@ -2744,8 +2739,6 @@ function renderUpdate(update) {
   const check = el('ab-update-check');
   const install = el('ab-update-install');
   const skip = el('ab-update-skip');
-  const confirm = el('ab-update-confirm');
-  const cancel = el('ab-update-cancel');
 
   let label = t('还没检查过');
   let busy = false;
@@ -2800,21 +2793,22 @@ function renderUpdate(update) {
   // ⚠️ 查的时候禁用「检查更新」：连点几下会并发发几个网络请求，而它们回来时
   // 会互相覆盖状态（先回来的那个反而是旧的）。
   check.disabled = busy;
-  // ⚠️★ 只有「有新版、且没在忙」时才露出那三个动作按钮。
+  // ⚠️★ 只有「有新版、且没在忙」时才露出那两颗动作按钮。
   // 下载中/装完/失败时露着它们，用户会以为还能再点一次。
   const canAct = offer !== null && !busy;
-  install.hidden = !canAct || updateConfirming;
-  skip.hidden = !canAct || updateConfirming;
-  confirm.hidden = !canAct || !updateConfirming;
-  cancel.hidden = !canAct || !updateConfirming;
+  // ⚠️★ 一次点击就开始下载（2026-10-20）—— 那就要挡住**连点两下**：
+  //    两次 `update_install` 会并发下两个包、抢着写「待确认」标记、再各自请求重启。
+  //    解锁放在「状态不再是 available」时：`downloading` / `failed` 都是下一拍的事，
+  //    而那时按钮本来也藏起来了。
+  if (phase !== 'available') installing = false;
+  install.hidden = !canAct;
+  skip.hidden = !canAct;
+  install.disabled = installing;
   install.dataset.version = offer || '';
   skip.dataset.version = offer || '';
-  // 状态不再是「有新版」时，把确认那一步收回去（比如用户点了跳过、或者查出来没新版）
-  if (!canAct) updateConfirming = false;
 }
 
 el('ab-update-check').addEventListener('click', () => {
-  updateConfirming = false;
   invoke('update_check').catch((error) => {
     showNotice('error', t('检查更新失败：{error}', { error: errorText(error) }));
   });
@@ -2823,7 +2817,6 @@ el('ab-update-check').addEventListener('click', () => {
 // 侧栏那颗「检查更新」：与关于页那颗**同一个命令**（`update_check`）——
 // 两处各发一个不同的命令，就会出现「一处能查、另一处查不动」。
 el('sb-update').addEventListener('click', () => {
-  updateConfirming = false;
   // 点了就切到「正在查」那一页，用户能看到结果（否则侧栏点一下什么都没发生）。
   openSettings();
   // ⚠️ 更新那一块在「关于」页（面板 id 是 `pane-about`，没有 `pane-update`）。
@@ -2834,27 +2827,21 @@ el('sb-update').addEventListener('click', () => {
 });
 
 el('ab-update-install').addEventListener('click', () => {
-  // 第一步：只把「确认」露出来，**不**开始下载。
-  updateConfirming = true;
-  renderUpdate(lastUpdate);
-});
-
-el('ab-update-cancel').addEventListener('click', () => {
-  updateConfirming = false;
-  renderUpdate(lastUpdate);
-});
-
-el('ab-update-confirm').addEventListener('click', () => {
+  // ⚠️★ **一次点击就够**（2026-10-20）：按钮已经写明「下载并重启」，
+  // 不用再加一步「确认安装并重启」—— 用户报的就是「要点 2 次」。
+  // ⚠️ 连点两下不能开两个下载（`installing` 的解锁见 `renderUpdate`）。
+  if (installing) return;
+  installing = true;
+  el('ab-update-install').disabled = true;
   // ⚠️★ 从这一刻起**壳会把应用关掉重装** —— 所以这里不做任何「等它回来」的事，
   // 也不用管返回值（macOS/Linux 上这个命令不会返回）。
-  updateConfirming = false;
   invoke('update_install').catch((error) => {
+    installing = false;
     showNotice('error', t('更新失败：{error}', { error: errorText(error) }));
   });
 });
 
 el('ab-update-skip').addEventListener('click', () => {
-  updateConfirming = false;
   invoke('update_skip', { version: el('ab-update-skip').dataset.version }).catch((error) => {
     showNotice('error', t('跳过失败：{error}', { error: errorText(error) }));
   });
