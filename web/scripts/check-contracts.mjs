@@ -213,10 +213,63 @@ for (const file of walk(join(WEB, 'src'))) {
     });
 }
 
+// ── H. WS 事件的 id 比较必须归一化（id 有数字 / 字符串两种形状）──────────────
+// ⚠️★ 2026-10-20 加。冻结契约里 id 有两种形状（Go 导出的，别去改它）：
+//   · WS 事件（`receive` / `update` / `revoke`）→ **数字**：`cases/protocol/text_receive.json` 的 `"id":7`
+//   · HTTP 历史（`/content`、`/content/latest`）→ **字符串**：`cases/protocol/content_list.json` 的 `"id":"7"`
+// 而 `ReceivedItem.id` 声明的是 `string`。所以「拿事件里的 id 去和列表比」**必须**过 `itemId(...)`；
+// 不过的后果是**静默**的：删除接口成功了、卡片却要刷新才消失（`e.id === 7` 对 `"7"` 永远 false）。
+const wsStore = readFileSync(join(WEB, 'src/stores/wsStore.ts'), 'utf8');
+if (!/function\s+itemId\s*\(/.test(wsStore)) {
+    problems.push('wsStore.ts 里不见了 `itemId()` —— id 的数字/字符串两种形状又没人管了');
+}
+/** 取 `case 'xxx':` 到它那个 `break;` 之间的一段（找不到返回 null，判据要红）。 */
+const eventCase = (name) => {
+    const start = wsStore.indexOf(`case '${name}'`);
+    if (start < 0) return null;
+    const end = wsStore.indexOf('break;', start);
+    return end < 0 ? null : wsStore.slice(start, end);
+};
+/**
+ * ⚠️★ 先把**注释行**剥掉再判 —— 这一段的注释里就写着 `id: targetId` 与 `itemId`，
+ * 不剥的话判据会被自己的说明骗过去（实测：变异删掉那段代码后判据照绿）。
+ * 本仓库踩过同一类坑（`android-contract-smoke.mjs` 的判据 11 抬头写着）。
+ */
+const stripLineComments = (text) =>
+    text
+        .split('\n')
+        .filter((line) => {
+            const trimmed = line.trim();
+            return !trimmed.startsWith('//') && !trimmed.startsWith('*') && !trimmed.startsWith('/*');
+        })
+        .join('\n');
+for (const name of ['revoke', 'update']) {
+    const raw = eventCase(name);
+    if (raw === null) {
+        problems.push(`wsStore.ts 里找不到 \`case '${name}'\` 的完整块 —— 这条判据失效了（别报绿）`);
+        continue;
+    }
+    const block = stripLineComments(raw);
+    if (!block.includes('itemId(')) {
+        problems.push(
+            `\`case '${name}'\` 拿 id 比较却没走 \`itemId(...)\` —— WS 事件的 id 是**数字**、历史里是**字符串**，` +
+                '严格相等对历史条目永远不成立（症状：删除成功但卡片要刷新才消失）',
+        );
+    }
+    // ⚠️ 用「逗号 + `id: targetId` + 右花括号」的**代码形态**，别用 `includes('id: targetId')`
+    //    —— 注释行里也写着这几个字（上面那个 stripLineComments 已经剥了，这里再加一道）。
+    if (name === 'update' && !/,\s*id:\s*targetId\s*\}/.test(block)) {
+        problems.push(
+            "`case 'update'` 展开事件数据时没把 `id` 归一 —— 数字 id 会把字符串 id 盖掉，" +
+                '下一次 revoke / update 又匹配不上（同一条 bug 换个入口复发）',
+        );
+    }
+}
+
 // ── 结果 ────────────────────────────────────────────────────────────────
 if (problems.length) {
     console.error(`✗ 契约守卫失败（${problems.length} 处）：`);
     for (const line of problems) console.error(`    ${line}`);
     process.exit(1);
 }
-console.log('✓ 契约守卫通过：零依赖共享模块字节一致 · 外壳形状完整 · PWA 放行表一致 · dev 代理覆盖了每条服务端路由 · i18n 无死键 · 已删模式未复活 · revoke 只发 POST');
+console.log('✓ 契约守卫通过：零依赖共享模块字节一致 · 外壳形状完整 · PWA 放行表一致 · dev 代理覆盖了每条服务端路由 · i18n 无死键 · 已删模式未复活 · revoke 只发 POST · WS 事件 id 已归一');
