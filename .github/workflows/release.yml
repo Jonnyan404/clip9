@@ -1259,12 +1259,19 @@ jobs:
           #       与打包脚本里那两个 `*_NAME=` 必须一致。
           n_ipk=$(find extra -maxdepth 1 -name 'clip9-openwrt-v*.ipk' | wc -l)
           n_apk=$(find extra -maxdepth 1 -name 'clip9-openwrt-apk-v*.apk' | wc -l)
+          # ⚠️★ 无界面变体（2026-10-20 起）：**另一套独立的名字**，所以上面那两个数不变。
+          #    ⚠️ 前缀必须是 `clip9-noui-openwrt-`：`clip9-openwrt-*` 那条**不会**把它们数进去，
+          #    所以漏了这一段 = noui 包少了也没人知道（`files: extra/*` 照样把有的那几份传上去）。
+          n_noui_ipk=$(find extra -maxdepth 1 -name 'clip9-noui-openwrt-v*.ipk' | wc -l)
+          n_noui_apk=$(find extra -maxdepth 1 -name 'clip9-noui-openwrt-apk-v*.apk' | wc -l)
           n_luci=$(find extra -maxdepth 1 \( -name 'clip9-luci-openwrt-v*.ipk' -o -name 'clip9-luci-openwrt-apk-v*.apk' \) | wc -l)
           n_all=$(find extra -type f | wc -l)
-          echo "ipk=${n_ipk}（期望 10） apk=${n_apk}（期望 8） luci=${n_luci}（期望 2） 合计=${n_all}"
+          echo "ipk=${n_ipk}（期望 10） apk=${n_apk}（期望 8） noui-ipk=${n_noui_ipk}（期望 10） noui-apk=${n_noui_apk}（期望 8） luci=${n_luci}（期望 2） 合计=${n_all}"
           bad=0
           [ "$n_ipk" = 10 ] || { echo "::error::ipk 有 ${n_ipk} 个，openwrt.yml 的 ipk 矩阵是 10 格"; bad=1; }
           [ "$n_apk" = 8 ] || { echo "::error::apk 有 ${n_apk} 个，openwrt.yml 的 apk 矩阵是 8 格"; bad=1; }
+          [ "$n_noui_ipk" = 10 ] || { echo "::error::noui ipk 有 ${n_noui_ipk} 个，应当与 ipk 矩阵一样是 10 个（每个架构一个）"; bad=1; }
+          [ "$n_noui_apk" = 8 ] || { echo "::error::noui apk 有 ${n_noui_apk} 个，应当与 apk 矩阵一样是 8 个（每个架构一个）"; bad=1; }
           [ "$n_luci" = 2 ] || { echo "::error::LuCI 包有 ${n_luci} 个，应该是 ipk + apk 两个"; bad=1; }
           [ "$bad" = 0 ] || exit 1
           echo "个数对得上"

@@ -165,13 +165,27 @@ docker compose up -d
 <summary><b>2️⃣ OpenWrt 路由器</b></summary>
 
 ```bash
-cat /etc/apk/arch                                  # 先看架构
+cat /etc/apk/arch                                                  # 先看架构
 
-apk add --allow-untrusted ./clip9-<版本>-<架构>.apk   # OpenWrt 25.12+
-opkg install ./clip9_<版本>_<架构>.ipk                # OpenWrt 24.10 及更早
+# OpenWrt 25.12+（apk）
+apk add --allow-untrusted ./clip9-openwrt-apk-v<版本>-<架构>.apk
+# OpenWrt 24.10 及更早（opkg）
+opkg install ./clip9-openwrt-v<版本>-<架构>.ipk
 ```
 
 装完在 LuCI 里配置。
+
+📦 **两个变体**（同一批架构，各一个包）：
+
+| 包名 | 里面是什么 | 什么时候装 |
+|---|---|---|
+| `clip9-openwrt-v…` | **内嵌界面** | 默认。装完 `http://路由器:9501` 打开就能用 |
+| `clip9-noui-openwrt-v…` | **不带界面**（只有 API） | flash 很小（16 / 32 MB）装不下界面那份时；界面放在别的机器上 |
+
+> ⚠️ 两个变体**互斥**（装的文件路径完全一样）：换用要先卸掉另一个
+> （`opkg remove clip9` / `apk del clip9`）。noui 那份声明了 `Provides: clip9`，
+> 所以 `luci-app-clip9` 照常能装 —— 但 LuCI 里「打开网页版」之类的入口会点到一个没有界面的服务端。
+> ⚠️ noui 那份要在服务端配 `allowOrigins`（前端所在的那个来源），否则浏览器会拦跨源请求。
 </details>
 
 <details>

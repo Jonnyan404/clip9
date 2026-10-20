@@ -20,9 +20,12 @@ USE_DOCKER_APK=0
 VERSION=${1:-}
 ARCH=${2:-}
 PACKAGE_ARCH=${3:-${OPENWRT_PKG_ARCH:-}}
+# 变体（第 4 个参数，`ui` | `noui`，默认 `ui`）—— 与 `package-openwrt.sh` 同一个含义：
+# `noui` 那一份**不带内嵌界面**，包小一个数量级，界面得放在别处。
+VARIANT=${4:-ui}
 
 if [ -z "$VERSION" ] || [ -z "$ARCH" ]; then
-    echo "用法: $0 <版本号> <二进制架构> [OpenWrt APK架构]"
+    echo "用法: $0 <版本号> <二进制架构> [OpenWrt APK架构] [ui|noui]"
     echo "二进制架构: x86_64, arm_cortex-a5, arm_cortex-a7, arm_cortex-a8, arm_cortex-a9,"
     echo "            arm_cortex-a15_neon-vfpv4, aarch64"
     echo "示例: $0 0.1.0 aarch64 aarch64_cortex-a53"
@@ -35,7 +38,12 @@ PKG_VERSION="$(printf '%s' "$VERSION" | sed -E 's/-([a-zA-Z]+)\.([0-9]+)/_\1\2/g
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 BASE_DIR="$(dirname "$SCRIPT_DIR")"
-BINARY="$BASE_DIR/build/clip9-server-v$VERSION-$ARCH"
+case "$VARIANT" in
+    ui)   BIN_PREFIX="clip9-server" ;;
+    noui) BIN_PREFIX="clip9-server-noui" ;;
+    *) echo "错误: 未知变体 ${VARIANT}（只认 ui / noui）"; exit 1 ;;
+esac
+BINARY="$BASE_DIR/build/$BIN_PREFIX-v$VERSION-$ARCH"
 PKG_DIR="$BASE_DIR/build/apk-$ARCH"
 ROOTFS_DIR="$BASE_DIR/ipk/rootfs"
 CONTROL_DIR="$BASE_DIR/ipk/control"
@@ -68,7 +76,25 @@ resolve_package_arch
 # 包**里面**那个程序仍然叫 `clip9-server`。⚠️ 这个字符串同时被
 # `.github/workflows/openwrt.yml`（`ls -l` 与 upload 的 path）和
 # `.github/workflows/release.yml`（`publish-openwrt` 里那句 `find … -name`）认着。
-APK_NAME="clip9-openwrt-apk-v${VERSION}-${PACKAGE_ARCH}.apk"
+if [ "$VARIANT" = "noui" ]; then
+    APK_NAME="clip9-noui-openwrt-apk-v${VERSION}-${PACKAGE_ARCH}.apk"
+    # ⚠️★ 与 ipk 那份**同一套语义**（见 `package-openwrt.sh` 那段注释）：
+    #    · `Provides: clip9` —— LuCI 那个包 `depends:clip9`，虚拟包满足它；
+    #    · `Replaces: clip9` —— 两个包的文件路径完全一样（`/usr/bin/clip9-server` 等），
+    #      apk 用 `replaces` 允许覆盖（它的 `conflicts` 是另一个概念，这里不需要）。
+    PKG_NAME="clip9-noui"
+    PKG_DESCRIPTION="Clip9 server (API only, no embedded web UI) for transferring text and files between devices"
+    # ⚠️ 用**数组**而不是「一个可能为空的字符串」：`--info "provides:"` 这种空值
+    #    apk 大概率直接拒掉，而 `ui` 那一份根本不需要这两个字段。
+    #    ⚠️ 展开时用 `${ARR[@]+"${ARR[@]}"}`：bash 3.2（macOS）在 `set -u` 下对**空数组**
+    #    的 `"${ARR[@]}"` 会报 unbound variable（本仓库 `build.sh` 里同一条规矩）。
+    APK_EXTRA_INFO=(--info "provides:clip9" --info "replaces:clip9")
+else
+    APK_NAME="clip9-openwrt-apk-v${VERSION}-${PACKAGE_ARCH}.apk"
+    PKG_NAME="clip9"
+    PKG_DESCRIPTION="Clip9 server for transferring text and files between devices"
+    APK_EXTRA_INFO=()
+fi
 
 to_container_path() {
     local host_path=$1
@@ -166,9 +192,10 @@ fi
 run_apk_mkpkg \
     --files "$APK_FILES_DIR" \
     --output "$APK_OUTPUT_PATH" \
-    --info "name:clip9" \
+    --info "name:${PKG_NAME}" \
     --info "version:$PKG_VERSION-r1" \
-    --info "description:Clip9 server for transferring text and files between devices" \
+    --info "description:${PKG_DESCRIPTION}" \
+    ${APK_EXTRA_INFO[@]+"${APK_EXTRA_INFO[@]}"} \
     --info "arch:$PACKAGE_ARCH" \
     --info "license:MIT" \
     --info "url:https://github.com/Jonnyan404/clip9" \

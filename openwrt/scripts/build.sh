@@ -36,6 +36,10 @@
 #   ./build.sh                          # 版本号取 rust/Cargo.toml 的 [workspace.package]
 #   ./build.sh 0.1.0-beta2              # 指定版本号（发布用）
 #   ./build.sh 0.1.0-beta2 --skip-web   # 跳过前端构建（产物已经由别处准备好时用，快很多）
+#   ./build.sh 0.1.0-beta2 --with-noui  # 额外编一套**不带界面**的（给 flash 很小的设备）
+#
+# ⚠️★ `--with-noui` 是**可选**的，不是默认：那套要再把三个 target 各编一次（几十分钟），
+#    本机平时只需要带界面的那份。CI 的 `openwrt.yml` 会传它。
 
 set -euo pipefail
 
@@ -47,9 +51,11 @@ WEB_DIR="$REPO_DIR/web"
 
 VERSION=""
 SKIP_WEB=0
+WITH_NOUI=0
 for arg in "$@"; do
     case "$arg" in
         --skip-web) SKIP_WEB=1 ;;
+        --with-noui) WITH_NOUI=1 ;;
         *) VERSION="$arg" ;;
     esac
 done
@@ -230,6 +236,89 @@ for entry in "${ARCH_MAP[@]}"; do
     echo "✓ $arch  ($(du -h "$dst" | cut -f1))  ← ${src#"$CROSS_TARGET_DIR_PREFIX"}"
 done
 
+# ── 5. 无界面变体（`--with-noui`）────────────────────────────────────────────
+#
+# ⚠️★ 为什么要有它：内嵌前端产物 21 MB（99 个文件），对 flash 只有 16/32 MB 的设备来说
+#    那一份是装不下的。noui 的二进制不带这些静态资源，**包小一个数量级** ——
+#    代价是**路由器上就没有界面了**：前端要放在别的机器上（服务端那边配 `allowOrigins`）。
+#
+# ⚠️★ 做法是「把 `static/` 挪走再编」：`build.rs` 在 `static/` 不存在时会内嵌那个
+#    「这个二进制没带界面」的占位页（不是 panic、也不是什么都不嵌）。**不是**编完再删资源 ——
+#    资源那时已经在二进制里了。
+#
+# ⚠️★ 挪走之后**必须放回去**：用 `trap` 兜住中途失败，否则一次失败的构建会把它留在 /tmp，
+#    下一次构建就变成「没有前端产物」，而那条路会安静地编出占位页二进制。
+#
+# ⚠️★ 每个 target 用**独立的 target 目录**（`cross-noui-` 前缀），绝不能复用上面那三个：
+#    `embedded_static.rs` 由 build.rs 写进 `OUT_DIR`，而 cargo **只按 mtime** 判断要不要
+#    重跑 build script。复用极可能拿到**带界面**的那份旧产物 —— 那时 `id="app"` 的断言会红成
+#    「代码写错了」的样子。独立目录 = 从零编一次，慢，但结果是确定的。
+if [ "$WITH_NOUI" = 1 ]; then
+    echo
+    echo "--- 无界面变体（noui）：把 static/ 挪走再编 ---"
+    static_dir="$RUST_DIR/crates/server/static"
+    stash_dir="$(mktemp -d)"
+
+    restore_static() {
+        if [ -d "$stash_dir/static" ]; then
+            mv "$stash_dir/static" "$static_dir"
+            # ⚠️ `mv` 回来的目录 mtime 是**旧的** —— 不 touch 的话，之后在同一个 target 目录里
+            # 再编一次时 cargo 认为 build script 不用重跑，拿到的还是占位页那份产物。
+            touch "$static_dir"
+        fi
+        rmdir "$stash_dir" 2>/dev/null || true
+    }
+    trap restore_static EXIT
+
+    if [ -d "$static_dir" ]; then
+        mv "$static_dir" "$stash_dir/static"
+    else
+        echo "  ! 没有 static/（大概传了 --skip-web）—— 这一份编出来本来就是不带界面的"
+    fi
+
+    for target in "${TARGETS[@]}"; do
+        echo "--- cross build $target (noui) ---"
+        ( cd "$RUST_DIR" && CARGO_TARGET_DIR="${CROSS_TARGET_DIR_PREFIX}noui-$target" \
+            RUSTFLAGS="-C strip=symbols" \
+            CLIP9_VERSION="$VERSION" \
+            cross build --release -p clip9-server --target "$target" )
+    done
+
+    # ── 摊平 + **反向**验收 ────────────────────────────────────────────────
+    # ⚠️★ 与上面那一段正好相反：这一份**要**有占位标记、**不许**有 `id="app"`。
+    #    反过来写（照抄上面）等于「把界面编回了 noui 的包里」，而包名还叫 noui。
+    for entry in "${ARCH_MAP[@]}"; do
+        arch="${entry%%:*}"
+        target="${entry#*:}"
+        src="$(find "$CROSS_TARGET_DIR_PREFIX""noui-$target" -type f -name clip9-server -path '*/release/*' -print -quit 2>/dev/null || true)"
+        if [ -z "$src" ]; then
+            echo "错误: 在 ${CROSS_TARGET_DIR_PREFIX}noui-$target 下找不到 release 产物" >&2
+            exit 1
+        fi
+        if ! strings -a "$src" | grep -qF "$VERSION"; then
+            echo "错误: $src 里找不到版本号 $VERSION —— CLIP9_VERSION 没生效" >&2
+            exit 1
+        fi
+        if ! strings -a "$src" | grep -qF 'clip9-no-embedded-frontend'; then
+            echo "错误: $src 里没有占位页标记 —— 它把一份前端编进去了（noui 的意义就是不带界面）" >&2
+            exit 1
+        fi
+        if strings -a "$src" | grep -qF 'id="app"'; then
+            echo "错误: $src 里带着真前端（找到了 id=\"app\"）—— 这一份不该有 static/" >&2
+            exit 1
+        fi
+        dst="$OUTPUT_DIR/clip9-server-noui-v$VERSION-$arch"
+        cp "$src" "$dst"
+        echo "✓ $arch (noui)  ($(du -h "$dst" | cut -f1))"
+    done
+
+    restore_static
+    trap - EXIT
+fi
+
 echo
 echo "=== 完成：$OUTPUT_DIR ==="
 ls -1 "$OUTPUT_DIR"/clip9-server-v"$VERSION"-*
+if [ "$WITH_NOUI" = 1 ]; then
+    ls -1 "$OUTPUT_DIR"/clip9-server-noui-v"$VERSION"-*
+fi

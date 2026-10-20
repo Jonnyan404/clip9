@@ -21,6 +21,20 @@ ARCH=$2
 #    在设备上查：`opkg print-architecture`
 PACKAGE_ARCH=${3:-}
 
+# 变体（第 4 个参数，`ui` | `noui`，默认 `ui`）。
+#
+# ⚠️★ `noui` 是**不带内嵌界面**的那一份（给 flash 很小的设备）：机器上就只有 API，
+# 界面得放在别处（服务端那边配 `allowOrigins`）。
+#
+# ⚠️★ 两个变体装进路由器以后**文件路径完全一样**（`/usr/bin/clip9-server`、
+# `/etc/init.d/clip9`、`/etc/config/clip9`）—— 它们就是「同一个包的两个版本」。
+# 所以 control 里必须让它们**互斥**：
+#   · `Provides: clip9` —— LuCI 那个包 `Depends: clip9`，没有它的话装完 noui 还得再装一份
+#     带界面的；而 `opkg` 认虚拟包，Provides 就能满足那个依赖。
+#   · `Conflicts: clip9` —— 两个包的文件重名，同时装会覆盖成一锅粥（而且 uninstall 其中一个
+#     会把共用的 `/usr/bin/clip9-server` 删掉）。互斥让「先卸再装」成为唯一路径，这是对的。
+VARIANT=${4:-ui}
+
 if [ -z "$VERSION" ] || [ -z "$ARCH" ]; then
     echo "用法: $0 <版本号> <二进制架构> [包架构]"
     echo "二进制架构: x86_64, arm_cortex-a5, arm_cortex-a7, arm_cortex-a8, arm_cortex-a9,"
@@ -35,7 +49,12 @@ fi
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 BASE_DIR="$(dirname "$SCRIPT_DIR")"
-BINARY="$BASE_DIR/build/clip9-server-v$VERSION-$ARCH"
+case "$VARIANT" in
+    ui)   BIN_PREFIX="clip9-server" ;;
+    noui) BIN_PREFIX="clip9-server-noui" ;;
+    *) echo "错误: 未知变体 ${VARIANT}（只认 ui / noui）"; exit 1 ;;
+esac
+BINARY="$BASE_DIR/build/$BIN_PREFIX-v$VERSION-$ARCH"
 PKG_DIR="$BASE_DIR/build/pkg-$PACKAGE_ARCH"
 CONTROL_DIR="$BASE_DIR/ipk/control"
 ROOTFS_DIR="$BASE_DIR/ipk/rootfs"
@@ -49,7 +68,12 @@ ROOTFS_DIR="$BASE_DIR/ipk/rootfs"
 #    的 ipk 矩阵），用二进制名的话这四个**会同名互相覆盖**。
 #    ⚠️ `package-openwrt-apk.sh` 一直就是这么做的 —— 两套包的产物名从此同一口径，
 #    也与「用户下哪个包就装哪个」这个事实一致。
-IPK_NAME="clip9-openwrt-v$VERSION-$PACKAGE_ARCH.ipk"
+# ⚠️ 名字沿用 `<东西>-openwrt-v<版本>-<设备架构>` 那条规矩（与 `clip9-luci-openwrt-…` 同形）。
+if [ "$VARIANT" = "noui" ]; then
+    IPK_NAME="clip9-noui-openwrt-v$VERSION-$PACKAGE_ARCH.ipk"
+else
+    IPK_NAME="clip9-openwrt-v$VERSION-$PACKAGE_ARCH.ipk"
+fi
 
 echo "脚本目录: $SCRIPT_DIR"
 echo "根目录: $BASE_DIR"
@@ -96,7 +120,30 @@ echo "准备控制文件..."
 if [ -f "$CONTROL_DIR/control" ]; then
     sed "s/{{VERSION}}/$VERSION/g; s/{{ARCH}}/$PACKAGE_ARCH/g" \
         "$CONTROL_DIR/control" > "$PKG_DIR/CONTROL/control"
-    echo "✓ 已处理控制文件"
+    if [ "$VARIANT" = "noui" ]; then
+        # ⚠️ 只改**包名**与依赖关系，文件表与初始化脚本一个字都不动 —— 两个变体装上去
+        #    长得完全一样，区别只有二进制里有没有内嵌前端。
+        #
+        # ⚠️★ `Provides` / `Conflicts` 要插在 **`Package:` 之后**，不是文件末尾：
+        #    `Description` 是最后一段，而它在 Debian 风格的 control 里允许**缩进续行** ——
+        #    把字段追加在它后面，读的人（和某些解析器）会把它当成描述的续行。
+        #
+        # ⚠️★ 用 `awk` 而不是 `sed`：BSD/ macOS 的 sed 在替换串里**不认 `\n`**
+        #    （GNU 才认）。这个脚本在本机（macOS）也要能跑 —— `check-packages.sh` 就跑它。
+        awk '{
+            if ($0 == "Package: clip9") {
+                print "Package: clip9-noui"
+                print "Provides: clip9"
+                print "Conflicts: clip9"
+            } else if ($0 ~ /^Description: /) {
+                print "Description: Clip9 server (API only, no embedded web UI) for transferring text and files between devices"
+            } else {
+                print
+            }
+        }' "$PKG_DIR/CONTROL/control" > "$PKG_DIR/CONTROL/control.new"
+        mv "$PKG_DIR/CONTROL/control.new" "$PKG_DIR/CONTROL/control"
+    fi
+    echo "✓ 已处理控制文件（变体: ${VARIANT}）"
 else
     echo "! 找不到控制文件模板（$CONTROL_DIR/control）"
     exit 1

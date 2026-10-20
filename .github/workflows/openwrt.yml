@@ -137,12 +137,19 @@ jobs:
           #    宿主构建脚本跨镜像复用，第二个 target 起报 `GLIBC_2.28 not found`（cross#724）。
           #    那段推理写在 `openwrt/scripts/build.sh` 第 3 节，判据是
           #    `tools/workflows-smoke.mjs` 的第 9 条。⚠️ 报出来的**是某个依赖的名字**。
-          ./openwrt/scripts/build.sh "$VERSION"
+          # ⚠️★ `--with-noui`：额外编一套**不带内嵌界面**的（给 flash 很小的设备）。
+          #    代价是三个 target 各再编一次（独立 target 目录，从零编）—— 那几十分钟换的是
+          #    「小 flash 设备也能装」。理由与取舍写在 `openwrt/scripts/build.sh` 第 5 节。
+          ./openwrt/scripts/build.sh "$VERSION" --with-noui
 
       - uses: actions/upload-artifact@v7
         with:
           name: openwrt-binaries
-          path: openwrt/build/clip9-server-v*
+          # ⚠️ 两条 glob：带界面的 `clip9-server-v*`，以及 `clip9-server-noui-v*`。
+          #    少一条 → 下游 `ipk` / `apk` 打包时「找不到二进制」而红（那条报错还算清楚）。
+          path: |
+            openwrt/build/clip9-server-v*
+            openwrt/build/clip9-server-noui-v*
           if-no-files-found: error
 
   # ── IPK（OpenWrt 24.10 及以下走这条）────────────────────────────────────
@@ -208,13 +215,21 @@ jobs:
           PKG_ARCH: ${{ matrix.pkg_arch }}
         run: |
           set -euo pipefail
-          ./openwrt/scripts/package-openwrt.sh "$VERSION" "$ARCH" "$PKG_ARCH"
-          ls -l "openwrt/build/clip9-openwrt-v${VERSION}-${PKG_ARCH}.ipk"
+          # ⚠️★ 两个变体各打一个包（第 4 个参数是变体，见 `package-openwrt.sh`）：
+          #    · `ui`   —— 内嵌界面，装上去 `http://路由器:9501` 就能用（绝大多数人装这个）；
+          #    · `noui` —— 不带界面，包小一个数量级，界面要放在别处（配 `allowOrigins`）。
+          ./openwrt/scripts/package-openwrt.sh "$VERSION" "$ARCH" "$PKG_ARCH" ui
+          ./openwrt/scripts/package-openwrt.sh "$VERSION" "$ARCH" "$PKG_ARCH" noui
+          ls -l "openwrt/build/clip9-openwrt-v${VERSION}-${PKG_ARCH}.ipk" \
+                "openwrt/build/clip9-noui-openwrt-v${VERSION}-${PKG_ARCH}.ipk"
 
       - uses: actions/upload-artifact@v7
         with:
           name: openwrt-pkg-ipk-${{ matrix.pkg_arch }}
-          path: openwrt/build/clip9-openwrt-v*.ipk
+          # ⚠️ 两条 glob 都要有：漏了 noui 那条，`release.yml` 的 `publish-openwrt` 会数出 0 个。
+          path: |
+            openwrt/build/clip9-openwrt-v*.ipk
+            openwrt/build/clip9-noui-openwrt-v*.ipk
           if-no-files-found: error
 
   # ── APK（OpenWrt 25.12 起用 apk 取代 opkg）──────────────────────────────
@@ -266,13 +281,18 @@ jobs:
           PKG_ARCH: ${{ matrix.pkg_arch }}
         run: |
           set -euo pipefail
-          ./openwrt/scripts/package-openwrt-apk.sh "$VERSION" "$ARCH" "$PKG_ARCH"
-          ls -l "openwrt/build/clip9-openwrt-apk-v${VERSION}-${PKG_ARCH}.apk"
+          # ⚠️★ 两个变体（理由同上，IPK 那一格）：`ui` 带界面，`noui` 只有 API。
+          ./openwrt/scripts/package-openwrt-apk.sh "$VERSION" "$ARCH" "$PKG_ARCH" ui
+          ./openwrt/scripts/package-openwrt-apk.sh "$VERSION" "$ARCH" "$PKG_ARCH" noui
+          ls -l "openwrt/build/clip9-openwrt-apk-v${VERSION}-${PKG_ARCH}.apk" \
+                "openwrt/build/clip9-noui-openwrt-apk-v${VERSION}-${PKG_ARCH}.apk"
 
       - uses: actions/upload-artifact@v7
         with:
           name: openwrt-pkg-apk-${{ matrix.pkg_arch }}
-          path: openwrt/build/clip9-openwrt-apk-v*.apk
+          path: |
+            openwrt/build/clip9-openwrt-apk-v*.apk
+            openwrt/build/clip9-noui-openwrt-apk-v*.apk
           if-no-files-found: error
 
   # ── LuCI 界面：与架构无关，一个 ipk 一个 apk ─────────────────────────────

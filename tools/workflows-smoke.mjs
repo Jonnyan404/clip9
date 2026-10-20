@@ -412,21 +412,46 @@ const pkgApk = read('openwrt/scripts/package-openwrt-apk.sh');
 //    `if-no-files-found: error`（还算早）；②③ 不一致 → 一路跑到 `publish-openwrt`，
 //    报的是「`ipk` 有 0 个」—— 而真正的错在另一个文件里。
 //    ⚠️ 判的是**前缀**（第一个 `$` 之前那截）：版本号 / 架构那一段由变量拼，不该比。
+//
+// ⚠️★ 2026-10-20 起有**两个变体**（`ui` 带界面 / `noui` 不带），所以每种格式各有**两个**
+//    包名。判据跟着改成「逐个名字查」：
+//      · 打包脚本里必须**两个都有**（只加一个 = 另一个变体没产物，而 `publish` 会照常成功）；
+//      · 每个名字都要在 `openwrt.yml` 的 `path:` 里有一条 glob；
+//      · 每个名字都要在 `release.yml` 的 `publish-openwrt` 里有一条 `find -name` + 一个计数。
+//    ⚠️ 别退回「只比第一个」：那样 noui 那套断了完全没人发现（前缀不同、`find` 不会误伤）。
 {
   const label = 'OpenWrt 包名前缀：打包脚本 ↔ openwrt.yml 的 path ↔ release.yml 的 find';
   const problems = [];
-  /** 从 `IPK_NAME="…"` 取**字面前缀**（第一个 `$` 之前那截）。 */
-  const head = (text, re, what) => {
-    const m = re.exec(text ?? '');
-    if (!m) {
+  /** 从 `IPK_NAME="…"` / `APK_NAME="…"` 里取**所有**字面前缀（第一个 `$` 之前那截）。 */
+  const heads = (text, re, what) => {
+    const found = [...(text ?? '').matchAll(re)].map((m) => {
+      const i = m[1].indexOf('$');
+      return i < 0 ? m[1] : m[1].slice(0, i);
+    });
+    if (!found.length) {
       problems.push(`读不到 ${what}`);
-      return null;
+      return [];
     }
-    const i = m[1].indexOf('$');
-    return i < 0 ? m[1] : m[1].slice(0, i);
+    return found;
   };
-  const ipkPrefix = head(pkgIpk, /IPK_NAME="([^"]+)"/, 'package-openwrt.sh 的 IPK_NAME');
-  const apkPrefix = head(pkgApk, /APK_NAME="([^"]+)"/, 'package-openwrt-apk.sh 的 APK_NAME');
+  const ipkPrefixes = heads(pkgIpk, /IPK_NAME="([^"]+)"/g, 'package-openwrt.sh 的 IPK_NAME');
+  const apkPrefixes = heads(pkgApk, /APK_NAME="([^"]+)"/g, 'package-openwrt-apk.sh 的 APK_NAME');
+  // ⚠️ 两个变体各一个：少一个就说明有人只给一个变体改了名（另一个在下游会「找不到文件」）。
+  for (const [what, list] of [['ipk', ipkPrefixes], ['apk', apkPrefixes]]) {
+    if (list.length !== 2) {
+      problems.push(
+        `${what}：打包脚本里读到 ${list.length} 个包名前缀（期望 2 —— ui 与 noui 各一个）：` +
+          list.map((x) => JSON.stringify(x)).join(' / '),
+      );
+    } else if (new Set(list).size !== list.length) {
+      // ⚠️★ 两个变体**同名** = 后打的包把先打的**覆盖**掉（同一个目录、同一个文件名），
+      //    而 workflow 里看着「两行都跑了、都成功了」。判的是**不同**，不只是个数。
+      problems.push(
+        `${what}：两个变体的包名前缀相同（${JSON.stringify(list[0])}）—— ` +
+          '后打的那一个会直接覆盖前一个，而日志里两行都是成功的',
+      );
+    }
+  }
   const owIpk = openwrt === null ? null : jobBlock(openwrt, 'ipk');
   const owApk = openwrt === null ? null : jobBlock(openwrt, 'apk');
   const pw = release === null ? null : jobBlock(release, 'publish-openwrt');
@@ -434,27 +459,29 @@ const pkgApk = read('openwrt/scripts/package-openwrt-apk.sh');
     problems.push('读不到 openwrt.yml 的 ipk / apk job 或 release.yml 的 publish-openwrt');
   } else {
     // ⚠️ 只在**各自的 job 块**里找：luci 那个 job 也有一句 `openwrt/build/clip9-luci-…`。
-    const globIpk = /openwrt\/build\/([^*"]+)\*\.ipk/.exec(owIpk);
-    const globApk = /openwrt\/build\/([^*"]+)\*\.apk/.exec(owApk);
-    const findIpk = /-name '([^*']+)\*\.ipk'/.exec(pw);
-    const findApk = /-name '([^*']+)\*\.apk'/.exec(pw);
-    const pairs = [
-      ['ipk', ipkPrefix, globIpk && globIpk[1], findIpk && findIpk[1]],
-      ['apk', apkPrefix, globApk && globApk[1], findApk && findApk[1]],
-    ];
+    // ⚠️ 用**集合**而不是第一个匹配：两个变体各有一条 glob / 一条 find。
+    const globIpk = new Set([...owIpk.matchAll(/openwrt\/build\/([^*"\s]+)\*\.ipk/g)].map((m) => m[1]));
+    const globApk = new Set([...owApk.matchAll(/openwrt\/build\/([^*"\s]+)\*\.apk/g)].map((m) => m[1]));
+    const findIpk = new Set([...pw.matchAll(/-name '([^*']+)\*\.ipk'/g)].map((m) => m[1]));
+    const findApk = new Set([...pw.matchAll(/-name '([^*']+)\*\.apk'/g)].map((m) => m[1]));
     const seen = [];
-    for (const [what, a, b, c] of pairs) {
-      if (!a || !b || !c) {
-        problems.push(`${what}：三处里有读不到的（打包脚本 ${JSON.stringify(a)} / openwrt.yml ${JSON.stringify(b)} / release.yml ${JSON.stringify(c)}）`);
-        continue;
-      }
-      if (a !== b || a !== c) {
-        problems.push(
-          `${what} 的前缀三处不一致：打包脚本 ${JSON.stringify(a)}、openwrt.yml ${JSON.stringify(b)}、` +
-            `release.yml 的 find ${JSON.stringify(c)}`,
-        );
-      } else {
-        seen.push(`${what}=${a}`);
+    for (const [what, list, globs, finds] of [
+      ['ipk', ipkPrefixes, globIpk, findIpk],
+      ['apk', apkPrefixes, globApk, findApk],
+    ]) {
+      for (const prefix of list) {
+        if (!globs.has(prefix)) {
+          problems.push(`${what}：openwrt.yml 的 path: 里没有 ${JSON.stringify(prefix)}*.ipk/.apk 这条 glob`);
+          continue;
+        }
+        if (!finds.has(prefix)) {
+          problems.push(
+            `${what}：release.yml 的 publish-openwrt 里没有 \`find … -name ${JSON.stringify(prefix)}*\` —— ` +
+              '那一批包发不出去也不会有人发现',
+          );
+          continue;
+        }
+        seen.push(`${what}=${prefix}`);
       }
     }
     if (!problems.length) ok(`${label} —— ${seen.join(' · ')}`);
@@ -985,42 +1012,68 @@ const pkgApk = read('openwrt/scripts/package-openwrt-apk.sh');
     //    （变异验证抓到过 —— 判据本来在这条上是瞎的）。
     // ⚠️ 而且前缀必须是**具名变量**：内联路径（`="$RUST_DIR/target/cross-$target"`）功能上
     //    一样对，但第 4 步就没有同一个变量可引用、只能再写一份 —— 那正是旧形状的毛病。
-    const ctd = /(?<![A-Za-z0-9_])CARGO_TARGET_DIR="\$([A-Za-z_][A-Za-z0-9_]*)\$target"/m.exec(code);
-    if (!ctd) {
+    // ⚠️★ 2026-10-20：现在有**两个**构建循环（ui 与 noui），所以 `CARGO_TARGET_DIR=`
+    //    与 `src=` 都可能出现两次。判据跟着改成「**每一处**都要满足同一条规矩」：
+    //    仍然不许写死路径、仍然必须引用同一个具名前缀变量 —— 只是不再要求「只有一处」。
+    const ctdValues = [...code.matchAll(/(?<![A-Za-z0-9_])CARGO_TARGET_DIR="([^"]+)"/g)]
+      .map((m) => m[1]);
+    const namedPrefix = ctdValues
+      // ⚠️ 两种写法都认：`$PREFIX$target` 与 `${PREFIX}noui-$target`
+      //    （后者是 noui 那一份 —— 相邻引号拼接会让下面的匹配只读到第一段）。
+      .map((value) => /^\$\{?([A-Za-z_][A-Za-z0-9_]*)/.exec(value))
+      .find((m) => m);
+    if (!ctdValues.length || !namedPrefix) {
       problems.push(
-        '没找到 `CARGO_TARGET_DIR="$<变量>$target"` —— 三个 target 共用 target/ 时，宿主构建' +
-          '脚本会跨镜像复用，第二个 target 起就报 GLIBC not found（cross#724）；' +
-          '而且前缀得是**具名变量**，第 4 步才能引用同一个（否则就是各写一份）',
+        '没找到以**具名变量**开头的 `CARGO_TARGET_DIR="$<变量>…$target"` —— 三个 target 共用 target/ 时，' +
+          '宿主构建脚本会跨镜像复用，第二个 target 起就报 GLIBC not found（cross#724）；' +
+          '而且前缀得是具名变量，取产物那一步才能引用同一个（否则就是各写一份）',
       );
+    } else {
+      // ⚠️ 每一处都必须带 `$target`：漏了就是「两个 target 共用同一个目录」，
+      //    而那正是 cross#724 的成因（这条比"写了两次"重要）。
+      for (const value of ctdValues) {
+        if (!value.includes('$target')) {
+          problems.push(`某处 \`CARGO_TARGET_DIR="${value}"\` 里没有 \`$target\` —— 多个 target 会共用一个目录`);
+        }
+      }
     }
     // 取产物那一步：⚠️ 只认 `src=` 这个变量名 —— 它同时是后面 `cp` 的输入；
     //    改了名字这里会红（提示跟着代码改），而不是静默放过。
+    //    ⚠️ 1..2 处：ui 与 noui 各一处（不再要求"只有一处"）。
     const srcLines = [...code.matchAll(/^[ \t]*src=(.+)$/gm)].map((m) => m[1].trim());
-    if (srcLines.length !== 1) {
-      problems.push('取产物那一步（src=）有 ' + srcLines.length + ' 处 —— 应当只有 1 处');
+    if (srcLines.length < 1 || srcLines.length > 2) {
+      problems.push(
+        '取产物那一步（src=）有 ' + srcLines.length + ' 处 —— 应当是 1 或 2 处（ui / noui 各一处）',
+      );
     } else {
-      const srcLine = srcLines[0];
+      let bad = false;
+      for (const srcLine of srcLines) {
       // ⚠️★ **先判这一条**：它才是真出过事的形状，说的也最具体（写死路径 / 少一层）。
       //    把 `release/clip9-server` 拼进路径就是少一层来的 —— `--target` 模式下 cargo 会在
       //    target 目录里**再套一层** `<triple>/`。
       //    ⚠️ 连「写对了两层」的那种也一起拦下：`find` 已经不猜层数了，没理由再退回写死 ——
       //    写死就意味着「层数」这件事又回到了脚本里，下次还得靠人记着。
-      if (/release\/clip9-server/.test(srcLine)) {
-        problems.push(
-          '取产物那一步把路径写死了：' + srcLine + '\n' +
-            '    别数那几层 —— 2026-09-28 就是数错一层红的（cross 编完了、`Finished release' +
-            ' profile` 也打出来了，紧接着报「找不到产物」）。改成在该 target 的目录里找。',
-        );
+        if (/release\/clip9-server/.test(srcLine)) {
+          problems.push(
+            '取产物那一步把路径写死了：' + srcLine + '\n' +
+              '    别数那几层 —— 2026-09-28 就是数错一层红的（cross 编完了、`Finished release' +
+              ' profile` 也打出来了，紧接着报「找不到产物」）。改成在该 target 的目录里找。',
+          );
+          bad = true;
+        }
+        // 再判「是不是以同一个前缀变量为根」。
+        if (namedPrefix && !srcLine.includes('"$' + namedPrefix[1])) {
+          problems.push(
+            '取产物那一步没有以 "$' + namedPrefix[1] + '…" 为根（CARGO_TARGET_DIR 用的正是 $' +
+              namedPrefix[1] + '）—— 各写一份的话，改了其中一处就会去别的地方找二进制',
+          );
+          bad = true;
+        }
       }
-      // 再判「两处是不是同一个变量」。
-      if (ctd && !srcLine.includes('"$' + ctd[1] + '$target"')) {
-        problems.push(
-          '取产物那一步没有以 "$' + ctd[1] + '$target" 为根（CARGO_TARGET_DIR 用的正是 $' +
-            ctd[1] + '）—— 两处各写一份的话，改了其中一处就会去别的地方找二进制',
-        );
+      if (!problems.length && !bad) {
+        ok(label + ' —— src= 在 "$' + (namedPrefix ? namedPrefix[1] : '?') + '…" 里找（' + srcLines.length + ' 处）');
       }
     }
-    if (!problems.length) ok(label + ' —— src= 在 "$' + ctd[1] + '$target" 里找');
   }
   if (problems.length) fail(label, problems.join('\n    '));
 }

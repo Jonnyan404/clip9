@@ -43,17 +43,27 @@ mkdir -p "$BUILD"
 #    这一步不验二进制内容，只验字段。
 cp -f "$HOST_BIN" "$BUILD/clip9-server-v$VER-x86_64"
 cp -f "$HOST_BIN" "$BUILD/clip9-server-v$VER-aarch64"
+# 无界面变体的替身：文件名只差一个 `-noui`（那一份真二进制里没有内嵌前端，
+# 但这一步验的是**包结构与 control 字段**，内容不参与）。
+cp -f "$HOST_BIN" "$BUILD/clip9-server-noui-v$VER-x86_64"
 echo "  替身: $BUILD/clip9-server-v$VER-x86_64 ($(du -h "$BUILD/clip9-server-v$VER-x86_64" | cut -f1))"
 
 ./openwrt/scripts/package-openwrt.sh  "$VER" x86_64                     >"$WORK.p1.log" 2>&1 || { echo "  ❌ package-openwrt.sh 失败"; tail -20 "$WORK.p1.log"; exit 1; }
 echo "  ✅ package-openwrt.sh  x86_64"
 ./openwrt/scripts/package-openwrt.sh  "$VER" aarch64 aarch64_cortex-a53 >"$WORK.p2.log" 2>&1 || { echo "  ❌ package-openwrt.sh（带包架构）失败"; tail -20 "$WORK.p2.log"; exit 1; }
 echo "  ✅ package-openwrt.sh  aarch64 + 包架构 aarch64_cortex-a53"
+./openwrt/scripts/package-openwrt.sh  "$VER" x86_64 x86_64 noui              >"$WORK.p1n.log" 2>&1 || { echo "  ❌ package-openwrt.sh（noui）失败"; tail -20 "$WORK.p1n.log"; exit 1; }
+echo "  ✅ package-openwrt.sh  x86_64 + noui 变体"
 ./openwrt/scripts/package-luci-app.sh "$VER"                            >"$WORK.p3.log" 2>&1 || { echo "  ❌ package-luci-app.sh 失败"; tail -20 "$WORK.p3.log"; exit 1; }
 echo "  ✅ package-luci-app.sh"
 
 SRV="$BUILD/clip9-openwrt-v$VER-x86_64.ipk"
-SRV2="$BUILD/clip9-openwrt-v$VER-aarch64.ipk"
+# ⚠️★ 名字里是**第三个参数**（设备架构名），不是二进制架构名 —— `IPK_NAME=` 用的就是
+#    `$PACKAGE_ARCH`。这里原来写的是 `...-aarch64.ipk`，那个文件**从来不存在**，
+#    于是下面那条 `tar -xzf` 静默失败、`control` 读不到、断言拿到空串 ——
+#    「第三个参数真的生效了吗」这条判据一直是**假绿**（2026-10-20 才发现）。
+SRV2="$BUILD/clip9-openwrt-v$VER-aarch64_cortex-a53.ipk"
+NOUI="$BUILD/clip9-noui-openwrt-v$VER-x86_64.ipk"
 LUC="$BUILD/clip9-luci-openwrt-v$VER-all.ipk"
 
 echo
@@ -110,6 +120,31 @@ chk "★ uci-defaults 保持 644"        "$(perms "$L/data.tar.gz" "./etc/uci-de
 
 chk "界面包 Architecture=all" "$(grep -m1 '^Architecture:' "$L/control" | awk '{print $2}')" "all"
 chk "界面包 Depends 含 clip9" "$(grep -m1 '^Depends:' "$L/control" | grep -c '\bclip9\b')" "1"
+
+echo
+echo "=== ④b 无界面变体 ipk: ${NOUI} ==="
+# ⚠️★ 这一份是给 **flash 很小的设备** 的（不带内嵌界面，包小一个数量级）。
+#    它必须：
+#      · 包名是 `clip9-noui`，但**文件路径与 ui 变体完全一样** —— 它们是「同一个包的两种版本」；
+#      · `Provides: clip9` —— LuCI 界面包 `Depends: clip9`，没有它装完 noui 还得再装一份带界面的；
+#      · `Conflicts: clip9` —— 两个包写同一批文件，同时装会互相覆盖（且卸一个会删掉共用文件）。
+[ -f "$NOUI" ] || { echo "  ❌ 没打出来"; exit 1; }
+N="$WORK/noui"; rm -rf "$N"; mkdir -p "$N"
+tar -xzf "$NOUI" -C "$N"; tar -xzf "$N/data.tar.gz" -C "$N"; tar -xzf "$N/control.tar.gz" -C "$N"
+
+chk "noui 包的 Package 名"       "$(grep -m1 '^Package:' "$N/control" | awk '{print $2}')" "clip9-noui"
+chk "★ noui 的 Provides 含 clip9" "$(grep -m1 '^Provides:' "$N/control" | awk '{print $2}')" "clip9"
+chk "★ noui 的 Conflicts 含 clip9" "$(grep -m1 '^Conflicts:' "$N/control" | awk '{print $2}')" "clip9"
+chk "noui 的 Architecture 与 ui 一致" "$(grep -m1 '^Architecture:' "$N/control" | awk '{print $2}')" "x86_64"
+# ⚠️ 二进制**仍然**装在 `/usr/bin/clip9-server`：初始化脚本、LuCI、`uci` 配置里写的都是这个名字，
+#    换成 `clip9-server-noui` 会让整套东西都找不到它。
+chk "★ noui 的二进制仍在 usr/bin/clip9-server" "$(perms "$N/data.tar.gz" "./usr/bin/clip9-server")" "-rwxr-xr-x"
+# ⚠️★ 文件列表必须**逐行相同**（两个变体装上去长得一样，只有二进制内容不同）：
+#    这里比的是**路径清单**，不是内容。多/少一个文件都说明有人只改了一边 ——
+#    那种漂移不会报错，只会在路由器上表现为「noui 装完少了 /etc/config」。
+chk "★ 与 ui 变体的文件清单完全一致" \
+    "$(diff <(tar -tzf "$D/data.tar.gz" | sort) <(tar -tzf "$N/data.tar.gz" | sort) | wc -l | tr -d ' ')" "0"
+chk "noui 的 postinst 权限"       "$(perms "$N/control.tar.gz" "./postinst")" "-rwxr-xr-x"
 
 echo
 echo "=== ⑤ gitignore 真的挡住了产物 ==="
