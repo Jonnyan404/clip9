@@ -56,6 +56,13 @@ use crate::child_process;
 /// 9502 紧挨着它，好记，而且不撞。
 pub const DEFAULT_PORT: u16 = 9502;
 
+/// 服务端可执行文件的名字（`default_binary` 与「按端口认人」共用一份）。
+pub const SERVER_BIN_NAME: &str = if cfg!(windows) {
+    "clip9-server.exe"
+} else {
+    "clip9-server"
+};
+
 /// 「宿主没了就退出」那个环境变量的名字。
 ///
 /// ⚠️★ **服务端里也有一份**（`crates/server/src/bin/clip9-server.rs` 的 `EXIT_WITH_PARENT`）。
@@ -395,6 +402,101 @@ impl ServerProcess {
         *self.last_error.lock().unwrap_or_else(|e| e.into_inner()) = None;
         Ok(())
     }
+
+    /// **接管**：把端口上那个不是我们起的服务端结束掉，再起我们自己的。
+    ///
+    /// ⚠️★ 只有用户**明确点了**「接管」才走这条路（命令 `server_takeover`）。
+    /// [`ServerProcess::start`] 仍然拒绝复用别人的服务端 —— 那可能是用户自己为手机起的。
+    ///
+    /// ⚠️★ 为什么需要它：父进程守护（[`EXIT_WITH_PARENT`]）是 **2026-10-20** 才有的，
+    /// 那之前发出去的版本（v0.1.5 及更早）起的服务端**不会随宿主退出**。于是从旧版升级
+    /// 上来的第一次，端口上就坐着一个「上一版遗留的」服务端：新客户端起不来（端口被占）、
+    /// 也停不掉（不是它起的）—— 用户看到的就是「无法重启也无法停止」。
+    pub fn take_over(&self) -> Result<(), Msg> {
+        let port = self.port();
+        // 端口空着就没什么好接管的，直接起。
+        if !probe(port) {
+            return self.start();
+        }
+        let pid = find_server_on_port(port)?;
+        let mut system = sysinfo::System::new();
+        system.refresh_processes(sysinfo::ProcessesToUpdate::All, true);
+        let Some(process) = system.process(pid) else {
+            // 刚查完就自己没了 —— 端口大概率也空了，直接起。
+            return self.start();
+        };
+        if !process.kill() {
+            return Err(Msg::key("takeoverKillFailed").param("pid", pid.as_u32()));
+        }
+        // ⚠️ 发信号到内核真的关掉 fd 之间有一小段，等一下再起；否则 `start()` 会
+        //    立刻看到端口还被占着，报一句「被别的进程占用」—— 而那正是刚被我们杀掉的。
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while Instant::now() < deadline && probe(port) {
+            std::thread::sleep(Duration::from_millis(100));
+        }
+        self.start()
+    }
+}
+
+/// 端口上那个进程**是不是一个 `clip9-server`**，且命令行里带着这个端口。
+///
+/// ⚠️★ 拆出来是为了能单测：判据只有这一句，而 `sysinfo` 那层造不出来。
+/// ⚠️ 名字优先看 `exe()` 的文件名；有的平台上拿不到 exe（权限 / 沙箱），退一步看命令行
+/// 第一段。两条都不中就不算 —— 宁可「认不出」，也别杀错。
+/// ⚠️ 端口按**独立的参数**比（`-port 9501` / `--port 9501`），也认 `--port=9501`；
+/// 宿主起服务端时一定显式传 `-port`（见 `start_inner`），所以这个前提是稳的。
+fn is_server_for_port(exe_name: Option<&str>, cmd: &[String], port: u16) -> bool {
+    let is_server = exe_name == Some(SERVER_BIN_NAME)
+        || cmd
+            .first()
+            .is_some_and(|arg| arg.ends_with(SERVER_BIN_NAME));
+    if !is_server {
+        return false;
+    }
+    let wanted = port.to_string();
+    let with_eq = format!("={wanted}");
+    cmd.iter()
+        .any(|arg| *arg == wanted || arg.ends_with(&with_eq))
+}
+
+/// 按「进程名 + 命令行里的端口」找出端口上那个服务端的 PID。
+///
+/// ⚠️★ 找到 **0 个或不止 1 个**都不动手：宁可报「认不出」，也别杀错进程。
+fn find_server_on_port(port: u16) -> Result<sysinfo::Pid, Msg> {
+    use sysinfo::{ProcessRefreshKind, ProcessesToUpdate, System, UpdateKind};
+    let mut system = System::new();
+    // ⚠️★ `refresh_processes` **不刷命令行**（只带 memory / cpu / disk / exe）——
+    //    必须用 `refresh_processes_specifics` 显式要 `cmd`，否则 `cmd()` 永远是空的，
+    //    而这条判据就会永远「找不到」。
+    system.refresh_processes_specifics(
+        ProcessesToUpdate::All,
+        true,
+        ProcessRefreshKind::nothing()
+            .with_exe(UpdateKind::OnlyIfNotSet)
+            .with_cmd(UpdateKind::OnlyIfNotSet),
+    );
+    let mut hits = Vec::new();
+    for (pid, process) in system.processes() {
+        let exe_name = process
+            .exe()
+            .and_then(|path| path.file_name())
+            .and_then(|name| name.to_str());
+        let cmd: Vec<String> = process
+            .cmd()
+            .iter()
+            .map(|arg| arg.to_string_lossy().into_owned())
+            .collect();
+        if is_server_for_port(exe_name, &cmd, port) {
+            hits.push(*pid);
+        }
+    }
+    match hits.as_slice() {
+        [pid] => Ok(*pid),
+        [] => Err(Msg::key("takeoverNotFound").param("port", port)),
+        many => Err(Msg::key("takeoverAmbiguous")
+            .param("port", port)
+            .param("count", many.len())),
+    }
 }
 
 /// 端口上**是不是我们的服务端**。
@@ -436,11 +538,7 @@ pub fn default_binary() -> Result<PathBuf, Msg> {
     let dir = exe
         .parent()
         .ok_or_else(|| Msg::key("binaryNoParent").param("path", exe.display()))?;
-    let name = if cfg!(windows) {
-        "clip9-server.exe"
-    } else {
-        "clip9-server"
-    };
+    let name = SERVER_BIN_NAME;
     let path = dir.join(name);
     if !path.is_file() {
         return Err(Msg::key("binaryNotFound").param("path", path.display()));
@@ -637,6 +735,50 @@ pub fn data_dir_under(client_data_dir: &Path) -> PathBuf {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// 「按端口认人」的判据 —— ⚠️★ 宁可不认，也别认错（认错会杀掉用户的进程）。
+    #[test]
+    fn identifies_only_a_clip9_server_that_carries_the_port() {
+        let args = |list: &[&str]| list.iter().map(|s| (*s).to_owned()).collect::<Vec<_>>();
+
+        // 正例：宿主起服务端时就是这么传的（`-port 9501` 是两个参数）。
+        assert!(is_server_for_port(
+            Some(SERVER_BIN_NAME),
+            &args(&["./clip9-server", "--port", "9501", "--data", "/tmp/x"]),
+            9501
+        ));
+        // 也认 `--port=9501` 这种写法。
+        assert!(is_server_for_port(
+            Some(SERVER_BIN_NAME),
+            &args(&["clip9-server", "--port=9501"]),
+            9501
+        ));
+        // 拿不到 exe 时退一步看命令行第一段（相对路径也算）。
+        assert!(is_server_for_port(
+            None,
+            &args(&["./rust/target/debug/clip9-server", "-port", "9501"]),
+            9501
+        ));
+
+        // 反例：同名的服务端，但**不是这个端口** —— 不能算。
+        assert!(!is_server_for_port(
+            Some(SERVER_BIN_NAME),
+            &args(&["clip9-server", "-port", "9502"]),
+            9501
+        ));
+        // 反例：是这个端口，但**不是 clip9-server** —— 不能算（用户别的程序）。
+        assert!(!is_server_for_port(
+            Some("node"),
+            &args(&["node", "server.js", "--port", "9501"]),
+            9501
+        ));
+        // 反例：端口只是**子串**（95011 里含 9501）—— 不能算。
+        assert!(!is_server_for_port(
+            Some(SERVER_BIN_NAME),
+            &args(&["clip9-server", "--port", "95011"]),
+            9501
+        ));
+    }
 
     /// 一个**空闲**端口。
     ///

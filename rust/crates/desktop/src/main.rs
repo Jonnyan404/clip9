@@ -482,6 +482,7 @@ fn main() {
             commands::set_local_server,
             commands::server_stop,
             commands::server_restart,
+            commands::server_takeover,
             // ⚠️★ 页面把**壳要说的那几句话**推过来（启动一次 + 每次换语种一次）。
             // 少注册这一个的表现是：菜单 / 通知 / 文件对话框永远停在键上
             // （页面会 `catch` 到一个「命令不存在」，但它自己那边看不出问题）。

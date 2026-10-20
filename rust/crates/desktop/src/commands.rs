@@ -774,6 +774,22 @@ pub async fn server_restart(server: State<'_, Option<Arc<ServerProcess>>>) -> Re
     .await
 }
 
+/// **接管端口**：结束端口上那个不是本客户端起的服务端，再起我们自己的。
+///
+/// ⚠️★ 这是**唯一**会去动「不是我们起的」进程的动作，而且只在用户**明确点了**「接管」
+/// 时才调得到（那颗按钮只在 `running && !owned` 时露出来）。默认的 `start()` 仍然
+/// 拒绝复用别人的服务端 —— 那可能是用户自己为手机起的。
+/// ⚠️ 为什么需要它：父进程守护（`CLIP9_EXIT_WITH_PARENT`）是 2026-10-20 才有的，
+/// 那之前发出去的版本起的服务端**不会随宿主退出**。从旧版升级上来的第一次，
+/// 端口上就坐着一个「上一版遗留的」服务端：新客户端起不来、也停不掉。
+#[tauri::command]
+pub async fn server_takeover(server: State<'_, Option<Arc<ServerProcess>>>) -> Result<(), Msg> {
+    let Some(server) = server.as_ref().cloned() else {
+        return Err(Msg::key("noBundledServer"));
+    };
+    run_server_blocking(Msg::key("serverTakeover"), move || server.take_over()).await
+}
+
 // ── 自动更新（2026-10-07）──────────────────────────────────────────────
 //
 // ⚠️★ 页面**拿不到 updater 插件的 JS API**（`capabilities/default.json` 里故意没有

@@ -3687,6 +3687,12 @@ async function refreshServerState() {
   }
   el('srv-state').textContent = stateLine;
 
+  // ⚠️★ 「接管端口」只在 `running && !owned` 时露出来 —— 那是唯一需要它的状态
+  //    （端口被别的服务端占着：我们的起不来、那个也停不掉）。
+  //    ⚠️ 它不是「随便停一个服务端」：命令会按「进程名 + 命令行里的端口」认出那个进程，
+  //    认不出（0 个或多个）就**一个都不动**，并把原因说出来。
+  el('srv-takeover').hidden = !(running && !owned);
+
   // `.kv` 五行 —— **逐行对着稿子**。
   el('srv-version').textContent = status.version || '—';
   el('srv-listen').textContent = status.listen || '—';
@@ -3749,6 +3755,10 @@ async function runServerAction(command, args, label) {
 el('srv-restart').addEventListener('click', () =>
   runServerAction('server_restart', undefined, t('重启')));
 el('srv-stop').addEventListener('click', () => runServerAction('server_stop', undefined, t('停止')));
+// ⚠️★ 接管：结束端口上那个「不是我们这个客户端起的」服务端，然后起我们自己的。
+//    只在 `running && !owned` 时露出来（见 `renderServer`）。
+el('srv-takeover').addEventListener('click', () =>
+  runServerAction('server_takeover', undefined, t('接管端口')));
 el('srv-open').addEventListener('click', () => {
   invoke('open_web').catch(async (error) => {
     await refreshServerState();

@@ -1851,6 +1851,10 @@ table.ra td input[type='checkbox'] { margin: 0; }
                         <div style="display:flex;gap:8px;margin-bottom:14px;">
                             <button class="btn" id="srv-restart" data-i18n="重启">重启</button>
                             <button class="btn danger" id="srv-stop" data-i18n="停止">停止</button>
+                            <!-- ⚠️★ 只在「端口上那个不是本客户端起的」时露出来（见 `renderServer`）：
+                                 升级遗留的孤儿 / 用户自己在别处起的那个。点它会**结束那个进程**再起
+                                 我们自己的 —— 所以标签把后果写出来了。 -->
+                            <button class="btn" id="srv-takeover" hidden data-i18n="接管端口">接管端口</button>
                             <button class="btn" id="srv-open" data-i18n="🌐 打开网页版">🌐 打开网页版</button>
                         </div>
                         <div class="divider"></div>
