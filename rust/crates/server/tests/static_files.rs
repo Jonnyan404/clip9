@@ -183,12 +183,20 @@ async fn real_products_are_served_with_their_mime() {
     assert_eq!(status, StatusCode::OK, "{entry} 发不出来");
     assert_eq!(content_type, "text/javascript; charset=utf-8");
     let on_disk = std::fs::read(static_dir().join(&entry)).expect("读产物");
+    // ⚠️★ 逐字节比，而不是「body 里含某个字符串」。
+    //
+    // 原来这一行断言的是 `body.contains("/automation")` —— 拿**前端源码里的一个路由
+    // 字面量**当「这是真 bundle」的证据。2026-10-21 它红了：那一版产物里没有这个字符串
+    // （前端把自动化面板拆成独立 chunk 之后，入口 bundle 里就没有它了）。前端一动
+    // 这条断言就跟着红，而它想守的其实是别的东西 ——「发的是真文件、不是外壳 HTML 兜底」。
+    //
+    // 逐字节比对把这件事说得更死，也不再依赖前端内容：字节不一致 = 内嵌的是旧产物
+    //（那正是 `sync-web-assets.mjs` 要挡、而这里能兜住的最后一道）。
     assert_eq!(
-        body.len(),
-        on_disk.len(),
-        "发出来的字节数该与仓库里那份一致"
+        body.as_bytes(),
+        on_disk.as_slice(),
+        "发出来的字节该与磁盘上那份逐字节相同（不一致 = 内嵌的是旧产物）"
     );
-    assert!(body.contains("/automation"), "得是真的入口 bundle");
 }
 
 /// ⚠️★ **这一条是这次改动的核心**：不存在的接口路径**不许**被回成一份 200 的 HTML。
