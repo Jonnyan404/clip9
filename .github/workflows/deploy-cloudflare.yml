@@ -12,6 +12,8 @@ name: Deploy Cloudflare Worker
 #     FILE_LIMIT / FILE_EXPIRE               可选：不设就用 `wrangler.toml.template` 里的值
 #     FILE_CLEANUP                           可选：过期文件清理的开关（<= 0 关掉）。周期不在这里，
 #                                            在模板的 `[triggers]` cron（默认每 5 分钟）
+#     ALLOW_ORIGINS                          可选：**前后端分离部署**时前端所在的来源（逗号分隔，
+#                                            例 `https://clip.example.com`）。不设 = 保持 `*`。
 # ⚠️ 前两个**不给就直接失败**，不静默跳过 —— 「以为部署了、其实没部署」比红一次难查得多。
 # ⚠️ 后面那几个可选的里，`AUTH_PASSWORD` / `ROOM_AUTH_JSON` 是安全相关的：模板里写的是
 # **公开仓库里的示例密码**，忘了设 secret 就等于「以为设了密码，其实是公开密码」。
@@ -177,6 +179,8 @@ jobs:
           FILE_LIMIT: ${{ secrets.FILE_LIMIT }}
           FILE_EXPIRE: ${{ secrets.FILE_EXPIRE }}
           FILE_CLEANUP: ${{ secrets.FILE_CLEANUP }}
+          # 前后端分离部署时前端所在的来源（逗号分隔）。不设 = 保持 `*`。
+          ALLOW_ORIGINS: ${{ secrets.ALLOW_ORIGINS }}
         run: |
           python3 - <<'PY'
           import json, os, re, subprocess, sys
@@ -184,7 +188,7 @@ jobs:
           keys = [
               "AUTH_PASSWORD", "ROOM_AUTH_JSON", "ROOM_LIST",
               "HISTORY_LIMIT", "TEXT_LIMIT", "FILE_LIMIT", "FILE_EXPIRE",
-              "FILE_CLEANUP",
+              "FILE_CLEANUP", "ALLOW_ORIGINS",
           ]
           # 这两个是安全相关的（模板里是公开仓库里写着的示例值），没设就顶到运行页上。
           security_keys = {"AUTH_PASSWORD", "ROOM_AUTH_JSON"}

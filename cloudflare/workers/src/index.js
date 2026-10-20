@@ -1,5 +1,5 @@
 import { Router } from 'itty-router';
-import { corsHeaders, handleCors } from './cors';
+import { corsHeaders, handleCors, withCors } from './cors';
 import { canAccessRoom, canAccessRoomAsync, resolveRoomAuth, issueRoomSessionToken, validateRoomSessionToken, parseRoomSessionToken, extractAuthToken } from './auth';
 import { TextHandler } from './handlers/text';
 import { FileHandler } from './handlers/file';
@@ -260,15 +260,20 @@ async function handleServer(request, env) {
 export default {
   async fetch(request, env, ctx) {
     try {
-      return await router.handle(request, env, ctx);
+      const response = await router.handle(request, env, ctx);
+      // ⚠️★ CORS 的**唯一**改写点（见 `src/cors.js` 的抬头）：handler 照旧铺 `*`，
+      // 这里按 `ALLOW_ORIGINS` 换成具体来源（或摘掉）。放在入口而不是每个 handler 里，
+      // 是为了「新加一条路由不会漏配」—— 漏配的症状是**只有跨源时**才出现的一句
+      // 「blocked by CORS policy」，而本机同源调试完全看不到。
+      return withCors(response, request, env);
     } catch (error) {
       console.error('Worker error:', error);
       console.error('Worker stack:', error?.stack || '(no stack)');
       const reason = String(error?.message || error || 'unknown');
-      return new Response(`Internal Server Error: ${reason}`, { 
+      return withCors(new Response(`Internal Server Error: ${reason}`, {
         status: 500,
         headers: corsHeaders
-      });
+      }), request, env);
     }
   },
 

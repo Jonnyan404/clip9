@@ -35,6 +35,7 @@
 | `FILE_LIMIT` | ➖ | 单文件大小上限（字节，默认 `204857600` 即 200MB） |
 | `FILE_EXPIRE` | ➖ | 全局文件过期时间（秒，默认 `3600` 即 1 小时） |
 | `FILE_CLEANUP` | ➖ | 过期文件后台回收的**开关**（秒。`<= 0` = 关掉，默认 `300` = 开）。⚠️ 它**不管周期**，周期在模板的 `[triggers]` cron 里（默认每 5 分钟） |
+| `ALLOW_ORIGINS` | ➖ | **前后端分离部署**时前端所在的来源（逗号分隔，例 `https://clip.example.com`）。不设 = `*`（谁都能跨源读，历史行为）。见下文「前后端分离部署」 |
 
 #### 2. 触发部署
 进入 GitHub 仓库 **Actions** 页面，找到 **Deploy Cloudflare Worker**，点击 **Run workflow** 即可一键完成构建与部署。
@@ -106,6 +107,37 @@ ROOM_AUTH_JSON = "{\"finance\":{\"password\":\"finance-pass\",\"fileExpire\":0},
 >   被回收之后再请求同一个 id 会变成 `message_not_found`（不再是 `file_expired`）。
 >   ⚠️ 关掉它（`FILE_CLEANUP=0`）的代价是 R2 只涨不消 —— 没人再访问的过期文件不会自己消失
 >   （R2 没有对象级 TTL）。周期想改就改模板里的 cron 表达式，改了要重新部署。
+
+### 🌐 前后端分离部署（界面放别处，Worker 只当 API）
+
+Worker 默认自己就把前端发了（`[assets]` 那一段），所以绝大多数人不需要这一节。
+但如果你要把界面放在 CDN / 静态托管上、只让 Worker 当接口，做两件事：
+
+1. **Worker 侧**：把前端的来源写进 `ALLOW_ORIGINS`（GitHub Secrets 或 `wrangler.toml` 的 `[vars]`）：
+
+   ```toml
+   ALLOW_ORIGINS = "https://clip.example.com"
+   ```
+
+   不填就是 `Access-Control-Allow-Origin: *`（历史行为）。填了就变成**逐条白名单**：
+   不在名单里的来源连一个 CORS 头都拿不到，浏览器那边表现为
+   「blocked by CORS policy」——**页面本身是好的**，只是数据不出现。
+   ⚠️ 拼错一条只忽略那一条；**整份都拼错 = 当没配（仍是 `*`）**，所以填完随手
+   `curl -I -H 'Origin: https://你的前端' https://<worker>/server` 看一眼响应头。
+
+2. **前端侧**：用 [Releases](https://github.com/Jonnyan404/clip9/releases) 里的
+   `clip9-web-<版本>.tar.gz`，改根目录 `config.js` 里那一行：
+
+   ```js
+   window.__CLIP9_API_BASE__ = 'https://<worker>.workers.dev/';
+   ```
+
+   填完在浏览器里打开这个静态站点即可（静态托管要开 SPA 回退，否则 `/s/<token>` 深链 404）。
+
+> ⚠️ 与自建服务端的差别：Worker **没有** `<base>` 注入之外的 OG 落地页能力 ——
+> 分享链接会指向前端的域名，社交平台的预览卡片拿不到（那是服务端渲染的）。
+> ⚠️ 别把 `ALLOW_ORIGINS` 当成鉴权：它只决定「哪个网页能读响应」，读得到什么仍由
+> 房间名 + 密码决定。
 
 ---
 

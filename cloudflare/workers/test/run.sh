@@ -3,7 +3,7 @@
 #
 #   receive-path.test.mjs  —— 上传（/upload multipart 与 /text）→ /content/latest?json=1 → Receive 决策树
 #   content-list.test.mjs  —— GET /content（历史分页）+ WS 握手（**不推历史**、带 `config.latestId`）
-#   revoke-method.test.mjs —— 删除消息的方法：POST（网页版现在发的）与 DELETE 都认，GET 不许删
+#   revoke-method.test.mjs —— 删除消息的方法：**只认 POST**，其它方法一律 405 且无副作用
 #   device-name.test.mjs   —— 设备名（?name=）落库与回读，含自愈加列路径
 #   asset-routing.test.mjs —— 静态资源路由契约：/file 与 /content 不能被资源层回成 index.html
 #   shortcut-contract.test.mjs —— Android 快捷指令真正发出的请求形状（?auth= 查询串等）
@@ -46,8 +46,12 @@ echo "── 历史分页与 WS 握手（GET /content + config.latestId；握手
 node --no-warnings test/content-list.test.mjs
 
 echo
-echo "── 删除消息的方法（POST / DELETE 都认；GET 不许删）"
+echo "── 删除消息的方法（只认 POST；其它方法 405 且没有副作用）"
 node --no-warnings test/revoke-method.test.mjs
+
+echo
+echo "── 跨源白名单（ALLOW_ORIGINS：缺省 * · 名单内回显 + Vary · 名单外一个头都拿不到）"
+node --no-warnings test/cors-origins.test.mjs
 
 echo
 echo "── 房间鉴权（/file/ 的房间不可被客户端 ?room= 伪造；会话令牌密钥含房间密码）"
