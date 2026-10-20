@@ -105,11 +105,23 @@ export function readLocationParam(key: string): string {
  *
  * 为什么必须换：服务端是用**请求的 Host** 拼这个地址的。而分享页是**前端路由**，
  * 它得落在前端所在的 origin 上 —— 只要中间有一层会改写 Host 的代理，服务端拼出来的主机就是错的。
+ *
+ * ⚠️★ 2026-10-20（前后端分离部署）：只取结尾的 `/s/<token>` 那一段，再拼到
+ * `APP_BASE_URL`（**这份前端**的目录）上。原来那版是「保留整个路径」—— 分离部署时
+ * 服务端那份地址里带着**后端**的前缀（`/clip/s/xxx`），把它挂到前端域名上，
+ * 前端路由根本匹配不到（`/s/:token` 在 `APP_BASE` 下，而 `/clip/s/xxx` 不是），
+ * 打开是一张空白页 —— 而链接看起来完全正常。
  */
 export function withCurrentOrigin(url: string): string {
     const raw = String(url || '');
     if (!raw || typeof window === 'undefined') {
         return raw;
+    }
+    // ⚠️ 锚在**结尾**：`/s/<token>` 是分享页地址的固定尾巴，前面有没有前缀（后端部署在
+    // 子目录时会有）都不影响。这样「两个部署的 prefix 不一样」也能落对地方。
+    const sharePath = raw.match(/\/s\/[^/?#]*(?:[?#].*)?$/);
+    if (sharePath) {
+        return new URL(sharePath[0].replace(/^\//, ''), APP_BASE_URL).toString();
     }
     const m = raw.match(/^[a-z][a-z0-9+.-]*:\/\/[^/]+(\/.*)?$/i);
     return m ? window.location.origin + (m[1] || '/') : raw;

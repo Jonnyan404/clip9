@@ -6,6 +6,7 @@ import { useAppStore } from '@/stores/appStore';
 import { useWebSocketStore } from '@/stores/wsStore';
 import { usePageToolbarActions } from './PageToolbarContext';
 import { MdiIcon } from '@/components/ui/MdiIcon';
+import { API_BASE_URL } from '@/lib/base';
 
 /**
  * 页面工具栏 —— 对应 web-vue3/src/components/PageToolbar.vue。
@@ -31,7 +32,6 @@ export function PageToolbar({ variant = 'default' }: { variant?: string }) {
 
     const uiMode = useAppStore((s) => s.uiMode);
     const setUiMode = useAppStore((s) => s.setUiMode);
-    const prefix = useAppStore((s) => s.config?.server?.prefix || '');
     const automationEnabled = useAppStore((s) => s.config?.automation?.enabled === true);
 
     const [collapsed, setCollapsed] = useState(() => localStorage.getItem('pageToolbarCollapsed') === 'true');
@@ -82,7 +82,18 @@ export function PageToolbar({ variant = 'default' }: { variant?: string }) {
                 ? theme.palette.warning.main
                 : theme.palette.error.main;
 
-    const automationUrl = `${prefix ? `/${prefix.replace(/^\/+|\/+$/g, '')}` : ''}/automation${room ? `?room=${encodeURIComponent(room)}` : ''}`;
+    // ⚠️★ 自动化管理页是**服务端渲染**的独立页面（不是这份前端的路由），所以地址必须指向
+    // **后端**（`API_BASE_URL`）。按页面目录拼的话，前后端分离部署时点进去是静态托管那边的一张 404 ——
+    // 而图标长得完全正常。
+    // ⚠️ 不再手动拼 `config.server.prefix`：`API_BASE_URL` 里已经含后端那个前缀（同源部署时
+    // 它就是从 `<base>` / 文档目录推出来的），再拼一次会变成 `/clip/clip/automation`。
+    const automationUrl = (() => {
+        const url = new URL('automation', API_BASE_URL);
+        if (room) {
+            url.searchParams.set('room', room);
+        }
+        return url.toString();
+    })();
 
     const toggleToolbar = () => {
         const next = !collapsed;

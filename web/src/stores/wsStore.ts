@@ -12,7 +12,7 @@
 import { create } from 'zustand';
 import axios from 'axios';
 import { router, isShareRoute } from '@/router';
-import { APP_BASE_URL } from '@/lib/base';
+import { API_BASE_URL } from '@/lib/base';
 import { useAppStore, type AppConfig, type ReceivedItem } from './appStore';
 
 const ROOM_AUTH_CACHE_KEY = 'roomAuthCache';
@@ -405,11 +405,18 @@ export const useWebSocketStore = create<WsState>((set, get) => ({
     },
 
     getWebSocketEndpoint: (room) => {
-        const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
-        // ⚠️ 必须用 APP_BASE_URL（从 `document.baseURI` 推导），**不能**用 config.server.prefix ——
+        // ⚠️★ 连的是**后端**（`API_BASE_URL`），不是页面所在的目录：分离部署时页面在
+        // CDN 上，往页面那边发 WS 只会得到一个 404 的 HTML 响应（浏览器报
+        // 「WebSocket 握手失败」，看不出是地址拼错了）。
+        //
+        // ⚠️★ 协议跟着**后端地址**走，不能看 `location.protocol`：页面是 https、
+        // 后端是 http 的开发/内网部署下，那两个结论正好相反 —— 用错的那个会被浏览器
+        // 当成混合内容拦掉。
+        //
+        // ⚠️ 必须用地址本身（从 `document.baseURI` / 配置推导），**不能**用 config.server.prefix ——
         // 后者只能从 WS 握手的 `config` 事件拿到，而这里正是为了连上 WS 才拼地址（鸡生蛋）。
-        const wsUrl = new URL('push', APP_BASE_URL);
-        wsUrl.protocol = protocol;
+        const wsUrl = new URL('push', API_BASE_URL);
+        wsUrl.protocol = wsUrl.protocol === 'https:' ? 'wss:' : 'ws:';
         const normalizedRoom = normalizeRoomName(room ?? get().room);
         if (normalizedRoom) {
             wsUrl.searchParams.set('room', normalizedRoom);

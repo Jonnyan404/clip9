@@ -79,7 +79,13 @@ export default defineConfig(({ command }) => {
                     // 所以「忘了排除」这个错**是响的** —— 但只在那一坨**大于 2 MiB** 时响；
                     // 小于 2 MiB 的残留 chunk 仍会被静默预缓存，那部分靠
                     // `web/scripts/check-whiteboard-plan.mjs` 的预缓存判据盯着。
-                    globIgnores: ['**/whiteboard-*.js', '**/whiteboard-*.css'],
+                    // ⚠️★ `config.js`（部署时可改的后端地址）也**不许**预缓存（2026-10-20）。
+                    // 它存在的全部意义就是「托管方改一行就换了个后端」，而预缓存会让
+                    // 「改完刷新看看」这件事**没有反应** —— 回访用户拿到的还是缓存里那份旧的，
+                    // 而 SW 的更新检查只看 SW 脚本本身，那个文件改了不会触发任何更新。
+                    // ⚠️ 两种写法都列上：`**/` 在这里是否吃根目录取决于 glob 实现，
+                    // 而漏掉它的症状是静默的（只是「改了不生效」）。
+                    globIgnores: ['**/whiteboard-*.js', '**/whiteboard-*.css', 'config.js', '**/config.js'],
                     cleanupOutdatedCaches: true,
                     navigateFallback: 'index.html',
                     // ⚠️★ 这份放行表是**契约**：服务端每加一条路由，这里漏了就出故障

@@ -13,6 +13,7 @@ import {
     copyTextToClipboard, errorMessage, filePreviewKind, formatTimestamp, prettyFileSize,
 } from '@/lib/util';
 import { renderMarkdownHtml as renderMd } from '@/lib/markdown.js';
+import { API_BASE_URL } from '@/lib/base';
 import { isWhiteboardName, parseWhiteboard } from '@/lib/whiteboard/document';
 import { reportShareVisit } from '@/services/share';
 
@@ -97,8 +98,15 @@ export default function SharePage() {
     // ⚠️ 文件地址用的令牌**不能直接用原 token** —— `<img>` / `<video>` / `<a download>` 是浏览器
     // 自己发的请求，加不了 `X-Share-Password` 头；带密码的分享会一律 401。
     const fileToken = String(info?.previewToken || '') || token;
+    // ⚠️★ 必须**绝对化到后端**（2026-10-20）：这些地址进的是 `<img src>` / `<video src>` /
+    // `<a download href>`，浏览器自己发请求，**不经过** axios 的 baseURL。相对地址会按
+    // **页面**目录解析 —— 前后端分离部署时那就是静态托管那边，图片/视频/下载全是 404，
+    // 而页面本身看着完全正常（只是「图挂了」）。
     const fileUrl = isFile && info?.uuid
-        ? `file/${encodeURIComponent(info.uuid)}/${encodeURIComponent(info.name || 'file')}?t=${encodeURIComponent(fileToken)}`
+        ? new URL(
+              `file/${encodeURIComponent(info.uuid)}/${encodeURIComponent(info.name || 'file')}?t=${encodeURIComponent(fileToken)}`,
+              API_BASE_URL,
+          ).href
         : '';
     const previewKind = isFile ? filePreviewKind(info?.name) : '';
 

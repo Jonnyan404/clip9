@@ -24,6 +24,14 @@
     <!-- ⚠️ 挂载点 id 保持 `app` 不变：服务端外壳（spa_shell.rs）与 PWA 导航兜底都按
          现有产物形状工作，改 id 等于引入一处「改错不报错」的隐性契约破坏。 -->
     <div id="app"></div>
+    <!-- ⚠️★ 部署时可改的运行时配置（`public/config.js`，产物根目录下的那一份）：
+         「后端在哪」由部署方决定，所以它**不能**编进 bundle（编进去就得为每处部署重编一次）。
+         ⚠️ 用**相对**地址（`./`）而不是 `/config.js`：这份前端要能部署在任意子路径下
+         （服务端 `-prefix` / 静态托管的子目录），绝对路径会指到错的地方。
+         ⚠️ 它在 PWA 的预缓存里被**排除**了（`vite.config.ts` 的 `globIgnores`）——
+         否则托管方改了这个文件，回访用户拿到的仍然是缓存里那份旧的。
+         ⚠️ 必须**排在** bundle 之前：`lib/base.ts` 在模块求值时就要读它。 -->
+    <script src="./config.js"></script>
     <script type="module" src="/src/main.tsx"></script>
 </body>
 </html>

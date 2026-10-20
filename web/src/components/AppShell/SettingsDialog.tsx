@@ -12,6 +12,8 @@ import { useDisplaySettings } from '@/hooks/useDisplaySettings';
 import { useThemeStore } from '@/stores/themeStore';
 import { buildId } from '@/services/swUpdate';
 import { MdiIcon } from '@/components/ui/MdiIcon';
+import { API_BASE_STORAGE_KEY, API_BASE_URL } from '@/lib/base';
+import { toast } from '@/stores/toastStore';
 import i18n from '@/i18n';
 
 const LANGUAGE_OPTIONS = [
@@ -89,6 +91,47 @@ export function SettingsDialog({
             void i18n.changeLanguage(code);
             localStorage.setItem('locale', code);
         }
+    };
+
+    /**
+     * 「后端地址」—— 前后端分离部署时用（`lib/base.ts` 的 `API_BASE_URL`）。
+     *
+     * ⚠️★ 嵌在桌面客户端的网页视图里时**不显示这一段**：那里连的必须是**本机**那个服务端
+     * （桌面端自己的配置页才是改这个的地方）。在这儿改了，网页视图会静默变成另一个服务端的
+     * 数据，而桌面自己的列表还是本机的 —— 两边对不上且没有任何提示。
+     */
+    const embedded = typeof window !== 'undefined' && window.self !== window.top;
+    // 留空 = 不覆盖（回落到 `config.js` / 同源）。显示的是**用户填过的**那个值，不是生效值。
+    const [apiBase, setApiBase] = useState(() => {
+        try {
+            return localStorage.getItem(API_BASE_STORAGE_KEY) || '';
+        } catch {
+            return '';
+        }
+    });
+    const apiBaseInvalid = Boolean(apiBase.trim()) && !/^https?:\/\//i.test(apiBase.trim());
+
+    const saveApiBase = () => {
+        const text = apiBase.trim();
+        // ⚠️ 必须带协议：`new URL('api.example.com', location.href)` 会把裸主机名当成
+        // 同源下的一个**路径**，于是每条请求都 404，而设置看起来填过了。
+        if (text && !/^https?:\/\//i.test(text)) {
+            toast(t('serverAddressInvalid'));
+            return;
+        }
+        try {
+            if (text) {
+                localStorage.setItem(API_BASE_STORAGE_KEY, text);
+            } else {
+                localStorage.removeItem(API_BASE_STORAGE_KEY);
+            }
+        } catch {
+            toast(t('serverAddressInvalid'));
+            return;
+        }
+        // ⚠️ 重新加载而不是就地改 axios/WS：接口地址、WebSocket、缓存与已建的分享链接
+        // 全都挂在它上面，就地改一半的形态最容易出现「有的请求打到旧的、有的打到新的」。
+        window.location.reload();
     };
 
     return (
@@ -202,6 +245,37 @@ export function SettingsDialog({
                                 <MdiIcon name="mdi-chevron-right" size={18} />
                             </ListItem>
                         </List>
+
+                        {/* 后端地址（前后端分离部署）—— 见上面 `embedded` 那段注释。 */}
+                        {!embedded && (
+                            <>
+                                <Typography variant="subtitle2" color="text.secondary">{t('serverSettings')}</Typography>
+                                <List dense disablePadding>
+                                    <ListItem disableGutters>
+                                        <MdiIcon name="mdi-server-network" style={iconStyle} />
+                                        <ListItemText
+                                            primary={t('serverAddress')}
+                                            secondary={t('serverAddressHint', { current: API_BASE_URL })}
+                                        />
+                                    </ListItem>
+                                </List>
+                                <Stack direction="row" spacing={1} alignItems="flex-start">
+                                    <TextField
+                                        size="small"
+                                        fullWidth
+                                        value={apiBase}
+                                        placeholder="https://api.example.com/"
+                                        onChange={(e) => setApiBase(e.target.value)}
+                                        error={apiBaseInvalid}
+                                        helperText={apiBaseInvalid ? t('serverAddressInvalid') : t('serverAddressExample')}
+                                        slotProps={{ htmlInput: { 'aria-label': t('serverAddress') } }}
+                                    />
+                                    <Button size="small" variant="outlined" onClick={saveApiBase} sx={{ flexShrink: 0 }}>
+                                        {t('saveAndReload')}
+                                    </Button>
+                                </Stack>
+                            </>
+                        )}
 
                         <Typography variant="subtitle2" color="text.secondary">{t('about')}</Typography>
                         <List dense disablePadding>
