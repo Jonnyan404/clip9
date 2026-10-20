@@ -150,7 +150,7 @@ export function StickyNote({ meta }: { meta: ReceivedItem }) {
 
     const deleteItem = async () => {
         try {
-            await axios.delete(`revoke/${meta.id}`, { params: new URLSearchParams([['room', useWebSocketStore.getState().room]]) });
+            await axios.post(`revoke/${meta.id}`, null, { params: new URLSearchParams([['room', useWebSocketStore.getState().room]]) });
             toast(t(isFile ? 'deleteSuccessFile' : 'deleteSuccessText', { name: meta.name }));
         } catch (error) {
             const msg = errorMessage(error);

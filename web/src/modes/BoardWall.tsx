@@ -87,7 +87,7 @@ export default function BoardWall() {
 
     const deleteItem = async (item: ReceivedItem) => {
         try {
-            await axios.delete(`revoke/${item.id}`, { params: new URLSearchParams([['room', useWebSocketStore.getState().room]]) });
+            await axios.post(`revoke/${item.id}`, null, { params: new URLSearchParams([['room', useWebSocketStore.getState().room]]) });
             setDetailItem(null);
             toast(t('deleteSuccessText', { name: item.name || '' }));
         } catch (error) {

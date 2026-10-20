@@ -58,7 +58,7 @@ export const ReceivedText = memo(function ReceivedText({ meta }: { meta: Receive
 
     const deleteItem = async () => {
         try {
-            await axios.delete(`revoke/${meta.id}`, { params: new URLSearchParams([['room', useWebSocketStore.getState().room]]) });
+            await axios.post(`revoke/${meta.id}`, null, { params: new URLSearchParams([['room', useWebSocketStore.getState().room]]) });
             toast(t('deleteSuccessText'));
         } catch (error) {
             const msg = errorMessage(error);

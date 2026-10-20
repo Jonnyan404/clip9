@@ -115,7 +115,7 @@ export function GlancePreview({ item }: { item: ReceivedItem | null }) {
     const deleteItem = async () => {
         if (!item) return;
         try {
-            await axios.delete(`revoke/${item.id}`, { params: new URLSearchParams([['room', room]]) });
+            await axios.post(`revoke/${item.id}`, null, { params: new URLSearchParams([['room', room]]) });
             toast(t('deleteSuccessText', { name: item.name || '' }));
         } catch (error) {
             toast(errorMessage(error) || t('deleteFailedMessage'));

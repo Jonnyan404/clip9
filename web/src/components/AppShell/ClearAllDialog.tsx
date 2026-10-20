@@ -25,7 +25,7 @@ export function ClearAllDialog({
         onClose();
         onCleared(true);
         try {
-            await axios.delete('revoke/all', {
+            await axios.post('revoke/all', null, {
                 params: { room: useWebSocketStore.getState().room },
             });
         } catch (error) {
