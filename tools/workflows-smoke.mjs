@@ -1542,6 +1542,124 @@ const pkgApk = read('openwrt/scripts/package-openwrt-apk.sh');
   if (problems.length) fail(label, problems.join('\n    '));
 }
 
+// ── 判据 17：Docker 的 noui 变体与 `ALLOW_ORIGINS` 三处对齐（2026-10-20）────────
+//
+// ⚠️★ 这条盯的是**跨文件的一串字符串**，而它们断掉的症状各不相同：
+//
+//   · `Dockerfile` 里那个包名（`clip9-cli-noui`）与 release 产物名不一致 → 镜像构建时
+//     `wget` 404，**这条会响**（构建失败），所以它只是顺带钉住；
+//   · `release.yml` / `docker.yml` 的 noui 标签写错（比如漏了 `-noui`）→ 两个变体互相覆盖，
+//     `docker pull clip9:latest` 可能拿到**没有界面**的那一份 —— **完全静默**，用户打开网页
+//     只看到一页「这个二进制没带界面」，还以为是打包坏了；
+//   · `:noui` 在预发布时也推 → `docker pull clip9:noui` 从正式版悄悄变成 beta（与 latest 同一条规矩）；
+//   · `entrypoint.sh` 不再把 `ALLOW_ORIGINS` 写进 `allowOrigins` → 分离部署的前端被 CORS 拦，
+//     而日志里一个字都没有（配置里看起来就是没配）。
+{
+  const label = 'Docker 的 noui 变体与 ALLOW_ORIGINS 三处对齐';
+  const problems = [];
+
+  // ① Dockerfile：按 `NOUI` 换包名
+  const dockerfile = read('Dockerfile');
+  if (dockerfile === null) {
+    problems.push('读不到 Dockerfile');
+  } else {
+    if (!/ARG\s+NOUI\b/.test(dockerfile)) {
+      problems.push('Dockerfile 里没有 `ARG NOUI` —— noui 变体没有开关');
+    }
+    if (!/PKG="clip9-cli-noui"/.test(dockerfile)) {
+      problems.push(
+        'Dockerfile 里没有把包名切到 `clip9-cli-noui` —— 那个 `wget` 一定 404',
+      );
+    }
+    // ⚠️ 装进镜像后**仍然叫** `clip9-cli`：entrypoint 与 HEALTHCHECK 都认这个名字。
+    if (!/mv\s+"?\/tmp\/\$\{PKG\}/.test(dockerfile)) {
+      problems.push('Dockerfile 没有把 `${PKG}` 那个二进制挪成统一名字 —— entrypoint 会找不到它');
+    }
+  }
+
+  // ② release.yml 的 docker job：两套标签 + 两次构建
+  const rel = read(RELEASE);
+  const job = rel === null ? null : jobBlock(rel, 'docker');
+  if (job === null) {
+    problems.push(`读不到 ${RELEASE} 里的 docker job`);
+  } else {
+    if (!/tags:\s*\$\{\{\s*steps\.tags\.outputs\.tags\s*\}\}/.test(job)) {
+      problems.push('release.yml 的 docker job 里找不到带界面那份的 `tags`');
+    }
+    if (!/tags:\s*\$\{\{\s*steps\.tags\.outputs\.tags_noui\s*\}\}/.test(job)) {
+      problems.push('release.yml 的 docker job 里没有用 `tags_noui` 的那次构建 —— noui 镜像没推');
+    }
+    if (!/NOUI=1/.test(job)) {
+      problems.push('release.yml 的 docker job 没有传 `NOUI=1` —— 第二次构建出来的还是带界面的');
+    }
+    // ⚠️ 起点要**跳过 `tags_noui<<EOF` 这几个字**再找收尾的 `EOF`：从标记本身开始找的话，
+    //    第一个 `EOF` 就在标记里（`<<EOF`），切出来是空串 —— 判据会对着空段报「没有 -noui」。
+    //    （2026-10-20 第一次写就是这么错的。）
+    const nouiMarker = 'tags_noui<<EOF';
+    const nouiStart = job.indexOf(nouiMarker);
+    const nouiEnd = nouiStart < 0 ? -1 : job.indexOf('EOF', nouiStart + nouiMarker.length);
+    const body = nouiStart >= 0 && nouiEnd > 0 ? job.slice(nouiStart + nouiMarker.length, nouiEnd) : '';
+    if (!body.includes('-noui')) {
+      problems.push('`tags_noui` 里没有 `:<tag>-noui`');
+    }
+    // ⚠️ `:noui` 必须排在 `PRERELEASE` 那道判断**之后**（= 正式版才推），
+    //    否则 beta 会顶掉正式版的 `noui` 标签。
+    const plainNoui = body.indexOf(':noui');
+    if (plainNoui >= 0 && body.indexOf('PRERELEASE') > plainNoui) {
+      problems.push('`tags_noui` 里的 `:noui` 落在预发布判断之前 —— beta 会顶掉正式版的那个标签');
+    }
+  }
+
+  // ③ docker.yml（手动补镜像）：要有 variant 输入与两次构建
+  const manual = read('.github/workflows/docker.yml');
+  if (manual === null) {
+    problems.push('读不到 .github/workflows/docker.yml');
+  } else {
+    for (const [needle, why] of [
+      [/options:\n(?:\s+-\s+\w+\n)*?\s+-\s+noui/, '没有 `noui` 这个 variant 选项 —— 手动补镜像时做不出 noui'],
+      [/NOUI=1/, '没有传 `NOUI=1`'],
+      [/tags_noui/, '没有用 `tags_noui`'],
+    ]) {
+      if (!needle.test(manual)) {
+        problems.push(`docker.yml ${why}`);
+      }
+    }
+  }
+
+  // ④ entrypoint：`ALLOW_ORIGINS` → 配置里的 `allowOrigins`
+  const entry = read('entrypoint.sh');
+  if (entry === null) {
+    problems.push('读不到 entrypoint.sh');
+  } else {
+    if (!entry.includes('ALLOW_ORIGINS')) {
+      problems.push('entrypoint.sh 里没有 `ALLOW_ORIGINS` —— Docker 用户配不了跨源来源');
+    }
+    // ⚠️ 键名写错（`allow_origins` / `allowedOrigins`）= 服务端 serde 不认识 → 静默当成没配。
+    if (!/"allowOrigins":\s*\$\{ALLOW_ORIGINS_JSON\}/.test(entry)) {
+      problems.push(
+        'entrypoint.sh 生成的 JSON 里没有 `"allowOrigins": ${ALLOW_ORIGINS_JSON}` —— ' +
+          '键名写错时服务端会静默忽略（serde 的 `default`）',
+      );
+    }
+  }
+
+  // ⑤ 文档：这个变量得有人写出来，不然只能靠读 entrypoint
+  const readme = read('README.md');
+  if (readme === null) {
+    problems.push('读不到 README.md');
+  } else {
+    if (!readme.includes('ALLOW_ORIGINS')) {
+      problems.push('README 里没有 `ALLOW_ORIGINS`（Docker 用户找不到这个开关）');
+    }
+    if (!/\bnoui\b/.test(readme)) {
+      problems.push('README 里没有提 `noui` 镜像标签');
+    }
+  }
+
+  if (!problems.length) ok(label);
+  if (problems.length) fail(label, problems.join('\n    '));
+}
+
 // ── 输出 ────────────────────────────────────────────────────────────────────
 
 if (failures.length) {

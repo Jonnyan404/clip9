@@ -5,19 +5,30 @@
 # 需要 build-arg: VERSION  (例如 v0.1.0-beta1)；
 # TARGETARCH / TARGETVARIANT 由 docker buildx 自动注入。
 #
+# ⚠️★ 两个变体，同一个 Dockerfile（`NOUI=1` 切到「不带界面」的那份产物）：
+#
+#   · 缺省（`NOUI=0`）→ `clip9-cli-<tag>-<平台>.tar.gz`：**内嵌前端**，开箱即用。
+#   · `NOUI=1`        → `clip9-cli-noui-<tag>-<平台>.tar.gz`：**没有内嵌前端**，
+#     `/` 上是一页「这个二进制没带界面」的说明。给**前后端分离部署**用
+#     （前端放 CDN / 静态托管，容器只当 API）。
+#
+# ⚠️ 两个变体只是**换下载哪个产物**，装进去以后**都叫** `/app/server-node/clip9-cli` ——
+#    `entrypoint.sh` 与 HEALTHCHECK 认的就是这个名字，改它要一起改。
+#
 # ⚠️★ 构建 context 是**仓库根**：`docker build --build-arg VERSION=vX -t clip9 .`
 # 根上那份 `.dockerignore` 把 `rust/target`（GB 级）与各 `node_modules` 都排掉了 ——
 # 别删它，否则每次构建都要把几百 MB 送到 builder。
-#
-# 与 cloud-clipboard-go 的 `cloud-clip/Dockerfile` 是同一套做法、同一批依赖，
-# 只有配置字段不同（这边历史存 redb：`dbPath` + `storageDir`，没有 Go 的
-# `historyFile` / `uds`）—— 见 `entrypoint.sh`。
 
 FROM alpine:latest
 
 ARG VERSION
 ARG TARGETARCH
 ARG TARGETVARIANT
+# `1` = 不带内嵌界面（前后端分离部署）。⚠️ 缺省 0 与改动前一致。
+ARG NOUI=0
+
+LABEL org.opencontainers.image.title="clip9" \
+      clip9.noui="${NOUI}"
 
 # 运行时依赖（与 Go 镜像一致）
 RUN apk add --no-cache ca-certificates netcat-openbsd git tzdata \
@@ -44,10 +55,11 @@ RUN chmod +x /app/entrypoint.sh \
       arm-v7)  B="linux-armv7";; \
       *) echo "不支持的平台: ${TARGETARCH}-${TARGETVARIANT}"; exit 1;; \
     esac \
- && wget -q -O - "https://github.com/Jonnyan404/clip9/releases/download/${VERSION}/clip9-cli-${VERSION}-${B}.tar.gz" \
-      | tar -xz -C /tmp "clip9-cli-${VERSION}-${B}/clip9-cli" \
- && mv "/tmp/clip9-cli-${VERSION}-${B}/clip9-cli" /app/server-node/clip9-cli \
- && rm -rf "/tmp/clip9-cli-${VERSION}-${B}" \
+ && if [ "$NOUI" = "1" ]; then PKG="clip9-cli-noui"; else PKG="clip9-cli"; fi \
+ && wget -q -O - "https://github.com/Jonnyan404/clip9/releases/download/${VERSION}/${PKG}-${VERSION}-${B}.tar.gz" \
+      | tar -xz -C /tmp "${PKG}-${VERSION}-${B}/${PKG}" \
+ && mv "/tmp/${PKG}-${VERSION}-${B}/${PKG}" /app/server-node/clip9-cli \
+ && rm -rf "/tmp/${PKG}-${VERSION}-${B}" \
  && chmod +x /app/server-node/clip9-cli \
  && /app/server-node/clip9-cli -v
 

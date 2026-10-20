@@ -29,6 +29,15 @@ on:
         required: true
         type: boolean
         default: false
+      variant:
+        description: 构建哪个变体（ui = 内嵌前端；noui = 不带前端、只当 API；both = 两个都构建）
+        required: true
+        type: choice
+        options:
+          - both
+          - ui
+          - noui
+        default: both
 
 permissions:
   contents: read
@@ -46,6 +55,7 @@ jobs:
       DH_USER: ${{ secrets.DOCKERHUB_USERNAME }}
       TAG: ${{ inputs.tag }}
       PLATFORMS: ${{ inputs.platforms }}
+      VARIANT: ${{ inputs.variant }}
     steps:
       - uses: actions/checkout@v7
 
@@ -62,6 +72,14 @@ jobs:
           # ⚠️ 这三个标签必须与 release.yml 各 job 矩阵里的 `label`、`Dockerfile` 的 case
           #    三处一致（release.yml 的 `assets` job 就是盯这件事的，但它盯不到这里）。
           IFS=',' read -ra plats <<< "$PLATFORMS"
+          # ⚠️★ 只有真的要构建那个变体时才校验它的产物：选 `noui` 却要求 ui 的包在，
+          #    或者反过来，都是「本来就不需要的东西挡住了这次构建」。
+          need_ui=1
+          need_noui=1
+          case "$VARIANT" in
+            ui)   need_noui=0 ;;
+            noui) need_ui=0 ;;
+          esac
           for p in "${plats[@]}"; do
             case "$p" in
               linux/amd64)  label=linux-x86_64 ;;
@@ -72,8 +90,16 @@ jobs:
             # ⚠️★ 产物名里带版本号（`v<版本>` 紧跟 `clip9-cli` 之后），而 `TAG` 本身就是
             #    `v0.1.0` 那个形态 → 直接用 `$TAG` 拼。与 `Dockerfile` 里那句 `wget`
             #    认的是同一个名字，改一处必须改两处。
-            grep -qx "clip9-cli-${TAG}-${label}.tar.gz" assets.txt \
-              || { echo "::error::$TAG 这个 Release 里没有 clip9-cli-${TAG}-${label}.tar.gz —— 镜像里的 wget 会 404"; exit 1; }
+            if [ "$need_ui" = 1 ]; then
+              grep -qx "clip9-cli-${TAG}-${label}.tar.gz" assets.txt \
+                || { echo "::error::$TAG 这个 Release 里没有 clip9-cli-${TAG}-${label}.tar.gz —— 镜像里的 wget 会 404"; exit 1; }
+            fi
+            # ⚠️ noui 是 2026-10-20 才加的产物：**更早的 tag 没有它**。给旧 tag 补镜像时
+            #    请把 variant 选成 `ui`（或 both 会红在这里，报的正是缺哪个文件）。
+            if [ "$need_noui" = 1 ]; then
+              grep -qx "clip9-cli-noui-${TAG}-${label}.tar.gz" assets.txt \
+                || { echo "::error::$TAG 这个 Release 里没有 clip9-cli-noui-${TAG}-${label}.tar.gz —— noui 变体的 wget 会 404（旧 tag 还没这个产物，variant 选 ui）"; exit 1; }
+            fi
           done
 
       - name: 算镜像标签
@@ -99,6 +125,19 @@ jobs:
             fi
             echo 'EOF'
           } >> "$GITHUB_OUTPUT"
+          # ⚠️ noui 变体：`:<tag>-noui` 总是有；`noui` 只在你勾了 also_latest 时推。
+          #    与 release.yml 那条规矩一致 —— `docker pull clip9`（latest）拿到的
+          #    永远是「开箱就能打开网页」的那一份。
+          {
+            echo 'tags_noui<<EOF'
+            echo "${ghcr}:${TAG}-noui"
+            echo "${dh}:${TAG}-noui"
+            if [ "${{ inputs.also_latest }}" = "true" ]; then
+              echo "${ghcr}:noui"
+              echo "${dh}:noui"
+            fi
+            echo 'EOF'
+          } >> "$GITHUB_OUTPUT"
           cat "$GITHUB_OUTPUT"
 
       - uses: docker/setup-qemu-action@v4
@@ -120,6 +159,7 @@ jobs:
       # ⚠️ context 是**仓库根**（`Dockerfile` 与 `entrypoint.sh` 都在根上）——
       #    根上那份 `.dockerignore` 已经把 `rust/target` 与各 `node_modules` 排掉了。
       - uses: docker/build-push-action@v7
+        if: inputs.variant != 'noui'
         with:
           context: .
           file: Dockerfile
@@ -128,3 +168,16 @@ jobs:
           platforms: ${{ env.PLATFORMS }}
           push: true
           tags: ${{ steps.tags.outputs.tags }}
+
+      # ⚠️ noui 变体：镜像里是 `clip9-cli-noui-*`（不带内嵌前端），给前后端分离部署用。
+      - uses: docker/build-push-action@v7
+        if: inputs.variant != 'ui'
+        with:
+          context: .
+          file: Dockerfile
+          build-args: |
+            VERSION=${{ env.TAG }}
+            NOUI=1
+          platforms: ${{ env.PLATFORMS }}
+          push: true
+          tags: ${{ steps.tags.outputs.tags_noui }}

@@ -1348,6 +1348,20 @@ jobs:
             fi
             echo 'EOF'
           } >> "$GITHUB_OUTPUT"
+          # ⚠️★ noui 变体（前端在别处、容器只当 API）用的是**另一套标签**：
+          #    `:<tag>-noui` 每次都有；`:noui` 与 `latest` 同一条规矩（正式版才推）。
+          #    ⚠️ 不要让 noui 抢 `latest` 那条名字 —— `docker pull clip9` 拿到的东西
+          #    必须还是「开箱就能打开网页」的那一份。
+          {
+            echo 'tags_noui<<EOF'
+            echo "${ghcr}:${TAG}-noui"
+            echo "${dh}:${TAG}-noui"
+            if [ "$PRERELEASE" != "true" ]; then
+              echo "${ghcr}:noui"
+              echo "${dh}:noui"
+            fi
+            echo 'EOF'
+          } >> "$GITHUB_OUTPUT"
           cat "$GITHUB_OUTPUT"
 
       - uses: docker/setup-qemu-action@v4
@@ -1379,6 +1393,21 @@ jobs:
           platforms: linux/amd64,linux/arm64,linux/arm/v7
           push: true
           tags: ${{ steps.tags.outputs.tags }}
+
+      # ⚠️★ 第二个变体：`NOUI=1` → 镜像里是 `clip9-cli-noui-*`（**不带内嵌前端**）。
+      #    它只是**换下载哪个产物**，装进去以后二进制名字、entrypoint、HEALTHCHECK 全一样。
+      #    ⚠️ 两个变体分开 build（不是一次多 tag）：`build-args` 不同就是两次构建。
+      #    这一步很便宜 —— 镜像里不编译，只 wget 一个几 MB 的静态二进制。
+      - uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: Dockerfile
+          build-args: |
+            VERSION=${{ env.TAG }}
+            NOUI=1
+          platforms: linux/amd64,linux/arm64,linux/arm/v7
+          push: true
+          tags: ${{ steps.tags.outputs.tags_noui }}
 
   # ── Homebrew：把 formula 与 cask 推进 tap 仓库 ────────────────────────────
   #

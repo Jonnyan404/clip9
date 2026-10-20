@@ -38,6 +38,36 @@ case "${AUTH_JSON_VALUE}" in
         ;;
 esac
 
+# --- 跨源来源白名单：前后端分离部署时，前端所在的那个 origin ------------------
+#
+# ⚠️★ `ALLOW_ORIGINS="https://clip.example.com,https://cdn.example.org"` →
+#    `"allowOrigins": ["https://clip.example.com","https://cdn.example.org"]`。
+#    不设 = `[]`（只放行内置那三类：桌面壳与本机回环）。
+#
+# ⚠️ 服务端会**再校验一次**（`clip9_core::config::normalize_origin`）：写法歪的条目在启动
+#    日志里是一条 warn（被忽略、其余照常生效），**不会**让容器起不来。刻意的 ——
+#    一条手滑不该把整台服务挡在门外。所以「配了但前端还是被 CORS 拦」时，先看那行 warn。
+#
+# ⚠️ 用 `tr , 空格` 再 `for` 拆：busybox 的 `read -a` 不保证有，而 `$(...)` 里的拆词是
+#    POSIX 的基础行为。来源里不会出现空格（服务端也不接受）。
+build_allow_origins_json() {
+    _out=''
+    for _origin in $(printf '%s' "$1" | tr ',' ' '); do
+        _escaped=$(printf '%s' "${_origin}" | sed 's/\\/\\\\/g; s/"/\\"/g')
+        if [ -z "${_out}" ]; then
+            _out="\"${_escaped}\""
+        else
+            _out="${_out},\"${_escaped}\""
+        fi
+    done
+    if [ -z "${_out}" ]; then
+        printf '[]'
+    else
+        printf '[%s]' "${_out}"
+    fi
+}
+ALLOW_ORIGINS_JSON=$(build_allow_origins_json "${ALLOW_ORIGINS:-}")
+
 # --- SSL：优先级与 Go 版逐条一致：手动路径 > mkcert > 不启用 ---
 KEY=""
 CERT=""
@@ -115,7 +145,8 @@ cat>"${CONFIG_FILE}"<<EOF
         "dbPath": "clip9.redb",
         "storageDir": "uploads",
         "roomList": ${ROOM_LIST:-false},
-        "roomCleanup": 3600
+        "roomCleanup": 3600,
+        "allowOrigins": ${ALLOW_ORIGINS_JSON}
     },
     "text": {
         "limit": ${TEXT_LIMIT:-4096}

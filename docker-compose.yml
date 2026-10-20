@@ -35,6 +35,7 @@ services:
             MANUAL_KEY_PATH: ${MANUAL_KEY_PATH:-} #手动设置证书路径,默认为空,该参数优先级高于MKCERT_DOMAIN_OR_IP
             MANUAL_CERT_PATH: ${MANUAL_CERT_PATH:-} #手动设置证书路径,默认为空,该参数优先级高于MKCERT_DOMAIN_OR_IP
             ROOM_LIST: ${ROOM_LIST:-} #是否启用房间列表展示功能,默认false
+            ALLOW_ORIGINS: ${ALLOW_ORIGINS:-} #允许跨源访问的前端来源(逗号分隔),默认空;只有前后端分离部署时需要（clip9 有,Go 没有）
             AUTOMATION_ENABLED: ${AUTOMATION_ENABLED:-} #定时自动化总开关,默认true（clip9 有,Go 没有）
             DEFAULT_TZ: ${DEFAULT_TZ:-} #定时任务的默认时区,默认Asia/Shanghai（clip9 有,Go 没有）
         volumes:
