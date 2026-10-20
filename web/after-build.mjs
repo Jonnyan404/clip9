@@ -1,11 +1,23 @@
-import { readFileSync, writeFileSync, readdirSync, statSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
-import { gzipSync, brotliCompressSync } from 'node:zlib';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-// 给 dist 里的 js/css/html/svg 各生成 .gz / .br，并在 DEPLOY_STATIC=1 时把 dist 同步进
-// `rust/crates/server/static/`（那一份会被 `include_bytes!` 编进 clip9-server）。
+// 在 DEPLOY_STATIC=1 时把 dist 同步进 `rust/crates/server/static/`
+//（那一份会被 `include_bytes!` 编进 clip9-server），并给产物盖「构建输入指纹」的章。
+//
+// ⚠️★ 2026-10-20：**不再生成 `.gz` / `.br` 预压缩副本**（原来这一步给 dist 里每个
+// js/css/html/svg 各写一份）。理由不是「省事」，是**没人读它们**：
+//
+//   · 服务端（`rust/crates/server/src/static_files.rs`）**没有**任何按 `Accept-Encoding`
+//     挑预压缩文件的逻辑，也没有 `Content-Encoding` 分支 —— 它只按相对路径读内嵌的那一张表；
+//   · 仓库里也没有一处 nginx `gzip_static` / `brotli_static` 配置在用它们。
+//
+//   而代价是实的：那 52 个文件 **6.3 MB**，跟着 `sync-web-assets` 一起进了 `static/`，
+//   于是被 `include_bytes!` 编进**每一个**二进制（CLI / Docker / OpenWrt / Android / 桌面）。
+//   前端产物本体 21 MB 里它占了 30% —— 对 flash 几十 MB 的路由器是实打实的一笔。
+//
+//   ⚠️ 要恢复它，得先有一个**真的会用它们**的消费者（例如给 `static_files` 加
+//   `Accept-Encoding` 分支），否则别加回来：`check-contracts.mjs` 的判据 J 会红。
 //
 // ⚠️★ 同步**委托给** `tools/sync-web-assets.mjs` —— 它是「前端产物进服务端」的**唯一入口**
 // （会挪走旧目录、逐个报新增/改动/消失、带 `--check`）。两条路各写一份拷贝逻辑
@@ -16,24 +28,6 @@ import { fileURLToPath } from 'node:url';
 // 现在 sync-web-assets 的 FE 已指向 `web/`，两边对齐，做法与 web-vue3 的 after-build 一致。
 
 const here = dirname(fileURLToPath(import.meta.url));
-const distDir = fileURLToPath(new URL('./dist', import.meta.url));
-
-function compress(dir) {
-    for (const name of readdirSync(dir)) {
-        const full = join(dir, name);
-        const s = statSync(full);
-        if (s.isDirectory()) {
-            compress(full);
-        } else if (/\.(js|css|html|svg)$/.test(name)) {
-            const buf = readFileSync(full);
-            writeFileSync(full + '.gz', gzipSync(buf));
-            writeFileSync(full + '.br', brotliCompressSync(buf));
-        }
-    }
-}
-
-compress(distDir);
-console.log('after-build: gz/br generated in dist/.');
 
 // ⚠️★ 盖「构建输入指纹」的章 —— 必须在**所有产物都写完**之后、在同步之前。
 //
@@ -42,7 +36,6 @@ console.log('after-build: gz/br generated in dist/.');
 // `--check` 一路绿，而 `static/` 里装的是**旧产物**。
 // 2026-10-11 真踩了（构建被本机安全删除钩子从 `emptyDir` 打断，`exit=1` 被当成无关紧要）。
 //
-// ⚠️ 放在 `compress()` 之后：`.gz`/`.br` 也算产物，章要盖在「全都写完」这个时刻。
 // ⚠️ 同步**之前**：`sync-web-assets.mjs` 会核对这个章，盖晚了它就没得核。
 execFileSync(process.execPath, [join(here, '..', 'tools', 'sync-web-assets.mjs'), '--stamp'], {
     stdio: 'inherit',

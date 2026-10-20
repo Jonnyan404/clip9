@@ -402,6 +402,27 @@ for (const name of ['revoke', 'update']) {
     }
 }
 
+// ── J. 不再生成「没人读的」预压缩副本（2026-10-20）────────────────────────
+// ⚠️★ `after-build.mjs` 原来给 dist 里每个 js/css/html/svg 各写一份 `.gz` 与 `.br`。
+//    而**没有任何东西读它们**：`rust/crates/server/src/static_files.rs` 没有
+//    `Accept-Encoding` / `Content-Encoding` 分支，仓库里也没有 nginx `gzip_static` 配置。
+//    代价却是实的 —— 52 个文件 **6.3 MB**，跟着同步进 `static/` 被 `include_bytes!`
+//    编进每一个二进制（CLI / Docker / OpenWrt / Android / 桌面）。
+//
+// ⚠️ 这条是**反向**判据（「别又加回来」），和「已删模式不得复活」同一类：
+//    加回来不会报错，只会让所有产物静默胖 6 MB。
+//    ⚠️ 真要有消费者了（给 `static_files` 加按 `Accept-Encoding` 挑预压缩文件的分支），
+//    那就连这条判据一起改 —— 别只删判据、不接消费者。
+{
+    const after = readFileSync(join(WEB, 'after-build.mjs'), 'utf8');
+    if (/gzipSync|brotliCompressSync|\.gz['"]|\.br['"]/.test(after)) {
+        problems.push(
+            '`after-build.mjs` 又在生成 `.gz` / `.br` 预压缩副本了 —— 服务端从不读它们，' +
+                '却会被编进每一个二进制（6.3 MB × 每次发布的所有产物）',
+        );
+    }
+}
+
 // ── 结果 ────────────────────────────────────────────────────────────────
 if (problems.length) {
     console.error(`✗ 契约守卫失败（${problems.length} 处）：`);
