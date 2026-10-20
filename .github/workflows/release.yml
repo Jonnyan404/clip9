@@ -371,6 +371,105 @@ jobs:
             rust/dist/*.tar.gz
           if-no-files-found: error
 
+  # ── 无界面（noui）：只有 API 的服务端，界面在**别处**部署 ────────────────────
+  #
+  # ⚠️★ 2026-10-20 加（Jonny：release 要一份 cli-noui，前端可配后端地址 → 前后端分离部署）。
+  #
+  #    它与上面 `linux` 那一格编的是**同一份源码**，差别只有一条：**不取前端产物**
+  #    （注意 `needs` 里没有 `web-assets`，也没有那个 download-artifact 步骤）。
+  #    `rust/crates/server/build.rs` 在 `static/` 不存在时内嵌一个「这个二进制没带界面」的
+  #    **占位页**（不是 panic，也不是什么都不嵌）—— 于是「有没有界面」在**构建期**就定了。
+  #
+  # ⚠️★ 所以这一格的验收是**反向**的，别照抄上面那三格：
+  #      · 要**有**占位标记 `clip9-no-embedded-frontend`；
+  #      · 要**没有** `id="app"`（那个字符串只可能来自一份真前端产物）。
+  #    把这里「修」成上面那样 = 把界面又编回 noui 的包里，而那让这个产物**失去意义**
+  #    （谁都能用普通那份；noui 存在的理由是「前端在 CDN 上，这台机器只跑 API」）。
+  #    `tools/workflows-smoke.mjs` 的判据 16 钉着这四条。
+  #
+  # ⚠️ `rust-cache` 的 key **必须**与 `linux` 那格不同：缓存里带着上次编好的产物，
+  #    而「内嵌的是哪一份前端」是 build.rs 在编译期写进 OUT_DIR 的 —— 共用缓存会让这一格
+  #    拿到一份**带界面**的旧产物（反向断言会红，但那属于自己给自己制造的假失败）。
+  linux-noui:
+    needs: [info]
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # ⚠️ 与 `linux` 同一组 target / label：这是给**服务器**用的产物，
+        #    而那三种架构正是 Linux 服务端的现实分布（见上面那段注释）。
+        include:
+          - target: x86_64-unknown-linux-musl
+            label: linux-x86_64
+          - target: aarch64-unknown-linux-musl
+            label: linux-aarch64
+          - target: armv7-unknown-linux-musleabihf
+            label: linux-armv7
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cross
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: rust
+          key: ${{ matrix.target }}-noui
+
+      - name: 构建（静态链接 musl，不带前端）
+        working-directory: rust
+        shell: bash
+        run: |
+          set -o pipefail
+          # 版本号与上面 `linux` 那格同一条理由：不注就回落成 Cargo.toml 里的常量。
+          export CLIP9_VERSION="${{ needs.info.outputs.tag }}"
+          export CLIP9_VERSION="${CLIP9_VERSION#v}"
+          cross build --release -p $BIN --target ${{ matrix.target }} --features doc 2>&1 | tee cross.log
+          if grep -q 'Falling back to `cargo` on the host' cross.log; then
+            echo "::error::cross 没有起容器（见 linux 那格的注释），这一格的产物一定是错的"
+            exit 1
+          fi
+          bin="target/${{ matrix.target }}/release/$BIN"
+          if ! strings "$bin" | grep -qF "$CLIP9_VERSION"; then
+            echo "::error::版本号没注进二进制（CLIP9_VERSION=${CLIP9_VERSION}）"
+            exit 1
+          fi
+          # ⚠️★ 反向验收（见 job 抬头）：占位页**必须**在，真前端**必须**不在。
+          if ! strings "$bin" | grep -qF 'clip9-no-embedded-frontend'; then
+            echo "::error::这一份里没有占位页 —— 它把一份前端编进去了（noui 的意义就是不带界面）"
+            exit 1
+          fi
+          if strings "$bin" | grep -qF 'id="app"'; then
+            echo "::error::这一份里带着真前端（找到了 id=\"app\"）—— 这一格不该有 web 产物"
+            exit 1
+          fi
+          # `doc` 与上面那三格一视同仁：分离部署的前端一样会用到文档转换。
+          if ! strings "$bin" | grep -qF '/convert/{uuid}'; then
+            echo "::error::二进制里没有 /convert/{uuid} —— 这一份没带 doc feature"
+            exit 1
+          fi
+
+      - name: 打包
+        working-directory: rust
+        run: |
+          set -euo pipefail
+          name="clip9-cli-noui-${{ needs.info.outputs.tag }}-${{ matrix.label }}"
+          mkdir -p "dist/$name"
+          cp "target/${{ matrix.target }}/release/$BIN" "dist/$name/clip9-cli-noui"
+          cp ../LICENSE ../README.md "dist/$name/"
+          tar -C dist -czf "dist/$name.tar.gz" "$name"
+
+      - uses: actions/upload-artifact@v7
+        with:
+          # ⚠️ 以 `clip9-cli-` 开头是有意的：`publish` 的下载 pattern 是 `clip9-cli-*`，
+          #    于这一份**不用**额外接线（而它也必须**不能**以 `clip9-desktop-` 开头 ——
+          #    那会把桌面端「按资产 id 更新」的链路弄坏，见 `publish` 抬头的注释）。
+          name: clip9-cli-noui-${{ matrix.label }}
+          path: |
+            rust/dist/*.tar.gz
+          if-no-files-found: error
+
   macos:
     # ⚠️ 同 `linux`：产物名里带版本号，所以要 tag。
     needs: [info, web-assets]
@@ -847,7 +946,7 @@ jobs:
   assets:
     # ⚠️★ `info` 也在这里：下面那份「资产名对不对」的期望清单是拿 tag 拼出来的。
     # ⚠️★ `web-assets` 也在：它产出的 `clip9-web-v<版本>.tar.gz` 是**发布资产**（清单里有它）。
-    needs: [info, linux, macos, windows, desktop, web-assets]
+    needs: [info, linux, linux-noui, macos, windows, desktop, web-assets]
     # ⚠️ 与 `publish` 同一个条件。手动跑且**没填 tag** 时产物名里没有版本号（tag 是空的），
     #    而那时也没有资产要发布 → 这份清单无从校验，别让它报一堆假错。
     if: github.event_name == 'release' || inputs.tag != ''
@@ -871,6 +970,9 @@ jobs:
             "clip9-cli-${tag}-linux-x86_64.tar.gz|Dockerfile 的 amd64 与 homebrew formula 的 Linux/intel"
             "clip9-cli-${tag}-linux-aarch64.tar.gz|Dockerfile 的 arm64 与 homebrew formula 的 Linux/arm"
             "clip9-cli-${tag}-linux-armv7.tar.gz|Dockerfile 的 arm/v7"
+            "clip9-cli-noui-${tag}-linux-x86_64.tar.gz|前后端分离部署（前端在别处，这台只跑 API）的 x86_64"
+            "clip9-cli-noui-${tag}-linux-aarch64.tar.gz|前后端分离部署的 arm64"
+            "clip9-cli-noui-${tag}-linux-armv7.tar.gz|前后端分离部署的 arm/v7"
             "clip9-cli-${tag}-macos-aarch64.tar.gz|homebrew formula 的 macOS/arm"
             "clip9-cli-${tag}-macos-x86_64.tar.gz|homebrew formula 的 macOS/intel"
             "clip9-desktop-${tag}-macos-aarch64.dmg|homebrew cask 的 macOS/arm"

@@ -145,7 +145,7 @@ docker compose up -d
 ./clip9-cli -port 9501 -auth mypassword123
 ```
 
-常用参数：`-host` / `-port` / `-auth` / `-config` / `-static`，全部见 `--help`。
+常用参数：`-host` / `-port` / `-auth` / `-config` / `-static` / `-allow-origin`，全部见 `--help`。
 </details>
 
 <details>
@@ -198,6 +198,40 @@ cd ../rust && cargo build --release -p clip9-server
 CI 与发版链会自己做「构建 + 同步」。
 </details>
 
+<details>
+<summary><b>6️⃣ 前后端分离部署（界面放 CDN，机器只跑 API）</b></summary>
+
+发版产物里的 **`clip9-cli-noui-*`** 就是给这件事用的：它**不带内嵌界面**（体积更小，
+`/` 上是一页「这个二进制没带界面」的说明），其余能力与普通那份完全一样。
+
+**① 后端**：从 [Releases](https://github.com/Jonnyan404/clip9/releases) 取 `clip9-cli-noui-<版本>-<架构>.tar.gz`，
+解包后启动，并**把前端的来源**写进白名单：
+
+```bash
+./clip9-cli-noui -port 9501 -auth mypassword123 -allow-origin https://clip.example.com
+```
+
+等价于配置文件里的 `server.allowOrigins`（数组，可写多条）。⚠️ 这一步**不能省**：
+浏览器的每一条接口都是跨源的，缺了它会被 CORS 拦下，而服务端日志里什么都没有。
+
+**② 前端**：下载 `clip9-web-<版本>.tar.gz`，解包后是一份纯静态站点（任何静态托管都行），
+把根目录 `config.js` 里那一行改成后端的地址：
+
+```js
+window.__CLIP9_API_BASE__ = 'https://api.example.com/';   // 留空 = 与页面同源
+```
+
+> 也可以在界面「设置 → 服务器 → 后端地址」里填（存本机，优先于 `config.js`），
+> 填完会自动重新加载。⚠️ 这个入口在桌面客户端的网页视图里**不显示** —— 那里必须连本机。
+
+⚠️ 两点与「同源部署」不同：
+- **分享链接**会指向**前端**的域名（`<前端>/s/<token>`），分享页由前端渲染；
+  社交平台的预览卡片（OG 标签）仍然只有同源部署才有 —— 分离部署时抓取程序拿到的是静态 HTML。
+- **静态托管要开 SPA 回退**（所有路径 → `index.html`，Netlify 的 `_redirects` / Nginx 的
+  `try_files` 都行），否则 `/s/<token>`、`/board` 这类深链直接 404。
+  后端的 `-prefix` 与前端的子目录**互不影响**：两边各自配自己的。
+</details>
+
 ---
 
 ## ⚙️ 配置
@@ -213,7 +247,7 @@ CI 与发版链会自己做「构建 + 同步」。
     "host": ["0.0.0.0"], "port": 9501, "prefix": "",
     "history": 50, "dbPath": "clip9.redb", "storageDir": "uploads",
     "auth": false, "roomAuth": {}, "cert": "", "key": "",
-    "roomList": false, "roomCleanup": 3600
+    "roomList": false, "roomCleanup": 3600, "allowOrigins": []
   },
   "text": { "limit": 4096 },
   "file": { "expire": 3600, "chunk": 1048576, "limit": 268435456 },

@@ -1442,6 +1442,106 @@ const pkgApk = read('openwrt/scripts/package-openwrt-apk.sh');
   if (problems.length) fail(label, problems.join('\n    '));
 }
 
+// ── 判据 16：`cli-noui` 那一格**真的**不带界面，且名字落在 publish 的范围内 ─────
+//
+// ⚠️★ 2026-10-20 加（前后端分离部署）。`linux-noui` 与 `linux` 编的是同一份源码，
+//    唯一的区别是**不取前端产物**（`build.rs` 于是在二进制里内嵌一个占位页）。
+//    于是「这一格是不是真的 noui」**只能靠反向断言**看出来：
+//
+//      · 该有 `clip9-no-embedded-frontend`（占位页的标记）；
+//      · 不该有 `id="app"`（那个字符串只可能来自一份真前端产物）。
+//
+//    ⚠️★ 这一条最容易的破坏方式是**照抄**：有人看到 `linux` 那格有四道自检，
+//    就把它们复制过来 —— 而那边前两道正好是「不许有占位标记、必须有 id="app"」，
+//    复制过去等于**把界面又编回 noui 的包里**，产物名还叫 noui。
+//    症状是静默的：包能装、能跑，只是它比普通那份少了个理由。
+//
+//    ⚠️ 另外两条同样会静默坏掉：
+//      · 这一格如果 `needs: web-assets`（或加了下载那一步），占位页就不会出现；
+//      · 产物名不以 `clip9-cli-` 开头的话，`publish` 的 pattern 取不到它 ——
+//        而 `action-gh-release` 少传一个文件是**成功**的（发布页看着一切正常）。
+{
+  const label = 'cli-noui 那一格真的不带界面，且产物名在 publish 的范围内';
+  const problems = [];
+  const rel = read(RELEASE);
+  const job = rel === null ? null : jobBlock(rel, 'linux-noui');
+  if (job === null) {
+    problems.push(`读不到 ${RELEASE} 里的 linux-noui job —— 这条判据失效了（别报绿）`);
+  } else {
+    // ① 不取前端产物（两处：needs 与下载步骤）。
+    if (/\bweb-assets\b/.test(job)) {
+      problems.push(
+        'linux-noui 里提到了 `web-assets` —— 它一旦取到前端产物就不再是 noui 了（内嵌的就是真界面）',
+      );
+    }
+    // ② 断言的方向只能从**句式**看出来（踩过一次）：
+    //      `if ! strings … | grep -qF 'X'; then 报错`  → **必须**有 X
+    //      `if   strings … | grep -qF 'X'; then 报错`  → **不许**有 X
+    //    ⚠️ 第一版按「这一行里有没有 `!`」判，结果两条**都**是 `if !` 开头的
+    //    （正向那条也是「找不到就报错」）—— 判据把自己的形状认反了。
+    const lines = job.split('\n');
+    const mustHave = (needle) => lines.some((line) => /if\s+!\s*strings/.test(line) && line.includes(needle));
+    const mustNotHave = (needle) => lines.some((line) => /if\s+strings/.test(line) && line.includes(needle));
+
+    if (!mustHave('clip9-no-embedded-frontend')) {
+      problems.push(
+        'linux-noui 没有断言「占位页必须在」—— 这一格可能悄悄把一份前端编了进去',
+      );
+    }
+    if (mustNotHave('clip9-no-embedded-frontend')) {
+      problems.push(
+        'linux-noui 里写着「不许有占位标记」—— 那是 `linux` 那格的断言（照抄过来了？）。' +
+          '这一格正好相反：占位页就是它的正常形态',
+      );
+    }
+    // ③ 反向：真前端不许在。
+    if (!mustNotHave('id="app"')) {
+      problems.push(
+        'linux-noui 没有断言「不许有 id="app"」—— 那一条是「这一份里没有真前端」的唯一证据',
+      );
+    }
+    if (mustHave('id="app"')) {
+      problems.push('linux-noui 里写着「必须有 id="app"」—— 那等于要求它带界面');
+    }
+    // ④ 版本与 doc 与其它发货路径一视同仁（分离部署照样要报对版本、照样要用文档转换）。
+    for (const [needle, why] of [
+      ['CLIP9_VERSION', '版本号没注入（会回落成 Cargo.toml 的 0.1.0）'],
+      ['/convert/{uuid}', '没带 doc feature'],
+    ]) {
+      if (!job.includes(needle)) {
+        problems.push(`linux-noui 少了 ${needle} —— ${why}`);
+      }
+    }
+  }
+
+  // ⑤ 产物名与两处清单对得上：`publish` 只取 `clip9-cli-*`，`assets` 还要逐个点名。
+  const assets = rel === null ? null : jobBlock(rel, 'assets');
+  if (assets === null) {
+    problems.push(`读不到 ${RELEASE} 里的 assets job`);
+  } else {
+    for (const target of ['linux-x86_64', 'linux-aarch64', 'linux-armv7']) {
+      const name = `clip9-cli-noui-\${tag}-${target}.tar.gz`;
+      if (!assets.includes(name)) {
+        problems.push(
+          `assets 的期望清单里没有 ${name} —— 那一份发不出去也不会有人发现` +
+            '（`action-gh-release` 少传一个文件是「成功」的）',
+        );
+      }
+    }
+    // ⚠️ 名字必须以 `clip9-cli-` 开头，否则 `publish` 的 pattern 取不到它。
+    //    直接拿 assets 里那三行反着验，比在这里另抄一条规则可靠。
+    const notCli = [...assets.matchAll(/"(clip9-[a-z-]*)-?\$\{tag\}-linux-(?:x86_64|aarch64|armv7)\.tar\.gz\|[^"]*noui[^"]*"/g)];
+    for (const match of notCli) {
+      if (match[1] !== 'clip9-cli-noui' && match[1] !== 'clip9-cli') {
+        problems.push(`noui 的产物名以 ${match[1]} 开头 —— publish 的 pattern 是 clip9-cli-*`);
+      }
+    }
+  }
+
+  if (!problems.length) ok(label);
+  if (problems.length) fail(label, problems.join('\n    '));
+}
+
 // ── 输出 ────────────────────────────────────────────────────────────────────
 
 if (failures.length) {
