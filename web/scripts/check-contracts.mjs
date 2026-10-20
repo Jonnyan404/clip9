@@ -189,10 +189,34 @@ for (const [pattern, why] of MODE_LEFTOVERS) {
     }
 }
 
+// ── G. 破坏性接口的方法：`revoke/*` 只许 POST ─────────────────────────────
+// ⚠️★ 2026-10-20 加。服务端把 `/revoke/{id}` 与 `/revoke/all` 注册成 **POST-only**
+//    （`rust/crates/server/src/lib.rs`：`post(handlers::revoke).fallback(only_post)`，
+//    别的方法一律 405 `method_not_allowed`）。这是 Jonny 2026-09-25 拍的板：
+//    **破坏性操作必须是显式 POST** —— Go 那边不检查方法，浏览器直接访问 `/revoke/5`
+//    就会删掉 5 号条目。
+// ⚠️★ 而前端是从 Vue 版照抄的 `axios.delete('revoke/…')`（当时打的是 Go，所以能用）；
+//    切到 Rust 服务端之后**每一条删除都 405** —— 症状是「单条消息删除失败」，
+//    文案是服务端那句「仅允许 POST 请求」。2026-10-20 全量改成 `axios.post(url, null, { params })`。
+//     ⚠️ 空 body 必须写 `null`：axios 的签名是 `post(url, data, config)`，
+//        写成 `post(url, { params })` 会把参数当 JSON body 发出去，服务端就收不到 `room`。
+// ⚠️ 别顺手把 `file/{uuid}` 那条也改了 —— 它**本来就是 DELETE**（`get(...).delete(...)`）。
+const BAD_REVOKE_METHOD = /axios\s*\.\s*(delete|get|put|patch)\s*\(\s*[`'"]revoke\b/;
+for (const file of walk(join(WEB, 'src'))) {
+    if (!/\.(ts|tsx|js|jsx)$/.test(file)) continue;
+    const lines = readFileSync(file, 'utf8').split('\n');
+    lines.forEach((line, i) => {
+        if (!BAD_REVOKE_METHOD.test(line)) return;
+        problems.push(
+            `revoke 只收 POST，这里发的是别的方法：${file.slice(WEB.length + 1)}:${i + 1}  ${line.trim()}`,
+        );
+    });
+}
+
 // ── 结果 ────────────────────────────────────────────────────────────────
 if (problems.length) {
     console.error(`✗ 契约守卫失败（${problems.length} 处）：`);
     for (const line of problems) console.error(`    ${line}`);
     process.exit(1);
 }
-console.log('✓ 契约守卫通过：零依赖共享模块字节一致 · 外壳形状完整 · PWA 放行表一致 · dev 代理覆盖了每条服务端路由 · i18n 无死键 · 已删模式未复活');
+console.log('✓ 契约守卫通过：零依赖共享模块字节一致 · 外壳形状完整 · PWA 放行表一致 · dev 代理覆盖了每条服务端路由 · i18n 无死键 · 已删模式未复活 · revoke 只发 POST');
