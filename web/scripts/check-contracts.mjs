@@ -266,10 +266,121 @@ for (const name of ['revoke', 'update']) {
     }
 }
 
+// ── I. 后端地址与页面地址是**两件事**（前后端分离部署，2026-10-20）────────────
+// ⚠️★ 同源部署时 `APP_BASE_URL`（页面在哪）与 `API_BASE_URL`（后端在哪）**相等**，
+//    所以「用错了」在本机开发时**完全看不出来** —— 而分离部署时用错的那个会让
+//    **每一条**接口都打到静态托管那边（拿回一份 HTML，前端报一句没信息量的错）。
+//    这一段的每一条都对应一个「改错了不会报错」的地方，逐条钉住。
+{
+    const configPath = join(WEB, 'public/config.js');
+    if (!existsSync(configPath)) {
+        problems.push(
+            '缺 `public/config.js` —— 部署方没有地方写后端地址，分离部署只能靠重编前端',
+        );
+    } else {
+        const source = readFileSync(configPath, 'utf8');
+        // ⚠️ 判据只认「赋值给 window 上那个名字」：改成 const/module 导出的话，
+        //    它是**构建期**的东西了（得重编），那就不是运行时配置了。
+        if (!/window\.__CLIP9_API_BASE__\s*=/.test(source)) {
+            problems.push(
+                '`public/config.js` 没有给 `window.__CLIP9_API_BASE__` 赋值 —— 运行时读的就是它',
+            );
+        }
+    }
+
+    // index.html：必须在模块 bundle **之前**加载（`lib/base.ts` 在模块求值时就读它）。
+    // ⚠️ 用**相对**地址：绝对 `/config.js` 在子路径部署（服务端 `-prefix` / 静态托管子目录）下会指错地方。
+    const configTag = html.indexOf('src="./config.js"');
+    const bundleTag = html.indexOf('type="module"');
+    if (configTag < 0) {
+        problems.push('index.html 没有引用 `./config.js`（部署方的后端地址读不到）');
+    } else if (bundleTag >= 0 && configTag > bundleTag) {
+        problems.push(
+            'index.html 里 `./config.js` 排在了模块 bundle **之后** —— 它必须在 bundle 之前加载',
+        );
+    }
+
+    const base = readFileSync(join(WEB, 'src/lib/base.ts'), 'utf8');
+    if (!/export\s+const\s+API_BASE_URL\b/.test(base)) {
+        problems.push('`src/lib/base.ts` 里没有 `API_BASE_URL` —— 后端地址这一份解析不见了');
+    }
+
+    // axios 的 baseURL 必须是**后端**地址。
+    const http = readFileSync(join(WEB, 'src/services/http.ts'), 'utf8');
+    if (!/axios\.defaults\.baseURL\s*=\s*API_BASE_URL\b/.test(http)) {
+        problems.push(
+            '`services/http.ts` 的 `axios.defaults.baseURL` 不是 `API_BASE_URL` —— ' +
+                '分离部署时每条接口都会打到页面所在的那台机器上',
+        );
+    }
+
+    // WS 地址同理，且协议要跟着**后端**地址走（页面 https + 后端 http 的内网部署下，
+    // 按 `location.protocol` 拼会得到 wss 并被浏览器当成混合内容拦掉）。
+    // ⚠️ 先剥注释：解释这件事的注释里就写着 `location.protocol`（同判据 H 的坑）。
+    const wsCode = stripLineComments(wsStore);
+    if (!/new URL\(\s*'push'\s*,\s*API_BASE_URL\s*\)/.test(wsCode)) {
+        problems.push("`wsStore.ts` 的 WS 地址不是从 `API_BASE_URL` 拼的（分离部署会连不上）");
+    }
+    if (/location\.protocol/.test(wsCode)) {
+        problems.push(
+            '`wsStore.ts` 又按 `location.protocol` 决定 ws/wss 了 —— 要跟**后端**地址走',
+        );
+    }
+
+    // 分享链接：只取结尾的 `/s/<token>` 再拼到**这份前端**的目录上。
+    // ⚠️ 保留服务端给的前缀（旧写法）在「后端有 prefix、前端在根目录」时会把链接拼到
+    //    前端匹配不到的路径上 —— 打开是一张空白页，而链接看起来完全正常。
+    const util = readFileSync(join(WEB, 'src/lib/util.ts'), 'utf8');
+    const withOrigin = util.slice(util.indexOf('export function withCurrentOrigin'));
+    // ⚠️ 用**普通字符串**判断而不是正则：要匹配的正是源码里那串 `\/s\/`，
+    //    写成正则得三层转义，读的人（和写的人）都会数错。
+    if (!withOrigin.includes('\\/s\\/') || !withOrigin.includes('APP_BASE_URL')) {
+        problems.push(
+            '`withCurrentOrigin` 不再把分享地址重建成「前端目录 + /s/<token>」—— ' +
+                '分离部署 + 后端有 prefix 时分享链接会打不开',
+        );
+    }
+
+    // PWA 的预缓存必须排除它：否则托管方改完 `config.js`，回访用户拿到的还是缓存里那份旧的
+    // （SW 的更新检查只看 SW 脚本本身，那个文件改了不触发任何更新）。
+    const viteConfig = readFileSync(join(WEB, 'vite.config.ts'), 'utf8');
+    const ignores = viteConfig.match(/globIgnores:\s*\[([^\]]*)\]/);
+    if (!ignores || !ignores[1].includes('config.js')) {
+        problems.push(
+            '`vite.config.ts` 的 `globIgnores` 没有排除 `config.js` —— ' +
+                '改了后端地址的部署方会看到「改了没反应」',
+        );
+    }
+
+    // ⚠️★ 浏览器**自己**发的请求（`<img src>` / `<a download>` / `<video src>`）不经过
+    // axios 的 baseURL —— 那些地址必须自己绝对化到后端。写成相对地址的话，分离部署时
+    // 会按**页面**目录解析到静态托管那边，症状是「图挂了 / 下载 404」，而页面一切正常。
+    const sharePage = readFileSync(join(WEB, 'src/pages/SharePage.tsx'), 'utf8');
+    // ⚠️ 剥掉 import 行再判：光有 `import { API_BASE_URL }` 说明不了任何人用它
+    //    （第一版就是这么写的，变异把用法删掉之后判据照绿）。
+    const shareCode = sharePage
+        .split('\n')
+        .filter((line) => !line.trim().startsWith('import'))
+        .join('\n');
+    if (!shareCode.includes('API_BASE_URL')) {
+        problems.push(
+            '`pages/SharePage.tsx` 的文件地址没有绝对化到 `API_BASE_URL` —— ' +
+                '分离部署时分享页里的图片/视频/下载全是 404（它们是浏览器自己发的请求）',
+        );
+    }
+    // 自动化管理页同理：它是**服务端渲染**的页面，不在前端路由里。
+    const toolbar = readFileSync(join(WEB, 'src/components/AppShell/PageToolbar.tsx'), 'utf8');
+    if (!/new URL\(\s*'automation'\s*,\s*API_BASE_URL\s*\)/.test(toolbar)) {
+        problems.push(
+            "`PageToolbar` 的自动化入口不是从 `API_BASE_URL` 拼的 —— 分离部署时点进去是 404",
+        );
+    }
+}
+
 // ── 结果 ────────────────────────────────────────────────────────────────
 if (problems.length) {
     console.error(`✗ 契约守卫失败（${problems.length} 处）：`);
     for (const line of problems) console.error(`    ${line}`);
     process.exit(1);
 }
-console.log('✓ 契约守卫通过：零依赖共享模块字节一致 · 外壳形状完整 · PWA 放行表一致 · dev 代理覆盖了每条服务端路由 · i18n 无死键 · 已删模式未复活 · revoke 只发 POST · WS 事件 id 已归一');
+console.log('✓ 契约守卫通过：零依赖共享模块字节一致 · 外壳形状完整 · PWA 放行表一致 · dev 代理覆盖了每条服务端路由 · i18n 无死键 · 已删模式未复活 · revoke 只发 POST · WS 事件 id 已归一 · 后端地址与页面地址分开');
