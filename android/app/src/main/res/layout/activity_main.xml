@@ -1762,6 +1762,66 @@
                             style="@style/Widget.Clip9.CfgInput" />
                     </LinearLayout>
 
+                    <!-- ── 跨源白名单（`server.allowOrigins`）─────────────────
+                         这一格是**多行**的（一条来源一行），所以和上面那些
+                         「说明在左、输入在右」的行不同：说明在上、整行输入在下。
+
+                         ⚠️★ 它是给**前后端分离部署**用的：前端放在别处（本地静态服务、
+                         CDN、反代后面的另一台机器），浏览器直接跨源调这台手机上的 API。
+                         没有它，浏览器的每一条接口都会被 CORS 拦下，而**服务端日志里
+                         什么都没有** —— 最难查的一类「看起来没坏」。 -->
+                    <LinearLayout
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:orientation="horizontal"
+                        android:paddingStart="15dp"
+                        android:paddingTop="10dp"
+                        android:paddingEnd="15dp"
+                        android:paddingBottom="12dp">
+
+                        <ImageView
+                            android:layout_width="19dp"
+                            android:layout_height="19dp"
+                            android:layout_marginTop="3dp"
+                            android:contentDescription="@null"
+                            android:src="@drawable/ic_console_link"
+                            app:tint="@color/console_text_faint" />
+
+                        <LinearLayout
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_marginStart="12dp"
+                            android:layout_weight="1"
+                            android:orientation="vertical">
+
+                            <TextView
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:text="@string/config_allow_origins"
+                                style="@style/Text.Clip9.CfgTitle" />
+
+                            <TextView
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:layout_marginTop="2dp"
+                                android:text="@string/config_allow_origins_hint"
+                                style="@style/Text.Clip9.CfgHint" />
+
+                            <EditText
+                                android:id="@+id/configAllowOrigins"
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:layout_marginTop="8dp"
+                                android:autofillHints=""
+                                android:gravity="start|top"
+                                android:hint="@string/config_allow_origins_ph"
+                                android:inputType="textMultiLine|textUri"
+                                android:maxLines="4"
+                                android:minLines="2"
+                                style="@style/Widget.Clip9.CfgArea" />
+                        </LinearLayout>
+                    </LinearLayout>
+
                     <!-- ── 证书与私钥（稿子 ⑧ 的 tlsrow）：两个路径都比较长，
                          塞进右侧小框放不下 —— 这一行做成「说明在上、两个全宽
                          输入框在下」的变体，是整张卡里唯一的例外。 -->

@@ -58,6 +58,21 @@ class ConfigPage(
         /** `server.host`：`"0.0.0.0"`、`["0.0.0.0","::"]`、以及 `-host` 那种逗号分隔的
          *  `"0.0.0.0,::"` —— **三种都合法**（服务端 `serve::resolve_hosts` 三种都收）。 */
         HOST,
+
+        /**
+         * `server.allowOrigins`：一个**字符串数组**，框里画成「一条一行」。
+         *
+         * ⚠️★ 它和 [HOST] 那种「同一个值的三种写法」不一样：这里的数组是**唯一的**
+         * 合法形状（`Vec<String>`），所以取样时必须写回 `JSONArray`，不能写回字符串 ——
+         * 写成字符串的话服务端反序列化会**整份配置失败**，而这个 App 的表现是
+         * 「保存成功、重启后端口回到默认」。
+         *
+         * ⚠️ 内容**不在这里校验**：`Config::validate_for_save` 已经逐条按
+         * `normalize_origin` 的规则检查（非法条目会带着原文回显），
+         * 这一层只负责「多行文本 ↔ 数组」的搬运。在这里再判一遍必然漂 ——
+         * 而漂了的两种结果都很难看（界面放行、服务端拒 / 界面拒、其实能配）。
+         */
+        ORIGINS,
     }
 
     /**
@@ -83,6 +98,7 @@ class ConfigPage(
         Field(R.id.configHost, "server.host", Kind.HOST),
         Field(R.id.configPort, "server.port", Kind.INT),
         Field(R.id.configPrefix, "server.prefix", Kind.STRING),
+        Field(R.id.configAllowOrigins, "server.allowOrigins", Kind.ORIGINS),
         Field(R.id.configCert, "server.cert", Kind.STRING),
         Field(R.id.configKey, "server.key", Kind.STRING),
         Field(R.id.configDbPath, "server.dbPath", Kind.STRING),
@@ -588,6 +604,15 @@ class ConfigPage(
                 .joinToString(",")
             else -> raw.toString()
         }
+        // 一条一行。⚠️ 非数组（手改坏了的配置）画成空框：那种值本来就会被服务端拒，
+        //    而把 `{"a":1}` 摊成一串 `toString()` 只会让人以为它是个合法来源。
+        Kind.ORIGINS -> when (raw) {
+            is JSONArray -> (0 until raw.length())
+                .map { raw.optString(it).trim() }
+                .filter { it.isNotEmpty() }
+                .joinToString("\n")
+            else -> ""
+        }
     }
 
     private fun fromText(kind: Kind, text: String): Any? {
@@ -601,6 +626,15 @@ class ConfigPage(
             // ⚠️ 空 → `["0.0.0.0"]`（与 `Config::default()` 一致）：空的 host 会被
             //    服务端补成 `0.0.0.0`，那不如就在这里写成它。
             Kind.HOST -> if (trimmed.isEmpty()) JSONArray().put("0.0.0.0") else trimmed
+            // 空 → 空数组（`Config::default()` 就是空 Vec）。⚠️ **必须**是 `JSONArray`：
+            // 写回空串的话服务端那边 `Vec<String>` 反序列化失败，整份配置读不出来。
+            // 分隔符同时认换行与逗号 —— 用户多半是从别处粘一行 `a,b` 进来。
+            Kind.ORIGINS -> JSONArray().also { arr ->
+                text.split('\n', ',')
+                    .map { it.trim() }
+                    .filter { it.isNotEmpty() }
+                    .forEach { arr.put(it) }
+            }
         }
     }
 }

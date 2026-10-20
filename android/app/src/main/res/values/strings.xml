@@ -238,6 +238,11 @@
     <string name="config_port_hint">被占用时服务端会直接报错，不会自己换一个 —— 静默换端口会让别的设备上填的地址永远连不上。</string>
     <string name="config_prefix">子路径前缀</string>
     <string name="config_prefix_hint">部署在反向代理的子目录时才用（比如 /clip9/）。留空 = 根路径。</string>
+    <!-- 跨源白名单：前端放在别处、浏览器直接调这台手机的 API 时才需要（前后端分离部署）。
+         ⚠️ 每条只写到端口为止，不能带路径 —— 浏览器发的 `Origin` 头就是这个形状。 -->
+    <string name="config_allow_origins">跨源来源（CORS）</string>
+    <string name="config_allow_origins_hint">前端部署在别的地址时才用。每行一个，只写到端口为止（不带路径）。留空 = 只放行本机与桌面端。</string>
+    <string name="config_allow_origins_ph">https://clip.example.com</string>
     <!-- 证书与私钥合成一行（稿子 ⑧ 的 tlsrow），两个输入框各自的提示沿用下面两条。 -->
     <string name="config_tls_title">证书与私钥</string>
     <string name="config_cert">证书文件路径</string>

@@ -154,4 +154,27 @@
         <item name="android:background">@drawable/bg_console_fin</item>
         <item name="android:imeOptions">actionDone</item>
     </style>
+
+    <!--
+      多行输入（跨源白名单用）：与 `.fin` 那一套同一副皮，但**没有 maxWidth**、
+      也不设 `actionDone` —— 多行框里那个会把回车吞掉，用户就打不出第二条来源了。
+
+      ⚠️ `inputType` 故意**不在这里**：调用方要写 `textMultiLine|textUri`。
+      写死在样式里的话，「这一格想换个键盘」就得改样式，而样式是二十来个框共用的。
+    -->
+    <style name="Widget.Clip9.CfgArea" parent="@android:style/Widget.EditText">
+        <item name="android:minHeight">72dp</item>
+        <item name="android:paddingStart">10dp</item>
+        <item name="android:paddingTop">8dp</item>
+        <item name="android:paddingEnd">10dp</item>
+        <item name="android:paddingBottom">8dp</item>
+        <item name="android:fontFamily">monospace</item>
+        <item name="android:textSize">13sp</item>
+        <item name="android:textColor">@color/console_text</item>
+        <item name="android:textColorHint">@color/console_text_faint</item>
+        <item name="android:background">@drawable/bg_console_fin</item>
+        <!-- ⚠️ `flagNoEnterAction`（不是 `actionNone`）：多行框要留着回车换行，
+             而 `actionNone` 只表示「不显示动作键」，回车在部分输入法上仍会被拦。 -->
+        <item name="android:imeOptions">flagNoEnterAction</item>
+    </style>
 </resources>
