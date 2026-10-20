@@ -617,7 +617,7 @@ const pkgApk = read('openwrt/scripts/package-openwrt-apk.sh');
 //    ⚠️ 另外三种是**必须红**的：版本不存在、那一段是占位、那一段只有标题没有正文。
 //    只判「正常情形抽得对」的话，一个永远返回空的脚本也能过。
 {
-  const label = 'tools/release-notes.mjs：抽对那一段；缺席 / 占位 / 空正文都要报错';
+  const label = 'tools/release-notes.mjs：抽对那一段；缺席 / 占位 / 空正文 / 没有下载表 都要报错';
   const problems = [];
   const script = join(ROOT, 'tools/release-notes.mjs');
   if (!existsSync(script)) {
@@ -650,6 +650,15 @@ const pkgApk = read('openwrt/scripts/package-openwrt-apk.sh');
       '',
       '就是这一版要说的话。',
       '',
+      // ⚠️★ 「### 下载哪个」那张表**不能省**（2026-10-21 起 `release-notes.mjs` 强制它）：
+      //    省掉的话，下面那条「抽 v0.1.0 应当成功」会红在一条与它无关的判据上 ——
+      //    而那看起来像「抽正文坏了」，其实只是夹具过时了。
+      '### 下载哪个',
+      '',
+      '| 我要装在哪 | 下哪个 |',
+      '| --- | --- |',
+      '| 服务端 | `clip9-cli-v0.1.0-x86_64-unknown-linux-gnu.tar.gz` |',
+      '',
       '## v0.0.9 · 2026-09-27',
       '',
       '再往前那一版的正文。',
@@ -681,6 +690,21 @@ const pkgApk = read('openwrt/scripts/package-openwrt-apk.sh');
     const empty = write('EMPTY.md', ['## v0.5.0 · 2026-10-02', '', '## v0.4.0 · 2026-10-01', '']);
     if (run('v0.5.0', empty).status === 0) {
       problems.push('抽到**只有标题、没有正文**的一条居然成功了');
+    }
+
+    // ⚠️★ 2026-10-21 加：正文写了、但**没有「### 下载哪个」**的一段必须红。
+    //    这一条是上面那条「v0.1.0 应当成功」的反面 —— 少了它，把那段检查删掉
+    //    也不会有任何东西变红（v0.1.4 / v0.1.5 / v0.1.6 就是这么连漏三版的）。
+    const noTable = write('NOTABLE.md', [
+      '## v0.6.0 · 2026-10-03',
+      '',
+      '### 这一版有什么',
+      '',
+      '正文写了，但没有下载表。',
+      '',
+    ]);
+    if (run('v0.6.0', noTable).status === 0) {
+      problems.push('抽到**没有「### 下载哪个」**的一段居然成功了（Release 上就没有「该下哪个」）');
     }
   }
   if (problems.length) fail(label, problems.join('\n    '));
