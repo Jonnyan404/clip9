@@ -1409,6 +1409,39 @@ const pkgApk = read('openwrt/scripts/package-openwrt-apk.sh');
   if (problems.length) fail(label, problems.join('\n    '));
 }
 
+// ── 判据 15：两条发货路径都把**版本号**注进了内嵌的那个服务端（2026-10-20）──
+//
+// ⚠️★ 症状是**静默**的：不注 `CLIP9_VERSION`，`server/src/lib.rs` 的 `option_env!` 就回落成
+//    `Cargo.toml` 的 `0.1.0` —— 编得过、发得出，只是桌面上那个「服务端版本」与手机上
+//    那个永远显示 0.1.0（v0.1.6 发出去的桌面端就是这样）。
+// ⚠️ CLI 那条路径**早就有**注入（`release.yml` 的 musl 那一步）。漏的是**桌面 sidecar**
+//    与 **Android 的 `.so`** —— 它们各自有自己的构建步骤，所以判据盯的是**那两处**，
+//    而不是「文件里出现过 `CLIP9_VERSION`」。
+{
+  const label = '桌面 sidecar 与 Android 的 .so 都注入了版本号';
+  const problems = [];
+  const rel = read(RELEASE);
+  const desk = rel === null ? null : jobBlock(rel, 'desktop');
+  if (desk === null) {
+    problems.push(`读不到 ${RELEASE} 里的 desktop job —— 这条判据失效了（别报绿）`);
+  } else if (!desk.includes('CLIP9_VERSION')) {
+    problems.push(
+      'release.yml 的 desktop job 没给 sidecar 注 `CLIP9_VERSION` —— 它会回落成 Cargo.toml 的 0.1.0，' +
+        '而界面上「服务端版本」读的就是它（`ServerProcess::version` 跑 `-v`）',
+    );
+  }
+  const android = read(ANDROID);
+  if (android === null) {
+    problems.push(`读不到 ${ANDROID}`);
+  } else if (!android.includes('CLIP9_VERSION')) {
+    problems.push(
+      'android.yml 没给编 `.so` 那一步传 `CLIP9_VERSION` —— 手机上的「服务端版本」会恒为 0.1.0',
+    );
+  }
+  if (!problems.length) ok(label);
+  if (problems.length) fail(label, problems.join('\n    '));
+}
+
 // ── 输出 ────────────────────────────────────────────────────────────────────
 
 if (failures.length) {

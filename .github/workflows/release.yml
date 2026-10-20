@@ -648,9 +648,23 @@ jobs:
             *windows*) exe=".exe" ;;
             *)         exe="" ;;
           esac
+          # ⚠️★ 版本号**必须注进这个 sidecar**（2026-10-20）：它跟 app 一起发出去，
+          #    而界面上「服务端版本」读的就是它的 `-v`（`ServerProcess::version`）。
+          #    不注的话它回落成 `Cargo.toml` 的 `0.1.0` —— 每一个版本都自称 0.1.0，
+          #    v0.1.6 发出去的桌面端就是这样。⚠️ 这条以前只加在 CLI 那条路径上（见上面
+          #    musl 那一步），桌面端漏了。
+          export CLIP9_VERSION="${{ needs.info.outputs.tag }}"
+          export CLIP9_VERSION="${CLIP9_VERSION#v}"
           cargo build --release -p $BIN --target ${{ matrix.target }} --features doc
           mkdir -p crates/desktop/binaries
           cp "target/${{ matrix.target }}/release/$BIN$exe" "crates/desktop/binaries/$BIN$exe"
+          # ⚠️★ 当场验一次：注不进去**不会报错**，只会安静地回落到 0.1.0。
+          #    ⚠️ 用 `grep -a`（把二进制当文本）而不是 `strings` —— Windows 的 Git Bash
+          #    里没有 `strings`，而这个 job 三个平台都跑。
+          if ! grep -aqF "$CLIP9_VERSION" "crates/desktop/binaries/$BIN$exe"; then
+            echo "::error::sidecar 里找不到 $CLIP9_VERSION —— 版本没注进去，它回落成 Cargo.toml 那个 0.1.0 了"
+            exit 1
+          fi
 
       # ★ 把 tag 里的版本号注进这次构建 —— **发布产物上唯一的版本真值**。
       #

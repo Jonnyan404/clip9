@@ -194,6 +194,10 @@ jobs:
         env:
           VERSION: ${{ needs.version.outputs.version }}
           VERSION_CODE: ${{ needs.version.outputs.version_code }}
+          # ⚠️★ 让 **`.so` 里那个内嵌服务端**也带上版本号（2026-10-20）：`cargo build` 读的
+          #    就是这个名字（`server/src/lib.rs` 的 `option_env!("CLIP9_VERSION")`）。
+          #    不传的话手机上「服务端版本」恒为 0.1.0 —— 与桌面端 sidecar 是同一条 bug。
+          CLIP9_VERSION: ${{ needs.version.outputs.version }}
           KEYSTORE_PATH: ${{ runner.temp }}/clip9-release.jks
           STORE_PASSWORD: ${{ secrets.SIGNING_KEY_STORE_PASSWORD }}
           KEY_ALIAS: ${{ secrets.SIGNING_KEY_ALIAS }}
@@ -332,6 +336,15 @@ jobs:
               fi
               if ! grep -qF 'id="app"' "$rows.txt"; then
                 echo "::error::$(basename "$apk") 的 $so 里找不到 id=\"app\" —— 它内嵌的不是一份真前端产物"
+                exit 1
+              fi
+              # ── 内嵌服务端的**版本号**（2026-10-20 加）────────────────────
+              #
+              # ⚠️★ 与桌面端 sidecar 同一条：`CLIP9_VERSION` 不传就回落成 `Cargo.toml`
+              #    的 `0.1.0`，而这一格**没有编译器看着** —— 编得过、装得上，
+              #    只是手机上「服务端版本」永远显示 0.1.0。
+              if ! grep -qF "$VERSION" "$rows.txt"; then
+                echo "::error::$(basename "$apk") 的 $so 里找不到 $VERSION —— 内嵌服务端的版本没注进去（回落成 0.1.0 了）"
                 exit 1
               fi
               # ── 文档转换（`doc` feature）必须在这一版里 ────────────────────
