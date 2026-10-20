@@ -73,7 +73,7 @@ jobs:
         working-directory: cloudflare/workers
         run: npm ci
 
-      # ⚠️ 放在部署**之前**：这些测试（12 个文件 / 320 项断言）此前没接进任何门禁，
+      # ⚠️ 放在部署**之前**：这些测试（`test/` 下每个文件一个场景、几百项断言）此前没接进任何门禁，
       #    而部署会动线上数据 —— 红了就别往下走。
       # ⚠️ 它不需要 wrangler、不联网：用 node:sqlite 当 D1、Map 当 R2，
       #    打包器是 `node_modules/.bin/esbuild`（由 wrangler 带进来）。

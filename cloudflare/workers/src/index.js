@@ -64,8 +64,17 @@ router.post('/upload', FileHandler.upload);
 router.get('/file/:uuid/:filename?', FileHandler.download);
 router.delete('/file/:uuid', FileHandler.delete);
 
-// 添加删除消息路由
+// ── 删除消息 ────────────────────────────────────────────────────────────────
+// ⚠️★ 2026-10-20：**POST 与 DELETE 都要认**。
+//    · 网页版在同一天统一改成了 POST —— 自建服务端（Rust）只接受 POST
+//      （`post(handlers::revoke).fallback(only_post)`；破坏性操作必须是显式 POST）。
+//      这里原来只有 DELETE，不补 POST 的话 Cloudflare 部署上**一条都删不掉** ——
+//      请求会落到下面那条 SPA 兜底，拿回一份 HTML，前端只会报「删除失败」。
+//    · 保留 DELETE 不是洁癖：老 SPA 可能还被 Service Worker 缓存着，换掉 SW 之前它还在发 DELETE。
+//    · 不补 GET：删一条消息不该是「打开一个链接」就能做到的事（与自建服务端同一条理由）。
+router.post('/revoke/all', ContentHandler.revokeAll);
 router.delete('/revoke/all', ContentHandler.revokeAll);
+router.post('/revoke/:id', ContentHandler.revoke);
 router.delete('/revoke/:id', ContentHandler.revoke);
 
 // WebSocket 连接

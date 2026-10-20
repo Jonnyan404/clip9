@@ -2,6 +2,8 @@
 # 跑 Cloudflare Worker 的测试。
 #
 #   receive-path.test.mjs  —— 上传（/upload multipart 与 /text）→ /content/latest?json=1 → Receive 决策树
+#   content-list.test.mjs  —— GET /content（历史分页）+ WS 握手（**不推历史**、带 `config.latestId`）
+#   revoke-method.test.mjs —— 删除消息的方法：POST（网页版现在发的）与 DELETE 都认，GET 不许删
 #   device-name.test.mjs   —— 设备名（?name=）落库与回读，含自愈加列路径
 #   asset-routing.test.mjs —— 静态资源路由契约：/file 与 /content 不能被资源层回成 index.html
 #   shortcut-contract.test.mjs —— Android 快捷指令真正发出的请求形状（?auth= 查询串等）
@@ -42,6 +44,10 @@ node --no-warnings test/history-name.test.mjs
 echo
 echo "── 历史分页与 WS 握手（GET /content + config.latestId；握手不推历史）"
 node --no-warnings test/content-list.test.mjs
+
+echo
+echo "── 删除消息的方法（POST / DELETE 都认；GET 不许删）"
+node --no-warnings test/revoke-method.test.mjs
 
 echo
 echo "── 房间鉴权（/file/ 的房间不可被客户端 ?room= 伪造；会话令牌密钥含房间密码）"
