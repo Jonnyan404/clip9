@@ -118,6 +118,10 @@ mod tests {
         cfg.text.limit = 8192;
         cfg.file.chunk = 2 * 1024 * 1024;
         cfg.automation.tick_seconds = 15;
+        // ⚠️ 分离部署用的白名单：它是 `Vec<String>` + `#[serde(default)]`，
+        // 写歪名字（`allowOrigins` → 别的拼法）会**静默丢掉整份列表**，
+        // 而症状是「前端跨源忽然全被拦」+「配置里明明写着」。所以让它参与往返比对。
+        cfg.server.allow_origins = vec!["https://clip.example.com".to_owned()];
 
         save(&path, &cfg).expect("写配置");
 

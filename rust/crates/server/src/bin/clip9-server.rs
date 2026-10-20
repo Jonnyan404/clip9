@@ -73,6 +73,12 @@ const FLAGS: &[(&str, bool, &str)] = &[
         "指定前端产物目录（**盖住**编进二进制的那一份）",
     ),
     (
+        "allow-origin",
+        true,
+        "允许跨源访问这个服务端的前端来源（前后端分离部署时用；逗号分隔，追加到配置里的白名单之后；\
+         例：https://clip.example.com）",
+    ),
+    (
         "data",
         true,
         "指定数据目录（redb 库与 uploads/ 的根）—— ⚠️ Go 版没有这个",
@@ -343,6 +349,22 @@ fn apply_flags(config: &mut Config, args: &Args) -> anyhow::Result<()> {
     }
     if let Some(v) = args.get("key") {
         config.server.key = v;
+    }
+    // ⚠️★ 这一条与上面那些**语义不同**（它是个列表）：命令行里的来源是**追加**到
+    // 配置文件那几条后面的，不是覆盖。理由：分离部署时「配置里写一个域名、临时用
+    // 命令行再加一个」是很自然的用法，而覆盖会导致「加了一条、原来那条悄悄没了」——
+    // 症状是「原来能用的前端突然被 CORS 拦了」，且只在启动参数里找得到线索。
+    //
+    // ⚠️ 非法值**当场失败**（不是忽略）：`-allow-origin` 是人在命令行上手打的，
+    // 写歪了不报错的话，接下来只会看到浏览器里一句「blocked by CORS policy」。
+    if let Some(v) = non_empty(args, "allow-origin") {
+        for raw in v.split(',') {
+            let origin = clip9_core::config::normalize_origin(raw)
+                .map_err(|why| anyhow::anyhow!("-allow-origin 用不了：{why}"))?;
+            if !config.server.allow_origins.contains(&origin) {
+                config.server.allow_origins.push(origin);
+            }
+        }
     }
     Ok(())
 }
@@ -699,5 +721,45 @@ mod tests {
         assert_eq!(c.server.storage_dir, "s2");
         assert_eq!(c.server.db_path, "d2");
         assert_eq!(c.server.prefix, "p2");
+    }
+
+    /// ⚠️★ `-allow-origin` 是**追加**语义（与上面那些标量参数相反，理由见 `apply_flags`）。
+    /// 这条钉住两件事：① 它不会把配置文件里那几条挤掉；② 写歪的值**当场失败**。
+    #[test]
+    fn allow_origin_appends_normalised_entries() {
+        let mut c = configured();
+        c.server.allow_origins = vec!["https://from-config.example".to_owned()];
+        let args = parse(&[
+            "-allow-origin",
+            "HTTPS://Clip.Example.com/, https://from-config.example",
+        ]);
+        apply_flags(&mut c, &args).unwrap();
+
+        assert_eq!(
+            c.server.allow_origins,
+            vec![
+                "https://from-config.example".to_owned(),
+                "https://clip.example.com".to_owned()
+            ],
+            "应当是「配置里那几条 + 命令行那几条（归一、去重）」，不是覆盖"
+        );
+    }
+
+    /// 写歪了要**当场**红：留到浏览器里报 CORS，排查会绕很远。
+    #[test]
+    fn a_malformed_allow_origin_fails_at_startup() {
+        let mut c = configured();
+        // 带路径 = 永远匹配不上浏览器发来的 `Origin`。
+        let args = parse(&["-allow-origin", "https://clip.example.com/board"]);
+        let err = apply_flags(&mut c, &args).expect_err("带路径的来源必须当场失败");
+        let text = err.to_string();
+        assert!(
+            text.contains("https://clip.example.com/board"),
+            "错误里要回显那个值：{text}"
+        );
+        assert!(
+            c.server.allow_origins.is_empty(),
+            "失败时不该有半条被写进配置"
+        );
     }
 }

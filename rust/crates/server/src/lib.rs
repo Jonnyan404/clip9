@@ -365,7 +365,20 @@ pub fn router(state: Arc<AppState>) -> Router {
     // ⚠️★ **原来是 `CorsLayer::permissive()`（= `Allow-Origin: *`），2026-09-26 收窄了**：
     // `*` 在本机服务端上是**一个真的洞**（用户访问的任意网站都能把开放房间的内容读走）。
     // 放行谁、为什么是那三个，以及 `file://` 的 `null` 为什么也不行，全在 `cors` 模块的文档里。
-    let app = app.layer(cors::cors());
+    //
+    // ⚠️★ 2026-10-20 起多一类：`server.allowOrigins` —— **前后端分离部署**时前端所在的那个
+    // origin（命令行 `-allow-origin`）。仍然是一份**显式白名单**，不是把 `*` 放回来。
+    // ⚠️ 写歪的那几条在这里 warn 一次就够（每次请求都 warn 会把日志淹没）；它们不进白名单，
+    // 其余合法的照常生效 —— 见 `ServerConfig::normalized_origins` 的注释。
+    let (extra_origins, rejected_origins) = state.config.server.normalized_origins();
+    for origin in &rejected_origins {
+        tracing::warn!(
+            origin = %origin,
+            "server.allowOrigins 里这一条不是合法的来源形状（要 scheme://host[:port]），已忽略 —— \
+             前端跨源会被浏览器拦下"
+        );
+    }
+    let app = app.layer(cors::cors(&extra_origins));
 
     // ── 前端静态资源 ────────────────────────────────────────────────────
     //
@@ -382,8 +395,11 @@ pub fn router(state: Arc<AppState>) -> Router {
     // ⚠️★ 来源（外部目录 `-static` > **内嵌**）与「怎么发」全在 `static_files` 里，
     // **只有那一处** —— 这里只问一句「有没有得发」。
     //
-    // ⚠️ 这也是为什么 SPA 与 API 必须**同源**：前端那些请求是相对路径，
-    // 不同源就全要配代理。
+    // ⚠️★ 同源部署时前端那些请求是相对路径，不用配任何东西（这是**默认**形态）。
+    // ⚠️ 2026-10-20 起也支持**分离部署**（前端在别处、只调这个 API）：前端把 axios 的
+    //    baseURL 与 WS 地址指向这里（`web/public/config.js` 或界面里的「后端地址」），
+    //    服务端这边则要把那个来源写进 `server.allowOrigins` —— 两边**都要**配，
+    //    少一边的症状都是浏览器控制台里一句 CORS/跨源报错。
     let app = if static_files::has_source(static_dir.as_deref()) {
         app.fallback(static_files::serve)
     } else {

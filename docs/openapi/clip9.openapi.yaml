@@ -67,6 +67,22 @@ info:
     With a prefix configured the unprefixed paths keep working too, because reverse
     proxies commonly strip the prefix before forwarding.
 
+    ## CORS
+
+    Cross-origin reads are **not** allowed for arbitrary sites: the server runs on the
+    user's own machine and rooms are open by default, so a wildcard would let any page
+    the user visits read their clipboard history. Two sets of origins are accepted:
+
+    - built in: the desktop shell (`tauri://localhost`) and loopback (`http://localhost[:port]`,
+      `http://127.0.0.1[:port]`);
+    - whatever is listed in `server.allowOrigins` (CLI: `-allow-origin <origin>[,<origin>]`,
+      appended to the config entries). That is the knob for a **separately hosted frontend**:
+      the front end's origin must be listed here, or every request fails CORS.
+
+    Each entry must be a bare origin (`https://clip.example.com`), not a URL: paths,
+    queries and userinfo are rejected at startup / save time because a browser never
+    sends them and an entry that can never match is worse than no entry.
+
     ## Authentication
 
     A credential is one of: the **global password**, a **room password**, or a

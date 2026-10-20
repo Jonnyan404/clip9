@@ -1022,7 +1022,12 @@ const pageSwitches = configPageSwitches();
   if (!rustKeys) {
     fail(label, '读不到 rust/crates/core/src/config.rs 的结构体字段');
   } else {
-    const HANDLED_ELSEWHERE = new Set(['server.roomAuth']);
+    // ⚠️ `server.allowOrigins`（2026-10-20 加）：**前后端分离部署**才需要它 ——
+    // 前端在 CDN 上、这台机器只跑 API。而 Android 自带的那个服务端只给**同一局域网**的
+    // 浏览器用（前端就是它自己发的那一份，同源），手机上那个入口没有对应用法：
+    // 手机在 NAT 后面、地址还会变，没人会把前端单独挂在别处只调它。
+    // ⚠️ 它仍然可以通过 `config.json`（应用私有目录里那一份）配 —— 只是不占界面一行。
+    const HANDLED_ELSEWHERE = new Set(['server.roomAuth', 'server.allowOrigins']);
     const blocks = rustKeys.get('Config');
     const covered = new Set([...pageFields, ...pageSwitches].map((f) => f.path));
     const missing = [];

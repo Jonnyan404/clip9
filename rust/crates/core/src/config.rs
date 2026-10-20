@@ -102,6 +102,16 @@ impl Config {
             );
         }
 
+        // ④ 跨源白名单里的每一条都要是合法的 `Origin` 形状。
+        //    写法歪了不会报错，只会「永远匹配不上」—— 症状是浏览器里一句
+        //    「blocked by CORS policy」，而配置页看起来明明配了。
+        //    ⚠️ 这里**连原始写法一起回显**：用户要改的就是那一行字。
+        for raw in &self.server.allow_origins {
+            if let Err(why) = normalize_origin(raw) {
+                return Err(format!("跨源白名单里有一条用不了：{why}"));
+            }
+        }
+
         Ok(())
     }
 }
@@ -224,6 +234,20 @@ pub struct ServerConfig {
     /// 一并把对账变频繁。测试时调到几秒很好用，生产别调到几秒。
     #[serde(rename = "fileCleanup")]
     pub file_cleanup: i64,
+    /// **允许跨源访问这个服务端的前端来源**（前后端分离部署时用）。空 = 只放行
+    /// 内置那三类（桌面 `tauri://localhost` 与本机回环，见 `server/src/cors.rs`）。
+    ///
+    /// ⚠️★ 为什么必须是**逐条列出**、而不是把 `*` 放回来：这个服务端默认跑在
+    /// **用户自己的机器**上、房间默认不要密码 —— `*` 意味着用户随手点开的任意网页
+    /// 都能把本机的剪贴板历史读走（2026-09-26 那次收窄的理由，见 `cors` 模块文档）。
+    /// 而「把前端放到 CDN 上、只调这个 API」确实是正当需求，所以给它一条**显式**
+    /// 的窄口子：谁来读，得由部署的人写下来。
+    ///
+    /// ⚠️ 每条必须是 `scheme://host[:port]`（`Origin` 头的严格形状），不是 URL：
+    /// 带路径 / 查询 / 用户信息的写法**存不进去**（见 [`normalize_origin`]）——
+    /// 浏览器从来不发那种形状，而一条永远匹配不上的白名单项只会让人以为配过了。
+    #[serde(rename = "allowOrigins")]
+    pub allow_origins: Vec<String>,
 }
 
 impl Default for ServerConfig {
@@ -242,7 +266,88 @@ impl Default for ServerConfig {
             room_list: false,
             room_cleanup: 3600,
             file_cleanup: 300,
+            allow_origins: Vec::new(),
         }
+    }
+}
+
+/// 把一条「允许跨源的前端来源」归一成 `scheme://host[:port]`。
+///
+/// ⚠️★ 这是**唯一**一处定义「什么算一个合法来源」，三边都调它：命令行
+/// （`-allow-origin`，非法值当场启动失败）、保存配置前的校验（
+/// [`Config::validate_for_save`]，非法值写不进盘）、以及服务端拼 CORS 那一层
+/// （`server/src/cors.rs` 只拿归一后的字符串做比较）。三处各写一份的话，
+/// 「命令行能过、配置文件能存、但浏览器送来的 Origin 匹配不上」这种半通状态必然出现。
+///
+/// 归一规则（都是**无歧义**的那几种，不做「聪明」的猜测）：
+/// - `scheme` 只认 `http` / `https`（`tauri://localhost` 是内置的，不走这里）；
+/// - `host` 与 `scheme` 转小写（`Origin` 的 scheme/host 本来就大小写不敏感）；
+/// - 结尾**一个** `/` 可以接受并去掉（人写地址时会顺手带上，而它不改变语义）；
+/// - 端口必须是数字；
+/// - 带路径 / 查询 / `#` / 用户信息的**一律拒绝** —— 浏览器从不发那种形状。
+pub fn normalize_origin(raw: &str) -> Result<String, String> {
+    let text = raw.trim();
+    if text.is_empty() {
+        return Err("来源不能是空字符串".to_owned());
+    }
+    let (scheme, rest) = text.split_once("://").ok_or_else(|| {
+        format!("{text:?} 缺协议头 —— 要写成 scheme://host[:port]（例如 https://clip.example.com）")
+    })?;
+    let scheme = scheme.to_ascii_lowercase();
+    if scheme != "http" && scheme != "https" {
+        return Err(format!(
+            "{text:?} 的协议是 {scheme:?} —— 只接受 http / https（浏览器页面就这两种）"
+        ));
+    }
+    // ⚠️ 只去掉**一个**结尾斜杠：`https://a.example//` 多半是手滑，不该被当成合法来源。
+    let rest = rest.strip_suffix('/').unwrap_or(rest);
+    if rest.is_empty() {
+        return Err(format!("{text:?} 没有主机名"));
+    }
+    if rest.contains(['/', '?', '#', '@']) {
+        return Err(format!(
+            "{text:?} 带了路径 / 查询 / 用户信息 —— 来源只写到端口为止（Origin 头就是这个形状）"
+        ));
+    }
+    let (host, port) = match rest.rsplit_once(':') {
+        Some((host, port)) => (host, Some(port)),
+        None => (rest, None),
+    };
+    if host.is_empty() {
+        return Err(format!("{text:?} 没有主机名"));
+    }
+    if let Some(port) = port {
+        if port.is_empty() || !port.bytes().all(|b| b.is_ascii_digit()) {
+            return Err(format!("{text:?} 的端口 {port:?} 不是数字"));
+        }
+        if port.parse::<u16>().is_err() {
+            return Err(format!("{text:?} 的端口超出 1–65535"));
+        }
+    }
+    let host = host.to_ascii_lowercase();
+    Ok(match port {
+        Some(port) => format!("{scheme}://{host}:{port}"),
+        None => format!("{scheme}://{host}"),
+    })
+}
+
+impl ServerConfig {
+    /// 把 `allowOrigins` 拆成（能用的，被拒的）。
+    ///
+    /// ⚠️ 被拒的那几条**不静默丢掉**：调用方（`server` 拼 CORS 时）要
+    /// `tracing::warn!` 出来 —— 手改 `config.json` 写错一条，症状是「前端跨源被浏览器拦」，
+    /// 而那时服务端一句日志都没有的话，没人会想到是白名单里那行字写歪了。
+    #[must_use]
+    pub fn normalized_origins(&self) -> (Vec<String>, Vec<String>) {
+        let mut ok = Vec::with_capacity(self.allow_origins.len());
+        let mut bad = Vec::new();
+        for raw in &self.allow_origins {
+            match normalize_origin(raw) {
+                Ok(origin) => ok.push(origin),
+                Err(_) => bad.push(raw.clone()),
+            }
+        }
+        (ok, bad)
     }
 }
 
@@ -682,5 +787,95 @@ mod tests {
                 "端口 {port} 是能用端口，不该挡"
             );
         }
+    }
+}
+
+#[cfg(test)]
+mod origin_tests {
+    use super::{Config, normalize_origin};
+
+    /// ⚠️★ 归一化的每一条都要有**具体**的用例：它是「命令行 / 配置校验 / CORS 比较」
+    /// 三处共用的唯一一份定义，这里歪一点，三处会一起歪，而且都是静默的。
+    #[test]
+    fn valid_origins_are_normalised() {
+        let cases = [
+            // 大小写不敏感（`Origin` 的 scheme/host 本来就如此），但**存下来要是一种写法**，
+            // 否则同一来源在配置里能写成好几种，比较时就得做大小写转换（那件事迟早会漏）。
+            ("HTTPS://Clip.Example.COM", "https://clip.example.com"),
+            ("http://127.0.0.1:8080", "http://127.0.0.1:8080"),
+            // 人写地址时顺手带的结尾斜杠：不改变语义，接受。
+            ("https://clip.example.com/", "https://clip.example.com"),
+            // 前后空格是复制粘贴的常态。
+            ("  https://clip.example.com  ", "https://clip.example.com"),
+            ("http://localhost:5173", "http://localhost:5173"),
+        ];
+        for (raw, want) in cases {
+            assert_eq!(normalize_origin(raw).as_deref(), Ok(want), "输入 {raw:?}");
+        }
+    }
+
+    /// 这些形状**必须**被拒 —— 它们都是「配了也匹配不上」的典型写法。
+    #[test]
+    fn malformed_origins_are_rejected() {
+        for raw in [
+            "",
+            "   ",
+            "clip.example.com",               // 缺协议
+            "clip.example.com:443",           // 缺协议（看着像 host:port）
+            "/relative/path",                 // 相对地址
+            "ftp://clip.example.com",         // 非 http(s)
+            "tauri://localhost",              // 内置来源，不该经这条配置项
+            "https://clip.example.com/board", // 带路径
+            "https://clip.example.com?x=1",   // 带查询
+            "https://clip.example.com#top",   // 带片段
+            "https://user@clip.example.com",  // 带用户信息
+            "https://",                       // 没主机
+            "https://:8080",                  // 没主机
+            "https://clip.example.com:abc",   // 端口不是数字
+            "https://clip.example.com:",      // 空端口
+            "https://clip.example.com:99999", // 端口越界
+            "https://clip.example.com//",     // 两个斜杠是手滑，不是来源
+        ] {
+            assert!(normalize_origin(raw).is_err(), "{raw:?} 应当被拒");
+        }
+    }
+
+    /// 存不进去的配置 = 从来没进过盘。这条钉的是「保存」那一侧。
+    #[test]
+    fn a_bad_origin_cannot_be_saved() {
+        let mut cfg = Config::default();
+        cfg.server.allow_origins = vec!["https://clip.example.com/board".to_owned()];
+        let err = cfg
+            .validate_for_save()
+            .expect_err("带路径的来源必须挡住 —— 它永远匹配不上浏览器发来的 Origin");
+        assert!(
+            err.contains("https://clip.example.com/board"),
+            "拒绝的话里要回显那一行原文：{err}"
+        );
+
+        // 反过来：一条合法的必须放行（挡多了就是「配置页不让配」）。
+        cfg.server.allow_origins = vec!["https://clip.example.com".to_owned()];
+        assert_eq!(cfg.validate_for_save(), Ok(()));
+    }
+
+    /// 手改配置写歪一条时，**其余合法的那几条仍然生效** —— 不能因为一条错就整层失效
+    /// （那样症状会变成「加了一条写错的，原来能用的也一起不能用了」，非常难懂）。
+    #[test]
+    fn one_bad_entry_does_not_drop_the_good_ones() {
+        let mut cfg = Config::default();
+        cfg.server.allow_origins = vec![
+            "https://ok.example".to_owned(),
+            "not-an-origin".to_owned(),
+            "https://also-ok.example:8443/".to_owned(),
+        ];
+        let (ok, bad) = cfg.server.normalized_origins();
+        assert_eq!(
+            ok,
+            vec![
+                "https://ok.example".to_owned(),
+                "https://also-ok.example:8443".to_owned()
+            ]
+        );
+        assert_eq!(bad, vec!["not-an-origin".to_owned()]);
     }
 }

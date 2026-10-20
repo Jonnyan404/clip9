@@ -19,17 +19,18 @@
 //! ⚠️ 这条同时也是 `dev-docs/specs/desktop-client.md` §8 审计清单里那条
 //! 「**只放该 origin**，别开 `*`」的落地。
 //!
-//! # 放行谁（就这三类）
+//! # 放行谁（三类内置 + 配置里写的）
 //!
 //! | 来源 | 为什么 |
 //! |---|---|
 //! | `tauri://localhost` | **桌面客户端**（`dev-docs/specs/desktop-client.md` §3 的 B 方案）。 ⚠️ 实测确认过：webview 发的就是**这一个**字符串（§0.1.3 那套记录型代理抓到的） |
 //! | `http(s)://localhost[:port]` | 本机开发（`vite dev` 是 `http://localhost:5173` → `http://localhost:9501`） |
 //! | `http(s)://127.0.0.1[:port]` | 同上，只是写法不同 |
+//! | `server.allowOrigins` 里的每一条 | **前后端分离部署**：前端在 CDN / 静态托管上，只调这个 API。 |
 //!
-//! ⚠️★ **SPA 不需要 CORS** —— 它由这个服务端**自己**渲染（同源）。所以这张表里
-//! 没有「用户的域名」这一类：真要支持「把前端放别处、只调这个 API」，那得加一个
-//! **配置项**，而不是把 `*` 放回来。
+//! ⚠️★ **SPA 同源部署不需要 CORS** —— 它由这个服务端**自己**渲染。而「前端放别处」这件事
+//! 2026-10-20 起有了**正式的口子**：`server.allowOrigins`（命令行 `-allow-origin`）。
+//! 那是**逐条列出**的白名单，**不是**把 `*` 放回来 —— 理由见下面「为什么要收窄」。
 //!
 //! ⚠️ `file://` 页面（用户拿个本地 HTML 当临时客户端）发的是 `Origin: null` ——
 //! **不放行**。`null` 也是沙箱化 iframe / `data:` URL 的来源，放行它等于把上面那个洞换了个写法。
@@ -43,7 +44,7 @@ use tower_http::cors::{AllowOrigin, CorsLayer};
 /// 桌面客户端的来源。⚠️ **实测值**，不是猜的（见模块文档那张表）。
 pub const TAURI_ORIGIN: &str = "tauri://localhost";
 
-/// 这个 `Origin` 头允许跨源读吗？
+/// 这个 `Origin` 头允许跨源读吗？（**内置**的那三类，不含配置里的白名单）
 ///
 /// ⚠️ 只接受 `scheme://host[:port]` 三段的**严格**形状：带路径 / 查询 / userinfo 的一律拒绝。
 /// 宽容在这儿没有任何好处 —— 浏览器本来就只发严格形状，而「看起来更安全的宽容」
@@ -84,7 +85,31 @@ pub fn is_allowed_origin(raw: &str) -> bool {
     matches!(host, "localhost" | "127.0.0.1")
 }
 
+/// 这个 `Origin` 头允许吗？= 内置三类 **或** 部署时配的那几条白名单。
+///
+/// ⚠️★ 比较**只走归一化后的字符串**：`origin` 来自请求头（大小写、结尾斜杠都可能与人写的不一样），
+/// 而 `extras` 已经是 [`clip9_core::config::normalize_origin`] 归一过的。
+/// 直接 `==` 原文的话，「配了 `HTTPS://A.example`、浏览器发 `https://a.example`」会**永远不匹配** ——
+/// 而那种错只在真机上才看得见（本地同源调试根本不触发 CORS）。
+#[must_use]
+pub fn is_allowed(raw: &str, extras: &[String]) -> bool {
+    if is_allowed_origin(raw) {
+        return true;
+    }
+    if extras.is_empty() {
+        return false;
+    }
+    match clip9_core::config::normalize_origin(raw) {
+        Ok(origin) => extras.iter().any(|allowed| allowed == &origin),
+        Err(_) => false,
+    }
+}
+
 /// 拼这一层 CORS。
+///
+/// `extras` 是 `server.allowOrigins`（调用方已经过 [`ServerConfig::normalized_origins`]
+/// 归一，被拒的那几条在外面 warn 过）。传空切片 = 只有内置那三类 —— 也就是同源渲染的
+/// 常规部署，与加这个参数之前**一模一样**。
 ///
 /// ⚠️ 方法与头的白名单**照抄 Go 的 `corsMiddleware`** —— 两边在这件事上必须一样，
 /// 否则「Go 能用、Rust 401」这种只在跨源时出现的差异会非常难查。
@@ -95,11 +120,16 @@ pub fn is_allowed_origin(raw: &str) -> bool {
 /// clippy 会报 `double_must_use`（`-D warnings` 下直接是红的）。
 /// 2026-09-26 补跑 clippy 时抓到的 —— 一个没有信息量的属性换来门禁变红，
 /// 而门禁红久了就会被当成噪声放过。
-pub fn cors() -> CorsLayer {
+pub fn cors(extras: &[String]) -> CorsLayer {
+    // ⚠️ 先 clone 一份成 `Arc<[String]>` 再进闭包：`CorsLayer` 的 predicate 是 `Fn`，
+    //    借用 `&[String]` 活不过这个函数（层要跟着 Router 活到进程结束）。
+    let extras: std::sync::Arc<[String]> = extras.into();
     CorsLayer::new()
-        .allow_origin(AllowOrigin::predicate(|origin: &HeaderValue, _request| {
-            origin.to_str().is_ok_and(is_allowed_origin)
-        }))
+        .allow_origin(AllowOrigin::predicate(
+            move |origin: &HeaderValue, _request| {
+                origin.to_str().is_ok_and(|raw| is_allowed(raw, &extras))
+            },
+        ))
         .allow_methods([
             Method::GET,
             Method::POST,
@@ -191,5 +221,34 @@ mod tests {
     fn ipv6_loopback_is_deliberately_not_allowed() {
         assert!(!is_allowed_origin("http://[::1]:5173"));
         assert!(!is_allowed_origin("http://[::1]"));
+    }
+
+    /// ⚠️★ 2026-10-20：分离部署的白名单**只多放行它列的**，别的照旧被拒。
+    /// 这条钉的是「加了口子之后，`*` 的效果没有偷偷回来」。
+    #[test]
+    fn configured_origins_are_allowed_and_nothing_else_is() {
+        let extras = vec!["https://clip.example.com".to_owned()];
+        assert!(is_allowed("https://clip.example.com", &extras));
+        // 归一化之后比较：大小写 / 结尾斜杠都能认（浏览器发的是小写无斜杠，人写的不一定）。
+        assert!(is_allowed("https://CLIP.Example.com", &extras));
+        assert!(is_allowed("https://clip.example.com/", &extras));
+        // 没列的一律不行 —— 包括它的子域、别的端口、别的协议。
+        for origin in [
+            "https://evil.example",
+            "https://sub.clip.example.com",
+            "https://clip.example.com:8443",
+            "http://clip.example.com",
+            "null",
+        ] {
+            assert!(
+                !is_allowed(origin, &extras),
+                "{origin} 不在白名单里，不该放行"
+            );
+        }
+        // 空白名单 = 与加这个参数之前完全一样。
+        assert!(!is_allowed("https://clip.example.com", &[]));
+        // ⚠️ 内置那三类**不因为配了白名单而消失**（桌面端不该被一次部署配置弄坏）。
+        assert!(is_allowed(TAURI_ORIGIN, &extras));
+        assert!(is_allowed("http://localhost:5173", &extras));
     }
 }

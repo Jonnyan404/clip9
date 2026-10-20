@@ -20,10 +20,20 @@ use clip9_store::Store;
 use tower::ServiceExt;
 
 fn app() -> (Router, tempfile::TempDir) {
+    app_with_origins(&[])
+}
+
+/// 带 `server.allowOrigins` 的部署（前后端分离）。
+///
+/// ⚠️★ 这条存在的理由：`cors::tests` 只验「判定函数」，完全不碰 `Config` 与 `router()`。
+/// 把 `cors::cors(&extra)` 改回 `cors::cors(&[])`（或忘了归一化）时，那些单测照样全绿，
+/// 而线上表现是「前端部署在 CDN 上，一条接口都调不通」—— 所以这里必须走真 Router + 真配置。
+fn app_with_origins(origins: &[&str]) -> (Router, tempfile::TempDir) {
     let dir = tempfile::tempdir().expect("建临时目录");
     let store = Store::open(dir.path().join("clip9.redb")).expect("打开 store");
     let mut config = Config::default();
     config.server.storage_dir = dir.path().join("uploads").display().to_string();
+    config.server.allow_origins = origins.iter().map(|o| (*o).to_owned()).collect();
     let state = AppState::new(config, store, None);
     (router(state), dir)
 }
@@ -140,4 +150,55 @@ async fn preflight_matches_the_actual_request() {
         vary.to_ascii_lowercase().contains("origin"),
         "必须带 `Vary: Origin`：{vary:?}"
     );
+}
+
+/// ⚠️★ **前后端分离部署**：`server.allowOrigins` 里写的前端来源要真的拿到放行头。
+///
+/// 这里同时钉住两件事：
+/// ① 配置**真的**接到那一层了（不是只加了一个没人读的字段）；
+/// ② 放行是**逐条**的 —— 配了 A 不等于放行 B（`*` 那种洞没回来）。
+#[tokio::test]
+async fn a_configured_frontend_origin_gets_the_allow_header() {
+    let (router, _dir) = app_with_origins(&["https://clip.example.com"]);
+
+    let (status, headers) = probe(&router, "https://clip.example.com", false).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(
+        allow_origin(&headers),
+        Some("https://clip.example.com"),
+        "配置里写的前端来源必须能跨源读到响应（否则分离部署一条接口都调不通）"
+    );
+
+    // 预检也要过：上行带 `Authorization`，浏览器一定会先 OPTIONS。
+    let (status, headers) = probe(&router, "https://clip.example.com", true).await;
+    assert!(status.is_success(), "预检应当成功，得到 {status}");
+    assert_eq!(allow_origin(&headers), Some("https://clip.example.com"));
+
+    // 没配的来源照旧不给头 —— 加了口子不等于把门全打开。
+    for origin in ["https://evil.example", "https://sub.clip.example.com"] {
+        let (_, headers) = probe(&router, origin, false).await;
+        assert_eq!(
+            allow_origin(&headers),
+            None,
+            "{origin} 不在 allowOrigins 里，不该被放行"
+        );
+    }
+}
+
+/// 配置里写歪一条时：**其余合法的照常生效**，写歪的那条只会在启动日志里 warn。
+///
+/// ⚠️ 为什么值得一条端到端用例：如果把 `normalized_origins()` 换成「有一条错就整层失效」，
+/// 症状会是「加了一条写错的，原来能用的前端也一起连不上了」—— 那种排查起来非常费劲。
+#[tokio::test]
+async fn one_malformed_entry_does_not_disable_the_valid_ones() {
+    let (router, _dir) = app_with_origins(&["https://ok.example", "不是来源"]);
+
+    let (_, headers) = probe(&router, "https://ok.example", false).await;
+    assert_eq!(
+        allow_origin(&headers),
+        Some("https://ok.example"),
+        "合法的那条不该被写歪的邻居拖下水"
+    );
+    let (_, headers) = probe(&router, "https://evil.example", false).await;
+    assert_eq!(allow_origin(&headers), None);
 }
