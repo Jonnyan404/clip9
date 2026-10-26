@@ -666,10 +666,63 @@ for (const name of ['revoke', 'update']) {
     }
 }
 
+// ── P. 图片工具条必须住在顶栏里，不许浮在图上（2026-10-26）──────────────────
+//
+// ⚠️★ 用户报的「白底图放大后完全看不到按钮」：工具条最早是**右下角浮层**，按钮底色
+//    只有 14% 的白 —— 截图 / 文档照片一放大，白底直接把按钮吃了。改成顶部浮动居中
+//    也不行：桌面端放大之后它挡住画面内容。现在它是顶栏（计数 ↔ 关闭）之间的一个
+//    空位，靠 `createPortal` 送进去 —— 顶栏那条深色渐变本来就常驻，等于不额外占画面。
+//
+// ⚠️ 症状是**静默**的：DOM 在、按钮在、点得动，只是看不见（或者挡着内容）。
+//    所以钉四条。
+{
+    const viewerPath = join(WEB, 'src/components/viewer/MediaViewer.tsx');
+    const viewerRaw = stripLineComments(readFileSync(viewerPath, 'utf8'));
+
+    // ① 顶栏里得有那个空位，而且是用**状态**存节点（`ref={setToolSlot}`）：
+    //    图是深层子组件，首次渲染时 ref 还是 null，换成 `useRef` 就永远不重渲染。
+    if (!/ref=\{setToolSlot\}/.test(viewerRaw)) {
+        problems.push(
+            '`MediaViewer` 的顶栏里没有 `ref={setToolSlot}` 那个空位 —— 图片工具条没地方挂，'
+            + '会退回「浮在图上」的老样子（白底图放大后看不见按钮）',
+        );
+    }
+
+    // ② 工具条得是 portal 进去的（文件里本来有一次 `createPortal` —— 查看器自己挂到 body）。
+    if ((viewerRaw.match(/createPortal\(/g) || []).length < 2) {
+        problems.push(
+            '`MediaViewer.tsx` 里少于两次 `createPortal(` —— 图片工具条没有送进顶栏的空位，'
+            + '它又变成图上的浮层了',
+        );
+    }
+
+    // ③ 药丸自己不许定位：绝对定位 = 又浮回图上了。
+    //    ⚠️ 只认**JSX 属性**那个出现位置（单独一行）：抬头注释里也提 `data-zoom-ui`，
+    //    从注释开始切会把整个组件切进去，`position: 'relative'` 一堆全是误报。
+    const pillAt = viewerRaw.search(/\n\s+data-zoom-ui\n/);
+    const pillEnd = pillAt < 0 ? -1 : viewerRaw.indexOf('toolSlot,', pillAt);
+    if (pillAt < 0 || pillEnd < 0) {
+        problems.push('`MediaViewer.tsx` 里找不到工具条药丸（`data-zoom-ui` … `toolSlot,`）—— 判据 P 失效了');
+    } else if (/position:/.test(viewerRaw.slice(pillAt, pillEnd))) {
+        problems.push(
+            '图片工具条药丸自己写了 `position:` —— 那就是浮在图上：白底图放大后会看不见，'
+            + '桌面端放大后会挡住内容。它应该待在顶栏的空位里',
+        );
+    }
+
+    // ④ 只有**当前**那条挂：邻近的也挂的话，同一个空位里会并排塞进三个工具条。
+    if (!/toolSlot=\{index === current \? toolSlot : null\}/.test(viewerRaw)) {
+        problems.push(
+            '`ViewerBody` 的 `toolSlot` 没有按「是不是当前那条」判 —— 惰性挂载的邻近两条也会'
+            + '把自己的工具条塞进顶栏，一个空位里并排三个',
+        );
+    }
+}
+
 // ── 结果 ────────────────────────────────────────────────────────────────
 if (problems.length) {
     console.error(`✗ 契约守卫失败（${problems.length} 处）：`);
     for (const line of problems) console.error(`    ${line}`);
     process.exit(1);
 }
-console.log('✓ 契约守卫通过：零依赖共享模块字节一致 · 外壳形状完整 · PWA 放行表一致 · dev 代理覆盖了每条服务端路由 · i18n 无死键 · 已删模式未复活 · revoke 只发 POST · WS 事件 id 已归一 · 后端地址与页面地址分开 · 选文件是追加 · 写请求都带 client · 预览不为显示签分享令牌 · 设置通用页不靠 secondaryAction · 便签进全屏先关阅读器');
+console.log('✓ 契约守卫通过：零依赖共享模块字节一致 · 外壳形状完整 · PWA 放行表一致 · dev 代理覆盖了每条服务端路由 · i18n 无死键 · 已删模式未复活 · revoke 只发 POST · WS 事件 id 已归一 · 后端地址与页面地址分开 · 选文件是追加 · 写请求都带 client · 预览不为显示签分享令牌 · 设置通用页不靠 secondaryAction · 便签进全屏先关阅读器 · 图片工具条住在顶栏');

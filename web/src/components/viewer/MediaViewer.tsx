@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useTranslation } from 'react-i18next';
-import { Box, IconButton, Typography } from '@mui/material';
+import { Box, Button, IconButton, Typography } from '@mui/material';
 import axios from 'axios';
 import { MdiIcon } from '@/components/ui/MdiIcon';
 import { MarkdownBody } from '@/components/MarkdownBody';
@@ -50,8 +50,16 @@ export function MediaViewer() {
     const rootRef = useRef<HTMLDivElement | null>(null);
     const scrollRef = useRef<HTMLDivElement | null>(null);
     const [current, setCurrent] = useState(0);
-    /** 放大到 1:1 的那一条（双击切换）。换一条就复位。 */
-    const [zoomed, setZoomed] = useState<string | null>(null);
+    /**
+     * 顶栏里留给「图片工具」的空位（计数与关闭之间）。
+     *
+     * ⚠️★ 工具条**不浮在图上**：白底图（截图 / 文档照片）一放大，浮层就看不见了，而桌面端
+     *    放大后它还会挡住内容。顶栏那一条是**本来就存在**的深色渐变，把按钮放进去等于
+     *    不额外占画面。
+     * ⚠️ 用**状态**存这个节点而不是 ref：图是深层子组件，首次渲染时这个 Box 还没挂上
+     *    （ref 在提交阶段才填），拿到 null 就永远不重渲染、工具条永远不出来。
+     */
+    const [toolSlot, setToolSlot] = useState<HTMLDivElement | null>(null);
 
     // id → 条目。⚠️ 渲染时现查，所以被 revoke 的那条会**自然消失**（见 viewerStore 的注释）。
     const items = useMemo(() => {
@@ -76,7 +84,6 @@ export function MediaViewer() {
         const at = Math.min(initialIndex, Math.max(0, items.length - 1));
         el.scrollTop = at * height;
         setCurrent(at);
-        setZoomed(null);
         // ⚠️ 依赖只有 `open`：这是「打开」那一次的定位，不是「每次列表变动都重新定位」。
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [open]);
@@ -85,7 +92,6 @@ export function MediaViewer() {
     useEffect(() => {
         if (!open) {
             setCurrent(0);
-            setZoomed(null);
         }
     }, [open]);
 
@@ -217,12 +223,9 @@ export function MediaViewer() {
                             }}
                         >
                             {near ? (
-                                <ViewerBody
-                                    item={item}
-                                    room={room}
-                                    zoomed={zoomed === String(item.id)}
-                                    onToggleZoom={() => setZoomed((prev) => (prev === String(item.id) ? null : String(item.id)))}
-                                />
+                                // ⚠️ 只有**当前**那一条把工具条挂进顶栏：邻近的也挂的话，
+                                // 同一个空位里会并排塞进三个工具条。
+                                <ViewerBody item={item} room={room} toolSlot={index === current ? toolSlot : null} />
                             ) : null}
                             {near && <ViewerCaption item={item} room={room} />}
                         </Box>
@@ -250,7 +253,7 @@ export function MediaViewer() {
                 <Typography variant="caption" sx={{ color: 'rgba(255,255,255,0.8)', fontVariantNumeric: 'tabular-nums', px: 1 }}>
                     {Math.min(current + 1, items.length)} / {items.length}
                 </Typography>
-                <Box sx={{ flex: 1 }} />
+                <Box ref={setToolSlot} sx={{ flex: 1, minWidth: 0, display: 'flex', justifyContent: 'center' }} />
                 <IconButton
                     size="small"
                     onClick={close}
@@ -266,12 +269,7 @@ export function MediaViewer() {
 }
 
 /** 一条的正文（媒体 / 文本 / 认不出类型的兜底）。 */
-function ViewerBody({ item, room, zoomed, onToggleZoom }: {
-    item: ReceivedItem;
-    room: string;
-    zoomed: boolean;
-    onToggleZoom: () => void;
-}) {
+function ViewerBody({ item, room, toolSlot }: { item: ReceivedItem; room: string; toolSlot: HTMLDivElement | null }) {
     const { t } = useTranslation();
     const isFile = isFileEntry(item);
     const kind = isFile ? filePreviewKind(item.name) : '';
@@ -303,33 +301,7 @@ function ViewerBody({ item, room, zoomed, onToggleZoom }: {
     }
 
     if (kind === 'image') {
-        return (
-            <Box
-                // 双击放大到 1:1：外层可滚，靠**原生滚动**平移（不写 transform 数学）。
-                // ⚠️ 页面禁了 user-scalable（index.html 的 viewport），所以这里不会有
-                //    「浏览器自己也放大一次」的冲突。
-                onDoubleClick={onToggleZoom}
-                sx={{
-                    maxWidth: '100%',
-                    maxHeight: '100%',
-                    overflow: zoomed ? 'auto' : 'hidden',
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                }}
-            >
-                <img
-                    src={src}
-                    alt={item.name || ''}
-                    style={{
-                        maxWidth: zoomed ? 'none' : '100%',
-                        maxHeight: zoomed ? 'none' : '100%',
-                        objectFit: 'contain',
-                        display: 'block',
-                    }}
-                />
-            </Box>
-        );
+        return <ZoomableImage src={src} alt={item.name || ''} resetKey={String(item.id)} toolSlot={toolSlot} />;
     }
 
     if (kind === 'video') {
@@ -355,6 +327,447 @@ function ViewerBody({ item, room, zoomed, onToggleZoom }: {
 
     return <ViewerTextFile item={item} />;
 }
+
+/** 放大上限（相对「适应窗口」）。4 倍够看清截图里的小字，再大就只剩马赛克了。 */
+const ZOOM_MAX = 4;
+/** 按钮 / 键盘一次放大多少倍（1 → 1.5 → 2.25 → 3.375 → 4）。 */
+const ZOOM_STEP = 1.5;
+
+/**
+ * 旋转后图片的**外接框**（未缩放）：90 / 270 时长宽互换。
+ *
+ * ⚠️ `offsetWidth` 量的是**没转之前**的排版盒子，CSS transform 不改它 —— 所以夹取边界
+ *    必须自己换一次，否则转完再放大，图会被拖到画面外。
+ */
+function contentSize(img: HTMLImageElement, rot: number) {
+    return rot % 180 === 0
+        ? { w: img.offsetWidth, h: img.offsetHeight }
+        : { w: img.offsetHeight, h: img.offsetWidth };
+}
+
+/**
+ * 「适应窗口」在当前旋转角下的倍率（乘在 `s` 上）。
+ *
+ * ⚠️ 旋转 90° 后外接框长宽互换，原来撑满宽度的横图会变成窄窄一条 —— 这个倍率把它
+ *    **重新撑满**（iOS 相册旋转就是这个行为）。
+ * ⚠️ 第三个上限是 **1:1**：`maxWidth: 100%` 不会把小图拉大，这里也必须跟着不拉大，
+ *    否则一张 200×200 的图标会被放大成一团糊。
+ */
+function fitScale(stage: HTMLElement, img: HTMLImageElement, rot: number) {
+    const c = contentSize(img, rot);
+    if (!c.w || !c.h || !img.naturalWidth) return 1;
+    return Math.min(
+        stage.clientWidth / c.w,
+        stage.clientHeight / c.h,
+        img.naturalWidth / img.offsetWidth,
+    );
+}
+
+/** 把平移量夹住：放大后的图不该被拖到完全看不见（拖到边上就停住）。 */
+function clampView(stage: HTMLElement, img: HTMLImageElement, rot: number, s: number, x: number, y: number) {
+    const total = s * fitScale(stage, img, rot);
+    const c = contentSize(img, rot);
+    const maxX = Math.max(0, (c.w * total - stage.clientWidth) / 2);
+    const maxY = Math.max(0, (c.h * total - stage.clientHeight) / 2);
+    return { s, x: Math.min(maxX, Math.max(-maxX, x)), y: Math.min(maxY, Math.max(-maxY, y)) };
+}
+
+/**
+ * 可缩放 / 可旋转 / 可镜像的一张图（全屏查看器里只给 `image` 用）。
+ *
+ * 手势按平台分开（2026-10-26 Jonny 的要求：手机上**不要**双击放大，要双指捏合）：
+ *
+ * | 动作 | 手机（触摸） | 桌面（鼠标） |
+ * |---|---|---|
+ * | 放大 / 缩小 | **双指捏合**（焦点在两指中点） | 顶栏 `+` / `−`，或键盘 `+` / `-` |
+ * | 平移 | 放大后单指拖 | 放大后按住拖 |
+ * | 复位（适应窗口 + 摆正 + 不镜像） | 点顶栏的百分比 | 双击，或键盘 `0` |
+ * | 实际尺寸 1:1 / 旋转 / 镜像 | 顶栏 | 顶栏 |
+ *
+ * ⚠️★ **手势没用 React 的 `onTouchMove`**：React 在根节点上注册的 touchmove 是**被动**的，
+ *    里面 `preventDefault()` 不生效（还会在控制台警告），于是两指时外层会跟着翻页。
+ *    这里自己 `addEventListener('touchmove', …, { passive: false })`。
+ *
+ * ⚠️★ `touch-action` 必须**随缩放状态切换**（`pan-y` ↔ `none`）：
+ *    · 没放大时 `pan-y` —— 单指上下滑仍然是**原生翻页**，查看器的 scroll-snap 全靠它；
+ *      改成 `none` 就再也翻不到下一条了（那才是更糟的回归）。
+ *    · 放大后 `none` —— 否则浏览器会先把单指拖动当成滚动、再给我们一个 `touchcancel`，
+ *      平移永远动不了。
+ *
+ * ⚠️ 页面在 `index.html` 里禁了 `user-scalable`，所以「浏览器自己也捏合放大一次」不存在，
+ *    两指手势完全归这里处理。
+ *
+ * ⚠️ 换一条时**自动复位**：`resetKey`（条目 id）变了就回到初始状态，不留上一条的旋转。
+ */
+function ZoomableImage({ src, alt, resetKey, toolSlot }: {
+    src: string;
+    alt: string;
+    resetKey: string;
+    /** 顶栏里放工具条的空位；`null` = 这一条不是当前那条，不挂。 */
+    toolSlot: HTMLDivElement | null;
+}) {
+    const { t } = useTranslation();
+    const [view, setView] = useState({ s: 1, x: 0, y: 0 });
+    /** 旋转角（0 / 90 / 180 / 270）与水平镜像。 */
+    const [rot, setRot] = useState(0);
+    const [flip, setFlip] = useState(false);
+    /**
+     * 当前旋转角下的 `fit`，以及「一个原图像素 = 几个屏幕像素」（都在 `s = 1` 时量）。
+     *
+     * ⚠️ 这两个值要**量**出来（`offsetWidth` / `naturalWidth`），渲染时读 DOM 不可靠 ——
+     *    首次渲染 ref 还是 null，而且量出来的结果变了也不会自己触发重渲染。
+     */
+    const [fit, setFit] = useState(1);
+    const [unit, setUnit] = useState(0);
+    // ⚠️ 事件回调要读**当前**值，而 `useEffect([])` 的闭包是旧的 —— 用 ref 镜像一份。
+    const viewRef = useRef(view);
+    viewRef.current = view;
+    const rotRef = useRef(rot);
+    rotRef.current = rot;
+
+    const stageRef = useRef<HTMLDivElement | null>(null);
+    const imgRef = useRef<HTMLImageElement | null>(null);
+    /** 捏合起点：两指距离 + 当时的状态 + 两指中点（相对容器中心）。 */
+    const pinchRef = useRef<{ dist: number; s: number; x: number; y: number; cx: number; cy: number } | null>(null);
+    /** 拖动起点（触摸与鼠标共用一个）。 */
+    const dragRef = useRef<{ px: number; py: number; x: number; y: number } | null>(null);
+    /** 最后一次手指离开屏幕的时刻。⚠️ `dblclick` 是 MouseEvent，**拿不到** pointerType，
+     *  手机上挡「双击放大」只能靠「刚刚有没有手指」 —— 捏合是主手势，双击是误触。 */
+    const lastTouchRef = useRef(0);
+
+    useEffect(() => {
+        setView({ s: 1, x: 0, y: 0 });
+        setRot(0);
+        setFlip(false);
+    }, [resetKey]);
+
+    const measure = useCallback(() => {
+        const stage = stageRef.current;
+        const img = imgRef.current;
+        if (!stage || !img || !img.naturalWidth || !img.offsetWidth) return;
+        const nextFit = fitScale(stage, img, rotRef.current);
+        setFit(nextFit);
+        setUnit(nextFit * (img.offsetWidth / img.naturalWidth));
+    }, []);
+
+    // ⚠️ 用 layout effect：旋转后先量再画，否则中间会有一帧「用旧的 fit 配新的角度」的跳动。
+    useLayoutEffect(() => {
+        measure();
+        window.addEventListener('resize', measure);
+        return () => window.removeEventListener('resize', measure);
+    }, [measure, src, rot]);
+
+    /** `s` 的上限。⚠️ 1:1 必须**总是够得着**（一张 12MP 照片在手机上是 ~10×），所以取
+     *  `max(ZOOM_MAX, 1:1 的倍率)` —— 不然「实际尺寸」按了没反应。 */
+    const maxScale = () => {
+        const stage = stageRef.current;
+        const img = imgRef.current;
+        if (!stage || !img || !img.offsetWidth || !img.naturalWidth) return ZOOM_MAX;
+        return Math.max(ZOOM_MAX, img.naturalWidth / img.offsetWidth / fitScale(stage, img, rotRef.current));
+    };
+
+    /** 以 (fx, fy)（容器中心为原点）为焦点缩放到 `nextScale`。 */
+    const zoomTo = (nextScale: number, fx = 0, fy = 0) => {
+        const stage = stageRef.current;
+        const img = imgRef.current;
+        if (!stage || !img) return;
+        const from = viewRef.current;
+        const s = Math.min(maxScale(), Math.max(1, nextScale));
+        const k = s / from.s;
+        // 焦点下面那一点保持不动：x' = fx - (fx - x) * k
+        setView(clampView(stage, img, rotRef.current, s, fx - (fx - from.x) * k, fy - (fy - from.y) * k));
+    };
+
+    /** 复位：适应窗口 + 摆正 + 不镜像（一个按钮回到刚打开的样子）。 */
+    const reset = () => {
+        setView({ s: 1, x: 0, y: 0 });
+        setRot(0);
+        setFlip(false);
+    };
+
+    /** 转 ±90°。⚠️ 转完要**重新夹取**：外接框变了，原来的平移量可能已经出界。 */
+    const rotate = (delta: number) => {
+        const stage = stageRef.current;
+        const img = imgRef.current;
+        const next = (rotRef.current + delta + 360) % 360;
+        setRot(next);
+        if (stage && img) {
+            const v = viewRef.current;
+            setView(clampView(stage, img, next, v.s, v.x, v.y));
+        }
+    };
+
+    /** 实际尺寸（1:1：一个原图像素 = 一个屏幕像素）。回到中心，方便逐点看。 */
+    const actualSize = () => {
+        const stage = stageRef.current;
+        const img = imgRef.current;
+        if (!stage || !img || !img.offsetWidth || !img.naturalWidth) return;
+        const s = img.naturalWidth / img.offsetWidth / fitScale(stage, img, rotRef.current);
+        setView(clampView(stage, img, rotRef.current, Math.min(maxScale(), Math.max(1, s)), 0, 0));
+    };
+
+    useEffect(() => {
+        const stage = stageRef.current;
+        if (!stage) return;
+
+        const span = (a: Touch, b: Touch) => Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY) || 1;
+        const mid = (a: Touch, b: Touch) => ({
+            x: (a.clientX + b.clientX) / 2,
+            y: (a.clientY + b.clientY) / 2,
+        });
+        /** ⚠️ 按在工具条上**不算**拖图：否则放大后手一抖，`preventDefault()` 会把点击吃掉。 */
+        const onToolbar = (event: Event) =>
+            Boolean((event.target as Element | null)?.closest?.('[data-zoom-ui]'));
+
+        const onTouchStart = (event: TouchEvent) => {
+            if (onToolbar(event)) return;
+            if (event.touches.length >= 2) {
+                const rect = stage.getBoundingClientRect();
+                const m = mid(event.touches[0], event.touches[1]);
+                pinchRef.current = {
+                    dist: span(event.touches[0], event.touches[1]),
+                    s: viewRef.current.s,
+                    x: viewRef.current.x,
+                    y: viewRef.current.y,
+                    cx: m.x - (rect.left + rect.width / 2),
+                    cy: m.y - (rect.top + rect.height / 2),
+                };
+                // 两指按下就接管：不然外层会把这个手势当成滚动
+                event.preventDefault();
+            } else if (event.touches.length === 1 && viewRef.current.s > 1) {
+                dragRef.current = {
+                    px: event.touches[0].clientX,
+                    py: event.touches[0].clientY,
+                    x: viewRef.current.x,
+                    y: viewRef.current.y,
+                };
+            }
+        };
+
+        const onTouchMove = (event: TouchEvent) => {
+            const img = imgRef.current;
+            const rot = rotRef.current;
+            if (!img) return;
+            if (event.touches.length >= 2 && pinchRef.current) {
+                event.preventDefault();
+                const p = pinchRef.current;
+                const s = Math.min(maxScale(), Math.max(1, p.s * (span(event.touches[0], event.touches[1]) / p.dist)));
+                const k = s / p.s;
+                setView(clampView(stage, img, rot, s, p.cx - (p.cx - p.x) * k, p.cy - (p.cy - p.y) * k));
+                return;
+            }
+            const d = dragRef.current;
+            if (event.touches.length === 1 && d && viewRef.current.s > 1) {
+                event.preventDefault();
+                setView(clampView(
+                    stage, img, rot, viewRef.current.s,
+                    d.x + (event.touches[0].clientX - d.px),
+                    d.y + (event.touches[0].clientY - d.py),
+                ));
+            }
+        };
+
+        const onTouchEnd = (event: TouchEvent) => {
+            if (event.touches.length < 2) pinchRef.current = null;
+            if (event.touches.length === 0) {
+                dragRef.current = null;
+                lastTouchRef.current = Date.now();
+            }
+        };
+
+        // 鼠标拖动（放大后）。⚠️ 只在 `pointerType === 'mouse'` 时接管：
+        // 触摸走上面那三个监听，两条路混在一起会互相清掉对方的起点。
+        const onPointerDown = (event: PointerEvent) => {
+            if (event.pointerType !== 'mouse' || viewRef.current.s <= 1 || onToolbar(event)) return;
+            dragRef.current = { px: event.clientX, py: event.clientY, x: viewRef.current.x, y: viewRef.current.y };
+        };
+        const onPointerMove = (event: PointerEvent) => {
+            const img = imgRef.current;
+            const d = dragRef.current;
+            if (!img || !d || event.pointerType !== 'mouse' || viewRef.current.s <= 1) return;
+            setView(clampView(
+                stage, img, rotRef.current, viewRef.current.s,
+                d.x + (event.clientX - d.px),
+                d.y + (event.clientY - d.py),
+            ));
+        };
+        const onPointerUp = () => { dragRef.current = null; };
+
+        // 键盘：`+` / `-` / `0`（桌面端最顺手的三个）。
+        const onKeyDown = (event: KeyboardEvent) => {
+            if (event.key === '+' || event.key === '=') {
+                event.preventDefault();
+                zoomTo(viewRef.current.s * ZOOM_STEP);
+            } else if (event.key === '-' || event.key === '_') {
+                event.preventDefault();
+                zoomTo(viewRef.current.s / ZOOM_STEP);
+            } else if (event.key === '0') {
+                event.preventDefault();
+                reset();
+            }
+        };
+
+        stage.addEventListener('touchstart', onTouchStart, { passive: false });
+        stage.addEventListener('touchmove', onTouchMove, { passive: false });
+        stage.addEventListener('touchend', onTouchEnd);
+        stage.addEventListener('touchcancel', onTouchEnd);
+        stage.addEventListener('pointerdown', onPointerDown);
+        stage.addEventListener('pointermove', onPointerMove);
+        stage.addEventListener('pointerup', onPointerUp);
+        stage.addEventListener('pointercancel', onPointerUp);
+        window.addEventListener('keydown', onKeyDown);
+        return () => {
+            stage.removeEventListener('touchstart', onTouchStart);
+            stage.removeEventListener('touchmove', onTouchMove);
+            stage.removeEventListener('touchend', onTouchEnd);
+            stage.removeEventListener('touchcancel', onTouchEnd);
+            stage.removeEventListener('pointerdown', onPointerDown);
+            stage.removeEventListener('pointermove', onPointerMove);
+            stage.removeEventListener('pointerup', onPointerUp);
+            stage.removeEventListener('pointercancel', onPointerUp);
+            window.removeEventListener('keydown', onKeyDown);
+        };
+        // ⚠️ 只挂一次：处理函数全部通过 ref 读最新值，依赖数组里放状态会让监听器每帧重建。
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, []);
+
+    /** 屏幕上的一个像素里有多少个原图像素 —— 100% 就是 1:1。 */
+    const percent = Math.round(view.s * (unit || 1) * 100);
+    const total = view.s * fit;
+
+    return (
+        <Box
+            ref={stageRef}
+            sx={{
+                position: 'relative',
+                width: '100%',
+                height: '100%',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                overflow: 'hidden',
+                touchAction: view.s > 1 ? 'none' : 'pan-y',
+            }}
+        >
+            <img
+                ref={imgRef}
+                src={src}
+                alt={alt}
+                onLoad={measure}
+                onDoubleClick={() => {
+                    // ⚠️ 触摸也**会**触发 dblclick（双击），而 Jonny 要的是双指捏合 ——
+                    // 手机上别让「手抖点了两下」把图放大。dblclick 上拿不到 pointerType，
+                    // 看「500ms 内有没有手指落过」。鼠标保留双击复位 / 放大。
+                    if (Date.now() - lastTouchRef.current < 500) return;
+                    if (view.s > 1) reset();
+                    else zoomTo(2.5);
+                }}
+                style={{
+                    maxWidth: '100%',
+                    maxHeight: '100%',
+                    objectFit: 'contain',
+                    display: 'block',
+                    // ⚠️ 顺序不能改：`scaleX(-1)` 在**最右**（先作用），镜像的是图片自己的
+                    //    左右，跟着旋转一起转 —— 这才是「把照片翻过来」，不是「屏幕上左右换」。
+                    transform: `translate(${view.x}px, ${view.y}px) rotate(${rot}deg) scale(${total}) scaleX(${flip ? -1 : 1})`,
+                    transition: dragRef.current || pinchRef.current ? 'none' : 'transform 140ms ease-out',
+                    userSelect: 'none',
+                    cursor: view.s > 1 ? 'grab' : 'zoom-in',
+                }}
+                draggable={false}
+            />
+
+            {/* 图片工具 —— 渲染到**顶栏**的空位里（`MediaViewer` 的 `toolSlot`，
+                就在计数与关闭按钮之间），靠 `createPortal` 送过去。
+                ⚠️★ 不浮在图上：白底图（截图 / 文档照片）一放大，浮层就看不见了；桌面端
+                    放大之后它还会**挡住内容**。顶栏那条深色渐变本来就常驻，把按钮放进去
+                    等于不额外占画面。
+                ⚠️ `+` / `−` 是**按钮**不是手势：触屏用户可能只想点一下，而捏合在没有
+                    多点触控的设备上用不了。`data-zoom-ui` 是给上面的手势处理看的
+                    （按在工具条上**不算**拖图）。
+                ⚠️ 顶栏整条是 `pointerEvents: 'none'`，所以药丸要自己打开 `auto`。 */}
+            {toolSlot
+                ? createPortal(
+                    <Box
+                        data-zoom-ui
+                        sx={{
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: 0.25,
+                            px: 0.5,
+                            py: 0.25,
+                            maxWidth: '100%',
+                            borderRadius: 20,
+                            // ⚠️ 半透明黑 + 模糊是刚需：顶栏渐变在白底图上不够压得住。
+                            bgcolor: 'rgba(0,0,0,0.55)',
+                            backdropFilter: 'blur(8px)',
+                            border: '1px solid rgba(255,255,255,0.16)',
+                            pointerEvents: 'auto',
+                        }}
+                    >
+                        <IconButton size="small" aria-label={t('zoomOut')} title={t('zoomOut')} onClick={() => zoomTo(view.s / ZOOM_STEP)} sx={zoomButtonSx}>
+                            <MdiIcon name="mdi-magnify-minus-outline" size={18} />
+                        </IconButton>
+                        <Button
+                            size="small"
+                            aria-label={t('zoomReset')}
+                            title={t('zoomReset')}
+                            onClick={reset}
+                            sx={{
+                                ...zoomButtonSx,
+                                minWidth: 42,
+                                px: 0.5,
+                                py: 0.25,
+                                fontSize: 11,
+                                color: '#fff',
+                                fontVariantNumeric: 'tabular-nums',
+                                opacity: view.s > 1 || rot !== 0 || flip ? 1 : 0.75,
+                            }}
+                        >
+                            {percent}%
+                        </Button>
+                        <IconButton size="small" aria-label={t('zoomIn')} title={t('zoomIn')} onClick={() => zoomTo(view.s * ZOOM_STEP)} sx={zoomButtonSx}>
+                            <MdiIcon name="mdi-magnify-plus-outline" size={18} />
+                        </IconButton>
+
+                        <Box sx={{ width: 1, height: 18, mx: 0.25, bgcolor: 'rgba(255,255,255,0.3)' }} />
+
+                        {/* 1:1 —— 截图 / 二维码这类「要看到原始像素」的图，靠按钮一次到位。 */}
+                        <IconButton size="small" aria-label={t('zoomActual')} title={t('zoomActual')} onClick={actualSize} sx={zoomButtonSx}>
+                            <MdiIcon name="mdi-image-size-select-actual" size={18} />
+                        </IconButton>
+                        <IconButton size="small" aria-label={t('rotateLeft')} title={t('rotateLeft')} onClick={() => rotate(-90)} sx={zoomButtonSx}>
+                            <MdiIcon name="mdi-rotate-left" size={18} />
+                        </IconButton>
+                        <IconButton size="small" aria-label={t('rotateRight')} title={t('rotateRight')} onClick={() => rotate(90)} sx={zoomButtonSx}>
+                            <MdiIcon name="mdi-rotate-right" size={18} />
+                        </IconButton>
+                        {/* ⚠️ 镜像开着时按钮要**看得出来**，否则连按两次就忘了自己在哪一面。 */}
+                        <IconButton
+                            size="small"
+                            aria-label={t('mirror')}
+                            title={t('mirror')}
+                            onClick={() => setFlip((prev) => !prev)}
+                            sx={{ ...zoomButtonSx, ...(flip ? { bgcolor: 'rgba(255,255,255,0.42)' } : null) }}
+                        >
+                            <MdiIcon name="mdi-flip-horizontal" size={18} />
+                        </IconButton>
+                    </Box>,
+                    toolSlot,
+                )
+                : null}
+        </Box>
+    );
+}
+
+/** 药丸里的按钮（`−` / 百分比 / `+` / 1:1 / 旋转 / 镜像共用）。
+ *  ⚠️ 底色是透明的：不透明的是**药丸本身**，按钮只负责 hover 时亮一点。 */
+const zoomButtonSx = {
+    color: '#fff',
+    bgcolor: 'transparent',
+    p: 0.5,
+    '&:hover': { bgcolor: 'rgba(255,255,255,0.18)' },
+} as const;
 
 /** 文本**条目**（`type: 'text'`）。 */
 function ViewerText({ item }: { item: ReceivedItem }) {
