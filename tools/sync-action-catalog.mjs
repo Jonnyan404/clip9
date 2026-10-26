@@ -147,9 +147,17 @@ function build() {
 
   // 指纹只记**源**：产物随源变，比源就够了（同 sync-web-assets 的理由）
   // ⚠️ 实现包的入口也是「源」：它变了而包没重打，就是桌面端跑着旧实现。
+  //
+  // ⚠️★ 文案这一项比的是**抽出来的那一份**（`labelsText`），**不是整份 locale 文件**
+  // （2026-10-26 改）。整份比的话，SPA 里加一个**跟动作无关**的界面文案（新模式的标题、
+  // 新按钮……）也会把指纹顶掉 —— 于是 CI 红在「源指纹对不上」，而 `--check` 的另外两条
+  // （逐文件内容、清单里的 sha）明明都通过，跑一遍同步只会改回这一行。
+  // 实测两次都是这个原因：`db38a23`、以及 2026-10-26 的 `feat(web): add a day-grouped
+  // timeline mode`（只往 locales 里加了 6 行界面文案，动作库一个字没动）。
+  // 真正要防的是「动作库用到的文案变了、桌面那份没跟」—— 那件事由 `labelsText` 覆盖。
   const fingerprint = sha([catalogText, pureText, slashText, implText, cssText, shareText,
     read(DESKTOP_ENTRY),
-    ...LANGS.map((l) => read(join(LOCALES, `${l}.json`)))].join('\0'));
+    labelsText].join('\0'));
 
   return { fingerprint, labelsText, keys, catalogText, pureText, slashText, cssText, shareText };
 }
