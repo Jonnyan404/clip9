@@ -169,7 +169,36 @@ docker compose up -d
 </details>
 
 <details>
-<summary><b>2️⃣ OpenWrt 路由器</b></summary>
+<summary><b>2️⃣ Homebrew（macOS / Linux）</b></summary>
+
+```bash
+# 服务端（命令行 + 内嵌界面）
+brew install Jonnyan404/tap/clip9
+
+# 桌面客户端（有窗口，自带服务端）
+brew install --cask Jonnyan404/tap/clip9
+```
+
+服务端那份装出来的命令是 **`clip9-cli`**（不叫 `clip9`，别和 cask 弄混）：
+
+```bash
+clip9-cli -port 9501 -auth mypassword123
+```
+
+升级：`brew upgrade clip9`（服务端）/ `brew upgrade --cask clip9`（桌面端）。
+
+> ⚠️ 公式与 cask **同名**（都叫 `clip9`），所以装桌面端那一次**必须带 `--cask`** ——
+> 少了它 Homebrew 会去装命令行那份；两个都装时也一样要带。
+>
+> ⚠️ 桌面端的 `.app` **没有签名**：装得上，但第一次打开会被 Gatekeeper 拦（「无法验证开发者」）——
+> 右键 →「打开」，或到「系统设置 → 隐私与安全性」里点「仍要打开」。
+>
+> 📌 这两份文件由发布流程自动生成并推到 [tap](https://github.com/Jonnyan404/homebrew-tap)，
+> 每次发版跟着升到那一版；先 `brew update` 再升级才会看到新版本。
+</details>
+
+<details>
+<summary><b>3️⃣ OpenWrt 路由器</b></summary>
 
 ```bash
 cat /etc/apk/arch                                                  # 先看架构
@@ -199,21 +228,21 @@ opkg install ./clip9-openwrt-v<版本>-<架构>.ipk
 </details>
 
 <details>
-<summary><b>3️⃣ Android 手机当服务器</b></summary>
+<summary><b>4️⃣ Android 手机当服务器</b></summary>
 
 从 [Releases](https://github.com/Jonnyan404/clip9/releases) 装 `.apk`，打开后设端口/密码、点「启动服务」，
 局域网里任何设备访问 `http://手机IP:9501` 即可。
 </details>
 
 <details>
-<summary><b>4️⃣ Cloudflare Workers（Serverless）</b></summary>
+<summary><b>5️⃣ Cloudflare Workers（Serverless）</b></summary>
 
 基于 Workers + D1 + R2，支持 GitHub Actions 自动部署或本地脚本部署。
 详见 [Cloudflare 部署指南](./cloudflare/README.md)。
 </details>
 
 <details>
-<summary><b>5️⃣ 从源码构建</b></summary>
+<summary><b>6️⃣ 从源码构建</b></summary>
 
 > 前置：Node.js ≥ 22、Rust stable。
 
@@ -236,7 +265,7 @@ CI 与发版链会自己做「构建 + 同步」。
 </details>
 
 <details>
-<summary><b>6️⃣ 前后端分离部署（界面放 CDN，机器只跑 API）</b></summary>
+<summary><b>7️⃣ 前后端分离部署（界面放 CDN，机器只跑 API）</b></summary>
 
 发版产物里的 **`clip9-cli-noui-*`** 就是给这件事用的：它**不带内嵌界面**（体积更小，
 `/` 上是一页「这个二进制没带界面」的说明），其余能力与普通那份完全一样。
