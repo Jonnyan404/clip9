@@ -111,6 +111,20 @@ export function StickyNote({ meta }: { meta: ReceivedItem }) {
         if (canPreview && !textPreview && !previewSrc) void loadPreview();
     };
 
+    /**
+     * 打开全屏查看器（图片 / 视频 / 音频都是它）。
+     *
+     * ⚠️★ **必须先关阅读器**（2026-10-26 用户报的「便签里点图片会重叠」）：
+     * 阅读器是 MUI `Dialog`（z-index **1300**），而查看器是 1200 —— 那个 1200 是**故意的**
+     * （见 `MediaViewer` 抬头：查看器开着时弹出的确认框 / 提示必须还能盖在它上面）。
+     * 所以两层同时开着的结果是：黑底的全屏查看器在下面，便签纸盖在上面 —— 看着就是「重叠」。
+     * 别的模式都是从列表直接进查看器，只有这里是从一个对话框里进，才会撞上这件事。
+     */
+    const openFullscreen = () => {
+        setExpanded(false);
+        openFromVisibleSet(meta);
+    };
+
     const copyText = async () => {
         try {
             await copyTextToClipboard(isFile ? textPreview : decodedContent);
@@ -275,6 +289,21 @@ export function StickyNote({ meta }: { meta: ReceivedItem }) {
                         否则会留一个「什么都没有」的灰盒子，看着像坏了。 */}
                     {canPreview && (
                         <div className="sticky-note__reader-preview">
+                            {/* ⚠️★ 视频**只能**从这里进全屏（2026-10-26 用户报的「视频点了没反应」）：
+                                图片可以靠「点图片」进去，视频上那一下点击属于播放/暂停（`controls`），
+                                所以给它一个显式的入口。音频也一起给 —— 查看器里是同一套东西。
+                                ⚠️ 别把 onClick 挂到 `<video>` 上：那会和它自带的控制条抢点击。 */}
+                            {!loadingPreview && kind !== 'text' && (
+                                <IconButton
+                                    className="sticky-note__reader-zoom"
+                                    size="small"
+                                    onClick={openFullscreen}
+                                    aria-label={t('preview')}
+                                    title={t('preview')}
+                                >
+                                    <MdiIcon name="mdi-arrow-expand" size={16} />
+                                </IconButton>
+                            )}
                             {loadingPreview ? (
                                 <div className="sticky-note__preview-loading">
                                     <CircularProgress size={36} />
@@ -298,7 +327,7 @@ export function StickyNote({ meta }: { meta: ReceivedItem }) {
                                 <img
                                     src={previewSrc || String(meta.thumbnail || '')}
                                     alt={meta.name}
-                                    onClick={() => openFromVisibleSet(meta)}
+                                    onClick={openFullscreen}
                                     style={{ maxHeight: '60vh', maxWidth: '100%', cursor: 'zoom-in' }}
                                 />
                             )}

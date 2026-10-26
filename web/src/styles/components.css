@@ -443,6 +443,27 @@
 
 .sticky-note__reader-preview {
     margin: 4px 0 2px;
+    /* 「全屏」按钮按它定位 */
+    position: relative;
+}
+
+/* 预览块右上角的「全屏」入口 —— 图片 / 视频 / 音频都靠它进全屏查看器。
+   ⚠️★ 视频**只能**走这里：它自带 `controls`，点一下是播放/暂停，挂 onClick 会抢掉控制条。
+   ⚠️ 选择器写成后代（0,2,0）是为了压过 MUI 的 `.MuiIconButton-root`（0,1,0）—— 那个类
+   同样在设 `color`，同权重下谁后到谁赢，而情绪（Emotion）注入的次序不由我们定。 */
+.sticky-note__reader-preview .sticky-note__reader-zoom {
+    position: absolute;
+    top: 6px;
+    right: 6px;
+    z-index: 2;
+    padding: 4px;
+    color: #fff;
+    background: rgba(0, 0, 0, 0.45);
+    box-shadow: 0 1px 6px rgba(0, 0, 0, 0.25);
+}
+
+.sticky-note__reader-preview .sticky-note__reader-zoom:hover {
+    background: rgba(0, 0, 0, 0.68);
 }
 
 .sticky-note__reader-preview > video,

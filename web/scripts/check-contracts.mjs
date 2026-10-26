@@ -607,10 +607,69 @@ for (const name of ['revoke', 'update']) {
     }
 }
 
+// ── O. 便签阅读器进全屏查看器之前，必须先把自己关掉（2026-10-26）────────────
+//
+// ⚠️★ 用户报的「便签里点图片有重叠」：阅读器是 MUI `Dialog`（z-index **1300**），
+//    而查看器是 **1200** —— 那个 1200 是**故意的**（见 `MediaViewer` 抬头：查看器开着时
+//    弹出的分享/确认框必须还能盖在它上面）。两层同时开着，就是便签纸盖在黑色的全屏图上，
+//    看着像「重叠」。别的模式都是从列表直接进查看器，只有便签这里是从一个对话框里进。
+//
+// ⚠️ 而且这个 bug **只看得见、不报错**：DOM 正常、控制台干净、关掉查看器还回到阅读器。
+//    所以钉两条：① `openFullscreen` 必须先 `setExpanded(false)`；② 不许在它之外另开一扇门。
+//
+// ⚠️ 顺带钉住「视频也能进全屏」：`<video>` 自带 `controls`，点它是播放/暂停，
+//    挂 onClick 会抢控制条 —— 所以视频**只能**靠 `.sticky-note__reader-zoom` 那个按钮。
+{
+    const stickyPath = join(WEB, 'src/components/sticky/StickyNote.tsx');
+    const sticky = stripLineComments(readFileSync(stickyPath, 'utf8'));
+
+    const at = sticky.indexOf('const openFullscreen');
+    if (at < 0) {
+        problems.push('`StickyNote.tsx` 里没有 `openFullscreen` —— 阅读器里进查看器的那条路不见了');
+    } else {
+        const end = sticky.indexOf('\n    };', at);
+        const body = end > at ? sticky.slice(at, end) : '';
+        if (!/setExpanded\(false\)/.test(body)) {
+            problems.push(
+                '`openFullscreen` 没有先 `setExpanded(false)` —— 阅读器（Dialog / 1300）会压在'
+                + '全屏查看器（1200）上面，看起来就是「便签纸和图片重叠」',
+            );
+        }
+        if (!/openFromVisibleSet\(/.test(body)) {
+            problems.push('`openFullscreen` 里没有 `openFromVisibleSet` —— 那它并没有在开查看器');
+        }
+        const elsewhere = sticky.slice(0, at) + sticky.slice(end);
+        if (/openFromVisibleSet\(/.test(elsewhere)) {
+            problems.push(
+                '`openFromVisibleSet` 在 `openFullscreen` 之外也被调用了 —— 那一处会把阅读器'
+                + '留在查看器上面（就是 2026-10-26 那个重叠）',
+            );
+        }
+    }
+
+    if (!/sticky-note__reader-zoom/.test(sticky)) {
+        problems.push(
+            '阅读器的预览块少了「全屏」入口（`.sticky-note__reader-zoom`）—— 视频自带 `controls`，'
+            + '点它只会播放，视频就永远进不了全屏',
+        );
+    }
+
+    // 查看器的层级必须**低于** Dialog（1300）：它抬头那段注释写着理由 ——
+    // 开着查看器时点分享弹出的那个框要能盖上来。谁为了消掉上面那个重叠把它抬到 1300，
+    // 那条能力就悄悄断了。
+    const viewer = stripLineComments(readFileSync(join(WEB, 'src/components/viewer/MediaViewer.tsx'), 'utf8'));
+    if (!/zIndex:\s*1200\b/.test(viewer)) {
+        problems.push(
+            '`MediaViewer` 的 zIndex 不是 1200 —— 它必须低于 Dialog（1300），'
+            + '否则查看器里点分享弹出的对话框会被压在下面',
+        );
+    }
+}
+
 // ── 结果 ────────────────────────────────────────────────────────────────
 if (problems.length) {
     console.error(`✗ 契约守卫失败（${problems.length} 处）：`);
     for (const line of problems) console.error(`    ${line}`);
     process.exit(1);
 }
-console.log('✓ 契约守卫通过：零依赖共享模块字节一致 · 外壳形状完整 · PWA 放行表一致 · dev 代理覆盖了每条服务端路由 · i18n 无死键 · 已删模式未复活 · revoke 只发 POST · WS 事件 id 已归一 · 后端地址与页面地址分开 · 选文件是追加 · 写请求都带 client · 预览不为显示签分享令牌 · 设置通用页不靠 secondaryAction');
+console.log('✓ 契约守卫通过：零依赖共享模块字节一致 · 外壳形状完整 · PWA 放行表一致 · dev 代理覆盖了每条服务端路由 · i18n 无死键 · 已删模式未复活 · revoke 只发 POST · WS 事件 id 已归一 · 后端地址与页面地址分开 · 选文件是追加 · 写请求都带 client · 预览不为显示签分享令牌 · 设置通用页不靠 secondaryAction · 便签进全屏先关阅读器');
