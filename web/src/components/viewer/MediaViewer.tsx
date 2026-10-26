@@ -47,6 +47,7 @@ export function MediaViewer() {
     const room = useWebSocketStore((s) => s.room);
 
     const open = ids.length > 0;
+    const rootRef = useRef<HTMLDivElement | null>(null);
     const scrollRef = useRef<HTMLDivElement | null>(null);
     const [current, setCurrent] = useState(0);
     /** 放大到 1:1 的那一条（双击切换）。换一条就复位。 */
@@ -106,6 +107,29 @@ export function MediaViewer() {
         };
     }, [open]);
 
+    // ⚠️★ 打开查看器时把**外面**正在播的媒体停掉（2026-10-26 用户报的「点全屏后两个声音」）：
+    // 原地预览里那段视频不会因为我们又开了一层而停下 —— 两路音频同时出声，听着像回声。
+    // ⚠️ 只 `pause()`，不 `currentTime = 0` 也不清 `src`：用户关掉查看器还想接着看那一段。
+    useEffect(() => {
+        if (!open) return;
+        for (const el of document.querySelectorAll<HTMLMediaElement>('video, audio')) {
+            if (!rootRef.current?.contains(el)) {
+                el.pause();
+            }
+        }
+    }, [open]);
+
+    // 同一个毛病的另一半：**查看器内部**翻到下一条时，上一条的视频要停 ——
+    // 否则划走的那条还在后台出声（±1 是挂着的，它不会自己卸载）。
+    useEffect(() => {
+        const scroller = scrollRef.current;
+        if (!scroller) return;
+        [...scroller.children].forEach((child, index) => {
+            if (index === current) return;
+            child.querySelectorAll<HTMLMediaElement>('video, audio').forEach((el) => el.pause());
+        });
+    }, [current, open]);
+
     // 键盘：↑↓ 翻，Esc 关。
     // ⚠️ 各模式的列表也有 ↑↓ 导航（速览 / 时间线），它们靠 `isViewerOpen()` 让开 ——
     //    在这里 `stopPropagation` 是没用的（同一个 window 上的监听器照样会跑）。
@@ -134,6 +158,7 @@ export function MediaViewer() {
 
     return createPortal(
         <Box
+            ref={rootRef}
             role="dialog"
             aria-modal="true"
             aria-label={t('preview')}
