@@ -254,8 +254,6 @@
   "shareHistoryText": "Text",
   "shareHistoryFile": "File",
   "shareHistoryPrivacyHint": "The list is scoped to a room: a password-protected room needs its credentials, and in an open room the share history is visible to anyone who can reach the server.",
-  "shareTtlMinLabel": "1 min",
-  "shareTtlMaxLabel": "24 h",
   "shareDurationMinutes": "{minutes} min",
   "shareDurationHours": "{hours} h",
   "shareDurationHoursMinutes": "{hours} h {minutes} min",

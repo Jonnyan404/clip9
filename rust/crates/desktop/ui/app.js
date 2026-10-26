@@ -1958,8 +1958,6 @@ function paintShareTtlScale() {
   el('share-ttl').min = String(shareCfg.SHARE_MIN_TTL_MINUTES);
   el('share-ttl').max = String(shareCfg.SHARE_MAX_TTL_MINUTES);
   el('share-ttl').step = '1';
-  el('share-ttl-min').textContent = shareCfg.formatShareDuration(shareCfg.SHARE_MIN_TTL, shareTranslate);
-  el('share-ttl-max').textContent = shareCfg.formatShareDuration(shareCfg.SHARE_MAX_TTL, shareTranslate);
   el('share-uses').max = String(shareCfg.SHARE_MAX_USES_LIMIT);
   const presets = el('share-ttl-presets');
   presets.textContent = '';

@@ -12,7 +12,7 @@ import {
     buildCleanAbsoluteRouteUrl, copyTextToClipboard, formatShareDuration, formatTimestamp,
     minutesToShareTTL, normalizeShareMaxUses, normalizeShareTTL, withCurrentOrigin, withShareQrFlag,
 } from '@/lib/util';
-import { SHARE_TTL_PRESET_MINUTES, shareTtlProgress } from '@/lib/share-config.js';
+import { SHARE_TTL_PRESET_MINUTES } from '@/lib/share-config.js';
 import { createShareLink } from '@/services/share';
 import { MdiIcon } from '@/components/ui/MdiIcon';
 import type { ReceivedItem } from '@/stores/appStore';
@@ -149,13 +149,6 @@ export function ShareLinkButton({
                                 onClick={() => setForm((prev) => ({ ...prev, ttlMinutes: minutes }))}
                             />
                         ))}
-                    </Stack>
-                    <div style={{ height: 6, borderRadius: 999, background: 'color-mix(in srgb, currentColor 18%, transparent)', marginBottom: 4 }}>
-                        <div style={{ height: 6, borderRadius: 999, background: 'var(--mui-palette-primary-main)', width: `${shareTtlProgress(form.ttlMinutes)}%` }} />
-                    </div>
-                    <Stack direction="row" justifyContent="space-between" sx={{ mb: 2 }}>
-                        <Typography variant="caption" color="text.secondary">{t('shareTtlMinLabel')}</Typography>
-                        <Typography variant="caption" color="text.secondary">{t('shareTtlMaxLabel')}</Typography>
                     </Stack>
                     <TextField
                         fullWidth

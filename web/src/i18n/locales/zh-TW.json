@@ -247,8 +247,6 @@
   "shareHistoryText": "文字",
   "shareHistoryFile": "檔案",
   "shareHistoryPrivacyHint": "列表按房間隔離：房間設了密碼就需要該房間的憑據，開放房間裡的分享記錄對能存取伺服器的人也是可見的。",
-  "shareTtlMinLabel": "1 分鐘",
-  "shareTtlMaxLabel": "24 小時",
   "shareDurationMinutes": "{minutes} 分鐘",
   "shareDurationHours": "{hours} 小時",
   "shareDurationHoursMinutes": "{hours} 小時 {minutes} 分",

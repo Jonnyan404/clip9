@@ -254,8 +254,6 @@
   "shareHistoryText": "文本",
   "shareHistoryFile": "文件",
   "shareHistoryPrivacyHint": "列表按房间隔离：房间设了密码就需要该房间的凭据，开放房间里的分享记录对能访问服务器的人也是可见的。",
-  "shareTtlMinLabel": "1 分钟",
-  "shareTtlMaxLabel": "24 小时",
   "shareDurationMinutes": "{minutes} 分钟",
   "shareDurationHours": "{hours} 小时",
   "shareDurationHoursMinutes": "{hours} 小时 {minutes} 分",

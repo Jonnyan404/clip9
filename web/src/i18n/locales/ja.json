@@ -247,8 +247,6 @@
   "shareHistoryText": "テキスト",
   "shareHistoryFile": "ファイル",
   "shareHistoryPrivacyHint": "一覧はルーム単位です：パスワード付きのルームではその認証情報が必要で、オープンなルームの共有履歴はサーバーに到達できる人なら誰でも見られます。",
-  "shareTtlMinLabel": "1 分",
-  "shareTtlMaxLabel": "24 時間",
   "shareDurationMinutes": "{minutes} 分",
   "shareDurationHours": "{hours} 時間",
   "shareDurationHoursMinutes": "{hours} 時間 {minutes} 分",
