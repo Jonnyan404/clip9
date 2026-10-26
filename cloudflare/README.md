@@ -39,7 +39,12 @@
 | `ALLOW_ORIGINS` | ➖ | **前后端分离部署**时前端所在的来源（逗号分隔，例 `https://clip.example.com`）。不设 = `*`（谁都能跨源读，历史行为）。见下文「前后端分离部署」 |
 
 #### 2. 触发部署
-进入 GitHub 仓库 **Actions** 页面，找到 **Deploy Cloudflare Worker**，点击 **Run workflow** 即可一键完成构建与部署。
+
+**会自动部署**：往 `main` 推的改动只要命中前端（`web/**`）或 Worker（`cloudflare/workers/**`、
+`cloudflare/d1/**`、`cloudflare/*.mjs`、`cloudflare/*.json|toml|sh`），
+工作流 **Deploy Cloudflare Worker** 就会自己跑一遍构建 + 迁移 + 部署。只改文档不会触发。
+
+要**手动**跑（改了 Secret、或想重跑一次）：进入仓库 **Actions** → **Deploy Cloudflare Worker** → **Run workflow**。
 
 ---
 
@@ -69,7 +74,8 @@ bash deploy.sh
 
 给「想让人点开就试」的场景用：同一份代码的**第二次部署**，与主站完全隔离。
 
-- 工作流：[.github/workflows/deploy-cloudflare-demo.yml](../.github/workflows/deploy-cloudflare-demo.yml)（同样是 **Actions → Run workflow** 手动触发）
+- 工作流：[.github/workflows/deploy-cloudflare-demo.yml](../.github/workflows/deploy-cloudflare-demo.yml)
+  （与主站**同一套路径触发**：推 `main` 改到前端或 Worker 就自动部署；也能 **Actions → Run workflow** 手动跑）
 - 只改**配置**，代码一行不同：Worker 叫 `clip9-demo`，D1 / R2 是 `clip9-db-demo` / `clip9-files-demo`，
   **单文件上限 3 MB**、文件 1 小时过期、历史 50 条、默认房间开放。
 - 「3 MB」不是前端写死的：Worker 通过 WebSocket 的 `config` 事件下发 `file.limit`，

@@ -1,9 +1,19 @@
 name: Deploy Cloudflare Worker
 
-# 把 `cloudflare/`（Worker + D1 + R2）部署到 Cloudflare。**纯手动**。
+# 把 `cloudflare/`（Worker + D1 + R2）部署到 Cloudflare。
 #
-# ⚠️★ 刻意**不挂任何自动触发**（与 cloud-clipboard-go 那边同一条规矩）：这一步会**动线上数据**
-# ——建 D1 库、跑迁移、用模板**整份覆盖** Worker 的变量 —— 跟着打标签或推分支自动发生不合适。
+# 触发（两条路，见下面 `on:`）：
+#   · **推 `main`** 且改动命中了 `on.push.paths` 里那些路径（前端产物 / Worker 本体 / D1 结构）
+#     → 自动构建并部署。改文档（`cloudflare/README.md`）不算。
+#   · **手动 Run workflow** —— 改了 secret、或想重跑一次时用。
+#
+# ⚠️★ 2026-10-26 由「刻意纯手动」改成自动（Jonny：每次改完前端都得记得去点一下）。
+#    原来那条规矩的理由是**这一步会动线上数据**（建 D1、跑迁移、用模板整份覆盖 Worker 变量）——
+#    那理由仍然成立，所以自动跑时靠三件事兜住：
+#      ① 「Worker 的测试」排在部署**之前**，红了就不往下走；
+#      ② `wrangler deploy` 是「传完才切」，失败时线上仍是上一版，不会半新半旧；
+#      ③ `concurrency` 让同一个 Worker 的部署**排队**（并行时先跑完的那次是旧的）。
+#    ⚠️ 别再给它加 `cancel-in-progress: true`：那会在部署中途掐掉一次。
 #
 # ⚠️★ 需要的 secrets（都在**这个仓库**的 Settings → Secrets 里；从 cloud-clipboard-go 不会跟过来）：
 #     CLOUDFLARE_API_TOKEN / CF_API_TOKEN    二者取一：要 D1 + R2 + Workers 的编辑权限
@@ -20,7 +30,35 @@ name: Deploy Cloudflare Worker
 # 但**不中止部署**（空密码是支持的配置），只把它们顶到运行页最显眼的位置。
 
 on:
+  # ⚠️ `paths` 圈的是「**会改变线上 Worker 内容**的路径」——多一条只会多跑一次部署（无害），
+  #    少一条就是**该部署却没部署**（静默：网页还是旧的，而 CI 一片绿）。
+  #    所以新增文件时要回头看这里。`tools/workflows-smoke.mjs` 判据 18 钉着这几条。
+  push:
+    branches: [main]
+    paths:
+      # 前端产物（构建后整份拷进 Worker 的静态资源）
+      - 'web/**'
+      # Worker 本体：源码 / 测试 / wrangler 模板 / package-lock
+      - 'cloudflare/workers/**'
+      # D1 的表结构（迁移就跑它）
+      - 'cloudflare/d1/**'
+      # 渲染配置与 workers.dev 回写这两个脚本
+      - 'cloudflare/*.mjs'
+      # wrangler 的版本由 lockfile 钉住
+      - 'cloudflare/*.json'
+      - 'cloudflare/*.toml'
+      # 本地部署脚本改了一般也要跟着重新部署
+      - 'cloudflare/*.sh'
+      # 这条工作流自己
+      - '.github/workflows/deploy-cloudflare.yml'
   workflow_dispatch:
+
+# ⚠️★ 排队，**不**取消：两次 `wrangler deploy` 并行时，先跑完的那次是**旧内容**，
+#    于是线上可能停在上一版（症状是「推了怎么没生效」，而两次 run 都绿）。
+#    `cancel-in-progress: true` 也不行 —— 那会在上传中途掐掉一次。
+concurrency:
+  group: deploy-cloudflare-production
+  cancel-in-progress: false
 
 permissions:
   contents: read

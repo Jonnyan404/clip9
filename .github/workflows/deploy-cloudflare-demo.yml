@@ -1,6 +1,13 @@
 name: Deploy Cloudflare Worker (demo)
 
-# 把一个**公开演示站**部署到 Cloudflare —— 同一份代码的第二次部署。纯手动。
+# 把一个**公开演示站**部署到 Cloudflare —— 同一份代码的第二次部署。
+#
+# 触发（与生产那条**同一套路径**，见下面 `on.push.paths`）：推 `main` 命中前端或 Worker 的改动
+# → 自动部署；也可以手动 Run workflow。演示站跟着 main 走，正是它存在的意义
+# （谁打开谁就能看到「现在这版」长什么样）。
+#
+# ⚠️ 两条工作流**同时**被一次 push 触发是正常的：它们部署到不同的 Worker / 账号，
+#    互不影响。各自有自己的 `concurrency` 组，所以不会互相排队。
 #
 # 为什么要单独一条（而不是给 `deploy-cloudflare.yml` 加参数）：演示站碰的是线上数据，
 # 而生产那条流水线已经跑通过好几版了 —— 宁可多一份工作流，也不让「演示站的配置」
@@ -34,7 +41,25 @@ name: Deploy Cloudflare Worker (demo)
 #    藏进 secret 反而会让「演示站到底什么限额」变得查不到。
 
 on:
+  # ⚠️ 与生产那条**逐条对齐**：少一条就是「该部署却没部署」，而且看不出来
+  #    （页面还是旧的，全程没有红）。改这里要两边一起改，判据 18 盯着。
+  push:
+    branches: [main]
+    paths:
+      - 'web/**'
+      - 'cloudflare/workers/**'
+      - 'cloudflare/d1/**'
+      - 'cloudflare/*.mjs'
+      - 'cloudflare/*.json'
+      - 'cloudflare/*.toml'
+      - 'cloudflare/*.sh'
+      - '.github/workflows/deploy-cloudflare-demo.yml'
   workflow_dispatch:
+
+# ⚠️ 与生产同一条规矩：排队不取消（并行时先跑完的那次是旧内容）。
+concurrency:
+  group: deploy-cloudflare-demo
+  cancel-in-progress: false
 
 permissions:
   contents: read

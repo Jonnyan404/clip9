@@ -1737,6 +1737,154 @@ const pkgApk = read('openwrt/scripts/package-openwrt-apk.sh');
   if (problems.length) fail(label, problems.join('\n    '));
 }
 
+// ── 判据 18：两条 CF 部署工作流的**自动触发范围**一致，且覆盖前端与 Worker（2026-10-26）
+//
+// ⚠️★ 2026-10-26 这两条从「纯手动」改成「推 main 命中路径就自动部署」。改完之后的失效方式是
+// **静默**的，而且两种都不报错：
+//
+//   · `paths` **少了**一条（比如漏了 `cloudflare/d1/**`）→ 改 schema 的那次 push **不部署**，
+//     CI 一片绿、站也还在跑旧版，谁也不会去看 Actions；
+//   · 两条工作流的 `paths` **不一致** → 生产更新了、演示站没更新（或反过来），
+//     而两边都是绿的。演示站存在的意义就是「跟着 main」，漂了就没意义了。
+//
+// 另外两条也一起钉住：`workflow_dispatch` 要留着（改了 secret 得能手动重跑）；
+// `concurrency` 必须是**排队**（`cancel-in-progress: false`）——
+// 两次 `wrangler deploy` 并行时先跑完的是旧内容，而 `true` 会在上传中途掐掉一次。
+{
+  const label = '两条 CF 部署工作流的自动触发范围一致，且覆盖前端与 Worker';
+  const problems = [];
+
+  const PROD = '.github/workflows/deploy-cloudflare.yml';
+  const DEMO = '.github/workflows/deploy-cloudflare-demo.yml';
+
+  // ⚠️ 必须出现在 `paths` 里的那几条（各自代表一类会改变线上内容的输入）。
+  const REQUIRED = [
+    'web/**',
+    'cloudflare/workers/**',
+    'cloudflare/d1/**',
+    'cloudflare/*.mjs',
+    'cloudflare/*.json',
+  ];
+
+  /**
+   * 取 `on.push.paths` 的条目。
+   * ⚠️ 读不到 / 读不全都返回 `null`（**不是**空数组）—— 空数组会被当成「这条没配」，
+   * 与「格式变了、我没解析出来」长得一样，那就把真正的原因盖掉了。
+   */
+  const pushPaths = (text) => {
+    const lines = text.split('\n');
+    const at = lines.findIndex((l) => /^on:\s*$/.test(l));
+    if (at < 0) return null;
+    let i = at + 1;
+    for (; i < lines.length; i += 1) {
+      if (/^\S/.test(lines[i])) return null; // `on:` 段结束，压根没有 push
+      if (/^ {2}push:\s*$/.test(lines[i])) break;
+    }
+    if (i >= lines.length) return null;
+    i += 1;
+    for (; i < lines.length; i += 1) {
+      if (/^ {2}\S/.test(lines[i])) return null; // push 的下一个兄弟键 → 没配 paths
+      if (/^ {4}paths:\s*$/.test(lines[i])) break;
+    }
+    if (i >= lines.length) return null;
+    const out = [];
+    for (i += 1; i < lines.length; i += 1) {
+      const line = lines[i];
+      if (!line.trim()) continue;
+      if (line.trim().startsWith('#')) continue; // 夹在条目中间的说明
+      const item = line.match(/^ {6}-\s*'([^']+)'\s*$/);
+      if (!item) break; // 不是条目了（或格式变了）→ 别猜，让下面判红
+      out.push(item[1]);
+    }
+    return out.length ? out : null;
+  };
+
+  /** `on:` 下面有没有 `workflow_dispatch`。 */
+  const hasDispatch = (text) => /^ {2}workflow_dispatch:\s*$/m.test(text);
+
+  /** `concurrency.cancel-in-progress` 的值；没有这个键返回 `'absent'`。 */
+  const cancelInProgress = (text) => {
+    const block = text.match(/^concurrency:\n([\s\S]*?)(?=^\S)/m);
+    if (!block) return null;
+    const m = block[1].match(/cancel-in-progress:\s*(\S+)/);
+    return m ? m[1] : 'absent';
+  };
+
+  const lists = {};
+  for (const file of [PROD, DEMO]) {
+    const text = read(file);
+    if (text === null) {
+      problems.push(`读不到 ${file}`);
+      continue;
+    }
+
+    const paths = pushPaths(text);
+    if (paths === null) {
+      problems.push(
+        `${file} 读不到 \`on.push.paths\` —— 自动部署的触发范围没了（或者格式变了，这条判据看不懂）`,
+      );
+    } else {
+      lists[file] = paths;
+      if (!paths.includes(file)) {
+        problems.push(`${file} 的 paths 里没有它自己 —— 改工作流本身不需要重新部署吗`);
+      }
+      for (const need of REQUIRED) {
+        if (!paths.includes(need)) {
+          problems.push(
+            `${file} 的 paths 少了 \`${need}\` —— 改这类文件时**不会部署**，而且没有任何提示`,
+          );
+        }
+      }
+    }
+
+    if (!/^ {2}push:\n(?:[\s\S]*?)^ {4}branches:\s*\[main\]/m.test(text)) {
+      problems.push(`${file} 的 push 没有限定 \`branches: [main]\` —— 推别的分支也会部署`);
+    }
+
+    if (!hasDispatch(text)) {
+      problems.push(`${file} 没有 workflow_dispatch —— 改了 secret 之后没法手动重跑`);
+    }
+
+    const cancel = cancelInProgress(text);
+    if (cancel === null) {
+      problems.push(`${file} 没有 concurrency —— 两次部署会并行，先跑完的那次是旧内容`);
+    } else if (cancel !== 'false') {
+      problems.push(
+        `${file} 的 concurrency.cancel-in-progress 是 \`${cancel}\` —— 必须是 false（排队），` +
+          '否则会在上传中途掐掉一次部署',
+      );
+    }
+  }
+
+  // ⚠️ 两边**逐条对齐**（去掉「它自己」那一条）：演示站与生产站跟着同一次 push 走。
+  if (lists[PROD] && lists[DEMO]) {
+    const norm = (arr) =>
+      arr
+        .filter((p) => !p.startsWith('.github/workflows/'))
+        .slice()
+        .sort()
+        .join('\n');
+    const a = norm(lists[PROD]);
+    const b = norm(lists[DEMO]);
+    if (a !== b) {
+      const onlyProd = lists[PROD].filter(
+        (p) => !p.startsWith('.github/workflows/') && !lists[DEMO].includes(p),
+      );
+      const onlyDemo = lists[DEMO].filter(
+        (p) => !p.startsWith('.github/workflows/') && !lists[PROD].includes(p),
+      );
+      problems.push(
+        '两条工作流的 paths 不一致（同一次 push 只有一个站更新）：\n' +
+          `      只有生产有：${onlyProd.join(' / ') || '（无）'}\n` +
+          `      只有演示有：${onlyDemo.join(' / ') || '（无）'}`,
+      );
+    }
+  }
+
+  if (!problems.length) ok(label);
+  if (problems.length) fail(label, problems.join('\n    '));
+}
+
 // ── 输出 ────────────────────────────────────────────────────────────────────
 
 if (failures.length) {
