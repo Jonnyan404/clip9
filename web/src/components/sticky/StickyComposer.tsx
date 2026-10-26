@@ -8,6 +8,7 @@ import { toast } from '@/stores/toastStore';
 import { useDisplaySettings } from '@/hooks/useDisplaySettings';
 import { errorMessage, getClientId, mergeSelectedFiles, prettyFileSize } from '@/lib/util';
 import { postText } from '@/services/send';
+import { writeParams } from '@/services/http';
 import { SLASH_TEMPLATES, resolveSlashText, slashMenuShouldOpen, slashMenuShouldStay, slashPendingAt, stripTrailingSlash } from '@/lib/slash-template.js';
 import { runActionById } from '@/lib/actions/index.js';
 import { ComposerSlashMenu, type SlashTemplate } from '@/components/ComposerSlashMenu';
@@ -163,14 +164,14 @@ export const StickyComposer = forwardRef<StickyComposerHandle, { variant?: strin
                 const formData = new FormData();
                 formData.set('file', file);
                 await axios.postForm('upload', formData, {
-                    params: new URLSearchParams([['room', room], ['client', clientId]]),
+                    params: writeParams(room, clientId),
                     onUploadProgress: (e) => setUploadedSizes((prev) => prev.map((v, i) => (i === index ? e.loaded : v))),
                 });
                 return;
             }
             const response = await axios.post('upload/chunk', file.name, {
                 headers: { 'Content-Type': 'text/plain' },
-                params: new URLSearchParams([['room', room]]),
+                params: writeParams(room, clientId),
             });
             const uuid = response.data.result.uuid;
             let uploaded = 0;
@@ -178,11 +179,12 @@ export const StickyComposer = forwardRef<StickyComposerHandle, { variant?: strin
                 const chunk = file.slice(uploaded, uploaded + chunkSize);
                 await axios.post(`upload/chunk/${uuid}`, chunk, {
                     headers: { 'Content-Type': 'application/octet-stream' },
+                    params: writeParams(room, clientId),
                     onUploadProgress: (e) => setUploadedSizes((prev) => prev.map((v, i) => (i === index ? uploaded + e.loaded : v))),
                 });
                 uploaded += chunkSize;
             }
-            await axios.post(`upload/finish/${uuid}`, null, { params: new URLSearchParams([['room', room], ['client', clientId]]) });
+            await axios.post(`upload/finish/${uuid}`, null, { params: writeParams(room, clientId) });
         }));
         useAppStore.setState({ send: { ...useAppStore.getState().send, files: [] } });
     };

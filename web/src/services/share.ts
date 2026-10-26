@@ -3,6 +3,7 @@
  */
 import axios from 'axios';
 import { normalizeShareTTL, normalizeShareMaxUses } from '@/lib/share-config.js';
+import { writeParams } from './http';
 
 export interface CreateShareLinkOptions {
     type: string;
@@ -107,7 +108,9 @@ export async function updateEntryColumn(id: string, room: string | undefined, co
  */
 export async function updateTextEntry(id: string, room: string, content: string) {
     await axios.post('text', String(content ?? ''), {
-        params: new URLSearchParams([['room', room ?? ''], ['id', String(id)]]),
+        // ⚠️ `id` 走 `extra` 而不是自己拼 URLSearchParams：`?room=` + `?client=` 这一对
+        // 全站只能有一处拼法（见 `writeParams` 的注释），否则下一条请求一定会漏。
+        params: writeParams(room ?? '', undefined, { id: String(id) }),
         headers: { 'Content-Type': 'text/plain' },
     });
 }

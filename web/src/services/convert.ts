@@ -7,6 +7,7 @@
  * 所以这里连「这个扩展名能不能转」都不判，只把服务端的话转达给用户。
  */
 import axios from 'axios';
+import { writeParams } from './http';
 
 /** `GET /server` 里 `convert` 那一段的形状。 */
 /**
@@ -293,12 +294,10 @@ export async function uploadDocument(params: {
     if (params.file.size > UPLOAD_SAFE_MAX) {
         throw new UploadTooLarge(params.file.size);
     }
-    const room = new URLSearchParams([['room', params.room]]);
-
     // ① 初始化：body 是**文件名**，回 uuid（这一路不落盘，只登记）
     const init = await axios.post('upload/chunk', params.file.name, {
         headers: { 'Content-Type': 'text/plain' },
-        params: room,
+        params: writeParams(params.room),
     });
     const uuid: unknown = init.data?.result?.uuid;
     if (typeof uuid !== 'string' || !uuid) {
@@ -308,11 +307,11 @@ export async function uploadDocument(params: {
     // ② 一个分片装完整份
     await axios.post(`upload/chunk/${uuid}`, params.file, {
         headers: { 'Content-Type': 'application/octet-stream' },
-        params: room,
+        params: writeParams(params.room),
     });
 
     // ③ 收尾：登记消息 + 广播给房间里的其他设备
-    await axios.post(`upload/finish/${uuid}`, null, { params: room });
+    await axios.post(`upload/finish/${uuid}`, null, { params: writeParams(params.room) });
 
     return { uuid, name: params.file.name };
 }

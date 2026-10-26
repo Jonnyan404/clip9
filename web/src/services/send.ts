@@ -11,6 +11,7 @@
  */
 import axios from 'axios';
 import { getClientId } from '@/lib/util';
+import { writeParams } from './http';
 
 export interface PostTextOptions {
     /** 房间名（`wsStore.room`，已归一化过的那份） */
@@ -23,7 +24,7 @@ export interface PostTextOptions {
 
 export function postText({ room, text, client = getClientId() }: PostTextOptions) {
     return axios.post('text', text, {
-        params: new URLSearchParams([['room', room], ['client', client]]),
+        params: writeParams(room, client),
         headers: {
             'Content-Type': 'text/plain',
         },

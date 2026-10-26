@@ -446,10 +446,78 @@ for (const name of ['revoke', 'update']) {
     }
 }
 
+// ── L. 每条「会落成一条消息」的写请求都带 `?client=`（2026-10-26）────────────
+// ⚠️★ `?client=` 是服务端填 `senderClientID` 的唯一来源，而「这条是不是我发的」全靠它
+//    （桌面端的左右分栏就是比它）。**少了它不会报错**：消息照发、界面照显示，
+//    只是自己发的东西被当成别的设备发的。
+//    ⚠️ 2026-10-26 之前这条规矩是**每处各写一遍**的，同一个 `sendFiles` 里四种写法
+//    （整份上传带、分片初始化不带、分片不带、收尾带）—— 没人看得出来少了哪一个。
+//    现在只有 `writeParams()` 一种写法，这条判据钉的就是「都用它」。
+//
+// ⚠️ 覆盖面：`src/` 下所有 `axios.post` / `axios.postForm`，**只看 URL 以 `upload` 开头
+//    或等于 `text` 的**（`revoke` / `auth` / `share` / `convert` 那些不落消息，不在此列）。
+//    ⚠️ 覆盖已有条目（`POST /text?id=`）也算：它同样走 `writeParams()`，`id` 用第三个参数的
+//    `extra` 传 —— 不给「自己拼 URLSearchParams」留第二种写法。
+{
+    const ROOT = join(WEB, 'src');
+    const files = readdirSync(ROOT, { recursive: true })
+        .filter((f) => typeof f === 'string' && /\.tsx?$/.test(f))
+        .map((f) => join(ROOT, f));
+
+    /** 取出从 `marker` 那个 `(` 起、括号配平的那一段实参文本。 */
+    const callArgs = (source, marker) => {
+        const out = [];
+        let from = 0;
+        for (;;) {
+            const at = source.indexOf(marker, from);
+            if (at < 0) return out;
+            let depth = 1;
+            let i = at + marker.length;
+            while (i < source.length && depth > 0) {
+                const ch = source[i];
+                if (ch === '(') depth += 1;
+                else if (ch === ')') depth -= 1;
+                else if (ch === "'" || ch === '"' || ch === '`') {
+                    // 跳过字符串字面量（URL 里有 `${uuid}` 那种模板串）
+                    const quote = ch;
+                    i += 1;
+                    while (i < source.length && source[i] !== quote) i += source[i] === '\\' ? 2 : 1;
+                }
+                i += 1;
+            }
+            out.push(source.slice(at + marker.length, i - 1));
+            from = i;
+        }
+    };
+
+    for (const file of files) {
+        // ⚠️ 先剥注释：解释这条规矩的注释里就写着 `axios.post('text')`（同判据 H / I 的坑）。
+        //    ⚠️ 行注释只剥「整行」的 —— 字符串里的 `http://` 不能被当成行注释。
+        const source = readFileSync(file, 'utf8')
+            .replace(/\/\*[\s\S]*?\*\//g, '')
+            .replace(/^[ \t]*\/\/.*$/gm, '');
+        const rel = file.slice(WEB.length + 1);
+        for (const marker of ['axios.postForm(', 'axios.post(']) {
+            for (const args of callArgs(source, marker)) {
+                const url = /^\s*(?:'([^']*)'|"([^"]*)"|`([^`]*)`)/.exec(args);
+                const target = (url && (url[1] ?? url[2] ?? url[3])) || '';
+                const createsMessage = /^upload/.test(target) || target === 'text';
+                if (!createsMessage) continue;
+                if (!/params:\s*writeParams\(/.test(args)) {
+                    problems.push(
+                        `${rel}：\`${target}\` 这条写请求没走 \`writeParams()\` —— ` +
+                            '少了 `?client=`，服务端就不知道这条是谁发的（桌面端会把它排到「别人」那一侧）',
+                    );
+                }
+            }
+        }
+    }
+}
+
 // ── 结果 ────────────────────────────────────────────────────────────────
 if (problems.length) {
     console.error(`✗ 契约守卫失败（${problems.length} 处）：`);
     for (const line of problems) console.error(`    ${line}`);
     process.exit(1);
 }
-console.log('✓ 契约守卫通过：零依赖共享模块字节一致 · 外壳形状完整 · PWA 放行表一致 · dev 代理覆盖了每条服务端路由 · i18n 无死键 · 已删模式未复活 · revoke 只发 POST · WS 事件 id 已归一 · 后端地址与页面地址分开 · 选文件是追加');
+console.log('✓ 契约守卫通过：零依赖共享模块字节一致 · 外壳形状完整 · PWA 放行表一致 · dev 代理覆盖了每条服务端路由 · i18n 无死键 · 已删模式未复活 · revoke 只发 POST · WS 事件 id 已归一 · 后端地址与页面地址分开 · 选文件是追加 · 写请求都带 client');

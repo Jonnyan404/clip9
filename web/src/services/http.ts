@@ -14,7 +14,30 @@
  */
 import axios from 'axios';
 import { API_BASE_URL } from '@/lib/base';
+import { getClientId } from '@/lib/util';
 import { useWebSocketStore } from '@/stores/wsStore';
+
+/**
+ * 所有**写**请求的 query：`?room=` + `?client=`。
+ *
+ * ⚠️★ `client` **不是可选的调味**：服务端拿它填 `senderClientID`，而「这条是不是我发的」
+ * 全靠那一个值（桌面端的左右分栏就是比它）。少一个参数的后果不会报错 ——
+ * 消息照发、界面照显示，只是自己发的东西被当成别的设备发的。
+ *
+ * ⚠️ 为什么抽成一个函数：这条规矩在 2026-10-26 之前**每处各写一遍**，于是同一个
+ * `sendFiles` 里四个请求有三种写法（整份上传带、分片初始化不带、收尾带），
+ * 而**没人能一眼看出少了哪一个**。现在只有一种写法可写。
+ *
+ * ⚠️ 分片的中间那几个（`upload/chunk/{uuid}`）服务端其实不读 `client`，但照样带上：
+ * 「哪些请求要带」这件事不该是一条需要背下来的规则，否则下一个加请求的人一定会漏。
+ */
+export function writeParams(room: string, client = getClientId(), extra?: Record<string, string>): URLSearchParams {
+    const params = new URLSearchParams([['room', room ?? ''], ['client', client]]);
+    for (const [key, value] of Object.entries(extra ?? {})) {
+        params.set(key, value);
+    }
+    return params;
+}
 
 export function setupAxios(): void {
     // ⚠️★ 全部接口调用都用**相对路径**，而 history 模式下文档目录不再是 `<prefix>/`：
