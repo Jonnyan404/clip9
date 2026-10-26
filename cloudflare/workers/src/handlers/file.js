@@ -3,6 +3,7 @@ import { buildSenderDevice, saveToD1, broadcastMessage, generateUUID } from '../
 import { ensureRoomAccess, normalizeRoomName } from '../auth';
 import { ensureRoomOrShareAccess } from '../share';
 import { errorResponse } from '../errors';
+import { checkUploadBudget, checkInflightBudget } from '../upload-quota';
 
 function decodeUploadFilename(value = '') {
   try {
@@ -229,6 +230,13 @@ export class FileHandler {
         return errorResponse(413, 'file_too_large', 'File too large', `文件大小超出限制 (最大 ${Math.floor(fileLimit / 1024 / 1024)}MB)`);
       }
 
+      // ⚠️★ 总量闸放在 **R2 写之前**：一旦字节落了盘，即使事后拒绝也已经在占额度了
+      //（而那条没变成消息的字节，清理任务也找不到它）。
+      const overBudget = await checkUploadBudget(env, fileSize);
+      if (overBudget) {
+        return overBudget;
+      }
+
       const uuid = generateUUID();
       const currentTime = Math.floor(Date.now() / 1000);
       const expireTime = resolveExpireTime(currentTime, env, authResult.requirement?.fileExpire);
@@ -279,6 +287,18 @@ export class FileHandler {
       const fileName = String(await request.text() || '').trim();
       if (!fileName) {
         return errorResponse(400, 'invalid_file_name', 'Invalid file name', '未提供文件名');
+      }
+
+      // 开一个分片会话 = 占一个「还没收尾」的名额；满了先拦住（详见 upload-quota.js）。
+      const tooMany = await checkInflightBudget(env);
+      if (tooMany) {
+        return tooMany;
+      }
+      // ⚠️ 这里还不知道最终多大，所以只拦「连 1 字节都放不下」的那种满。
+      //    真正的判断在 `uploadChunkPart`（按累计大小）与 `finishChunk`（收尾前）。
+      const overBudget = await checkUploadBudget(env, 1);
+      if (overBudget) {
+        return overBudget;
       }
 
       const currentTime = Math.floor(Date.now() / 1000);
@@ -347,6 +367,13 @@ export class FileHandler {
         return errorResponse(413, 'file_too_large', 'File too large', `文件大小超出限制 (最大 ${Math.floor(fileLimit / 1024 / 1024)}MB)`);
       }
 
+      // ⚠️ 分片的字节是**逐片落盘**的（`startChunkUpload` 那条注释说的），所以要在
+      //    每一片之前判一次总量：`已提交 + 这个会话已写的 + 这一片`。
+      const overBudget = await checkUploadBudget(env, Number(meta.totalSize || 0) + chunkSize);
+      if (overBudget) {
+        return overBudget;
+      }
+
       const upload = env.R2_BUCKET.resumeMultipartUpload(createFileKey(uuid), meta.uploadId);
       const partNumber = (meta.parts.length || 0) + 1;
       const part = await upload.uploadPart(partNumber, request.body);
@@ -394,6 +421,12 @@ export class FileHandler {
 
       if (!meta.uploadId || !parts.length) {
         return errorResponse(400, 'no_chunks', 'No chunks', '未找到上传的分块');
+      }
+
+      // ⚠️ 收尾前再判一次：会话开着的时候（可能几十分钟）别人可能已经把空间用掉了。
+      const overBudget = await checkUploadBudget(env, Number(meta.totalSize || 0));
+      if (overBudget) {
+        return overBudget;
       }
 
       const upload = env.R2_BUCKET.resumeMultipartUpload(createFileKey(uuid), meta.uploadId);
@@ -451,6 +484,16 @@ export class FileHandler {
       const fileLimit = getFileLimit(env);
       if (fileSize > fileLimit) {
         return errorResponse(413, 'file_too_large', 'File too large', `文件大小超出限制 (最大 ${Math.floor(fileLimit / 1024 / 1024)}MB)`);
+      }
+
+      // ⚠️ 建 multipart 会话时就知道总大小，所以在**一片都还没写**的时候就能判总量。
+      const tooMany = await checkInflightBudget(env);
+      if (tooMany) {
+        return tooMany;
+      }
+      const overBudget = await checkUploadBudget(env, fileSize);
+      if (overBudget) {
+        return overBudget;
       }
 
       const uuid = generateUUID();
@@ -540,6 +583,17 @@ export class FileHandler {
 
       if (!uploadId || !key || !parts.length) {
         return errorResponse(400, 'invalid_multipart_complete_params', 'Invalid multipart request', '分片完成参数无效');
+      }
+
+      // ⚠️ 会话是**建的时候**判过总量的，但它可能开了很久（空间在这期间被别人用掉）。
+      //    收尾前按客户端声明的大小再判一次；声明缺失就放行（此时字节其实已经写完了，
+      //    多拦一次只会留下更麻烦的孤儿分片 — 见 upload-quota.js 抬头那段）。
+      const declaredSize = Number(body?.size || 0);
+      if (declaredSize > 0) {
+        const overBudget = await checkUploadBudget(env, declaredSize);
+        if (overBudget) {
+          return overBudget;
+        }
       }
 
       const upload = env.R2_BUCKET.resumeMultipartUpload(key, uploadId);

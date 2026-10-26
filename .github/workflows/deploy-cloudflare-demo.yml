@@ -46,6 +46,12 @@ env:
   BUCKET_NAME: clip9-files-demo
   # 3 MB。⚠️ 单位是字节，不是 MB —— 写成 3 会被当成 3 字节，谁都传不上来。
   FILE_LIMIT: '3145728'
+  # ⚠️★ **总量**上限（字节）：所有未过期文件加起来不能超过它。这才是控 R2 账单的那一条 ——
+  #    `FILE_LIMIT` 只管单个文件，反复传能把 10 GB-month 的免费额度填满，
+  #    而填满之后不是报错，是**开始计费**。
+  #    2 GiB ≈ 免费额度的 1/5，留足了「过期但还没被清理」的余量；顶满了也不用管，
+  #    1 小时后自动释放（见下面 FILE_EXPIRE）。
+  FILE_TOTAL_LIMIT: '2147483648'
 
 jobs:
   deploy:
@@ -210,6 +216,7 @@ jobs:
             --db-id "$D1_ID" \
             --bucket-name "$BUCKET_NAME" \
             --set FILE_LIMIT="$FILE_LIMIT" \
+            --set FILE_TOTAL_LIMIT="$FILE_TOTAL_LIMIT" \
             --set FILE_EXPIRE=3600 \
             --set HISTORY_LIMIT=50 \
             --set FILE_CLEANUP=300 \

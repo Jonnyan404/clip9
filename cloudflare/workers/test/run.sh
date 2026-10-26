@@ -12,6 +12,8 @@
 #   deploy-subdomain.test.mjs —— 部署不该替操作者表态（workers.dev 的当前状态照原样写回配置）
 #   stats-daily.test.mjs  —— 房间活跃度（热力图的数据源），与自建服务端的 `/stats/daily` 同一条契约
 #   file-cleanup.test.mjs  —— 过期文件的后台回收（cron + scheduled 两半都要在；永不过期的文件不许碰）
+#   upload-quota.test.mjs  —— 文件**总量**上限（FILE_TOTAL_LIMIT）：整份 / 分片 / multipart 三条路都拦，
+#                             不设上限时行为不变（既有部署不受影响）
 #
 # 端到端测试需要先打包处理器（Worker 源码用打包器风格的无后缀导入，Node 直接加载不了），
 # 并用 node:sqlite 充当 D1、Map 充当 R2，因此不需要 wrangler、不联网。
@@ -88,3 +90,7 @@ node --no-warnings test/stats-daily.test.mjs
 echo
 echo "── 过期文件的后台回收（cron → scheduled；永不过期的文件一条不许碰）"
 node --no-warnings test/file-cleanup.test.mjs
+
+echo
+echo "── 文件总量的闸（FILE_TOTAL_LIMIT；整份 / 分片 / multipart 每条路都要管）"
+node --no-warnings test/upload-quota.test.mjs

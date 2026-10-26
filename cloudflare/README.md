@@ -33,6 +33,7 @@
 | `HISTORY_LIMIT` | ➖ | 房间历史消息条数（默认 `50`） |
 | `TEXT_LIMIT` | ➖ | 文本最大字符数（默认 `40960`） |
 | `FILE_LIMIT` | ➖ | 单文件大小上限（字节，默认 `204857600` 即 200MB） |
+| `FILE_TOTAL_LIMIT` | ➖ | **所有未过期文件加起来**的上限（字节，默认空 = 不限制）。公开实例必设，见下文「防止账单爆炸」 |
 | `FILE_EXPIRE` | ➖ | 全局文件过期时间（秒，默认 `3600` 即 1 小时） |
 | `FILE_CLEANUP` | ➖ | 过期文件后台回收的**开关**（秒。`<= 0` = 关掉，默认 `300` = 开）。⚠️ 它**不管周期**，周期在模板的 `[triggers]` cron 里（默认每 5 分钟） |
 | `ALLOW_ORIGINS` | ➖ | **前后端分离部署**时前端所在的来源（逗号分隔，例 `https://clip.example.com`）。不设 = `*`（谁都能跨源读，历史行为）。见下文「前后端分离部署」 |
@@ -87,6 +88,31 @@ bash deploy.sh
 
 ⚠️ 新账号第一次部署前，先去控制台**开通 R2**（Account → R2 → Enable）。没开通时
 `wrangler r2 bucket create` 会报一句和「桶名不对」看不出来的错。
+
+#### 防止账单爆炸（公开实例必看）
+
+公开站谁都能传，而 R2 免费额度是 **10 GB-month**。单文件上限（`FILE_LIMIT`）只管一个文件，
+**管不住总量** —— 反复传能把它填满，而填满之后**不是报错，是开始计费**。所以演示站配了这一组：
+
+| 旋钮 | 演示站的值 | 起什么作用 |
+| :--- | :--- | :--- |
+| `FILE_LIMIT` | 3 MB | 单个文件不能超 |
+| `FILE_TOTAL_LIMIT` | 2 GiB | **所有未过期文件加起来**不能超；超了返回 507「文件空间已满」 |
+| `FILE_EXPIRE` | 3600 | 文件 1 小时后过期，空间**自愈** |
+| `FILE_CLEANUP` + `[triggers]` cron | 300 / 每 5 分钟 | 后台真的把过期文件从 R2 删掉 |
+
+三条上传路径（整份 `POST /upload`、分片 `upload/chunk*`、`upload/multipart*`）**都在写字节之前**
+判总量；另外分片会话有并发上限（20 个），防止「开了会话写一半就不管」的那部分字节没人管。
+判据：`cloudflare/workers/test/upload-quota.test.mjs`（在 `test/run.sh` 里，部署前会跑）。
+
+⚠️ 还建议在控制台加两道**外部**保险（代码管不着）：
+
+- **R2 → Settings → Object lifecycle rules**：加一条 *Abort incomplete multipart uploads*（比如 1 天）。
+  它是「会话开了一半就断掉」那些残留的唯一清道夫。
+- **Account → Billing → Notifications**：设一个 R2 用量提醒（比如 5 GB）。
+
+⚠️ 总量上限**不是**「防刷」的全部：文本消息不占 R2，但占 D1 的写入配额（免费 10 万行/天）。
+真要防刷，还得在 Cloudflare 上加 Rate limiting 规则（按 IP 限制 `POST /text`、`POST /upload` 的频率）。
 
 ---
 
