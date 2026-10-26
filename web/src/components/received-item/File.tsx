@@ -8,10 +8,10 @@ import { useDisplaySettings } from '@/hooks/useDisplaySettings';
 import { useInView } from '@/hooks/useInView';
 import { useMarkdown } from '@/hooks/useMarkdown';
 import {
-    SHARE_DEFAULT_TTL, deviceLabel, errorMessage, filePreviewKind,
+    deviceLabel, errorMessage, filePreviewKind,
     formatTimestamp, isImageName, prettyFileSize,
 } from '@/lib/util';
-import { createShareLink } from '@/services/share';
+import { downloadFile as saveFileToDisk } from '@/services/file-url';
 import { MarkdownBody } from '@/components/MarkdownBody';
 import { MarkdownToggle } from '@/components/MarkdownToggle';
 import { ShareLinkButton } from '@/components/ShareLinkButton';
@@ -32,7 +32,7 @@ const TEXT_PREVIEW_LIMIT = 16 * 1024;
  * 总工作量从 50 次变成 12+24+36+48+50=170 次，分批反而更慢。
  * `meta` 是 store 数组里的稳定引用，所以这个比较是有意义的。
  */
-export const ReceivedFile = memo(function ReceivedFile({ meta }: { meta: ReceivedItem }) {
+export const ReceivedFile = memo(function ReceivedFile({ meta, onOpen }: { meta: ReceivedItem; onOpen: (item: ReceivedItem) => void }) {
     const { t } = useTranslation();
     const display = useDisplaySettings();
     const room = useWebSocketStore((s) => s.room);
@@ -40,14 +40,10 @@ export const ReceivedFile = memo(function ReceivedFile({ meta }: { meta: Receive
     const [expand, setExpand] = useState(false);
     const [loading, setLoading] = useState(false);
     const [loaded, setLoaded] = useState(0);
-    const [srcPreview, setSrcPreview] = useState('');
     const [textPreview, setTextPreview] = useState('');
     const [showFullText, setShowFullText] = useState(false);
-    const [downloading, setDownloading] = useState(false);
 
     const kind = useMemo(() => filePreviewKind(meta.name), [meta.name]);
-    const isVideo = kind === 'video';
-    const isAudio = kind === 'audio';
     const isText = kind === 'text';
 
     const expired = Boolean(meta.expire && meta.expire > 0 && Date.now() / 1000 > meta.expire);
@@ -62,68 +58,51 @@ export const ReceivedFile = memo(function ReceivedFile({ meta }: { meta: Receive
         inView,
     );
 
-    const ensureRawUrl = async (): Promise<string> => {
-        const data = await createShareLink({ type: 'file', uuid: meta?.cache, ttl: SHARE_DEFAULT_TTL, maxUses: 0, room });
-        return data?.rawUrl || '';
+    // ⚠️ 同步的：地址本地拼（`services/file-url`），不再为「看一眼」去签一条分享令牌。
+    const downloadFile = () => {
+        if (expired || !meta.cache) return;
+        saveFileToDisk(meta.cache, meta.name, room);
     };
 
-    const downloadFile = async () => {
-        if (expired || downloading) return;
-        setDownloading(true);
-        try {
-            const url = await ensureRawUrl();
-            if (!url) return;
-            const target = new URL(url, window.location.origin);
-            target.searchParams.set('download', 'true');
-            const anchor = document.createElement('a');
-            anchor.href = target.toString();
-            anchor.download = meta?.name || 'file';
-            anchor.rel = 'noopener';
-            document.body.appendChild(anchor);
-            anchor.click();
-            document.body.removeChild(anchor);
-        } catch (error) {
-            const msg = errorMessage(error);
-            toast(msg ? t('fileFetchFailedMsg', { msg }) : t('fileFetchFailed'));
-        } finally {
-            setDownloading(false);
-        }
-    };
-
-    const previewFile = async () => {
-        if (expand) {
-            setExpand(false);
-            return;
-        }
-        if (srcPreview || textPreview) {
-            setExpand(true);
-            return;
-        }
-        setExpand(true);
+    const loadText = async () => {
         setLoading(true);
         setLoaded(0);
         try {
-            if (isVideo || isAudio) {
-                setSrcPreview(await ensureRawUrl());
-            } else if (isText) {
-                setShowFullText(false);
-                const response = await axios.get(`file/${meta.cache}/${encodeURIComponent(meta.name || '')}`, {
-                    responseType: 'text',
-                    onDownloadProgress: (e) => setLoaded(e.loaded),
-                });
-                setTextPreview(typeof response.data === 'string' ? response.data : String(response.data || ''));
-            } else {
-                const response = await axios.get(`file/${meta.cache}/${encodeURIComponent(meta.name || '')}`, {
-                    responseType: 'arraybuffer',
-                    onDownloadProgress: (e) => setLoaded(e.loaded),
-                });
-                setSrcPreview(URL.createObjectURL(new Blob([response.data])));
-            }
+            setShowFullText(false);
+            const response = await axios.get(`file/${meta.cache}/${encodeURIComponent(meta.name || '')}`, {
+                responseType: 'text',
+                onDownloadProgress: (e) => setLoaded(e.loaded),
+            });
+            setTextPreview(typeof response.data === 'string' ? response.data : String(response.data || ''));
         } catch (error) {
             const msg = errorMessage(error);
             toast(msg ? t('fileFetchFailedMsg', { msg }) : t('fileFetchFailed'));
         } finally {
             setLoading(false);
+        }
+    };
+
+    /**
+     * 预览。
+     *
+     * ⚠️★ 媒体（图片 / 视频 / 音频 / 认不出类型的）一律进**全屏查看器**，不在这儿展开：
+     * 查看器能上下翻、能双击放大、能下载，而原地展开只能给一个 480px 高的框 ——
+     * 而且它和「点开一条看全」是同一个动作，两套实现必然长歪。
+     * 只有**正文类**文件留在原地展开：那是一段要读的字，全屏并不会更好读。
+     */
+    const previewFile = () => {
+        if (expired) return;
+        if (!isText) {
+            onOpen(meta);
+            return;
+        }
+        if (expand) {
+            setExpand(false);
+            return;
+        }
+        setExpand(true);
+        if (!textPreview && !loading) {
+            void loadText();
         }
     };
 
@@ -140,7 +119,9 @@ export const ReceivedFile = memo(function ReceivedFile({ meta }: { meta: Receive
         }
     };
 
-    const previewIcon = isVideo || isAudio ? 'mdi-movie-search-outline' : isText ? 'mdi-text-box-search-outline' : 'mdi-image-search-outline';
+    const previewIcon = kind === 'video' || kind === 'audio'
+        ? 'mdi-movie-search-outline'
+        : isText ? 'mdi-text-box-search-outline' : 'mdi-image-search-outline';
     const canPreview = Boolean(meta.thumbnail || kind);
     const showMeta = Boolean(meta.timestamp && (display.timestamp || display.device || display.ip));
 
@@ -175,10 +156,18 @@ export const ReceivedFile = memo(function ReceivedFile({ meta }: { meta: Receive
                 )}
 
                 <div className="file-card__row">
-                    {meta.thumbnail && !isVideo && !isAudio ? (
-                        <img src={String(meta.thumbnail)} alt="" className="file-card__thumb" />
+                    {/* ⚠️ 缩略图**本身**就能点开全屏（这是手机上最顺手的那个动作：看到图就点它，
+                        而不是去右上角找放大镜）。预览图标仍然保留，两条路都能进。 */}
+                    {meta.thumbnail && kind !== 'video' && kind !== 'audio' ? (
+                        <img
+                            src={String(meta.thumbnail)}
+                            alt=""
+                            className="file-card__thumb"
+                            onClick={() => { if (!expired) onOpen(meta); }}
+                            style={{ cursor: expired ? 'default' : 'pointer' }}
+                        />
                     ) : (
-                        <MdiIcon name={isAudio ? 'mdi-music-note' : isVideo ? 'mdi-movie' : isImageName(meta.name) ? 'mdi-image-outline' : 'mdi-file-outline'} size={40} />
+                        <MdiIcon name={kind === 'audio' ? 'mdi-music-note' : kind === 'video' ? 'mdi-movie' : isImageName(meta.name) ? 'mdi-image-outline' : 'mdi-file-outline'} size={40} />
                     )}
                     <div className="file-card__info">
                         <Typography variant="subtitle1" noWrap className={expired ? 'file-card__name--expired' : undefined} title={meta.name}>
@@ -196,7 +185,7 @@ export const ReceivedFile = memo(function ReceivedFile({ meta }: { meta: Receive
                         {display.cardDownload && (
                             <Tooltip title={expired ? t('expired') : t('download')}>
                                 <span>
-                                    <IconButton size="small" disabled={expired || downloading} onClick={downloadFile} aria-label={t('download')}>
+                                    <IconButton size="small" disabled={expired} onClick={downloadFile} aria-label={t('download')}>
                                         <MdiIcon name={expired ? 'mdi-download-off' : 'mdi-download'} size={18} />
                                     </IconButton>
                                 </span>
@@ -204,7 +193,7 @@ export const ReceivedFile = memo(function ReceivedFile({ meta }: { meta: Receive
                         )}
                         {display.cardPreview && canPreview && (
                             <Tooltip title={t('preview')}>
-                                <IconButton size="small" onClick={() => { if (!expired) void previewFile(); }} aria-label={t('preview')}>
+                                <IconButton size="small" onClick={previewFile} aria-label={t('preview')}>
                                     <MdiIcon name={previewIcon} size={18} />
                                 </IconButton>
                             </Tooltip>
@@ -220,7 +209,9 @@ export const ReceivedFile = memo(function ReceivedFile({ meta }: { meta: Receive
                     </div>
                 </div>
 
-                {expand && (
+                {/* ⚠️ 展开块**只剩正文类**：媒体走全屏查看器（见 previewFile 的注释），
+                    所以这里不再有 `<video>` / `<audio>` / `<img>` 三个分支。 */}
+                {expand && isText && (
                     <>
                         <Divider className="text-card__divider" />
                         {loading && (
@@ -228,20 +219,13 @@ export const ReceivedFile = memo(function ReceivedFile({ meta }: { meta: Receive
                                 {meta.size ? `${Math.round((loaded / Number(meta.size)) * 100)}%` : '…'}
                             </Typography>
                         )}
-                        {isVideo && <video src={srcPreview} controls preload="metadata" style={{ maxHeight: 480, maxWidth: '100%', display: 'block', margin: '0 auto' }} />}
-                        {isAudio && <audio src={srcPreview} controls preload="metadata" style={{ width: '100%' }} />}
-                        {isText && (
-                            <div className="md-preview" style={{ '--md-toggle-gutter': md.gutter } as React.CSSProperties}>
-                                {md.available && <MarkdownToggle mode={md.mode} actions={md.actions} onModeChange={md.setMode} />}
-                                {md.html
-                                    ? <MarkdownBody html={md.html} />
-                                    : <pre className="code-block" style={{ maxHeight: '30rem' }}>{displayedText}</pre>}
-                            </div>
-                        )}
-                        {!isVideo && !isAudio && !isText && srcPreview && (
-                            <img src={srcPreview} alt={meta.name} style={{ maxHeight: 480, maxWidth: '100%', display: 'block', margin: '0 auto' }} />
-                        )}
-                        {isText && hasTruncated && (
+                        <div className="md-preview" style={{ '--md-toggle-gutter': md.gutter } as React.CSSProperties}>
+                            {md.available && <MarkdownToggle mode={md.mode} actions={md.actions} onModeChange={md.setMode} />}
+                            {md.html
+                                ? <MarkdownBody html={md.html} />
+                                : <pre className="code-block" style={{ maxHeight: '30rem' }}>{displayedText}</pre>}
+                        </div>
+                        {hasTruncated && (
                             <div className="file-card__truncated">
                                 <Typography variant="caption" color="text.secondary">
                                     {t('textPreviewTruncated', { limit: prettyFileSize(TEXT_PREVIEW_LIMIT) })}

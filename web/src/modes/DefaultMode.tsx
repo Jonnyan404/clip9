@@ -9,6 +9,7 @@ import { ReceivedFile } from '@/components/received-item/File';
 import { MdiIcon } from '@/components/ui/MdiIcon';
 import { useAppStore, selectComposerDisabledEverywhere, selectComposerFullyHidden, selectVisibleReceived, type ReceivedItem } from '@/stores/appStore';
 import { useDisplaySettings } from '@/hooks/useDisplaySettings';
+import { useViewerStore } from '@/stores/viewerStore';
 import { isFileEntry, isImageName, localDateKey, looksLikeTable, looksLikeTaskList } from '@/lib/util';
 
 const TIMELINE_FILTER_KEY = 'timelineFilter';
@@ -73,6 +74,12 @@ export default function DefaultMode() {
         const wantImage = filter === 'image';
         return visible.filter((item) => isFileEntry(item) && isImageName(item.name) === wantImage);
     }, [visible, display.timelineFilter, filter]);
+
+    // 点开一条媒体 → 全屏查看器。序列用 **`filtered` 而不是 `filtered.slice(0, renderLimit)`**：
+    // 后者只是「已经画出来的那一段」，从里面翻会在第 12 条突然到底，而界面上明明还有内容。
+    const openViewer = useCallback((item: ReceivedItem) => {
+        useViewerStore.getState().open(filtered, item.id);
+    }, [filtered]);
 
     // ⚠️★ 分批挂载：一帧只画 `FIRST_CHUNK` 条，剩下的用 rAF 一帧加一批。
     //
@@ -235,7 +242,7 @@ export default function DefaultMode() {
                                     className="timeline-item"
                                     sx={{ pt: item === filtered[0] ? 1.5 : 0 }}
                                 >
-                                    {item.type === 'text' ? <ReceivedText meta={item} /> : <ReceivedFile meta={item} />}
+                                    {item.type === 'text' ? <ReceivedText meta={item} /> : <ReceivedFile meta={item} onOpen={openViewer} />}
                                 </Box>
                             ))}
                             {filtered.length === 0 && (

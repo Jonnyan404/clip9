@@ -26,11 +26,13 @@ export const TimelineRow = memo(function TimelineRow({
     category,
     expanded,
     onToggle,
+    onOpen,
 }: {
     meta: ReceivedItem;
     category: TimelineCategory;
     expanded: boolean;
     onToggle: (id: string) => void;
+    onOpen: (item: ReceivedItem) => void;
 }) {
     const { t } = useTranslation();
     const display = useDisplaySettings();
@@ -127,7 +129,7 @@ export const TimelineRow = memo(function TimelineRow({
 
             {expanded && (
                 <div className="timeline-row__full">
-                    <GlancePreview item={meta} enableTaskToggle inline />
+                    <GlancePreview item={meta} enableTaskToggle inline onOpen={onOpen} />
                 </div>
             )}
         </div>

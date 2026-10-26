@@ -20,6 +20,7 @@ import { TraditionalColorDialog } from './TraditionalColorDialog';
 import { ShareHistoryDialog } from './ShareHistoryDialog';
 import { ActivityHeatmapDialog } from './ActivityHeatmapDialog';
 import { ToastHost } from './ToastHost';
+import { MediaViewer } from '@/components/viewer/MediaViewer';
 
 /**
  * 应用外壳 —— 对应 web-vue3/src/App.vue 的 `<v-app>` 那一层。
@@ -239,6 +240,9 @@ export function AppShell({ children }: { children: ReactNode }) {
                 <PageQrDialog open={pageQrOpen} onClose={() => setPageQrOpen(false)} />
                 <AuthDialog />
                 <RoomDialog />
+                {/* 全屏查看器挂在这一层（不是某个模式里）：**每个模式点开媒体都是它**。
+                    它自己走 portal 到 body，所以不受这里的布局影响。 */}
+                <MediaViewer />
                 <ToastHost />
             </Box>
         </PageToolbarContext.Provider>

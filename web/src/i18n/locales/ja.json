@@ -76,6 +76,7 @@
   "download": "ダウンロード",
   "expired": "期限切れ",
   "preview": "プレビュー",
+  "viewerUnsupported": "この形式はプレビューできません。ダウンロードして確認してください",
   "showTimelineFilter": "カテゴリバーを表示",
   "showTimelineSearch": "検索バーを表示",
   "searchPlaceholder": "検索…",

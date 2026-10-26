@@ -1,15 +1,15 @@
 import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Button, CircularProgress, Stack, Typography } from '@mui/material';
+import { Button, CircularProgress, IconButton, Stack, Typography } from '@mui/material';
 import axios from 'axios';
 import { useWebSocketStore } from '@/stores/wsStore';
 import { toast } from '@/stores/toastStore';
 import { useMarkdown } from '@/hooks/useMarkdown';
 import { useTaskListToggle } from '@/hooks/useTaskListToggle';
 import {
-    SHARE_DEFAULT_TTL, copyTextToClipboard, deviceLabel, errorMessage, filePreviewKind, formatTimestamp, isFileEntry, prettyFileSize,
+    copyTextToClipboard, deviceLabel, errorMessage, filePreviewKind, formatTimestamp, isFileEntry, prettyFileSize,
 } from '@/lib/util';
-import { createShareLink } from '@/services/share';
+import { downloadFile as saveFileToDisk, fileUrl } from '@/services/file-url';
 import { MarkdownBody } from '@/components/MarkdownBody';
 import { MarkdownToggle } from '@/components/MarkdownToggle';
 import { ShareLinkButton } from '@/components/ShareLinkButton';
@@ -32,13 +32,18 @@ import type { ReceivedItem } from '@/stores/appStore';
  * （实测一张 1440 宽的截图能把一行拉到 613px，动作行直接滚出视野）。内联时图片/视频/文本
  * 预览一律压到 220px / 18rem，动作行始终留在视野里。
  */
-export function GlancePreview({ item, enableTaskToggle = false, inline = false }: { item: ReceivedItem | null; enableTaskToggle?: boolean; inline?: boolean }) {
+export function GlancePreview({ item, enableTaskToggle = false, inline = false, onOpen }: {
+    item: ReceivedItem | null;
+    enableTaskToggle?: boolean;
+    inline?: boolean;
+    /** 点媒体进全屏查看器。不给就只是预览（调用方自己决定序列，见 `viewerStore`）。 */
+    onOpen?: (item: ReceivedItem) => void;
+}) {
     const { t } = useTranslation();
     const room = useWebSocketStore((s) => s.room);
     const [previewSrc, setPreviewSrc] = useState('');
     const [textPreview, setTextPreview] = useState('');
     const [loading, setLoading] = useState(false);
-    const [downloading, setDownloading] = useState(false);
 
     // ⚠️ 这个 hook 必须无条件调用（React 的规矩）。`enableTaskToggle` 只决定**认不认**它，
     // 不决定调不调 —— 关着的时候仍用原始 content，和加这个 prop 之前逐字一致。
@@ -58,31 +63,29 @@ export function GlancePreview({ item, enableTaskToggle = false, inline = false }
     const canPreview = Boolean(isFile && kind && !expired);
     const md = useMarkdown(() => content);
 
-    const ensureRawUrl = async (): Promise<string> => {
-        const data = await createShareLink({ type: 'file', uuid: item?.cache, ttl: SHARE_DEFAULT_TTL, maxUses: 0, room });
-        return data?.rawUrl || '';
-    };
-
     useEffect(() => {
-        setPreviewSrc('');
         setTextPreview('');
+        setLoading(false);
         // ⚠️ 不是文件 / 类型不支持预览 / 已过期：什么都不取（也就不会弹气泡），
         // 直接落到下面的兜底块。
         if (!item || !canPreview) {
+            setPreviewSrc('');
             return;
         }
+        // ⚠️★ 图片 / 视频 / 音频的地址是**本地拼的**（`services/file-url`）：不请求、不 loading、
+        // 也不会因为「要一条分享令牌」而污染 `GET /share/list`。只有文本文件要真的发一次请求
+        // （文件条目本身没有正文）。
+        if (kind !== 'text') {
+            setPreviewSrc(fileUrl(item.cache, { room }));
+            return;
+        }
+        setPreviewSrc('');
         let cancelled = false;
         setLoading(true);
         void (async () => {
             try {
-                if (kind === 'text') {
-                    // ⚠️ 文本文件**必须**另发一次请求取正文：文件条目本身没有 content。
-                    const response = await axios.get(`file/${item.cache}/${encodeURIComponent(item.name || '')}`, { responseType: 'text' });
-                    if (!cancelled) setTextPreview(typeof response.data === 'string' ? response.data : String(response.data || ''));
-                } else {
-                    const url = await ensureRawUrl();
-                    if (!cancelled) setPreviewSrc(url);
-                }
+                const response = await axios.get(`file/${item.cache}/${encodeURIComponent(item.name || '')}`, { responseType: 'text' });
+                if (!cancelled) setTextPreview(typeof response.data === 'string' ? response.data : String(response.data || ''));
             } catch (error) {
                 if (!cancelled) toast(errorMessage(error) || t('fileFetchFailed'));
             } finally {
@@ -90,28 +93,12 @@ export function GlancePreview({ item, enableTaskToggle = false, inline = false }
             }
         })();
         return () => { cancelled = true; };
-    }, [item?.id]);
+    }, [item?.id, room]);
 
-    const downloadFile = async () => {
-        if (downloading || !item?.cache) return;
-        setDownloading(true);
-        try {
-            const url = await ensureRawUrl();
-            if (!url) return;
-            const target = new URL(url, window.location.origin);
-            target.searchParams.set('download', 'true');
-            const anchor = document.createElement('a');
-            anchor.href = target.toString();
-            anchor.download = item?.name || 'file';
-            anchor.rel = 'noopener';
-            document.body.appendChild(anchor);
-            anchor.click();
-            document.body.removeChild(anchor);
-        } catch (error) {
-            toast(errorMessage(error) || t('fileFetchFailed'));
-        } finally {
-            setDownloading(false);
-        }
+    // ⚠️ 同步的：地址是本地拼的（`services/file-url`），没有「等令牌」这一拍。
+    const downloadFile = () => {
+        if (!item?.cache) return;
+        saveFileToDisk(item.cache, item.name, room);
     };
 
     const copyContent = async () => {
@@ -151,10 +138,31 @@ export function GlancePreview({ item, enableTaskToggle = false, inline = false }
                 <>
                     <Stack alignItems="center" justifyContent="center" sx={{ minHeight: 60 }}>
                         {loading && <CircularProgress size={26} />}
-                        {!loading && kind === 'image' && previewSrc && <img src={previewSrc} alt={item.name} style={{ maxWidth: '100%', maxHeight: inline ? 220 : '46vh', borderRadius: 8 }} />}
+                        {/* ⚠️ 图片**本身**可点进全屏（手机上最顺手的动作）。视频/音频不行 ——
+                            那里 `controls` 自己吃点击，所以另给一个全屏按钮，见下面那一块。 */}
+                        {!loading && kind === 'image' && previewSrc && (
+                            <img
+                                src={previewSrc}
+                                alt={item.name}
+                                onClick={onOpen ? () => onOpen(item) : undefined}
+                                style={{
+                                    maxWidth: '100%',
+                                    maxHeight: inline ? 220 : '46vh',
+                                    borderRadius: 8,
+                                    cursor: onOpen ? 'zoom-in' : 'default',
+                                }}
+                            />
+                        )}
                         {!loading && kind === 'video' && previewSrc && <video src={previewSrc} controls style={{ maxWidth: '100%', maxHeight: inline ? 220 : '46vh', borderRadius: 8 }} />}
                         {!loading && kind === 'audio' && previewSrc && <audio src={previewSrc} controls style={{ width: '100%' }} />}
                         {!loading && kind === 'text' && textPreview && <pre className="code-block" style={{ width: '100%', maxHeight: inline ? '18rem' : '46vh' }}>{textPreview}</pre>}
+                        {!loading && (kind === 'video' || kind === 'audio') && previewSrc && onOpen && (
+                            <Stack direction="row" justifyContent="flex-end" sx={{ width: '100%' }}>
+                                <IconButton size="small" onClick={() => onOpen(item)} aria-label={t('preview')}>
+                                    <MdiIcon name="mdi-fullscreen" size={18} />
+                                </IconButton>
+                            </Stack>
+                        )}
                         {/* ⚠️★ 兜底块 = Vue 那条 `v-if/v-else-if` 链最后的 `v-else`：
                             **只要上面四路预览一路都没命中，就显示它**。
                             以前这里写的是 `!kind`，于是「类型认得出、但字节取不到」的情况
@@ -196,7 +204,6 @@ export function GlancePreview({ item, enableTaskToggle = false, inline = false }
                     <Button
                         size="small"
                         variant="contained"
-                        loading={downloading}
                         disabled={expired}
                         onClick={downloadFile}
                         startIcon={<MdiIcon name={expired ? 'mdi-download-off' : 'mdi-download'} size={16} />}

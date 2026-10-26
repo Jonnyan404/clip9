@@ -76,6 +76,7 @@
   "download": "下载",
   "expired": "已过期",
   "preview": "预览",
+  "viewerUnsupported": "这个类型没法预览，可以下载下来看",
   "showTimelineFilter": "显示分类条",
   "showTimelineSearch": "显示搜索条",
   "searchPlaceholder": "搜索内容…",

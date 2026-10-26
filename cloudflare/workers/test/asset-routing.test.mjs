@@ -65,4 +65,14 @@ const lastNamedAt = Math.max(
 );
 check.check('catch-all 注册在具名路由之后', catchAllAt > lastNamedAt && lastNamedAt > 0, true);
 
+// ⚠️★ 2026-10-26：网页端现在拼 `/file/<uuid>`（**不带文件名**）来显示图片 / 视频
+// （预览不再签分享令牌，见 `web/src/services/file-url.ts`）。这条路成立的前提就是
+// 路由上那个 `:filename?` 的 **`?`** —— 去掉它，`/file/<uuid>` 没有任何具名路由接，
+// 直接掉进上面的 catch-all 回成 index.html：**所有图片变成一份网页**，而且不报错。
+check.check(
+  '文件路由的文件名是可选的（网页端拼 /file/<uuid>）',
+  /router\.get\(\s*['"]\/file\/:uuid\/:filename\?['"]/.test(index),
+  true,
+);
+
 check.summary('静态资源路由契约');

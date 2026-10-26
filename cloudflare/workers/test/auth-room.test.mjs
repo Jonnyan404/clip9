@@ -130,6 +130,55 @@ console.log('\n── C. 受保护房间：/content/latest 的 url 能靠 ?auth=
   check('第二步补上 ?auth= → 200', step2WithAuth.status, 200);
 }
 
+console.log('\n── C2. 网页端现在拼的是 /file/<uuid>（不带文件名）+ ?room=&auth= ──');
+{
+  // ⚠️★ 2026-10-26：网页端把「预览」从「签一条分享令牌（?t=）」改成「直接拼 /file/<uuid>」，
+  //    地址里**不带文件名**（MIME 与 Content-Disposition 都由服务端按登记的文件名给）。
+  //    这条路依赖两件事，两件都不会报错、只会「图片变成一份 index.html」：
+  //      ① 路由器那条 `/file/:uuid/:filename?` 的 `?`（少了它 `/file/<uuid>` 会掉进 SPA 兜底）；
+  //      ② `extractAuthToken` 认 `?auth=`。
+  //    所以在这里把**网页端真正发出的那个形状**钉住。
+  const { env, db } = makeEnv();
+  env.AUTH_PASSWORD = 'pw123';
+  env.ROOM_AUTH_JSON = '{}';
+
+  const up = await uploadTo(env, db, 'default', 'shot.png', { auth: 'pw123' });
+  const uuid = up.uuid;
+
+  const noAuth = await FileHandler.download(
+    downloadRequest(`http://worker.local/file/${uuid}`, { uuid }),
+    env,
+  );
+  check('不带文件名、不带凭据 → 401（缺文件名不等于「公开」）', noAuth.status, 401);
+
+  const withAuth = await FileHandler.download(
+    downloadRequest(`http://worker.local/file/${uuid}?room=default&auth=pw123`, { uuid }),
+    env,
+  );
+  check('不带文件名 + ?auth= → 200', withAuth.status, 200);
+  check('Content-Type 仍按登记的文件名给（png）', withAuth.headers.get('Content-Type'), 'image/png');
+  check(
+    '默认 inline（图片要能就地显示）',
+    String(withAuth.headers.get('Content-Disposition') || '').startsWith('inline'),
+    true,
+  );
+
+  const asDownload = await FileHandler.download(
+    downloadRequest(`http://worker.local/file/${uuid}?room=default&auth=pw123&download=true`, { uuid }),
+    env,
+  );
+  check(
+    'download=true → attachment',
+    String(asDownload.headers.get('Content-Disposition') || '').startsWith('attachment'),
+    true,
+  );
+  check(
+    'attachment 里带上了原文件名',
+    String(asDownload.headers.get('Content-Disposition') || '').includes('shot.png'),
+    true,
+  );
+}
+
 console.log('\n── D. {"open": true} = 全局加密时仍然开放的房间 ──');
 {
   const { env } = makeEnv();

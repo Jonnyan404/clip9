@@ -1,13 +1,14 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Box, Button, Dialog, DialogContent, DialogTitle, IconButton, Menu, MenuItem, Stack, TextField, Typography } from '@mui/material';
 import { PageToolbar } from '@/components/AppShell/PageToolbar';
 import { GlancePreview } from '@/components/glance/GlancePreview';
 import { MdiIcon } from '@/components/ui/MdiIcon';
-import { useAppStore, selectVisibleReceived } from '@/stores/appStore';
+import { useAppStore, selectVisibleReceived, type ReceivedItem } from '@/stores/appStore';
 import { useWebSocketStore } from '@/stores/wsStore';
+import { isViewerOpen, useViewerStore } from '@/stores/viewerStore';
 import { useLocalRooms } from '@/hooks/useLocalRooms';
-import { isFileEntry, isImageName, looksLikeTable, looksLikeTaskList } from '@/lib/util';
+import { filePreviewKind, isFileEntry, isImageName, looksLikeTable, looksLikeTaskList } from '@/lib/util';
 
 const WIDE_MIN = 500;
 const TIMELINE_FILTER_KEY = 'timelineFilter';
@@ -83,6 +84,13 @@ export default function GlanceWall() {
 
     const selected = filtered.find((item) => item.id === selectedId) || filtered[0] || null;
 
+    // 点媒体 → 全屏查看器。序列是**这个模式当前筛选后**的列表（不是全部历史）。
+    // ⚠️ 顺手关掉窄屏那个弹窗：查看器盖在它上面，用户按 ✕ 回到一个还开着的弹窗会莫名其妙。
+    const openSelectedInViewer = useCallback((target: ReceivedItem) => {
+        setPreviewDialog(false);
+        useViewerStore.getState().open(filtered, target.id);
+    }, [filtered]);
+
     // 宽窄判断只有这一处（初值用当前宽度算，避免窄屏先画一帧两栏）。
     const [isWide, setIsWide] = useState(() => window.innerWidth > WIDE_MIN);
     useEffect(() => {
@@ -106,6 +114,9 @@ export default function GlanceWall() {
         const onKeyDown = (event: KeyboardEvent) => {
             if (event.key !== 'ArrowDown' && event.key !== 'ArrowUp') return;
             if (previewDialog || newRoomOpen) return;
+            // ⚠️★ 全屏查看器开着时**让开**：它也用 ↑↓ 翻条目，两边一起动就是「按一下跳两条」。
+            // 在这里 `stopPropagation` 没用 —— 同一个 window 上的监听器照样会跑。
+            if (isViewerOpen()) return;
             // ⚠️ 必须拦掉默认动作（方向键默认是滚容器）。
             event.preventDefault();
             moveSelection(event.key === 'ArrowDown' ? 1 : -1);
@@ -222,7 +233,16 @@ export default function GlanceWall() {
                                 className="glance-wall__row"
                                 onClick={() => {
                                     setSelectedId(item.id);
-                                    if (!isWide) setPreviewDialog(true);
+                                    if (isWide) return;
+                                    // 窄屏点一行：**媒体**进全屏查看器（能一路上下翻），
+                                    // 其余（文本 / 文本文件）仍走全屏弹窗 —— 那里有视图切换与动作行，
+                                    // 查看器不做那些，硬换过去等于把能力弄丢。
+                                    const mediaKind = isFileEntry(item) ? filePreviewKind(item.name) : '';
+                                    if (mediaKind === 'image' || mediaKind === 'video' || mediaKind === 'audio') {
+                                        useViewerStore.getState().open(filtered, item.id);
+                                        return;
+                                    }
+                                    setPreviewDialog(true);
                                 }}
                                 sx={{
                                     display: 'flex',
@@ -254,7 +274,7 @@ export default function GlanceWall() {
 
                     {isWide && (
                         <Box sx={{ minHeight: 0, overflowY: 'auto', pl: 2, borderLeft: 1, borderColor: 'divider' }}>
-                            <GlancePreview item={selected} />
+                            <GlancePreview item={selected} onOpen={openSelectedInViewer} />
                         </Box>
                     )}
                 </Box>
@@ -269,7 +289,7 @@ export default function GlanceWall() {
                     </IconButton>
                 </DialogTitle>
                 <DialogContent>
-                    <GlancePreview item={selected} />
+                    <GlancePreview item={selected} onOpen={openSelectedInViewer} />
                 </DialogContent>
             </Dialog>
 

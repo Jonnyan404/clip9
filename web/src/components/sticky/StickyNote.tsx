@@ -8,9 +8,10 @@ import { useDisplaySettings } from '@/hooks/useDisplaySettings';
 import { useMarkdown } from '@/hooks/useMarkdown';
 import { useTaskListToggle } from '@/hooks/useTaskListToggle';
 import {
-    SHARE_DEFAULT_TTL, copyTextToClipboard, deviceLabel, errorMessage, filePreviewKind, formatTimestamp, isFileEntry, isImageName, prettyFileSize,
+    copyTextToClipboard, deviceLabel, errorMessage, filePreviewKind, formatTimestamp, isFileEntry, isImageName, prettyFileSize,
 } from '@/lib/util';
-import { createShareLink } from '@/services/share';
+import { downloadFile as saveFileToDisk, fileUrl } from '@/services/file-url';
+import { openFromVisibleSet } from '@/stores/viewerStore';
 import { MarkdownBody } from '@/components/MarkdownBody';
 import { MarkdownToggle } from '@/components/MarkdownToggle';
 import { ShareLinkButton } from '@/components/ShareLinkButton';
@@ -38,7 +39,6 @@ export function StickyNote({ meta }: { meta: ReceivedItem }) {
     const [textPreview, setTextPreview] = useState('');
     const [previewSrc, setPreviewSrc] = useState('');
     const [loadingPreview, setLoadingPreview] = useState(false);
-    const [downloading, setDownloading] = useState(false);
 
     const isFile = isFileEntry(meta);
     const { text: decodedContent, onMdClick } = useTaskListToggle(meta, () => useWebSocketStore.getState().room);
@@ -88,21 +88,17 @@ export function StickyNote({ meta }: { meta: ReceivedItem }) {
         ? `${prettyFileSize(Number(meta.size || 0))} · ${t('stickyImage')}`
         : prettyFileSize(Number(meta.size || 0));
 
-    const ensureRawUrl = async (): Promise<string> => {
-        const data = await createShareLink({ type: 'file', uuid: meta.cache, ttl: SHARE_DEFAULT_TTL, maxUses: 0, room: useWebSocketStore.getState().room });
-        return data?.rawUrl || '';
-    };
-
     const loadPreview = async () => {
         if (!canPreview || loadingPreview) return;
+        // ⚠️ 媒体地址本地拼（`services/file-url`）—— 同步、不发请求、不签分享令牌。
+        if (kind !== 'text') {
+            setPreviewSrc(fileUrl(meta.cache, { room: useWebSocketStore.getState().room }));
+            return;
+        }
         setLoadingPreview(true);
         try {
-            if (kind === 'text') {
-                const response = await axios.get(`file/${meta.cache}/${encodeURIComponent(String(meta.name || ''))}`, { responseType: 'text' });
-                setTextPreview(typeof response.data === 'string' ? response.data : String(response.data || ''));
-            } else {
-                setPreviewSrc(await ensureRawUrl());
-            }
+            const response = await axios.get(`file/${meta.cache}/${encodeURIComponent(String(meta.name || ''))}`, { responseType: 'text' });
+            setTextPreview(typeof response.data === 'string' ? response.data : String(response.data || ''));
         } catch (error) {
             toast(errorMessage(error) || t('fileFetchFailed'));
         } finally {
@@ -124,28 +120,10 @@ export function StickyNote({ meta }: { meta: ReceivedItem }) {
         }
     };
 
-    // 下载：一次签发拿到直连地址，再补 `download=true` 走浏览器的保存流程。
-    const downloadFile = async () => {
-        if (expired || downloading) return;
-        setDownloading(true);
-        try {
-            const url = await ensureRawUrl();
-            if (!url) return;
-            const target = new URL(url, window.location.origin);
-            target.searchParams.set('download', 'true');
-            const anchor = document.createElement('a');
-            anchor.href = target.toString();
-            anchor.download = String(meta.name || 'file');
-            anchor.rel = 'noopener';
-            document.body.appendChild(anchor);
-            anchor.click();
-            document.body.removeChild(anchor);
-        } catch (error) {
-            console.error('下载失败:', error);
-            toast(t('fileFetchFailed'));
-        } finally {
-            setDownloading(false);
-        }
+    // 下载：地址本地拼，补 `download=true` 走浏览器的保存流程（同步，没有「等令牌」那一拍）。
+    const downloadFile = () => {
+        if (expired || !meta.cache) return;
+        saveFileToDisk(meta.cache, meta.name, useWebSocketStore.getState().room);
     };
 
     const deleteItem = async () => {
@@ -317,7 +295,12 @@ export function StickyNote({ meta }: { meta: ReceivedItem }) {
                                     )}
                                 </div>
                             ) : (
-                                <img src={previewSrc || String(meta.thumbnail || '')} alt={meta.name} style={{ maxHeight: '60vh', maxWidth: '100%' }} />
+                                <img
+                                    src={previewSrc || String(meta.thumbnail || '')}
+                                    alt={meta.name}
+                                    onClick={() => openFromVisibleSet(meta)}
+                                    style={{ maxHeight: '60vh', maxWidth: '100%', cursor: 'zoom-in' }}
+                                />
                             )}
                         </div>
                     )}
@@ -327,7 +310,6 @@ export function StickyNote({ meta }: { meta: ReceivedItem }) {
                             <Button
                                 size="small"
                                 variant="contained"
-                                loading={downloading}
                                 disabled={expired}
                                 startIcon={<MdiIcon name={expired ? 'mdi-download-off' : 'mdi-download'} size={16} />}
                                 onClick={downloadFile}

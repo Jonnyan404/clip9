@@ -514,6 +514,66 @@ for (const name of ['revoke', 'update']) {
     }
 }
 
+// ── M. 文件预览**不许**为「显示」去签分享令牌（2026-10-26）──────────────────
+//
+// ⚠️★ 这一条是**真出过事**才补的。在这之前，凡是「把一张图塞进 `<img src>`」的地方
+//    都是先 `POST /share` 签一条 `type=file` 的只读令牌、再拿 `rawUrl` 当预览地址。
+//    代价三笔，一笔都不会报错：
+//      · **污染分享记录** —— `GET /share/list` 列的是「这个房间最近的分享」，用户每看
+//        一眼图就多一条；桌面端的相册视图翻一遍，分享历史里全是自己没分享过的条目。
+//      · **每张图多一次往返** —— 而它和「直接读这个文件」在权限上是同一件事
+//        （服务端 `require_file_read_access` 本来就认房间凭据）。
+//      · **令牌有 TTL** —— 过期之后预览地址失效，而文件本身还活着。
+//    正确地址一直是 `GET /file/<uuid>` + `?room=&auth=`（`auth_gate.rs` 的
+//    `extract_auth_token` 认 query）。现在只有 `services/file-url.ts` 一处拼它。
+//
+// ⚠️ 判据的**形式**：`type: 'file'` 的分享**一次都不许出现**（分享按钮发的是
+//    `type: 'content'`，那是真分享，不受影响）。这一条之所以能这么硬，是因为
+//    「文件分享链接」除了当预览地址用，在这个仓库里**没有第二个用途**。
+{
+    const ROOT = join(WEB, 'src');
+    const files = readdirSync(ROOT, { recursive: true })
+        .filter((f) => typeof f === 'string' && /\.tsx?$/.test(f))
+        .map((f) => join(ROOT, f));
+    for (const file of files) {
+        // 定义处不算用法（它自己不调用）。
+        if (file.endsWith('/services/share.ts')) continue;
+        const source = readFileSync(file, 'utf8')
+            .replace(/\/\*[\s\S]*?\*\//g, '')
+            .replace(/^[ \t]*\/\/.*$/gm, '');
+        if (/createShareLink\(\s*\{[^}]*type:\s*['"]file['"]/.test(source)) {
+            problems.push(
+                `${file.slice(WEB.length + 1)}：为**预览**签了一条文件分享令牌 —— ` +
+                    '那会在 `GET /share/list` 里留下用户没分享过的记录、每张图多一次往返、' +
+                    '而且令牌过期后预览就失效。改用 `services/file-url.ts` 的 `fileUrl()`',
+            );
+        }
+    }
+
+    // 那个唯一的实现还在不在，而且**两样都必须有**：绝对化到后端、带凭据。
+    const helperPath = join(ROOT, 'services/file-url.ts');
+    if (!existsSync(helperPath)) {
+        problems.push('缺 `src/services/file-url.ts` —— 文件字节的直连地址没有唯一实现了');
+    } else {
+        const code = readFileSync(helperPath, 'utf8')
+            .replace(/\/\*[\s\S]*?\*\//g, '')
+            .replace(/^[ \t]*\/\/.*$/gm, '');
+        if (!/export\s+function\s+fileUrl\b/.test(code)) {
+            problems.push('`services/file-url.ts` 里没有 `fileUrl()` —— 直连地址的唯一实现不见了');
+        }
+        // ⚠️ 绝对化到 `API_BASE_URL`：`<img src>` 是**浏览器自己**发的请求，不走 axios 的
+        //    baseURL。写成相对地址时，分离部署下会按**页面**目录解析到静态托管那边 ——
+        //    症状是「图挂了」，而页面一切正常（同判据 I）。
+        if (!code.includes('API_BASE_URL')) {
+            problems.push('`fileUrl()` 没有绝对化到 `API_BASE_URL` —— 分离部署时图片/视频全 404');
+        }
+        // ⚠️ 少了 `auth` 不会报错，只会「开放房间能看、带密码的房间一片碎图标」。
+        if (!code.includes("'auth'")) {
+            problems.push("`fileUrl()` 没有把房间凭据挂进 query（`?auth=`）—— 带密码的房间预览全 401");
+        }
+    }
+}
+
 // ── N. 设置「通用」页不许用 `secondaryAction`（2026-10-26）──────────────────
 //
 // ⚠️★ 用户报的「移动端设置通用页文字重叠」：MUI 的 `secondaryAction` 只给正文留
@@ -553,4 +613,4 @@ if (problems.length) {
     for (const line of problems) console.error(`    ${line}`);
     process.exit(1);
 }
-console.log('✓ 契约守卫通过：零依赖共享模块字节一致 · 外壳形状完整 · PWA 放行表一致 · dev 代理覆盖了每条服务端路由 · i18n 无死键 · 已删模式未复活 · revoke 只发 POST · WS 事件 id 已归一 · 后端地址与页面地址分开 · 选文件是追加 · 写请求都带 client · 设置通用页不靠 secondaryAction');
+console.log('✓ 契约守卫通过：零依赖共享模块字节一致 · 外壳形状完整 · PWA 放行表一致 · dev 代理覆盖了每条服务端路由 · i18n 无死键 · 已删模式未复活 · revoke 只发 POST · WS 事件 id 已归一 · 后端地址与页面地址分开 · 选文件是追加 · 写请求都带 client · 预览不为显示签分享令牌 · 设置通用页不靠 secondaryAction');

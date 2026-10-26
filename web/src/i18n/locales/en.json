@@ -76,6 +76,7 @@
   "download": "Download",
   "expired": "Expired",
   "preview": "Preview",
+  "viewerUnsupported": "This type can't be previewed here — download it instead",
   "showTimelineFilter": "Show category bar",
   "showTimelineSearch": "Show search bar",
   "searchPlaceholder": "Search…",

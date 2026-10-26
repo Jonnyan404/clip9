@@ -14,6 +14,7 @@ import { localDateKey } from '@/lib/util';
 import { selectVisibleReceived, useAppStore, type ReceivedItem } from '@/stores/appStore';
 import { useWebSocketStore } from '@/stores/wsStore';
 import { toast } from '@/stores/toastStore';
+import { useViewerStore } from '@/stores/viewerStore';
 
 const FILTER_STORAGE_KEY = 'timelineFilter';
 
@@ -124,6 +125,12 @@ export default function TimelineWall() {
 
     const todayKey = localDateKey(Math.floor(Date.now() / 1000));
     const canCompose = Boolean(display.composerText || display.composerUpload);
+
+    // 点开一条媒体 → 全屏查看器。序列是**当前筛选后的扁平列表**（`filtered`），
+    // 不是某一组里那几条 —— 否则翻到当天最后一条就到底了，而下面明明还有内容。
+    const openViewer = useCallback((item: ReceivedItem) => {
+        useViewerStore.getState().open(filtered, item.id);
+    }, [filtered]);
 
     // ── 热力图点了某一天 → 展开并滚到那天的块首 ─────────────────────────────
     // ⚠️ 信号是**一次性**的：用掉就清，否则下一次因别的原因重渲染会再跳一次（标准模式同样的约定）。
@@ -271,6 +278,7 @@ export default function TimelineWall() {
                                                 category={categories.get(item.id) || 'text'}
                                                 expanded={expandedIds.has(item.id)}
                                                 onToggle={toggleRow}
+                                                onOpen={openViewer}
                                             />
                                         ))}
                                     </div>
