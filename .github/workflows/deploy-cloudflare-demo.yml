@@ -1,0 +1,233 @@
+name: Deploy Cloudflare Worker (demo)
+
+# 把一个**公开演示站**部署到 Cloudflare —— 同一份代码的第二次部署。纯手动。
+#
+# 为什么要单独一条（而不是给 `deploy-cloudflare.yml` 加参数）：演示站碰的是线上数据，
+# 而生产那条流水线已经跑通过好几版了 —— 宁可多一份工作流，也不让「演示站的配置」
+# 有可能污染生产。代价是**步骤有两份**，所以：
+#   ⚠️★ 改构建 / 迁移 / 部署步骤时，`deploy-cloudflare.yml` 与这里**两处一起看**。
+#   渲染配置那一段是共用的（`cloudflare/render-wrangler.mjs`），不是抄的。
+#
+# 和生产站的差别（全部是**配置**，代码一行不同）：
+#
+#   | | 生产 | 演示 |
+#   |---|---|---|
+#   | Worker | `clip9-worker` | `clip9-demo` |
+#   | D1 / R2 | `clip9-db` / `clip9-files` | `clip9-db-demo` / `clip9-files-demo` |
+#   | 单文件上限 | 大 | **3 MB**（`FILE_LIMIT=3145728`） |
+#   | 访问 | 看 secret | **默认房间开放**，另有一个带密码的房间 `demo` 当示例 |
+#   | 文件过期 | 看 secret | 1 小时 |
+#
+# ⚠️★ **为什么演示站要 3 MB**：它是公开的、谁都能往上传。3 MB 够演示（截图、小文档），
+#    又不会让人把它当网盘；再配上 1 小时过期 + 每 5 分钟的定时清理，R2 用量是有上界的。
+#    ⚠️ 这个上限**前端会自己显示**（Worker 通过 WS 的 `config` 事件下发 `file.limit`），
+#    所以界面上会写「文件 3 MB」，超了在选文件那一步就被拦住 —— 不用改前端。
+#
+# ⚠️★ 需要的 secrets 与生产那条**故意不同名**（`CF_API_TOKEN_DEMO` / `CF_ACCOUNT_ID_DEMO`）：
+#    演示站要部署到**另一个 Cloudflare 账号**。如果沿用生产那两个名字（或加一个
+#    `|| secrets.CF_API_TOKEN` 的兜底），某天演示站的 secret 漏设了，它会**拿着生产账号的
+#    令牌把演示站塞进生产账号** —— 表面一切正常，两个站从此共用一个账号。
+#    所以这里没有兜底：少了就红，并且说清楚缺哪个。
+#    （令牌权限：Workers Scripts:Edit、D1:Edit、Workers R2 Storage:Edit。）
+#
+#    演示站的其它配置写死在本文件里 —— 它们**不是秘密**（公开站的限额，人人可见），
+#    藏进 secret 反而会让「演示站到底什么限额」变得查不到。
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# ⚠️ 名字集中在这里：改演示站的名字只动这三行 + 下面渲染那一处（它们是同一件事）。
+env:
+  WORKER_NAME: clip9-demo
+  DB_NAME: clip9-db-demo
+  BUCKET_NAME: clip9-files-demo
+  # 3 MB。⚠️ 单位是字节，不是 MB —— 写成 3 会被当成 3 字节，谁都传不上来。
+  FILE_LIMIT: '3145728'
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CF_API_TOKEN_DEMO }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CF_ACCOUNT_ID_DEMO }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: 检查 Cloudflare 凭据（演示账号）
+        run: |
+          if [ -z "$CLOUDFLARE_API_TOKEN" ]; then
+            echo "::error::缺 CF_API_TOKEN_DEMO —— 演示站要部署到**另一个** Cloudflare 账号，这个 secret 必须是那个账号的令牌（不是生产账号的）"
+            exit 1
+          fi
+          if [ -z "$CLOUDFLARE_ACCOUNT_ID" ]; then
+            echo "::error::缺 CF_ACCOUNT_ID_DEMO —— 令牌只够一个账号时 wrangler 能自己认出来，但多账号会直接失败；先补上这个更省事"
+            exit 1
+          fi
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: |
+            web/package-lock.json
+            cloudflare/package-lock.json
+            cloudflare/workers/package-lock.json
+
+      # ⚠️ 与生产那条一样：用 `cloudflare/package-lock.json` 钉住的 wrangler，
+      #    不用全局装的那一份（否则「本地跑什么版本」和「线上跑什么版本」是两件事）。
+      - name: 装 wrangler（按 lockfile 钉住的版本）
+        working-directory: cloudflare
+        run: npm ci
+
+      - name: 把 wrangler 放进 PATH
+        run: echo "$GITHUB_WORKSPACE/cloudflare/node_modules/.bin" >> "$GITHUB_PATH"
+
+      - name: 装 Worker 依赖
+        working-directory: cloudflare/workers
+        run: npm ci
+
+      # ⚠️ 部署会动线上数据，红了就别往下走。它不联网：node:sqlite 当 D1、Map 当 R2。
+      - name: Worker 的测试
+        working-directory: cloudflare/workers
+        run: bash test/run.sh
+
+      - name: 构建前端（sync-shortcuts + 契约守卫 + tsc + vite build + after-build）
+        working-directory: web
+        run: |
+          npm ci
+          npm run build
+
+      # ⚠️ 排除 `.gz` / `.br`：Workers Static Assets 自己会协商压缩。
+      - name: 把构建产物拷成 Worker 的静态资源
+        run: |
+          set -euo pipefail
+          rm -rf cloudflare/workers/assets
+          mkdir -p cloudflare/workers/assets
+          for item in web/dist/*; do
+            case "$(basename "$item")" in
+              *.gz|*.br) continue ;;
+            esac
+            cp -R "$item" cloudflare/workers/assets/
+          done
+          echo "assets 文件数: $(find cloudflare/workers/assets -type f | wc -l | tr -d ' ')"
+
+      # ⚠️ R2 / D1 都按**演示站自己的名字**建 —— 与生产站完全隔离：
+      #    演示站里谁也不该读得到生产房间的内容。
+      - name: 准备 D1 与 R2（演示站专用）
+        id: prepare
+        working-directory: cloudflare/workers
+        run: |
+          set -euo pipefail
+          wrangler r2 bucket create "$BUCKET_NAME" 2>/dev/null || echo "R2 桶已存在"
+
+          # ⚠️ 末尾 `|| true`：`d1 list` 报错或 `head` 提前关管道都会让赋值失败，
+          #    而「库里还没有这个 db」正是要走创建分支的正常情况。
+          d1_id=$(wrangler d1 list --json 2>/dev/null \
+            | jq -r --arg n "$DB_NAME" '.[] | select(.name == $n) | .uuid' \
+            | head -1 || true)
+          if [ -z "$d1_id" ] || [ "$d1_id" = "null" ]; then
+            # ⚠️ `{}` 不能省：`$DB_NAME，` 里那个全角逗号会被 bash 当成变量名的一部分。
+            echo "没有现成的 ${DB_NAME}，创建它"
+            create_out=$(wrangler d1 create "$DB_NAME")
+            d1_id=$(printf '%s' "$create_out" | grep -o 'database_id = "[^"]*"' | cut -d'"' -f2 || true)
+          fi
+          if [ -z "$d1_id" ] || [ "$d1_id" = "null" ]; then
+            echo "::error::拿不到 D1 的 id —— 检查这个 API Token 有没有 D1: Edit 权限"
+            exit 1
+          fi
+          echo "D1 id: $d1_id"
+          echo "d1_id=$d1_id" >> "$GITHUB_OUTPUT"
+
+      # ⚠️ 渲染在**部署之前**、迁移**之后**都可以；这里放在迁移前，让配置文件先成型，
+      #    万一渲染失败就什么都没动过。
+      - name: 渲染 wrangler.toml（演示站的四个名字 + 限额）
+        working-directory: cloudflare/workers
+        env:
+          D1_ID: ${{ steps.prepare.outputs.d1_id }}
+        run: |
+          set -euo pipefail
+          node ../render-wrangler.mjs \
+            --out wrangler.toml \
+            --worker-name "$WORKER_NAME" \
+            --db-name "$DB_NAME" \
+            --db-id "$D1_ID" \
+            --bucket-name "$BUCKET_NAME" \
+            --set FILE_LIMIT="$FILE_LIMIT" \
+            --set FILE_EXPIRE=3600 \
+            --set HISTORY_LIMIT=50 \
+            --set FILE_CLEANUP=300 \
+            --set ROOM_LIST=true \
+            --set AUTH_PASSWORD= \
+            --set 'ROOM_AUTH_JSON={"demo":"demo123"}'
+
+      - name: 跑 D1 迁移（远程）
+        working-directory: cloudflare/workers
+        run: wrangler d1 execute "$DB_NAME" --file=../d1/schema.sql --remote --yes
+
+      # ⚠️ schema.sql 用的是 `CREATE TABLE IF NOT EXISTS`，给**已有的表**加不了列。
+      - name: 补 senderClientID 列（幂等）
+        working-directory: cloudflare/workers
+        run: |
+          set -euo pipefail
+          has_col=$(wrangler d1 execute "$DB_NAME" --remote --yes --json \
+            --command "SELECT count(*) AS c FROM pragma_table_info('messages') WHERE name='senderClientID';" \
+            | jq -r '[.. | objects | .c? // empty] | [0] // 0')
+          if [ "$has_col" != "1" ]; then
+            echo "messages 表缺 senderClientID 列，ALTER 补上"
+            wrangler d1 execute "$DB_NAME" --remote --yes \
+              --command "ALTER TABLE messages ADD COLUMN senderClientID TEXT;"
+          else
+            echo "senderClientID 列已在，跳过"
+          fi
+
+      # ⚠️ 与生产同一条规矩：把「这个 Worker 现在开没开 *.workers.dev」照原样写回，
+      #    否则每次部署都会把操作者在控制台关掉的域名重新打开。
+      #    演示站**第一次**部署会拿不到状态 → 脚本按「首次」写 `true`，这正是我们要的
+      #    （演示站就靠 `*.workers.dev` 那个地址访问）。
+      - name: 写回 workers.dev 的当前状态（部署不表态）
+        working-directory: cloudflare/workers
+        run: node ../sync-workers-dev.mjs wrangler.toml
+
+      - name: 部署 Worker
+        id: deploy
+        working-directory: cloudflare/workers
+        run: |
+          set -euo pipefail
+          out="$(wrangler deploy 2>&1)" || { printf '%s\n' "$out"; exit 1; }
+          printf '%s\n' "$out"
+          url="$(printf '%s' "$out" | grep -o 'https://[^ ]*\.workers\.dev' | head -1 || true)"
+          # ⚠️ 拿不到 URL **不算失败**（自定义域、或输出格式变了都能导致），但要说出来 ——
+          #    「部署成功、地址是空的」会让人以为没部署。
+          if [ -z "$url" ]; then
+            echo "::warning::没从 wrangler 输出里抓到 workers.dev 地址，去控制台看一眼"
+          else
+            echo "demo_url=$url" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: 结果
+        if: always()
+        env:
+          DEMO_URL: ${{ steps.deploy.outputs.demo_url }}
+        run: |
+          set -euo pipefail
+          {
+            echo "### 公开演示站"
+            echo ""
+            if [ -n "${DEMO_URL:-}" ]; then
+              echo "**地址**：[${DEMO_URL}](${DEMO_URL})"
+            else
+              echo "**地址**：见 Cloudflare 控制台 → Workers → \`$WORKER_NAME\`"
+            fi
+            echo ""
+            echo "| 项 | 值 |"
+            echo "| --- | --- |"
+            echo "| Worker | \`$WORKER_NAME\` |"
+            echo "| D1 / R2 | \`$DB_NAME\` / \`$BUCKET_NAME\` |"
+            echo "| 单文件上限 | 3 MB（$FILE_LIMIT 字节） |"
+            echo "| 文件过期 | 1 小时（每 5 分钟清理一次） |"
+            echo "| 默认房间 | 开放，无密码 |"
+            echo "| 示例房间 | \`demo\` / 密码 \`demo123\` |"
+          } >> "$GITHUB_STEP_SUMMARY"

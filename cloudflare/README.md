@@ -64,6 +64,32 @@ bash deploy.sh
 
 ---
 
+### 方式三：公开演示站（独立 Worker + **另一个 Cloudflare 账号**）
+
+给「想让人点开就试」的场景用：同一份代码的**第二次部署**，与主站完全隔离。
+
+- 工作流：[.github/workflows/deploy-cloudflare-demo.yml](../.github/workflows/deploy-cloudflare-demo.yml)（同样是 **Actions → Run workflow** 手动触发）
+- 只改**配置**，代码一行不同：Worker 叫 `clip9-demo`，D1 / R2 是 `clip9-db-demo` / `clip9-files-demo`，
+  **单文件上限 3 MB**、文件 1 小时过期、历史 50 条、默认房间开放。
+- 「3 MB」不是前端写死的：Worker 通过 WebSocket 的 `config` 事件下发 `file.limit`，
+  界面上会直接显示「文件 3 MB」，超了在选文件那一步就被拦住。
+
+#### 要配的 Secret（两个，都填**演示账号**的）
+
+| Secret 名称 | 必填 | 说明 |
+| :--- | :---: | :--- |
+| `CF_API_TOKEN_DEMO` | ✅ | 演示账号的 API Token，权限与主站那个相同：**Workers Scripts** → Edit、**D1** → Edit、**Workers R2 Storage** → Edit（再加 **Account Settings** → Read 更省事） |
+| `CF_ACCOUNT_ID_DEMO` | ✅ | 演示账号的 Account ID（Dashboard 首页右下角 / URL 里那串 32 位十六进制） |
+
+⚠️★ 这两个名字与主站那两个（`CF_API_TOKEN` / `CF_ACCOUNT_ID`）**故意不同**，而且工作流里
+**没有兜底**：漏设就红。用兜底的话，某天演示站的 secret 忘了配，它会拿着**生产账号**的令牌
+把演示站塞进生产账号 —— 两个站从此共用一个账号，而且看起来一切正常。
+
+⚠️ 新账号第一次部署前，先去控制台**开通 R2**（Account → R2 → Enable）。没开通时
+`wrangler r2 bucket create` 会报一句和「桶名不对」看不出来的错。
+
+---
+
 ## ⚙️ 环境变量与配置说明
 
 ### 📌 `ROOM_AUTH_JSON` 填法避坑（重点）
