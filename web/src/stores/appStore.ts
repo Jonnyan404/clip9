@@ -191,7 +191,7 @@ export const useAppStore = create<AppState>((set, get) => ({
      * 菜单布局（2026-10-07）：`top` = 顶部横条（原样），`side` = 左侧竖栏。
      *
      * ⚠️★ 为什么放在 store 里而不是组件 state：它要**即时生效**（切一下整个界面就换布局），
-     * 而工具栏是**每个模式各自渲染**的（`<PageToolbar/>`）—— 走 props 的话五个模式都要传一遍。
+     * 而工具栏是**每个模式各自渲染**的（`<PageToolbar/>`）—— 走 props 的话每个模式都要传一遍。
      * ⚠️ 持久化到 localStorage（键 `menuLayout`），与 `darkmode` / `displayByMode` 同一套规矩。
      */
     menuLayout: (localStorage.getItem('menuLayout') === 'side' ? 'side' : 'top') as 'top' | 'side',
@@ -327,7 +327,7 @@ export function selectComposerFullyHidden(state: Pick<AppState, 'displayByMode' 
 }
 
 /**
- * 六个模式**全都**把文本区与上传区关掉了 —— 即「纯预览模式」。
+ * 所有模式**全都**把文本区与上传区关掉了 —— 即「纯预览模式」。
  * ⚠️ 模式列表**现取**（不要在模块顶层算成常量）：见 meta.ts 的循环依赖说明。
  */
 export function selectComposerDisabledEverywhere(state: Pick<AppState, 'displayByMode'>): boolean {

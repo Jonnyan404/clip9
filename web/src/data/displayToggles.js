@@ -20,7 +20,7 @@ export const DISPLAY_GROUPS = [
 // 卡片图标那排是 received-item/*，两者都只被 DefaultMode 用。
 // 所以整组都写 modes: ['default']，别的模式的面板里不会冒出拨了没反应的开关。
 //
-// ⚠️ 但「只对标准模式有意义」不等于「别的模式没有相关功能」：其余五个模式的**详情弹窗**
+// ⚠️ 但「只对标准模式有意义」不等于「别的模式没有相关功能」：其余模式的**详情弹窗**
 // 里也有分享入口（ShareLinkButton 的 iconOnly=false 形态），便签模式的卡片上还有链接图标。
 // 那些入口**刻意不受这里的开关管** —— 这个分组叫「卡片图标」，只管卡片上那排图标。
 // 加开关时先想清楚它管的是哪一种入口。
@@ -58,7 +58,7 @@ export const DISPLAY_TOGGLES = [
     { key: 'timelineFilter', group: 'content', labelKey: 'showTimelineFilter', icon: 'mdi-filter-variant', modes: ONLY_DEFAULT },
     // 时间流上方的搜索条。默认关，跟分类条同一条理由（新增的可选浏览方式，
     // 默认开会给老用户凭空加一条横条）。
-    // ⚠️ 例外：**六个模式都把发送区关掉**（纯预览模式）时会自动出现，
+    // ⚠️ 例外：**所有模式都把发送区关掉**（纯预览模式）时会自动出现，
     // 不依赖这个开关 —— 那种状态下没有发送动作，搜索才是主操作。
     { key: 'timelineSearch', group: 'content', labelKey: 'showTimelineSearch', icon: 'mdi-magnify', modes: ONLY_DEFAULT },
 
@@ -77,12 +77,12 @@ export const DISPLAY_TOGGLES = [
     // 关掉整块是给「只想收、不想发」或「只用其中一种」的人用的 ——
     // 只关图标那排解决不了这个（图标底下还留着空输入框）。
     //
-    // ⚠️ 这两个**故意不写 modes**，意思是「六个模式的面板里都要出现这一项」——
-    // 不是「六个模式共用一份值」。存储始终是 displayByMode[模式][开关]，
+    // ⚠️ 这两个**故意不写 modes**，意思是「每个模式的面板里都要出现这一项」——
+    // 不是「所有模式共用一份值」。存储始终是 displayByMode[模式][开关]，
     // 每个模式各存各的（见 store/app.js），在聊天里关掉不会影响标准模式。
     //
     // 为什么必须每个模式都出现：发送区有两套实现 ——
-    // UnifiedComposer（标准模式）和 StickyComposer（其余五个模式），
+    // UnifiedComposer（标准模式）和 StickyComposer（其余模式），
     // 但「文本输入 / 上传文件」这两块两边都有，所以每一端都该能关。
     // 上面那排图标则相反：只有 UnifiedComposer 有，所以是 ONLY_DEFAULT。
     { key: 'composerText', group: 'composer', labelKey: 'showComposerText', icon: 'mdi-text-box-outline' },

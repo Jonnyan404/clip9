@@ -5,6 +5,7 @@ import axios from 'axios';
 import { useWebSocketStore } from '@/stores/wsStore';
 import { toast } from '@/stores/toastStore';
 import { useMarkdown } from '@/hooks/useMarkdown';
+import { useTaskListToggle } from '@/hooks/useTaskListToggle';
 import {
     SHARE_DEFAULT_TTL, copyTextToClipboard, deviceLabel, errorMessage, filePreviewKind, formatTimestamp, isFileEntry, prettyFileSize,
 } from '@/lib/util';
@@ -22,8 +23,16 @@ import type { ReceivedItem } from '@/stores/appStore';
  * （正文不截断，动作行与元信息都在这里）。
  * ⚠️ 同一个预览出现在两处（宽屏右侧面板 / 窄屏全屏弹窗），所以必须抽成组件 ——
  * 否则会出现「面板里能做的事、弹窗里做不了」。
+ *
+ * ⚠️★ `enableTaskToggle`：时间线模式把它**嵌在列表里**展开，任务列表的复选框必须能勾且落盘
+ * （那里没有「选中条目」这个动作，勾一下就该存）。速览模式自己**不传**，行为保持原样 ——
+ * 别把两边都改成可勾：速览里勾完没有任何提示，反而像点坏了。
+ *
+ * ⚠️★ `inline`：时间线把预览**塞在一行底下**，媒体再按 46vh 撑开就会把整屏顶掉
+ * （实测一张 1440 宽的截图能把一行拉到 613px，动作行直接滚出视野）。内联时图片/视频/文本
+ * 预览一律压到 220px / 18rem，动作行始终留在视野里。
  */
-export function GlancePreview({ item }: { item: ReceivedItem | null }) {
+export function GlancePreview({ item, enableTaskToggle = false, inline = false }: { item: ReceivedItem | null; enableTaskToggle?: boolean; inline?: boolean }) {
     const { t } = useTranslation();
     const room = useWebSocketStore((s) => s.room);
     const [previewSrc, setPreviewSrc] = useState('');
@@ -31,8 +40,11 @@ export function GlancePreview({ item }: { item: ReceivedItem | null }) {
     const [loading, setLoading] = useState(false);
     const [downloading, setDownloading] = useState(false);
 
+    // ⚠️ 这个 hook 必须无条件调用（React 的规矩）。`enableTaskToggle` 只决定**认不认**它，
+    // 不决定调不调 —— 关着的时候仍用原始 content，和加这个 prop 之前逐字一致。
+    const { text: liveTaskText, onMdClick } = useTaskListToggle(item || undefined, () => useWebSocketStore.getState().room);
     const isFile = isFileEntry(item);
-    const content = String(item?.content || '');
+    const content = enableTaskToggle ? liveTaskText : String(item?.content || '');
     // 文件条目的**可预览类型**。判型收在 `lib/util.ts` 的 `filePreviewKind`（**全站唯一实现**）。
     // ⚠️ 只看扩展名、不看内容 —— 服务端不嗅探、客户端也不嗅探，两边同一套标准。
     const kind = isFile ? filePreviewKind(item?.name) : '';
@@ -139,10 +151,10 @@ export function GlancePreview({ item }: { item: ReceivedItem | null }) {
                 <>
                     <Stack alignItems="center" justifyContent="center" sx={{ minHeight: 60 }}>
                         {loading && <CircularProgress size={26} />}
-                        {!loading && kind === 'image' && previewSrc && <img src={previewSrc} alt={item.name} style={{ maxWidth: '100%', maxHeight: '46vh', borderRadius: 8 }} />}
-                        {!loading && kind === 'video' && previewSrc && <video src={previewSrc} controls style={{ maxWidth: '100%', maxHeight: '46vh', borderRadius: 8 }} />}
+                        {!loading && kind === 'image' && previewSrc && <img src={previewSrc} alt={item.name} style={{ maxWidth: '100%', maxHeight: inline ? 220 : '46vh', borderRadius: 8 }} />}
+                        {!loading && kind === 'video' && previewSrc && <video src={previewSrc} controls style={{ maxWidth: '100%', maxHeight: inline ? 220 : '46vh', borderRadius: 8 }} />}
                         {!loading && kind === 'audio' && previewSrc && <audio src={previewSrc} controls style={{ width: '100%' }} />}
-                        {!loading && kind === 'text' && textPreview && <pre className="code-block" style={{ width: '100%', maxHeight: '46vh' }}>{textPreview}</pre>}
+                        {!loading && kind === 'text' && textPreview && <pre className="code-block" style={{ width: '100%', maxHeight: inline ? '18rem' : '46vh' }}>{textPreview}</pre>}
                         {/* ⚠️★ 兜底块 = Vue 那条 `v-if/v-else-if` 链最后的 `v-else`：
                             **只要上面四路预览一路都没命中，就显示它**。
                             以前这里写的是 `!kind`，于是「类型认得出、但字节取不到」的情况
@@ -165,7 +177,11 @@ export function GlancePreview({ item }: { item: ReceivedItem | null }) {
                     </Stack>
                 </>
             ) : (
-                <div className={`md-preview${md.available ? ' md-preview--md' : ''}`} style={{ '--md-toggle-gutter': md.gutter } as React.CSSProperties}>
+                <div
+                    className={`md-preview${md.available ? ' md-preview--md' : ''}`}
+                    style={{ '--md-toggle-gutter': md.gutter } as React.CSSProperties}
+                    onClick={enableTaskToggle ? onMdClick : undefined}
+                >
                     {md.available && <MarkdownToggle mode={md.mode} actions={md.actions} onModeChange={md.setMode} />}
                     {md.html ? <MarkdownBody html={md.html} /> : <div style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>{content}</div>}
                 </div>

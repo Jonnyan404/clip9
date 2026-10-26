@@ -2,8 +2,8 @@
  * 界面模式的**元数据**（key / 文案键 / 图标）—— 不含任何 React 组件引用。
  *
  * ⚠️★ 为什么把元数据与组件拆成两个文件：`stores/appStore.ts` 要读模式列表
- * （`composerDisabledEverywhere` 判定「六个模式都把发送区关掉」），而 registry 会 import
- * 5 个模式组件、组件又 import store —— 元数据与组件不拆的话就是一个模块循环
+ * （`composerDisabledEverywhere` 判定「所有模式都把发送区关掉」），而 registry 会 import
+ * 每一个模式组件、组件又 import store —— 元数据与组件不拆的话就是一个模块循环
  * （web-vue3 里靠「在 getter 里现取 MODES」绕开，React 侧用拆文件更干净）。
  *
  * ⚠️★ 四个模式（chat / mega / workbench / terminal）已**退役并真删**（2026-09-26）。
@@ -31,4 +31,7 @@ export const MODES_META: ModeMeta[] = [
     // ⚠️ 它和 `canvas` 用的是**同一条**转换管线（`services/convert.ts`），
     // 只是白板要布局、这个只要文本 —— 别在这里另写一套转换。
     { key: 'convert', labelKey: 'uiModeConvert', icon: 'mdi-language-markdown-outline' },
+    // ⚠️ 还是**排在最后**（理由同上）：2026-10-25 加的第 8 个模式。
+    // 它按本地日分组、一条一行（展开即完整预览）—— 与标准模式的区别是**密度**，不是皮肤。
+    { key: 'timeline', labelKey: 'uiModeTimeline', icon: 'mdi-timeline-text-outline' },
 ];

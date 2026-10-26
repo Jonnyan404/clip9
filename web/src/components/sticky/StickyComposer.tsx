@@ -47,9 +47,12 @@ export const StickyComposer = forwardRef<StickyComposerHandle, { variant?: strin
     const clientId = getClientId();
 
     const sendShortcutLabel = t('sendShortcutTip', { keys: isApplePlatform ? '⌘+Enter' : 'Ctrl+Enter' });
+    // 看板与时间线都不是「贴一张便签」，输入区要能起多行结构（`/` 模板插进来的任务清单 / 表格）。
+    // 其余非标准模式仍然是「新建便签…」。
+    const placeholderKey = variant === 'board' || variant === 'timeline' ? 'composerSlashHint' : 'stickyNewNote';
     const placeholder = isTouchOnly
-        ? t(variant === 'board' ? 'composerSlashHint' : 'stickyNewNote')
-        : `${t(variant === 'board' ? 'composerSlashHint' : 'stickyNewNote')} ${sendShortcutLabel}`;
+        ? t(placeholderKey)
+        : `${t(placeholderKey)} ${sendShortcutLabel}`;
 
     const fileSize = send.files.reduce((acc, cur) => acc + cur.size, 0);
     const uploadedSize = uploadedSizes.reduce((acc, cur) => acc + cur, 0);

@@ -806,7 +806,8 @@
    图标最多三个（原文 + 2 个针对性动作 + ⋯），所以只有两个值。 */
 :root {
     --md-toggle-gutter: 64px;
-    --md-toggle-gutter-wide: 96px;
+    /* 4 个图标实测 110px + `.md-toggle` 的 12px 右缩进；96px 会让最后一个图标压住正文。 */
+    --md-toggle-gutter-wide: 124px;
     --md-toggle-height: 1lh;
 }
 
@@ -1621,5 +1622,596 @@
 @media (hover: none) {
     .rl-row__fav {
         opacity: 0.75;
+    }
+}
+
+/* ══════════════════════════════════════════════════════════════════════
+   时间线模式（方案 B：按日分组的日志流）
+   ══════════════════════════════════════════════════════════════════════
+   ⚠️★ 全部走静态 class 而不是 `sx`：一屏十几行 × 每行十几个元素，`sx` 每次渲染都要走
+   `styleFunctionSx`（解析 → 序列化 → 哈希 → emotion），50 条卡片上实测能到上百毫秒。
+   与 `.text-card*`（标准模式）同一条理由。
+   ⚠️ 颜色只在这里按明暗两套给：MUI 的 CSS 变量只暴露了 background-paper / text-primary
+   几个，divider / text-secondary 得自己写；`--timeline-*` 由根节点往下传，输入区也吃同一套。 */
+
+.timeline-wall {
+    --timeline-line: rgba(148, 163, 184, 0.24);
+    --timeline-hover: rgba(14, 165, 233, 0.045);
+    --timeline-muted: #7b8794;
+    --timeline-panel: #fff;
+    --timeline-panel-2: #fbfdff;
+}
+
+.dark .timeline-wall {
+    --timeline-line: rgba(71, 85, 105, 0.55);
+    --timeline-hover: rgba(56, 189, 248, 0.07);
+    --timeline-muted: #8092ad;
+    --timeline-panel: rgba(30, 41, 59, 0.62);
+    --timeline-panel-2: rgba(2, 6, 23, 0.34);
+}
+
+.timeline-wall__head {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-width: 0;
+    padding: 10px 2px 6px;
+    flex-shrink: 0;
+}
+
+.timeline-wall__title {
+    font-size: 14px;
+    font-weight: 700;
+    letter-spacing: -0.01em;
+}
+
+.timeline-wall__usage {
+    font-size: 11px;
+    color: var(--timeline-muted);
+    font-variant-numeric: tabular-nums;
+}
+
+/* 搜索框是这一屏的常驻件（不像标准模式那样藏在个性化开关后面）：
+   日志流的用法就是「先找一条」，没有搜索才奇怪。 */
+.timeline-wall__search {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    flex: 1 1 160px;
+    min-width: 0;
+    max-width: 300px;
+    margin-left: auto;
+    padding: 4px 8px;
+    border: 1px solid var(--timeline-line);
+    border-radius: 8px;
+    background: var(--timeline-panel);
+    color: var(--timeline-muted);
+}
+
+.timeline-wall__search input {
+    flex: 1;
+    min-width: 0;
+    width: 100%;
+    border: 0;
+    outline: 0;
+    background: none;
+    font: inherit;
+    font-size: 12px;
+    color: var(--mui-palette-text-primary);
+}
+
+.timeline-wall__search input::placeholder {
+    color: var(--timeline-muted);
+    opacity: 0.8;
+}
+
+.timeline-wall__filters {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 5px;
+    padding: 0 0 8px;
+    flex-shrink: 0;
+}
+
+.timeline-filter-count {
+    margin-left: 4px;
+    font-size: 10px;
+    opacity: 0.65;
+    font-variant-numeric: tabular-nums;
+}
+
+.timeline-wall__scroll {
+    flex: 1;
+    min-height: 0;
+    overflow-y: auto;
+    overflow-x: hidden;
+    padding-bottom: 4px;
+}
+
+/* 日期块：`content-visibility` 让屏外的整块不参与布局与绘制（切模式 / 滚动更稳）。
+   ⚠️ 只在块级做，不逐行做 —— 行高很矮，逐行省不到什么，反而让滚动吸顶（如有）变复杂。 */
+.timeline-day {
+    border: 1px solid var(--timeline-line);
+    border-radius: 12px;
+    background: var(--timeline-panel);
+    margin-bottom: 12px;
+    overflow: hidden;
+    content-visibility: auto;
+    contain-intrinsic-size: auto 320px;
+}
+
+.timeline-day__head {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    width: 100%;
+    padding: 9px 12px;
+    border: 0;
+    border-bottom: 1px solid var(--timeline-line);
+    background: none;
+    color: inherit;
+    font: inherit;
+    text-align: left;
+    cursor: pointer;
+}
+
+.timeline-day__head:hover {
+    background: var(--timeline-hover);
+}
+
+.timeline-day.is-folded .timeline-day__head {
+    border-bottom-color: transparent;
+}
+
+.timeline-day__date {
+    font-size: 16px;
+    font-weight: 700;
+    letter-spacing: -0.015em;
+    white-space: nowrap;
+}
+
+.timeline-day__week {
+    font-size: 11px;
+    color: var(--timeline-muted);
+    white-space: nowrap;
+}
+
+.timeline-day__today {
+    padding: 2px 6px;
+    border-radius: 5px;
+    font-size: 9.5px;
+    font-weight: 700;
+    color: #fff;
+    background: linear-gradient(135deg, #0ea5e9, #14b8a6);
+    white-space: nowrap;
+}
+
+/* 日头的小时分布：只画有内容的钟点，按时间顺序排，不铺满 24 格。 */
+/* 一条 24 小时的细基线 + 按钟点定位的小柱：只有一条记录时也能看出「是几点」。
+   ⚠️ 以前是「把有内容的钟点按先后排成一排」—— 只有一根柱子时既没有分布信息，
+   看着还像一条杂线，所以一度被藏掉；改成按比例定位之后就没有这个问题了。 */
+.timeline-day__hist {
+    position: relative;
+    flex: none;
+    width: 88px;
+    height: 16px;
+    margin-left: 8px;
+}
+
+.timeline-day__track {
+    position: absolute;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    height: 1px;
+    border-radius: 1px;
+    background: color-mix(in srgb, var(--timeline-muted) 42%, transparent);
+}
+
+.timeline-day__bar {
+    position: absolute;
+    bottom: 1px;
+    width: 4px;
+    min-height: 3px;
+    transform: translateX(-50%);
+    border-radius: 2px 2px 0 0;
+    background: color-mix(in srgb, #0ea5e9 60%, transparent);
+}
+
+.dark .timeline-day__bar {
+    background: color-mix(in srgb, #38bdf8 48%, transparent);
+}
+
+.timeline-day__types {
+    display: flex;
+    align-items: center;
+    gap: 9px;
+    margin-left: auto;
+    font-size: 10px;
+    color: var(--timeline-muted);
+    min-width: 0;
+    overflow: hidden;
+}
+
+.timeline-day__type {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    white-space: nowrap;
+}
+
+.timeline-day__type::before {
+    content: "";
+    flex: none;
+    width: 5px;
+    height: 5px;
+    border-radius: 50%;
+    background: var(--cat, var(--timeline-muted));
+}
+
+.timeline-day__type[data-category="text"],
+.timeline-row[data-category="text"] { --cat: #0ea5e9; }
+
+.timeline-day__type[data-category="image"],
+.timeline-row[data-category="image"] { --cat: #8b5cf6; }
+
+.timeline-day__type[data-category="file"],
+.timeline-row[data-category="file"] { --cat: #f97316; }
+
+.timeline-day__type[data-category="task"],
+.timeline-row[data-category="task"] { --cat: #10b981; }
+
+.timeline-day__type[data-category="table"],
+.timeline-row[data-category="table"] { --cat: #f59e0b; }
+
+.timeline-day__type--more::before {
+    display: none;
+}
+
+.timeline-day__count {
+    margin-left: 8px;
+    font-size: 10px;
+    color: var(--timeline-muted);
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+}
+
+.timeline-day__caret {
+    flex: none;
+    color: var(--timeline-muted);
+    transition: transform 0.15s ease;
+}
+
+.timeline-day.is-folded .timeline-day__caret {
+    transform: rotate(-90deg);
+}
+
+/* ── 一行 ───────────────────────────────────────────────────────────── */
+.timeline-row {
+    position: relative;
+    border-top: 1px dashed var(--timeline-line);
+}
+
+.timeline-day__body .timeline-row:first-child {
+    border-top: 0;
+}
+
+.timeline-row:hover {
+    background: var(--timeline-hover);
+}
+
+.timeline-row__main {
+    display: grid;
+    grid-template-columns: 46px 26px minmax(0, 1fr) auto 18px;
+    align-items: start;
+    gap: 8px;
+    width: 100%;
+    min-width: 0;
+    padding: 8px 10px 8px 12px;
+    border: 0;
+    background: none;
+    color: inherit;
+    font: inherit;
+    text-align: left;
+    cursor: pointer;
+}
+
+.timeline-row__time {
+    padding-top: 4px;
+    font-size: 10.5px;
+    line-height: 1.5;
+    color: var(--timeline-muted);
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+}
+
+.timeline-row__icon {
+    display: grid;
+    place-items: center;
+    width: 24px;
+    height: 24px;
+    border-radius: 7px;
+    color: var(--cat, #0ea5e9);
+    background: color-mix(in srgb, var(--cat, #0ea5e9) 12%, transparent);
+}
+
+.timeline-row__body {
+    display: block;
+    min-width: 0;
+}
+
+.timeline-row__preview {
+    display: -webkit-box;
+    -webkit-line-clamp: 1;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+    font-size: 12.5px;
+    line-height: 1.5;
+    word-break: break-word;
+}
+
+/* 展开后摘要让位给正文 —— 同一条内容没必要在一屏里出现两遍（日头的计数仍在）。 */
+.timeline-row.is-open .timeline-row__preview {
+    display: none;
+}
+
+.timeline-row__meta {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    flex-wrap: wrap;
+    margin-top: 2px;
+    font-size: 10px;
+    color: var(--timeline-muted);
+}
+
+.timeline-row__cat {
+    font-weight: 600;
+    color: var(--cat, var(--timeline-muted));
+}
+
+.timeline-row__sep {
+    flex: none;
+    width: 3px;
+    height: 3px;
+    border-radius: 50%;
+    background: currentColor;
+    opacity: 0.35;
+}
+
+.timeline-row__meta-item {
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
+    min-width: 0;
+}
+
+.timeline-row__flag {
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
+    height: 15px;
+    padding: 0 5px;
+    border-radius: 4px;
+    font-size: 9.5px;
+    font-weight: 600;
+}
+
+.timeline-row__flag--auto {
+    color: #7c3aed;
+    background: rgba(139, 92, 246, 0.13);
+}
+
+.timeline-row__flag--late {
+    color: #b45309;
+    background: rgba(245, 158, 11, 0.16);
+}
+
+.dark .timeline-row__flag--auto { color: #c4b5fd; }
+.dark .timeline-row__flag--late { color: #fcd34d; }
+
+.timeline-row__thumb {
+    align-self: center;
+    width: 46px;
+    height: 32px;
+    object-fit: cover;
+    border: 1px solid var(--timeline-line);
+    border-radius: 6px;
+    background: var(--timeline-panel-2);
+}
+
+.timeline-row__chev {
+    display: grid;
+    place-items: center;
+    padding-top: 4px;
+    color: var(--timeline-muted);
+    transition: transform 0.15s ease;
+}
+
+.timeline-row.is-open .timeline-row__chev {
+    transform: rotate(90deg);
+}
+
+/* 展开后大图在下面，行首的小缩略图就是重复信息。 */
+.timeline-row.is-open .timeline-row__thumb {
+    display: none;
+}
+
+/* 快速复制：只在 hover / 聚焦时出现，位置正好盖住右侧的箭头（两者不同时占位）。 */
+.timeline-row__copy {
+    position: absolute;
+    top: 6px;
+    right: 8px;
+    display: grid;
+    place-items: center;
+    width: 24px;
+    height: 24px;
+    border: 0;
+    border-radius: 6px;
+    background: var(--timeline-panel);
+    color: var(--timeline-muted);
+    cursor: pointer;
+    opacity: 0;
+    transition: opacity 0.12s ease, color 0.12s ease, background 0.12s ease;
+}
+
+.timeline-row__copy:hover {
+    color: var(--cat, #0ea5e9);
+    background: var(--timeline-hover);
+}
+
+.timeline-row:hover .timeline-row__copy,
+.timeline-row__copy:focus-visible {
+    opacity: 1;
+}
+
+.timeline-row:hover .timeline-row__chev,
+.timeline-row:focus-within .timeline-row__chev {
+    opacity: 0;
+}
+
+/* 触屏没有 hover：别让复制按钮永远不出现（展开后动作行里还有复制）。 */
+@media (hover: none) {
+    .timeline-row__copy { display: none; }
+}
+
+/* 展开区：左边与正文对齐（12 + 46 + 8 + 26 + 8 = 100px）。 */
+.timeline-row__full {
+    padding: 2px 16px 12px 100px;
+    background: var(--timeline-panel-2);
+}
+
+.timeline-wall__empty {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 8px;
+    padding: 64px 12px;
+    text-align: center;
+    color: var(--timeline-muted);
+    font-size: 12px;
+}
+
+.timeline-wall__empty strong {
+    font-size: 15px;
+    font-weight: 650;
+    color: inherit;
+}
+
+/* ── 时间线的发送区皮肤 ─────────────────────────────────────────────────
+   ⚠️ 基础 `.sticky-composer` 是便签墙那张米黄纸。时间线是普通内容区，
+   用中性的面板色 + 实线边；发送按钮跟随主题主色（不是便签的琥珀色）。 */
+.sticky-composer--timeline {
+    background: var(--timeline-panel);
+    border: 1px solid var(--timeline-line);
+    border-radius: 12px;
+    padding: 7px 11px;
+    box-shadow: none;
+}
+
+.sticky-composer--timeline .sticky-composer__area {
+    padding: 4px 0;
+    /* 两行起步：这是「记一条」的输入条，不是便签墙那张要摊开的纸。
+       `/` 模板插入的多行内容照样会把框撑高（textarea 没有 max-height）。 */
+    min-height: calc(2lh + 8px);
+    font-size: 12.5px;
+    color: inherit;
+}
+
+.sticky-composer--timeline .sticky-composer__area::placeholder {
+    color: var(--timeline-muted);
+    opacity: 0.8;
+}
+
+.sticky-composer--timeline .sticky-composer__attach {
+    color: var(--timeline-muted);
+}
+
+.sticky-composer--timeline .sticky-composer__file {
+    background: rgba(148, 163, 184, 0.16);
+    color: inherit;
+}
+
+.sticky-composer--timeline .sticky-composer__progress {
+    color: inherit;
+}
+
+.sticky-composer__go--timeline {
+    background: var(--mui-palette-primary-main);
+    color: #fff;
+    border-radius: 8px;
+    padding: 6px 14px;
+    font-size: 12px;
+    font-weight: 650;
+}
+
+/* ── 窄屏 ───────────────────────────────────────────────────────────────
+   分类条只留图标（六个带字的胶囊在手机上会折成两行）；日头让出类型摘要；
+   行收窄时间列与缩进；缩略图隐藏（文件名已经够了）。 */
+@media (max-width: 768px) {
+    .timeline-filter-label {
+        display: none;
+    }
+
+    /* 选中项保留文字：六个纯图标里分不清「现在是哪个分类」（标准模式同一条规矩）。 */
+    .timeline-filter-chip.MuiChip-filled .timeline-filter-label {
+        display: inline;
+    }
+
+    .timeline-day__head {
+        gap: 6px;
+        padding: 8px 10px;
+    }
+
+    .timeline-day__date {
+        font-size: 15px;
+    }
+
+    .timeline-day__types {
+        display: none;
+    }
+
+    .timeline-day__hist {
+        width: 64px;
+        margin-left: 4px;
+    }
+
+    .timeline-day__count {
+        margin-left: auto;
+    }
+
+    .timeline-wall__head {
+        flex-wrap: wrap;
+    }
+
+    .timeline-wall__search {
+        flex: 1 1 100%;
+        max-width: none;
+        margin-left: 0;
+    }
+
+    .timeline-row__main {
+        grid-template-columns: 34px 22px minmax(0, 1fr) 16px;
+        gap: 6px;
+        padding: 7px 8px 7px 10px;
+    }
+
+    .timeline-row__time {
+        font-size: 9.5px;
+        padding-top: 5px;
+    }
+
+    .timeline-row__icon {
+        width: 22px;
+        height: 22px;
+        border-radius: 6px;
+    }
+
+    .timeline-row__thumb {
+        display: none;
+    }
+
+    .timeline-row__full {
+        padding: 2px 10px 10px 62px;
     }
 }

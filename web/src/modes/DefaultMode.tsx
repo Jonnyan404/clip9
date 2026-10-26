@@ -9,22 +9,9 @@ import { ReceivedFile } from '@/components/received-item/File';
 import { MdiIcon } from '@/components/ui/MdiIcon';
 import { useAppStore, selectComposerDisabledEverywhere, selectComposerFullyHidden, selectVisibleReceived, type ReceivedItem } from '@/stores/appStore';
 import { useDisplaySettings } from '@/hooks/useDisplaySettings';
-import { isFileEntry, isImageName, looksLikeTable, looksLikeTaskList } from '@/lib/util';
+import { isFileEntry, isImageName, localDateKey, looksLikeTable, looksLikeTaskList } from '@/lib/util';
 
 const TIMELINE_FILTER_KEY = 'timelineFilter';
-/** `timestamp`（秒）→ **本地**的 `YYYY-MM-DD`。
- *
- * ⚠️★ 不用 `toISOString()`：那给的是 **UTC** 日，会把本地晚上的条目算到第二天 ——
- * 而服务端是按**本地日**分桶的（见 `clip9-core::stats`），两边对不上就会「跳错一天」，
- * 而且**不报错**。 */
-function localDateOf(timestamp?: number): string {
-    if (!timestamp) {
-        return '';
-    }
-    const d = new Date(timestamp * 1000);
-    const pad = (n: number) => String(n).padStart(2, '0');
-    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
-}
 
 /** 每帧最多挂载多少条（见下面 `renderLimit` 那段注释）。 */
 const FIRST_CHUNK = 12;
@@ -120,7 +107,7 @@ export default function DefaultMode() {
             return;
         }
         useAppStore.setState({ jumpToDay: null });
-        const index = filtered.findIndex((item) => localDateOf(item.timestamp) === jumpToDay);
+        const index = filtered.findIndex((item) => localDateKey(item.timestamp) === jumpToDay);
         if (index < 0) {
             // ⚠️ 那一天可能已经被历史窗口裁掉了 —— 要**说清**，别静默跳到别的地方。
             toast(t('activityDayGone', { date: jumpToDay }));

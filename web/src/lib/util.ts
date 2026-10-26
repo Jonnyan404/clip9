@@ -61,6 +61,26 @@ export function formatTimestamp(timestamp?: number): string {
     });
 }
 
+/** 两位补零。时间相关的几个格式化都从这里过，别再各写一份。 */
+function pad2(value: number): string {
+    return String(value).padStart(2, '0');
+}
+
+/**
+ * `timestamp`（秒）→ **本地**的 `YYYY-MM-DD`。时间线模式按它分组，热力图跳转也用它比对。
+ *
+ * ⚠️★ 不用 `toISOString()`：那给的是 **UTC** 日，会把本地晚上的条目算到第二天 ——
+ * 而服务端是按**本地日**分桶的（见 `clip9-core::stats`），两边对不上就会「跳错一天」，
+ * 而且**不报错**。
+ *
+ * ⚠️ 这是**全站唯一**实现：标准模式的热力图跳转与时间线模式的按日分组必须用同一个答案。
+ */
+export function localDateKey(timestamp?: number): string {
+    if (!timestamp) return '';
+    const date = new Date(timestamp * 1000);
+    return `${date.getFullYear()}-${pad2(date.getMonth() + 1)}-${pad2(date.getDate())}`;
+}
+
 /**
  * 构建不带房间密码的绝对 URL。
  * 分享/下载鉴权应使用服务端签发的短期 token（?t=），而不是 ?auth= 房间密码。

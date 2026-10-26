@@ -134,9 +134,11 @@ export function useMarkdown(
     // 「复制」该复制**你正在看的那一份**：原文 / 当前动作的结果。
     const copyText = viewText || text;
 
-    // 图标有几个 → 正文要给图标让出多宽。总数封在 3 个（原文 + 2 个针对性动作 + ⋯）。
+    // 图标有几个 → 正文要给图标让出多宽。总数封在 4 个（原文 + 2 个针对性动作 + ⋯）。
+    // ⚠️★ 4 个图标的实测宽度是 110px，再加 `.md-toggle` 的右缩进 12px = 122px ——
+    //    原来这里给 96px，第 4 个图标会压在正文上（窄屏尤其明显，时间线展开时实测重叠 26px）。
     const iconCount = !available ? 0 : 1 + Math.min(targeted.length, 2) + (targeted.length > 2 ? 1 : 0);
-    const gutter = iconCount > 2 ? '96px' : '64px';
+    const gutter = iconCount > 2 ? '124px' : '64px';
 
     const setMode = useCallback((next: string | null) => {
         setOverride(next ?? null);

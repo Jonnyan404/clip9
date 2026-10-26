@@ -504,7 +504,7 @@ export default function CanvasWall() {
             // `auto` = 内容高度 —— 下面那个 `flex: 1` 的画布区随之塌成 **1px**。
             // 症状极其隐蔽：**没有报错、没有警告**，画布元素在 DOM 里、`<canvas>` 也在，
             // 只是 Excalidraw 量到的高度是 0，于是一片空白（看起来像「还没加载完」）。
-            // 另外五个模式的根节点都是 `100dvh`，这条是跟着它们来的。
+            // 其它模式的根节点都是 `100dvh`，这条是跟着它们来的。
             // ⚠️ `dvh` 而不是 `vh`：移动端地址栏收起/展开时 `vh` 会算错，底部被切掉一截。
             sx={{ display: 'flex', flexDirection: 'column', height: '100dvh', minHeight: 0 }}
             onDragEnter={(event) => {
