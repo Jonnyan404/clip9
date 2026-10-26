@@ -109,7 +109,25 @@ jobs:
         run: |
           set -euo pipefail
           # R2 桶：已存在时 `r2 bucket create` 会报错，这里不当失败。
-          wrangler r2 bucket create "$BUCKET_NAME" 2>/dev/null || echo "R2 桶已存在"
+          # ⚠️★ 但也不能把**所有**失败都说成「已存在」：这个账号没开通 R2 时那句谎话
+          #    会把人引去查「D1 权限」（2026-10-26 在演示站那条工作流上真踩了）。
+          #    三种情况分开说，见 `deploy-cloudflare-demo.yml` 同一段的注释。
+          if r2_out=$(wrangler r2 bucket create "$BUCKET_NAME" 2>&1); then
+            echo "R2 桶已创建：$BUCKET_NAME"
+          else
+            case "$r2_out" in
+              *"already exists"*|*"already owned"*|*"code: 10004"*)
+                echo "R2 桶已存在，继续" ;;
+              *"enable R2"*|*"Enable R2"*|*"not enabled"*|*"code: 10042"*)
+                echo "::error::这个账号还没开通 R2 —— 去 Dashboard → R2 → 点 Enable，再重跑"
+                printf '%s\n' "$r2_out"
+                exit 1 ;;
+              *)
+                echo "::error::建 R2 桶失败（不是「已存在」，也不是「没开通 R2」）："
+                printf '%s\n' "$r2_out"
+                exit 1 ;;
+            esac
+          fi
 
           cp wrangler.toml.template wrangler.toml
 
@@ -123,11 +141,37 @@ jobs:
           if [ -z "$d1_id" ] || [ "$d1_id" = "null" ]; then
             # ⚠️ `{}` 不能省：`$DB_NAME，` 里那个全角逗号会被 bash 当成变量名的一部分。
             echo "没有现成的 ${DB_NAME}，创建它"
-            create_out=$(wrangler d1 create "$DB_NAME")
-            d1_id=$(printf '%s' "$create_out" | grep -o 'database_id = "[^"]*"' | cut -d'"' -f2 || true)
+            # ⚠️ 先拿退出码再决定，别让 `set -e` 直接甩出去（那样连 wrangler 的原话都没了）。
+            set +e
+            d1_out=$(wrangler d1 create "$DB_NAME" 2>&1)
+            create_status=$?
+            set -e
+            printf '%s\n' "$d1_out"
+            if [ "$create_status" -ne 0 ]; then
+              # ⚠️ 「已经存在」不是失败（上一次跑到这里失败过、或两人同时点），继续从清单里取。
+              case "$d1_out" in
+                *"already exists"*|*"already owned"*|*"code: 10004"*|*"A database with that name"*)
+                  echo "D1 库已经存在，从清单里取 id" ;;
+                *)
+                  echo "::error::建 D1 失败（退出码 ${create_status}）—— 上面是 wrangler 的原话"
+                  exit 1 ;;
+              esac
+            fi
+            # ⚠️★ 两种输出形状都要认：老版本 TOML（`database_id = "…"`）、4.81.x 是 JSON
+            #    （`"database_id": "…"`）。只认 `=` 的那版会「建成功了却拿不到 id」，
+            #    然后报「检查 D1: Edit 权限」—— 指错方向。
+            d1_id=$(printf '%s' "$d1_out" \
+              | grep -oE '"database_id"[[:space:]]*:[[:space:]]*"[^"]+"|database_id[[:space:]]*=[[:space:]]*"[^"]+"' \
+              | head -1 | sed -E 's/.*"([^"]+)"$/\1/' || true)
+            if [ -z "$d1_id" ]; then
+              d1_id=$(wrangler d1 list --json 2>/dev/null \
+                | jq -r --arg n "$DB_NAME" '.[] | select(.name == $n) | .uuid' \
+                | head -1 || true)
+            fi
           fi
           if [ -z "$d1_id" ] || [ "$d1_id" = "null" ]; then
-            echo "::error::拿不到 D1 的 id —— 检查这个 API Token 有没有 D1: Edit 权限"
+            echo "::error::建完 D1 还是拿不到 id —— 看一眼上面 wrangler 的输出；必要时查令牌有没有 D1: Edit"
+            wrangler d1 list --json 2>&1 | head -40 || true
             exit 1
           fi
           echo "D1 id: $d1_id"

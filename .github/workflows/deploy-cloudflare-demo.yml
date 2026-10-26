@@ -121,8 +121,32 @@ jobs:
         working-directory: cloudflare/workers
         run: |
           set -euo pipefail
-          wrangler r2 bucket create "$BUCKET_NAME" 2>/dev/null || echo "R2 桶已存在"
 
+          # ── R2 ────────────────────────────────────────────────────────────
+          # ⚠️★ 别用 `|| echo 已存在` 兜 —— 那会把**三种完全不同**的失败都说成「已存在」：
+          #    ① 桶真的已经有了（正常，继续）；
+          #    ② 这个账号**还没开通 R2**（去 Dashboard → R2 → Enable）；
+          #    ③ 令牌没有 R2 权限。
+          #    2026-10-26 第一次跑就栽在这里：日志只有一句「R2 桶已存在」，而下一句
+          #    D1 的错误把人引向「D1 权限」，真正的原因被吞掉了。
+          if r2_out=$(wrangler r2 bucket create "$BUCKET_NAME" 2>&1); then
+            echo "R2 桶已创建：$BUCKET_NAME"
+          else
+            case "$r2_out" in
+              *"already exists"*|*"already owned"*|*"code: 10004"*)
+                echo "R2 桶已存在，继续" ;;
+              *"enable R2"*|*"Enable R2"*|*"not enabled"*|*"code: 10042"*)
+                echo "::error::这个账号还没开通 R2 —— 去 Dashboard → R2 → 点 Enable（免费额度够演示用），再重跑"
+                printf '%s\n' "$r2_out"
+                exit 1 ;;
+              *)
+                echo "::error::建 R2 桶失败（不是「已存在」，也不是「没开通 R2」）："
+                printf '%s\n' "$r2_out"
+                exit 1 ;;
+            esac
+          fi
+
+          # ── D1 ────────────────────────────────────────────────────────────
           # ⚠️ 末尾 `|| true`：`d1 list` 报错或 `head` 提前关管道都会让赋值失败，
           #    而「库里还没有这个 db」正是要走创建分支的正常情况。
           d1_id=$(wrangler d1 list --json 2>/dev/null \
@@ -131,11 +155,41 @@ jobs:
           if [ -z "$d1_id" ] || [ "$d1_id" = "null" ]; then
             # ⚠️ `{}` 不能省：`$DB_NAME，` 里那个全角逗号会被 bash 当成变量名的一部分。
             echo "没有现成的 ${DB_NAME}，创建它"
-            create_out=$(wrangler d1 create "$DB_NAME")
-            d1_id=$(printf '%s' "$create_out" | grep -o 'database_id = "[^"]*"' | cut -d'"' -f2 || true)
+            # ⚠️ 先拿到**退出码**再决定，别让 `set -e` 把我们直接甩出去（那样连 wrangler
+            #    的原话都看不到，只留一句自己编的「检查权限」）。
+            set +e
+            d1_out=$(wrangler d1 create "$DB_NAME" 2>&1)
+            create_status=$?
+            set -e
+            printf '%s\n' "$d1_out"
+            if [ "$create_status" -ne 0 ]; then
+              # ⚠️ 「已经存在」不是失败：可能是上一次跑到这里就失败了（库建好了、id 没取到，
+              #    2026-10-26 正是这样），也可能是两个人同时点。这种情况继续往下走，从清单里取。
+              case "$d1_out" in
+                *"already exists"*|*"already owned"*|*"code: 10004"*|*"A database with that name"*)
+                  echo "D1 库已经存在，从清单里取 id" ;;
+                *)
+                  echo "::error::建 D1 失败（退出码 ${create_status}）—— 上面是 wrangler 的原话"
+                  exit 1 ;;
+              esac
+            fi
+            # ⚠️★ **两种输出形状都要认**：老版本打 TOML 片段（`database_id = "…"`），
+            #    wrangler 4.81.x 打 JSON 片段（`"database_id": "…"`）。只认 `=` 那一版在
+            #    2026-10-26 第一次跑就空手而归 —— 而错误信息写的是「检查 D1: Edit 权限」，
+            #    把人指去了完全错的地方（其实库已经建好了）。
+            d1_id=$(printf '%s' "$d1_out" \
+              | grep -oE '"database_id"[[:space:]]*:[[:space:]]*"[^"]+"|database_id[[:space:]]*=[[:space:]]*"[^"]+"' \
+              | head -1 | sed -E 's/.*"([^"]+)"$/\1/' || true)
+            # 再兜一层：万一输出格式又变了，按名字从清单里取（与「已存在」那条路同源）。
+            if [ -z "$d1_id" ]; then
+              d1_id=$(wrangler d1 list --json 2>/dev/null \
+                | jq -r --arg n "$DB_NAME" '.[] | select(.name == $n) | .uuid' \
+                | head -1 || true)
+            fi
           fi
           if [ -z "$d1_id" ] || [ "$d1_id" = "null" ]; then
-            echo "::error::拿不到 D1 的 id —— 检查这个 API Token 有没有 D1: Edit 权限"
+            echo "::error::建完 D1 还是拿不到 id —— 看一眼上面 wrangler 的输出；必要时查令牌有没有 D1: Edit"
+            wrangler d1 list --json 2>&1 | head -40 || true
             exit 1
           fi
           echo "D1 id: $d1_id"
