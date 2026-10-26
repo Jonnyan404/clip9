@@ -140,6 +140,10 @@
          直接发一个流；② SPA 回 `files-unsupported` 那个 reason 键。同一个事实、同一句话。 -->
     <string name="share_files_unsupported">现在只支持分享文本，文件还不行。</string>
 
+    <!-- 设备上没有能处理 ACTION_GET_CONTENT 的界面（DocumentsUI 被裁掉的 ROM）。
+         ⚠️ 这一步失败**不能**静默：用户点「添加文件」什么都没发生，那句 toast 是唯一的线索。 -->
+    <string name="file_chooser_unavailable">这台设备没有可用的文件选择器</string>
+
     <!-- 自签 HTTPS 的确认框。⚠️ 两个占位符的顺序与 WebAppActivity.askAboutCertificate 一致：
          ① primaryError ② SHA-256 指纹。 -->
     <string name="ssl_title">证书验证没通过</string>

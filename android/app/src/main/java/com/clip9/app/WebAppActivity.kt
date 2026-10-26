@@ -1,6 +1,7 @@
 package com.clip9.app
 
 import android.annotation.SuppressLint
+import android.app.Activity
 import android.app.AlertDialog
 import android.content.ActivityNotFoundException
 import android.content.Intent
@@ -12,6 +13,8 @@ import android.os.Looper
 import android.view.View
 import android.webkit.JavascriptInterface
 import android.webkit.SslErrorHandler
+import android.webkit.ValueCallback
+import android.webkit.WebChromeClient
 import android.webkit.WebResourceError
 import android.webkit.WebResourceRequest
 import android.webkit.WebView
@@ -20,6 +23,7 @@ import android.widget.ProgressBar
 import android.widget.TextView
 import android.widget.Toast
 import androidx.activity.OnBackPressedCallback
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import org.json.JSONObject
 import java.security.MessageDigest
@@ -52,6 +56,13 @@ import java.security.MessageDigest
  * （状态码、重定向、gzip、编码、以及**自签证书的确认**全都得自己处理一遍），
  * 而任何一处没重放对，症状都是「界面白了」或者「证书对话框不出现了」。
  * 让 SPA 主动问一句要小得多、也可靠得多。
+ *
+ * ⚠️★ **Web 页面里的 `<input type="file">` 默认是死的**（2026-10-26 加）：
+ * `WebChromeClient` 不装的话，Android 官方文档写得很直白 ——
+ * *"The default behavior is that WebView will cancel all file requests."*
+ * 症状不是报错，是**点了没反应**（选择器不弹、页面那边的 `change` 永远不来）。
+ * 所以下面 `onShowFileChooser` 那一段是这个壳的**功能件**，不是可选的润色：
+ * 少了它，用户在 App 里一个文件都发不出去。
  */
 class WebAppActivity : AppCompatActivity() {
 
@@ -153,6 +164,62 @@ class WebAppActivity : AppCompatActivity() {
     /** 正在投递中（防重入：`onPageFinished` 会因为页内跳转再来一次）。 */
     private var delivering = false
 
+    /**
+     * 上一次 `onShowFileChooser` 交过来的回调 —— 选择器回来时要用它把结果送回去。
+     *
+     * ⚠️★ **必须只留一个**：WebView 同一时刻只认一个 callback。上一次还没回来又弹一次
+     * （用户连续点两下「添加文件」）时，直接覆盖会让**上一次的请求永远悬着** ——
+     * 页面那边的 `change` 永远不来，表现是「第一次选了没反应，之后才正常」这种时好时坏。
+     * 所以下面 `onShowFileChooser` 里先 `onReceiveValue(null)` 把上一次取消掉。
+     */
+    private var pendingFileCallback: ValueCallback<Array<Uri>>? = null
+
+    /**
+     * 系统文件选择器的返回。
+     *
+     * ⚠️ 用 `registerForActivityResult` 而不是 `startActivityForResult` + `onActivityResult`：
+     * 后者在新版本里已废弃，而 Activity 被系统回收重建之后那个回调会丢
+     * （症状同样是「选了文件，什么都没发生」）。注册发生在属性初始化时 = 一定早于 `STARTED`。
+     */
+    private val fileChooserLauncher = registerForActivityResult(
+        ActivityResultContracts.StartActivityForResult(),
+    ) { result ->
+        val callback = pendingFileCallback ?: return@registerForActivityResult
+        pendingFileCallback = null
+        val uris = parseChooserResult(result.resultCode, result.data)
+        // ⚠️ 用户按了返回：`uris` 是 null = 取消。**必须**回一次（哪怕是 null），
+        // 否则页面那个 `input` 会一直停在「正在选」的状态，之后再点也不会再触发。
+        callback.onReceiveValue(uris)
+    }
+
+    /**
+     * 从选择器的结果里取出 URI 列表。
+     *
+     * ⚠️★ 官方那个 `FileChooserParams.parseResult` **不够**：多选时结果只放在
+     * `intent.clipData` 里、`intent.data` 是 null，而它在这种形状上会回 **null**
+     * （2026-10-26 真机日志：`code=-1`（RESULT_OK）/ `data=null` / `clipData=2 项`
+     * → `uris=null`）。拿 null 去回页面 = 页面认为「用户取消了」，chips 一个都不出 ——
+     * 症状就是「选了三个文件，只成功其中一个」（甚至一个都没有）。
+     *
+     * 所以：先信官方的（它处理单选与老版本的形状），拿不到再自己读 `clipData`。
+     * ⚠️ 两条都要按 `itemCount` 全部取出，别只取第 0 项 —— 那正是「只剩一个」的来源。
+     */
+    private fun parseChooserResult(resultCode: Int, data: Intent?): Array<Uri>? {
+        val official = WebChromeClient.FileChooserParams.parseResult(resultCode, data)
+        if (official != null && official.isNotEmpty()) return official
+        if (resultCode != Activity.RESULT_OK) return official
+        val clip = data?.clipData ?: return official
+        val uris = ArrayList<Uri>(clip.itemCount)
+        for (index in 0 until clip.itemCount) {
+            clip.getItemAt(index)?.uri?.let { uris += it }
+        }
+        if (uris.isEmpty()) {
+            android.util.Log.w("clip9", "选择器回了 OK 但没有可用 URI：data=${data?.data} clip=${clip.itemCount}")
+            return official
+        }
+        return uris.toTypedArray()
+    }
+
     @SuppressLint("SetJavaScriptEnabled")
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -221,6 +288,36 @@ class WebAppActivity : AppCompatActivity() {
                 error: SslError,
             ) {
                 askAboutCertificate(handler, error)
+            }
+        }
+
+        // ⚠️★ 文件选择器（2026-10-26）。见类文档那一段：**不装这个，页面里所有
+        // `<input type="file">` 都是死的**（点了没反应，不报错）。
+        //
+        // ⚠️ `fileChooserParams.createIntent()` 已经把该带的都带上了 —— 页面写了 `multiple`
+        // 就是 `mode == MODE_OPEN_MULTIPLE`，`createIntent()` 会给它加
+        // `EXTRA_ALLOW_MULTIPLE`；`accept` 变成 MIME 过滤。自己拼 Intent 就会漏掉
+        // 「多选」这一半，于是选择器只能点一个文件 —— 那正是「多文件只成功一个」的经典成因。
+        webView.webChromeClient = object : WebChromeClient() {
+            override fun onShowFileChooser(
+                view: WebView,
+                filePathCallback: ValueCallback<Array<Uri>>,
+                fileChooserParams: WebChromeClient.FileChooserParams,
+            ): Boolean {
+                // 上一次没回来的话先取消 —— 一个 WebView 同时只认一个 callback。
+                pendingFileCallback?.onReceiveValue(null)
+                pendingFileCallback = filePathCallback
+                return try {
+                    fileChooserLauncher.launch(fileChooserParams.createIntent())
+                    true
+                } catch (e: ActivityNotFoundException) {
+                    // 没有能处理它的 App（罕见：DocumentsUI 被裁掉的 ROM）。
+                    // ⚠️ 光吐 false 不够 —— 得先把 callback 收掉，否则这次请求悬着。
+                    pendingFileCallback = null
+                    filePathCallback.onReceiveValue(null)
+                    toast(getString(R.string.file_chooser_unavailable))
+                    false
+                }
             }
         }
 

@@ -1369,6 +1369,48 @@ function fullScreenSubPages() {
   }
 }
 
+// ── 契约 H：WebView 的文件选择器（2026-10-26）──────────────────────────────
+
+/**
+ * 页面里的 `<input type="file">` **只有装了 `WebChromeClient.onShowFileChooser` 才可能弹选择器**。
+ * Android 官方文档写得很直白：*"The default behavior is that WebView will cancel all
+ * file requests."* —— 少了它的症状是**点了没反应**：不报错、没日志、页面那边的 `change`
+ * 永远不来。2026-10-26 用户报「手机上发多个文件只成功其中一个」时才发现这个壳里根本没有它。
+ *
+ * 多选还有**第二个**坑（同一天真机日志钉下来的）：
+ * `code=-1`（RESULT_OK）/ `data=null` / `clipData=2 项` → 官方 `parseResult` 回 **null**。
+ * 所以结果解析里必须有 `clipData` 分支，否则「选了三个只回来一个」（甚至一个都没有）。
+ *
+ * 这条判据钉三件事：`onShowFileChooser` 存在 · 用 `createIntent()`（它才会带
+ * `EXTRA_ALLOW_MULTIPLE`）· 解析时有 `clipData` 兜底。
+ *
+ * ⚠️ 为什么是静态判据：Kotlin 这边没有测试运行器，而这两种坏的形态都**编得过、跑得起来**，
+ *    只有真机手点才知道 —— 那正是这次暴露出来的缺口。
+ */
+{
+  const label = '契约 H：WebAppActivity 装了文件选择器（onShowFileChooser + 多选 clipData）';
+  const text = readKotlinCode('android/app/src/main/java/com/clip9/app/WebAppActivity.kt');
+  if (text === null) {
+    fail(label, '读不到 WebAppActivity.kt');
+  } else {
+    const missing = [];
+    if (!/override\s+fun\s+onShowFileChooser\s*\(/.test(text)) missing.push('onShowFileChooser 这个 override');
+    if (!/webChromeClient\s*=/.test(text)) missing.push('webView.webChromeClient 的赋值');
+    if (!/\.createIntent\(\)/.test(text)) missing.push('fileChooserParams.createIntent()（多选的 EXTRA_ALLOW_MULTIPLE 靠它）');
+    if (!/clipData/.test(text)) missing.push('结果解析里的 clipData 分支（多选时 intent.data 是 null）');
+    if (missing.length) {
+      fail(
+        label,
+        `缺：${missing.join(' / ')}\n    ⚠️★ 缺 onShowFileChooser = 页面里所有 <input type="file"> 都是死的\n` +
+          '       （点了没反应，官方默认行为就是取消所有文件请求）；\n' +
+          '       缺 clipData = 多选只回来一个（多选的结果只在 clipData 里，data 是 null）。',
+      );
+    } else {
+      ok(`${label} —— onShowFileChooser + createIntent + clipData`);
+    }
+  }
+}
+
 // ── 输出 ────────────────────────────────────────────────────────────────────
 
 function report() {
