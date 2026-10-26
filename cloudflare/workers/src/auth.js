@@ -320,11 +320,13 @@ async function getRoomSessionSigningKey(env) {
   );
 }
 
-export async function issueRoomSessionToken(env, room, ttlSeconds = 3600, scope = '') {
+export async function issueRoomSessionToken(env, room, ttlSeconds = 7 * 24 * 60 * 60, scope = '') {
   const normalizedRoom = normalizeRoomName(room);
-  
-  // Clamp TTL to valid range
-  let validTtl = Math.max(60, Math.min(ttlSeconds, 24 * 60 * 60));
+
+  // 夹一次 TTL。⚠️ 上限（30 天）比默认值（7 天）宽，理由与自建服务端
+  // `clip9_core::clamp_session_ttl` 完全一致：默认值决定「不特别说明时签多久」，
+  // 上限只拦「把天数当秒数传进来」那一类手滑。别把两个数合并成一个。
+  const validTtl = Math.max(60, Math.min(ttlSeconds, 30 * 24 * 60 * 60));
 
   const now = Math.floor(Date.now() / 1000);
   const claims = {

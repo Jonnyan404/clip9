@@ -15,6 +15,21 @@ import { router, isShareRoute } from '@/router';
 import { API_BASE_URL } from '@/lib/base';
 import { useAppStore, type AppConfig, type ReceivedItem } from './appStore';
 
+/**
+ * 房间会话令牌的存储键。
+ *
+ * ⚠️★ 存在 **`localStorage`** 里，不是 `sessionStorage`（2026-10-26 改）。
+ * 用户报的「PWA 每次回去都要输密码」就是这一条：`sessionStorage` 的生命周期是
+ * **一个标签页 / 一次会话**，而手机上的 PWA 被切到后台、被系统回收、或者被用户从多任务里
+ * 划掉之后，sessionStorage 就**没了** —— 于是每次打开都当成「从没登过」。
+ * 桌面浏览器上不容易发现，因为标签页通常一直开着。
+ *
+ * ⚠️ 换成 `localStorage` **不会**延长令牌的权限：它自带 `expiresAt`
+ * （见 `getEffectiveAuthEntry` 里那道过期判断），到点照样要重输密码。
+ * 变的只是「关掉应用之后还记得多久」。
+ *
+ * ⚠️ 这是唯一一处把房间凭据落盘的地方 —— 它是个**有时限**的会话令牌，不是密码本身。
+ */
 const ROOM_AUTH_CACHE_KEY = 'roomAuthCache';
 const DEFAULT_ROOM_KEY = '__default__';
 const GLOBAL_ROOM_KEY = '__global__';
@@ -72,21 +87,24 @@ function readNativeRoomAuth(): Record<string, RoomAuthEntry> {
 }
 
 function loadRoomAuthCache(): Record<string, RoomAuthEntry> {
-    let fromSession: Record<string, RoomAuthEntry> = {};
+    let fromStore: Record<string, RoomAuthEntry> = {};
     try {
-        const raw = sessionStorage.getItem(ROOM_AUTH_CACHE_KEY);
+        // ⚠️ 老版本写的是 sessionStorage（关掉就没了）。**顺手读一眼**：同一次会话里
+        // 升级上来的用户不至于被多问一次密码 —— 下一次 persist 就落到 localStorage 了。
+        const raw = localStorage.getItem(ROOM_AUTH_CACHE_KEY)
+            || sessionStorage.getItem(ROOM_AUTH_CACHE_KEY);
         if (raw) {
             const parsed = JSON.parse(raw);
             if (parsed && typeof parsed === 'object') {
-                fromSession = parsed;
+                fromStore = parsed;
             }
         }
     } catch {
-        fromSession = {};
+        fromStore = {};
     }
-    // ⚠️★ 外壳给的那一份**盖在上面**：它是**刚刚**用密码换出来的，而 sessionStorage 里那份
+    // ⚠️★ 外壳给的那一份**盖在上面**：它是**刚刚**用密码换出来的，而本地存的那份
     // 可能是上一次会话留下的、服务端早已不认的旧令牌。
-    return { ...fromSession, ...readNativeRoomAuth() };
+    return { ...fromStore, ...readNativeRoomAuth() };
 }
 
 // ── 定时器（模块级，见文件头）────────────────────────────────────────────
@@ -189,7 +207,15 @@ export const useWebSocketStore = create<WsState>((set, get) => ({
     normalizeRoomName,
     getRoomStorageKey: (room) => normalizeRoomName(room ?? get().room) || DEFAULT_ROOM_KEY,
     persistRoomAuthCache: () => {
-        sessionStorage.setItem(ROOM_AUTH_CACHE_KEY, JSON.stringify(get().roomAuthCache));
+        // ⚠️ 写不进去**不算错**（隐私模式 / 配额满）：代价只是「下次还要输密码」，
+        // 而抛出去会把登录流程整个打断 —— 那是更糟的方向。所以吞掉，但留一句话。
+        try {
+            localStorage.setItem(ROOM_AUTH_CACHE_KEY, JSON.stringify(get().roomAuthCache));
+            // 老版本那份还在的话清掉，免得下次 load 时读到过期的旧值。
+            sessionStorage.removeItem(ROOM_AUTH_CACHE_KEY);
+        } catch (error) {
+            console.warn('[clip9] 房间令牌存不下来（下次打开要重新输密码）：', error);
+        }
     },
     getGlobalAuthToken: () => {
         const entry = get().roomAuthCache[GLOBAL_ROOM_KEY];

@@ -69,8 +69,19 @@ pub const SHARE_PASSWORD_HASH_LEN: usize = 16;
 
 /// 预览令牌有效期（10 分钟）。
 pub const PREVIEW_TOKEN_TTL_SECONDS: i64 = 10 * 60;
-/// 会话令牌有效期（1 小时）。
-pub const ROOM_SESSION_TTL_SECONDS: i64 = 60 * 60;
+/// 会话令牌有效期（7 天）。
+///
+/// ⚠️★ 2026-10-26 从 **1 小时**改成 7 天。原因不是「1 小时不够优雅」，而是**手机上做不到**：
+/// PWA 被系统回收 / 被划掉之后，前端那份令牌（`localStorage`）还在，可它一小时就过期 ——
+/// 于是每次打开都要重输密码（用户报的就是这个）。
+///
+/// ⚠️ 这是**「记住这台设备」的取舍**，不是无代价的：
+///   · 令牌是 bearer 凭据，拿到它就等于拿到这个房间，直到过期；
+///   · **吊销手段仍然存在**：`ShareKey` 是从「全局密码 + 各房间密码」派生出来的，
+///     所以**改一次密码 = 所有已签发的令牌当场作废**（见 `ShareKey::derive`）。
+///     这条是本设计敢把有效期放长的前提，别把它改掉。
+///   · 想要更短/更长，改这一个常量（`clamp_session_ttl` 的上限跟着它走）。
+pub const ROOM_SESSION_TTL_SECONDS: i64 = 7 * 24 * 60 * 60;
 /// 会话令牌的 `typ`。
 pub const SESSION_TYPE: &str = "room_session";
 /// 会话令牌的全局作用域标记（`sc` 字段）。
@@ -481,13 +492,16 @@ pub fn normalize_share_max_uses(max_uses: i64) -> i64 {
     }
 }
 
-/// 会话令牌的 TTL：`<= 0` = 1 小时，上限 1 天。
+/// 会话令牌的 TTL：`<= 0` = 默认值（[`ROOM_SESSION_TTL_SECONDS`]），上限 30 天。
+///
+/// ⚠️ 上限比默认值宽：默认值决定「不特别说明时签多久」，上限只拦「把天数当秒数传进来」
+/// 那一类手滑。两者不要合并成一个数 —— 那样一调默认值就把保险丝也一起调了。
 #[must_use]
 pub fn clamp_session_ttl(ttl_seconds: i64) -> i64 {
     if ttl_seconds <= 0 {
         ROOM_SESSION_TTL_SECONDS
     } else {
-        ttl_seconds.min(24 * 60 * 60)
+        ttl_seconds.min(30 * 24 * 60 * 60)
     }
 }
 
@@ -872,6 +886,31 @@ mod validate_tests {
         let (short_claims, _) = new_claims(&key, TYPE_CONTENT, "7", "work", 60, 0, "", "jti-2");
         let (_, short_exp) = key.preview_token(&short_claims, NOW);
         assert_eq!(short_exp, NOW + 60);
+    }
+
+    /// 会话令牌的有效期：**默认 7 天**，越界夹到 30 天。
+    ///
+    /// ⚠️★ 这条钉的是 2026-10-26 那个改动（1 小时 → 7 天）。手机上 PWA 被系统回收 /
+    /// 被划掉之后，一小时的令牌早就过期了 —— 用户每次打开都要重输密码。
+    /// ⚠️ 想改回去就改 `ROOM_SESSION_TTL_SECONDS`，但**先想清楚吊销手段**：
+    /// 令牌的签名密钥是从「全局密码 + 各房间密码」派生的，**改密码才**能让已签发的令牌作废。
+    #[test]
+    fn a_session_token_lasts_a_week_and_is_capped_at_thirty_days() {
+        let key = key();
+        let (_, exp) = key.session_token("work", ROOM_SESSION_TTL_SECONDS, None, NOW);
+        assert_eq!(exp, NOW + 7 * 24 * 60 * 60, "默认 7 天");
+
+        assert_eq!(
+            clamp_session_ttl(0),
+            ROOM_SESSION_TTL_SECONDS,
+            "<= 0 用默认值"
+        );
+        assert_eq!(clamp_session_ttl(600), 600, "短的不动");
+        assert_eq!(
+            clamp_session_ttl(365 * 24 * 60 * 60),
+            30 * 24 * 60 * 60,
+            "上限 30 天（防「把天数当秒数」）"
+        );
     }
 
     /// 扣不扣额度只看**这一条分享**的 `mu`，而且 Range 续传不算一次。
