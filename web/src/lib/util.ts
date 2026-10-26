@@ -51,6 +51,43 @@ export function percentage(value: number, decimal = 2): string {
     return `${(value * 100).toFixed(decimal)}%`;
 }
 
+/**
+ * 文件的「同一条」判据：**名字 + 字节数 + 修改时间**。
+ *
+ * ⚠️ 只用名字不够 —— 用户完全可能同时选到两个 `IMG_0001.jpg`（不同目录）；
+ * 只用 `name+size` 也不够 —— 同一张图改过一版但大小恰好相同就会当成同一个。
+ * 三者一起，才既不会把两条不同的文件合成一条，也不会把同一个文件重复加。
+ */
+function fileIdentity(file: File): string {
+    return `${file.name}\u0000${file.size}\u0000${file.lastModified}`;
+}
+
+/**
+ * 把「这一次选中的文件」并进已有的列表 —— **追加，不是替换**（2026-10-26）。
+ *
+ * ⚠️★ 原来是 `setState({ files })` 直接替换。桌面上感觉不出来（用户一次性框选/拖一堆），
+ * 但手机上的典型操作是「点添加 → 选一个 → 再点添加」，于是**每加一个都把前面选的清空**，
+ * 最后只剩最后一个发出去 —— 用户看到的就是「选了三个文件，只成功其中一个」。
+ * 反馈来源：2026-10-26（手机端）。
+ *
+ * ⚠️ 去重是必须的（不是顺手）：追加之后「同一个文件又选了一次」会变成两个 chips、
+ * 上传两份字节，而用户没有任何提示。chips 的删除按钮才是移除的唯一入口。
+ *
+ * ⚠️ 抽在这里而不是各 composer 各写一份：发送区有两套实现（`UnifiedComposer` /
+ * `StickyComposer`），这条规矩必须只有一个答案。
+ */
+export function mergeSelectedFiles(current: File[], incoming: File[]): File[] {
+    const merged = [...current];
+    const seen = new Set(merged.map(fileIdentity));
+    for (const file of incoming) {
+        const key = fileIdentity(file);
+        if (seen.has(key)) continue;
+        seen.add(key);
+        merged.push(file);
+    }
+    return merged;
+}
+
 export function formatTimestamp(timestamp?: number): string {
     if (!timestamp) return '';
     const date = new Date(timestamp * 1000);

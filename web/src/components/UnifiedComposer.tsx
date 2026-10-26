@@ -8,7 +8,7 @@ import { FULLSCREEN_OPACITY_MAX, FULLSCREEN_OPACITY_MIN, useAppStore } from '@/s
 import { useWebSocketStore } from '@/stores/wsStore';
 import { toast } from '@/stores/toastStore';
 import { useDisplaySettings } from '@/hooks/useDisplaySettings';
-import { errorMessage, prettyFileSize } from '@/lib/util';
+import { errorMessage, mergeSelectedFiles, prettyFileSize } from '@/lib/util';
 import { postText } from '@/services/send';
 import { SLASH_TEMPLATES, resolveSlashText, slashMenuShouldOpen, slashMenuShouldStay, slashPendingAt, stripTrailingSlash } from '@/lib/slash-template.js';
 import { runActionById } from '@/lib/actions/index.js';
@@ -77,7 +77,10 @@ export const UnifiedComposer = forwardRef<UnifiedComposerHandle>(function Unifie
             toast(t('fileSizeExceeded', { limit: prettyFileSize(config.file.limit) }));
             return;
         }
-        useAppStore.setState({ send: { text: useAppStore.getState().send.text, files } });
+        // ⚠️★ **追加，不是替换**（理由见 `mergeSelectedFiles` 的注释）：
+        // 手机上「分几次添加」是常态，替换语义会把前几次选的全丢掉。
+        const current = useAppStore.getState().send.files;
+        useAppStore.setState({ send: { ...useAppStore.getState().send, files: mergeSelectedFiles(current, files) } });
     }, [config.file.limit, t]);
 
     useImperativeHandle(ref, () => ({

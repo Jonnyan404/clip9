@@ -423,10 +423,33 @@ for (const name of ['revoke', 'update']) {
     }
 }
 
+// ── K. 选文件是**追加**，不是替换（2026-10-26）────────────────────────────
+// ⚠️★ 两套发送区（标准 / 非标准）都必须走 `mergeSelectedFiles`。
+//    原来的写法是 `setState({ send: { …, files } })` —— 整份**替换**。桌面上框选/拖一堆
+//    感觉不出来，但手机上的典型操作是「点添加 → 选一个 → 再点添加」，
+//    于是每加一个都把前面选的清空，最后只剩最后一个发出去
+//    （用户报的「手机上发多个文件只成功其中一个」，2026-10-26）。
+//    ⚠️ 这条**不会**在构建期报错：替换也是合法代码，页面照常能发、照常提示成功。
+{
+    const composers = [
+        ['src/components/UnifiedComposer.tsx', '标准模式'],
+        ['src/components/sticky/StickyComposer.tsx', '非标准模式'],
+    ];
+    for (const [file, label] of composers) {
+        const source = readFileSync(join(WEB, file), 'utf8');
+        if (!/mergeSelectedFiles\(/.test(source)) {
+            problems.push(`${label}（${file}）没有走 mergeSelectedFiles —— 选文件又变成替换语义了`);
+        }
+        if (/setState\(\{\s*send:\s*\{[^}]*\bfiles\s*\}\s*\}\)/.test(source)) {
+            problems.push(`${label}（${file}）把 \`send.files\` 整份覆盖回去了（选文件必须是追加）`);
+        }
+    }
+}
+
 // ── 结果 ────────────────────────────────────────────────────────────────
 if (problems.length) {
     console.error(`✗ 契约守卫失败（${problems.length} 处）：`);
     for (const line of problems) console.error(`    ${line}`);
     process.exit(1);
 }
-console.log('✓ 契约守卫通过：零依赖共享模块字节一致 · 外壳形状完整 · PWA 放行表一致 · dev 代理覆盖了每条服务端路由 · i18n 无死键 · 已删模式未复活 · revoke 只发 POST · WS 事件 id 已归一 · 后端地址与页面地址分开');
+console.log('✓ 契约守卫通过：零依赖共享模块字节一致 · 外壳形状完整 · PWA 放行表一致 · dev 代理覆盖了每条服务端路由 · i18n 无死键 · 已删模式未复活 · revoke 只发 POST · WS 事件 id 已归一 · 后端地址与页面地址分开 · 选文件是追加');
