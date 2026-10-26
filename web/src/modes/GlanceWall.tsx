@@ -234,9 +234,12 @@ export default function GlanceWall() {
                                 onClick={() => {
                                     setSelectedId(item.id);
                                     if (isWide) return;
-                                    // 窄屏点一行：**媒体**进全屏查看器（能一路上下翻），
-                                    // 其余（文本 / 文本文件）仍走全屏弹窗 —— 那里有视图切换与动作行，
-                                    // 查看器不做那些，硬换过去等于把能力弄丢。
+                                    // ⚠️★ 窄屏点一行：
+                                    //   · **媒体 → 一步进全屏查看器**。速览本来就是「快速翻着看」，
+                                    //     再套一层「先看预览、再点一下」纯属多一下（2026-10-26 用户指定：
+                                    //     只有速览适合一步到位，其它模式保持原本的两步）。
+                                    //   · 其余（文本 / 文本文件）→ 原来的全屏弹窗：那里有视图切换与动作行，
+                                    //     查看器不做那些，硬换过去等于把能力弄丢。
                                     const mediaKind = isFileEntry(item) ? filePreviewKind(item.name) : '';
                                     if (mediaKind === 'image' || mediaKind === 'video' || mediaKind === 'audio') {
                                         useViewerStore.getState().open(filtered, item.id);
