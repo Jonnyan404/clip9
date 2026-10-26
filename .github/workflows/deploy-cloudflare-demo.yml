@@ -222,19 +222,35 @@ jobs:
         run: wrangler d1 execute "$DB_NAME" --file=../d1/schema.sql --remote --yes
 
       # ⚠️ schema.sql 用的是 `CREATE TABLE IF NOT EXISTS`，给**已有的表**加不了列。
+      #    所以这一步只对**老库**有意义（建表早于 `senderClientID` 这一列的那些）。
       - name: 补 senderClientID 列（幂等）
         working-directory: cloudflare/workers
         run: |
           set -euo pipefail
+          # ⚠️★ 是 `.[0]` 不是 `[0]`：`[0]` 在 jq 里是**数组字面量**，结果永远是 `[0]`，
+          #    于是「永远判定缺列」→ 对新建的库（schema.sql 里本来就有这一列）执行 ALTER
+          #    → `duplicate column name` 红掉。2026-10-26 演示站第一次跑到这里就是这么红的。
           has_col=$(wrangler d1 execute "$DB_NAME" --remote --yes --json \
             --command "SELECT count(*) AS c FROM pragma_table_info('messages') WHERE name='senderClientID';" \
-            | jq -r '[.. | objects | .c? // empty] | [0] // 0')
-          if [ "$has_col" != "1" ]; then
-            echo "messages 表缺 senderClientID 列，ALTER 补上"
-            wrangler d1 execute "$DB_NAME" --remote --yes \
-              --command "ALTER TABLE messages ADD COLUMN senderClientID TEXT;"
-          else
+            | jq -r '[.. | objects | .c? // empty] | .[0] // 0')
+          if [ "$has_col" = "1" ]; then
             echo "senderClientID 列已在，跳过"
+            exit 0
+          fi
+          echo "messages 表缺 senderClientID 列，ALTER 补上"
+          # ⚠️ 这一步**天生幂等**：判定与执行之间可能有人先加了列，那就撞「列已存在」——
+          #    那不是失败。别让它把整条部署红掉（否则每次重跑都得人工看一眼）。
+          set +e
+          alter_out=$(wrangler d1 execute "$DB_NAME" --remote --yes \
+            --command "ALTER TABLE messages ADD COLUMN senderClientID TEXT;" 2>&1)
+          alter_status=$?
+          set -e
+          printf '%s\n' "$alter_out"
+          if [ "$alter_status" -ne 0 ]; then
+            case "$alter_out" in
+              *"duplicate column name"*) echo "列其实已经在了，继续" ;;
+              *) echo "::error::补列失败（退出码 ${alter_status}）—— 上面是 wrangler 的原话"; exit 1 ;;
+            esac
           fi
 
       # ⚠️ 与生产同一条规矩：把「这个 Worker 现在开没开 *.workers.dev」照原样写回，
