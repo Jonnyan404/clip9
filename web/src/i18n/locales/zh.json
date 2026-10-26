@@ -211,7 +211,7 @@
   "shareOpenedHint": "打开次数在「设置 → 分享记录」里累计",
   "serverSettings": "服务器",
   "serverAddress": "后端地址",
-  "serverAddressHint": "当前生效：{current}。多个后端可以都存下来，用上一行切换；「默认」= 与页面同源（常规部署）。",
+  "serverAddressHint": "当前生效：{current}。多个后端都可以存下来，随时在下拉里切换；「默认」= 与页面同源（常规部署）。",
   "serverAddressExample": "要写完整，例如 https://api.example.com/（后端在子目录时带子路径）",
   "serverAddressInvalid": "后端地址要以 http:// 或 https:// 开头",
   "serverDefault": "默认（同源 / config.js）",

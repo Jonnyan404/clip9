@@ -302,47 +302,71 @@ export function SettingsDialog({
                         {!embedded && (
                             <>
                                 <Typography variant="subtitle2" color="text.secondary">{t('serverSettings')}</Typography>
+                                {/* ⚠️★ 切换控件必须放进 `SettingRow` 的 children（与说明**同一行**）。
+                                    以前它是另起一行的：先是「后端地址 + 当前生效：…」一整行、右侧空着，
+                                    再是一行孤零零的选择框 —— 而说明里那句「用上一行切换」还指反了方向，
+                                    窄屏上看着就是「说明悬空、控件另起一段」（用户报的排版问题）。
+                                    放进 children 之后走的是 SettingRow 那套可换行 flex：放不下时控件整体
+                                    换到下一行并靠右，正文永远在自己的宽度里换行 —— 与这一页其余各行一致。 */}
                                 <List dense disablePadding>
                                     <SettingRow
                                         icon="mdi-server-network"
                                         primary={t('serverAddress')}
                                         secondary={t('serverAddressHint', { current: API_BASE_URL })}
-                                    />
-                                </List>
-                                {/* 切换：改一行就生效（整页重新加载），不需要再点保存。
-                                    ⚠️ 空值 = 「默认」，即 `config.js` / 同源 —— 与没配过一样。 */}
-                                <Stack direction="row" spacing={1} alignItems="center">
-                                    <Select
-                                        size="small"
-                                        fullWidth
-                                        value={activeBase}
-                                        onChange={(e) => switchTo(e.target.value)}
-                                        inputProps={{ 'aria-label': t('serverAddress') }}
                                     >
-                                        <MenuItem value="">
-                                            <em>{t('serverDefault')}</em>
-                                        </MenuItem>
-                                        {savedBases.map((entry) => (
-                                            <MenuItem key={entry.url} value={entry.url}>
-                                                {entry.name || apiBaseLabel(entry.url)}
+                                        {/* 切换：改一行就生效（整页重新加载），不需要再点保存。
+                                            ⚠️ 空值 = 「默认」，即 `config.js` / 同源 —— 与没配过一样。
+                                            ⚠️ `maxWidth` + 省略号：地址可以很长，不截断会把整行撑开。 */}
+                                        <Select
+                                            size="small"
+                                            value={activeBase}
+                                            onChange={(e) => switchTo(e.target.value)}
+                                            inputProps={{ 'aria-label': t('serverAddress') }}
+                                            // ⚠️★ `displayEmpty` 不能省：没配过（`activeBase === ''`）时
+                                            // MUI 默认只画一个零宽空格，下拉框看起来是**空的** ——
+                                            // 而「空」在这里恰恰是一个有意义的值（= 默认 / 同源）。
+                                            // 加上它才会把 `value=""` 那个 `MenuItem` 的文案显示出来。
+                                            displayEmpty
+                                            sx={{
+                                                minWidth: 140,
+                                                maxWidth: 240,
+                                                '& .MuiSelect-select': { overflow: 'hidden', textOverflow: 'ellipsis' },
+                                            }}
+                                        >
+                                            <MenuItem value="">
+                                                <em>{t('serverDefault')}</em>
                                             </MenuItem>
-                                        ))}
-                                    </Select>
-                                    <Button
-                                        size="small"
-                                        color="error"
-                                        variant="outlined"
-                                        onClick={removeActive}
-                                        // 只有「当前用的是列表里那条」才删得掉：默认那条不是列表项。
-                                        disabled={!activeBase || !savedBases.some((entry) => entry.url === activeBase)}
-                                        sx={{ flexShrink: 0 }}
-                                    >
-                                        {t('serverRemove')}
-                                    </Button>
-                                </Stack>
+                                            {savedBases.map((entry) => (
+                                                <MenuItem key={entry.url} value={entry.url}>
+                                                    {entry.name || apiBaseLabel(entry.url)}
+                                                </MenuItem>
+                                            ))}
+                                        </Select>
+                                        <Button
+                                            size="small"
+                                            color="error"
+                                            variant="outlined"
+                                            onClick={removeActive}
+                                            // 只有「当前用的是列表里那条」才删得掉：默认那条不是列表项。
+                                            disabled={!activeBase || !savedBases.some((entry) => entry.url === activeBase)}
+                                            sx={{ flexShrink: 0 }}
+                                        >
+                                            {t('serverRemove')}
+                                        </Button>
+                                    </SettingRow>
+                                </List>
 
-                                {/* 添加一条：填完点一下就直接切过去（否则还要再选一次，多余）。 */}
-                                <Stack direction="row" spacing={1} alignItems="flex-start">
+                                {/* 添加一条：填完点一下就直接切过去（否则还要再选一次，多余）。
+                                    ⚠️★ 「要写完整，例如 …」挪到输入框**上面**（原来是 URL 框的 helperText）：
+                                    那段说明让 URL 那一列多出一行高度，而同一行的按钮是按 `flex-start`
+                                    对齐的 —— 按钮就吊在上面、与旁边的输入框对不齐。现在 helperText 只在
+                                    **报错时**出现，正常状态下整行是平的。
+                                    ⚠️ 窄屏竖排：三个控件挤一行时 URL 框只剩几十像素
+                                    （手机上对话框内容宽约 310px，名称框 132 + 按钮 64 + 两个间距）。 */}
+                                <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 0.5 }}>
+                                    {t('serverAddressExample')}
+                                </Typography>
+                                <Stack spacing={1} sx={{ mt: 1 }}>
                                     <TextField
                                         size="small"
                                         fullWidth
@@ -350,26 +374,32 @@ export function SettingsDialog({
                                         placeholder="https://api.example.com/"
                                         onChange={(e) => setDraftUrl(e.target.value)}
                                         error={draftInvalid}
-                                        helperText={draftInvalid ? t('serverAddressInvalid') : t('serverAddressExample')}
+                                        helperText={draftInvalid ? t('serverAddressInvalid') : undefined}
                                         slotProps={{ htmlInput: { 'aria-label': t('serverAddress') } }}
                                     />
-                                    <TextField
-                                        size="small"
-                                        value={draftName}
-                                        onChange={(e) => setDraftName(e.target.value)}
-                                        placeholder={t('serverNamePlaceholder')}
-                                        slotProps={{ htmlInput: { 'aria-label': t('serverNamePlaceholder'), maxLength: 40 } }}
-                                        sx={{ maxWidth: 132, flexShrink: 0 }}
-                                    />
-                                    <Button
-                                        size="small"
-                                        variant="outlined"
-                                        onClick={addAndSwitch}
-                                        disabled={!draftUrl.trim() || draftInvalid}
-                                        sx={{ flexShrink: 0 }}
+                                    <Stack
+                                        direction={{ xs: 'column', sm: 'row' }}
+                                        spacing={1}
+                                        sx={{ alignItems: { xs: 'stretch', sm: 'center' } }}
                                     >
-                                        {t('serverAdd')}
-                                    </Button>
+                                        <TextField
+                                            size="small"
+                                            value={draftName}
+                                            onChange={(e) => setDraftName(e.target.value)}
+                                            placeholder={t('serverNamePlaceholder')}
+                                            slotProps={{ htmlInput: { 'aria-label': t('serverNamePlaceholder'), maxLength: 40 } }}
+                                            sx={{ flex: 1, minWidth: 0 }}
+                                        />
+                                        <Button
+                                            size="small"
+                                            variant="outlined"
+                                            onClick={addAndSwitch}
+                                            disabled={!draftUrl.trim() || draftInvalid}
+                                            sx={{ flexShrink: 0 }}
+                                        >
+                                            {t('serverAdd')}
+                                        </Button>
+                                    </Stack>
                                 </Stack>
                             </>
                         )}

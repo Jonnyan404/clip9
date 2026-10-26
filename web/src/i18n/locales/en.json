@@ -211,7 +211,7 @@
   "shareOpenedHint": "Open counts accumulate under Settings → Share history",
   "serverSettings": "Server",
   "serverAddress": "Backend URL",
-  "serverAddressHint": "In use: {current}. Keep several backends and switch with the list above; \"Default\" means the page origin (the usual deployment).",
+  "serverAddressHint": "In use: {current}. Save several backends and switch with the dropdown; \"Default\" means the page origin (the usual deployment).",
   "serverAddressExample": "Must be absolute, e.g. https://api.example.com/ (include the sub-path if the backend lives there)",
   "serverAddressInvalid": "The backend URL must start with http:// or https://",
   "serverDefault": "Default (same origin / config.js)",

@@ -204,7 +204,7 @@
   "shareOpenedHint": "開啟次數在「設定 → 分享記錄」裡累計",
   "serverSettings": "伺服器",
   "serverAddress": "後端位址",
-  "serverAddressHint": "目前生效：{current}。多個後端可以都存下來，用上一行切換；「預設」= 與頁面同源（一般部署）。",
+  "serverAddressHint": "目前生效：{current}。多個後端都可以存下來，隨時在下拉裡切換；「預設」= 與頁面同源（一般部署）。",
   "serverAddressExample": "要寫完整，例如 https://api.example.com/（後端在子目錄時帶子路徑）",
   "serverAddressInvalid": "後端位址要以 http:// 或 https:// 開頭",
   "serverDefault": "預設（同源 / config.js）",

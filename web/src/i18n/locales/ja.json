@@ -204,7 +204,7 @@
   "shareOpenedHint": "開いた回数は「設定 → 共有履歴」に累積されます",
   "serverSettings": "サーバー",
   "serverAddress": "バックエンド URL",
-  "serverAddressHint": "現在の値：{current}。複数のバックエンドを保存して上のリストで切り替えられます。「既定」= ページと同一オリジン（通常の配置）。",
+  "serverAddressHint": "現在の値：{current}。複数のバックエンドを保存して、ドロップダウンでいつでも切り替えられます。「既定」= ページと同一オリジン（通常の配置）。",
   "serverAddressExample": "完全な URL で指定します（例：https://api.example.com/。サブパス配下ならそれも含める）",
   "serverAddressInvalid": "バックエンド URL は http:// または https:// で始まる必要があります",
   "serverDefault": "既定（同一オリジン / config.js）",
