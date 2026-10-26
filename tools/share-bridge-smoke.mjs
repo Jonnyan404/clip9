@@ -160,17 +160,17 @@ if (ktReasonBody === null) {
 // ── 5. 「发一条文本」只有一处实现 ─────────────────────────────────────────
 // ⚠️★ 这条是这次新加的**契约**：原来这条 POST 在四个地方各写了一份，而且带不带 `?client=`
 // 都不一样（标准模式漏了它 → 「我发的」永远标不出来）。现在只许 `send.js` 有一份。
+/** 剥掉整行的注释行 —— 判据要盯的是**代码**，不是「注释里提过一句」。 */
+const codeOnly = (text) => text
+  .split('\n')
+  .filter((line) => {
+    const t = line.trim();
+    return !t.startsWith('//') && !t.startsWith('*') && !t.startsWith('/*');
+  })
+  .join('\n');
+
 const TEXT_POST = "axios.post('text'";
 {
-  // ⚠️★ 剥掉行注释再找：注释里提一句 `axios.post('text')` 不该被当成「又一份实现」
-  //（React 版的 services/http.ts 抬头正好有这么一句说明）。判据要盯的是**代码**。
-  const codeOnly = (text) => text
-    .split('\n')
-    .filter((line) => {
-      const t = line.trim();
-      return !t.startsWith('//') && !t.startsWith('*') && !t.startsWith('/*');
-    })
-    .join('\n');
   const hitFiles = walk(SPA)
     .filter((file) => /\.(js|ts|tsx|vue)$/.test(file))
     .filter((file) => codeOnly(read(file)).includes(TEXT_POST))
@@ -191,10 +191,12 @@ const TEXT_POST = "axios.post('text'";
     ok(`\`axios.post('text'\` 只在 services/send.ts（新建）与 services/share.ts（按 id 更新）各一份`);
   }
   // ⚠️ services/share.ts 那一处必须是**按 id 更新**（`?id=`），不是又一份新建。
+  // ⚠️ 2026-10-26 起 `?id=` 不是手拼的了：它作为 `writeParams()` 的第三个参数
+  //    （`extra`）传进去 —— 所以两种形状都要认（`['id', …]` 与 `{ id: … }`）。
   const updateSrc = codeOnly(read(join(SPA, 'services/share.ts')));
   const updateHit = updateSrc.indexOf(TEXT_POST);
-  const updateTail = updateSrc.slice(updateHit, updateHit + 240);
-  if (updateHit < 0 || !updateTail.includes("'id'")) {
+  const updateTail = updateSrc.slice(updateHit, updateHit + 300);
+  if (updateHit < 0 || !/['"]?id['"]?\s*[:,]/.test(updateTail)) {
     fail('services/share.ts 那一处带 `?id=`', '它看起来是又一次「新建」而不是「更新已有条目」');
   }
 }
@@ -209,10 +211,19 @@ if (shareSrc.includes('postText(')) {
 // ── 7. 共享函数必须带 `?client=` ─────────────────────────────────────────
 // ⚠️ 服务端 `handlers.rs` 的 `sender_base` 注释：「客户端 ID 来自 `?client=`，
 // 用于气泡收发归属」。缺了它的症状是**永远分不出「我发的」**，而且不报错。
-if (sendSrc.includes("['client'")) {
-  ok('send.js 的 postText 带 `?client=`');
-} else {
-  fail('send.js 的 postText 带 `?client=`', '缺了它服务端存下的 sender_client_id 是空串');
+// ⚠️ 2026-10-26 起 `?client=` 只在 `services/http.ts` 的 `writeParams()` 里拼一次，
+//    `postText` 通过它带上去 —— 所以这条要**两处一起看**：postText 走 writeParams，
+//    而 writeParams 里真的有 `client`。
+{
+  const httpSrc = codeOnly(read(join(SPA, 'services/http.ts')));
+  const builderHasClient = httpSrc.includes("['client'");
+  if (sendSrc.includes('writeParams(') && builderHasClient) {
+    ok('send.js 的 postText 走 writeParams()，而它带 `?client=`');
+  } else if (!builderHasClient && sendSrc.includes("['client'")) {
+    ok('send.js 的 postText 带 `?client=`（还是自己拼的那一版）');
+  } else {
+    fail('send.js 的 postText 带 `?client=`', '缺了它服务端存下的 sender_client_id 是空串');
+  }
 }
 
 // ── 收尾 ─────────────────────────────────────────────────────────────────
