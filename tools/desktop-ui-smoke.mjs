@@ -3162,13 +3162,27 @@ if (entryViewFiles.length !== 1) {
 // 而 `<img>` 的 error 会被静默换成一介文件行。用户看到的症状是
 // 「列表本来是直接显示图片的，现在只显示文件名了」，**一个字都不提密码**。
 //
-// ⚠️ 实测（真服务端 + 真浏览器）：同一个地址，裸的 401、带 `?auth=` 的 200；
-// 而 `type=file` 签出来的 `rawUrl`（`/file/<uuid>/<name>?t=…`）裸取就是 200、Range 206。
-// 所以「带令牌的那条地址」是唯一能让图片/视频在带密码的房间显形的路。
+// ⚠️★ 2026-10-26 改了**凭据怎么进 URL**：
 //
-// ⚠️★ 顺带钉住一条**禁止**：把房间凭据拼进 URL（`?auth=…`）。
-// `clip9_client::endpoint` 的模块文档第 3 条写着「房间密码 / 会话令牌一律走请求头」，
-// 那里还有断言盯着。要进 URL 的只能是**分享令牌**（它本来就是给人贴出去的东西）。
+//   旧做法：`POST /share` 签一条 `type=file` 的只读令牌，用它的 `rawUrl`（`?t=…`）。
+//   新做法：壳**本地拼** `GET /file/<uuid>?room=&auth=`（`endpoint::preview_url`）。
+//
+// 为什么换（三笔代价，一笔都不会报错）：
+//   1. **污染分享记录**：`GET /share/list` 列的是「这个房间最近的分享」，用户每看一张图
+//      就多一条。桌面端相册视图翻一遍，分享历史里全是自己没分享过的条目。
+//   2. **每张图多一次往返**：签令牌是网络请求，而它和「直接读这个文件」在权限上是同一件事。
+//   3. **令牌有 TTL**：过期之后预览地址失效，而文件本身还活着 ——「昨天能看，今天碎图标」。
+//
+// ⚠️ 那「凭据不进 URL」这条呢？**它仍然成立，只是边界说清楚了**：
+//   · 走得了请求头的地方（`/text`、`/content`、`/upload`…）**一律**走请求头 —— 判据 36
+//     下面那段 `leaked()` 继续盯着 `runtime.rs` / `model.rs` 里不许出现 `?auth=` 字面量；
+//   · 走不了请求头的地方（`<img src>` / `<video src>`）只能用 query —— 这和
+//     **安卓捷径**那份已经发货的契约是同一件事（`shortcuts/android/verify.mjs`：
+//     `展示文件 GET {url}/file/{uuid}/{name}?auth={auth}`），服务端 `extract_auth_token`
+//     也一直是两种都认；
+//   · 而且这条地址**只活在拥有者自己的浏览器里**（不贴给别人、不进分享页），
+//     与「分享令牌本来就是给人贴出去的」是两个东西。
+//   ⚠️ 代价照旧：它会出现在服务端访问日志里 —— 别在日志里回显完整 URL。
 {
   const problems = [];
   const read1 = (rel) => {
@@ -3213,26 +3227,25 @@ if (entryViewFiles.length !== 1) {
     if (!previewFn) {
       problems.push('`Runtime` 里没有 `preview_url` —— 页面要不到那条带令牌的地址');
     } else {
-      if (!/"type"\s*:\s*"file"/.test(previewFn)) {
-        problems.push('`preview_url` 没有按 `type: file` 去签 —— 那样 `rawUrl` 会指向 `/content/…`，'
-          + '那是给分享页看的，不是「直连正文」的那一条');
+      // ⚠️★ 地址必须由 `endpoint::preview_url` 拼 —— 那是「带凭据的文件地址」的
+      // **唯一**实现（路径前缀、`?room=`、`?auth=` 都在它里面）。
+      if (!/endpoint::preview_url\s*\(/.test(previewFn)) {
+        problems.push('`preview_url` 没有走 `endpoint::preview_url` —— 自己拼地址会漏掉子路径前缀'
+          + '或 `?auth=`（症状：子路径部署下 404，或带密码的房间全是碎图标）');
       }
-      if (!/raw_url_of|rawUrl/.test(previewFn)) {
-        problems.push('`preview_url` 没有取 `rawUrl` —— 拿到的是分享**页**地址，'
-          + '塞进 `src` 只会得到一张 HTML');
+      if (!/auth_token/.test(previewFn)) {
+        problems.push('`preview_url` 没有把房间凭据带上（`channel.auth_token`）——'
+          + '带密码的房间会 401，而 `<img>` 的 error 只会静默变成一行文件名');
       }
-      if (!/maxUses"\s*:\s*0/.test(previewFn)) {
-        problems.push('预览令牌没有给 `maxUses: 0`（不限次数）——'
-          + '**视频拖进度条会发很多次请求**，限了次数就会播到一半断掉');
+      // ⚠️★ 反向判据：**不许**再回去签一条分享令牌。那三笔代价见文件抬头。
+      if (/post_share|"type"\s*:\s*"file"|remember_preview_token/.test(previewFn)) {
+        problems.push('`preview_url` 又在为预览签分享令牌了 —— 那会污染 `GET /share/list`、'
+          + '每张图多一次往返、而且令牌过期后预览就失效（见判据 36 抬头）');
       }
       if (!/channel_needs_token/.test(previewFn)) {
-        problems.push('`preview_url` 没有判「这个房间要不要换令牌」——'
-          + '开放房间也会白签一条只读记录');
+        problems.push('`preview_url` 没有判「这个房间要不要凭据」——'
+          + '开放房间会白白多挂一个 `?auth=`（服务端会当成「带了空令牌」）');
       }
-    }
-    if (!/remember_preview_token/.test(runtime)) {
-      problems.push('签出来的令牌没有缓存 —— 界面每一张图都会问一次，'
-        + '只读记录会以肉眼可见的速度堆起来');
     }
     // ③ **禁止**把房间凭据拼进 URL
     //
@@ -3246,8 +3259,8 @@ if (entryViewFiles.length !== 1) {
     for (const [name, source] of [['runtime.rs', runtimeSrc], ['model.rs', modelSrc]]) {
       if (leaked(source)) {
         problems.push(`\`${name}\` 里把房间凭据拼进了 URL（\`?auth=\` / \`"auth"\`）——`
-          + '房间密码 / 会话令牌**只走请求头**（`clip9_client::endpoint` 模块文档第 3 条），'
-          + '要进 URL 的只能是分享令牌');
+          + '凭据进 URL 只允许经 `endpoint::preview_url` 那**一处**（那是唯一一个'
+          + '「浏览器自己发请求、加不了头」的场景）；其余请求一律走 `Authorization` 头');
       }
     }
     // ④ 命令要注册，不然页面调了等于没调
@@ -3293,7 +3306,7 @@ if (entryViewFiles.length !== 1) {
     console.error(`✗ 判据 36：预览地址的凭据通道没落实（${problems.length} 处）：`);
     for (const one of problems) console.error(`    · ${one}`);
   } else {
-    console.log('· 判据 36：带密码的房间会换一条只读令牌地址（且房间凭据不进 URL）。');
+    console.log('· 判据 36：预览地址由壳本地拼（`?auth=` 只出现在这一条路上，其余请求仍走请求头）。');
   }
 }
 

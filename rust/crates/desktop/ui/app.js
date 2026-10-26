@@ -1118,10 +1118,14 @@ const previewSrcs = new Map();
 /** 一个**能直接当 `src` 用**的预览地址。
  *
  * ⚠️★ 两条来源（见 `EntryView::preview_needs_token`）：
- *   · 快照里给了 `previewUrl` → 那是**不要密码的房间**的裸地址，直接用，一次网络都不用；
+ *   · 快照里给了 `previewUrl` → 那是**不要密码的房间**的裸地址，直接用；
  *   · 没给 → 房间要密码，而 `<img src>` / `<video src>` **带不了 `Authorization` 头**
  *     （裸地址一定 401，而 `<img>` 的 error 会把它静默换成一介文件行）——
- *     必须回头问壳要一条**带只读令牌**的地址。
+ *     回头问壳要一条**带 `?auth=` 的地址**。
+ *
+ * ⚠️★ 2026-10-26 起壳是**本地拼**这条地址（`endpoint::preview_url`），不再去 `/share`
+ * 签一条只读令牌。所以这一次 `invoke` 是**纯本地**的：不发网络请求、不在分享记录里留痕、
+ * 也没有 TTL 会过期。缓存仍然有用（一次 IPC 换一次省），但它已经不是「必须」的了。
  */
 async function previewSrc(entry) {
   if (entry.previewUrl) return entry.previewUrl;
@@ -1146,14 +1150,14 @@ function loadPreviewSrc(media, entry, swap) {
     media.src = direct;
     return;
   }
-  // ⚠️★ 等到**真的进入视口**再问（见 `whenVisible`）：预览令牌是一次网络请求
-  //（远端服务端就是一次往返），而列表里大多数条目用户根本没看 —— 为看不见的东西
-  // 签令牌，用户那边什么都不会多出来，只会在「分享记录」里多出一串他自己没签过的。
+  // ⚠️★ 等到**真的进入视口**再挂 `src`（见 `whenVisible`）：地址本身已经是本地拼的了，
+  // 但**图片字节**是浏览器去拉的 —— 列表里大多数条目用户根本没看，提前设 `src`
+  // 等于把整屏缩略图都下一遍。
   whenVisible(media, () => {
     previewSrc(entry)
       .then((url) => {
         if (!url) {
-          showNotice('error', t('previewTokenFailed'));
+          showNotice('error', t('previewUrlFailed'));
           swap.replaceWith(fileRow(entry));
           return;
         }
@@ -1275,7 +1279,7 @@ function openLightbox(entry) {
     .then((url) => {
       if (!url) {
         loading.remove();
-        stage.append(h('div', 'lb-load', t('previewTokenFailed')));
+        stage.append(h('div', 'lb-load', t('previewUrlFailed')));
         return;
       }
       media.src = url;

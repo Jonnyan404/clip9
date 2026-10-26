@@ -242,7 +242,7 @@
       'shareNoURL': '服务端没有给出链接地址',
       // ⚠️ 预览令牌：房间要密码时，图片/视频的地址必须换成一条**带只读令牌**的
       //（`<img src>` 带不了 Authorization 头）。这一句说的是「连令牌也没签出来」。
-      'previewTokenFailed': '这一条拿不到预览地址（服务端没有给出可直连的令牌）',
+      'previewUrlFailed': '这一条拿不到预览地址（它可能已经不在列表里了）',
       'serverRejectedAuth': '服务端不收这个凭据（房间密码不对，或者这个房间要密码而这里没填）',
       'serverRejectedStatus': '服务端回了 HTTP {status}',
       '给这条跑个动作': '给这条跑个动作',
@@ -849,7 +849,7 @@
       'deleteFailed': 'Delete failed: {reason}',
       'shareFailed': 'Share failed: {reason}',
       'shareNoURL': 'the server returned no link',
-      'previewTokenFailed': 'No preview address for this one (the server returned no direct-use token)',
+      'previewUrlFailed': 'No preview address for this one (it may have left the list)',
       'serverRejectedAuth': 'the server rejected the credentials (wrong room password, or the room needs one and none is set)',
       'serverRejectedStatus': 'the server answered HTTP {status}',
       '给这条跑个动作': 'Run an action on this entry',

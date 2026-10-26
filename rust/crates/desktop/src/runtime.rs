@@ -902,24 +902,26 @@ impl Runtime {
     /// ⚠️★ 为什么不能像从前那样把 `EntryView::preview_url` 直接递过去：
     /// `<img>` / `<video>` 的 `src` **带不了 `Authorization` 头**，而配了密码的实例上
     /// `/file/...` 要凭据（`server::auth_gate::require_file_read_access`）——
-    /// 裸地址一定 401，而 `<img>` 的 error 会被静默换成一介文件行（2026-10-04 实测：
-    /// 同一个地址，裸的 401、带 `?auth=` 的 200）。
+    /// 裸地址一定 401（2026-10-04 实测：同一个地址，裸的 401、带 `?auth=` 的 200）。
     ///
-    /// 两条路（同一个问题只判一次：`store::channel_needs_token`）：
-    /// - 房间**没有**凭据 → 裸地址本来就取得回来，**一次网络都不用**；
-    /// - 房间**有**凭据 → 向 `/share` 签一条 `type=file` 的**只读令牌**，用它的 `rawUrl`
-    ///   （`/file/<uuid>/<name>?t=…`）。那是项目里唯一「可以进 URL 的凭据」——
-    ///   房间凭据永远只走请求头（见 `clip9_client::endpoint` 的模块文档第 3 条）。
+    /// ⚠️★ 2026-10-26 起**本地拼**（[`clip9_client::endpoint::preview_url`]），
+    /// 不再去 `POST /share` 换一条只读令牌。理由三条，一条都不会报错，所以写在这儿：
+    ///   1. **污染分享记录**：`GET /share/list` 列的是「这个房间最近的分享」，用户每看一张图
+    ///      就多一条。桌面端的相册视图翻一遍，分享历史里全是自己没分享过的条目。
+    ///   2. **每张图多一次往返**：列表里每张缩略图都要先签令牌，才能开始取字节。
+    ///   3. **令牌会过期**：过期之后预览地址就失效，而文件本身还活着 —— 症状是
+    ///      「昨天还能看的图，今天变成碎图标」。
     ///
-    /// ⚠️ 令牌**按条目缓存**（[`Store::preview_token`]）：界面每一张图 / 每一段视频都会问一次，
-    /// 不缓存就是每个媒体条目一条只读记录（`/share/list` 里全是它们）。
+    /// 房间凭据进 URL 是**有意的取舍**（`<img>` 带不了头），与 WebSocket 那条路一致；
+    /// 代价是它会出现在服务端访问日志里 —— 别在日志里回显完整 URL。
+    ///
+    /// ⚠️ 地址**由壳自己查**（只按 id）—— 与 `save_entry_file` 同一套规矩：
+    /// 页面递地址，就等于给了页面「让壳去取任意 URL」的能力。
     pub async fn preview_url(self: &Arc<Self>, id: i32) -> Result<String, Msg> {
         let channel = self
             .store
             .selected_channel()
             .ok_or_else(|| Msg::key("noRoomsConfigured"))?;
-        // ⚠️ 地址**由壳自己查**（只按 id）—— 与 `save_entry_file` 同一套规矩：
-        // 页面递地址，就等于给了页面「让壳去取任意 URL」的能力。
         let bare = self
             .store
             .entry_preview_url(id)
@@ -927,33 +929,16 @@ impl Runtime {
         if !channel_needs_token(&channel) {
             return Ok(bare);
         }
-        if let Some(url) = self.store.preview_token(&channel.server, &channel.room, id) {
-            return Ok(url);
-        }
+        // ⚠️ 拼地址要用**文件自己的 uuid**，不能用 `bare`（那条已经带了 `/file/<uuid>/<name>`，
+        // 再往上挂 query 也能用，但名字那段是多余的，见 endpoint::preview_url 的注释）。
         let cache = self
             .store
             .entry_file_cache(id)
             .ok_or_else(|| Msg::key("entryPreviewUnavailable"))?;
-        // ⚠️ `maxUses: 0` = 不限次数：**视频拖进度条会发很多次请求**，限次数会让它播到一半断掉。
-        // ⚠️ 不给 `ttl`：那一个数只有服务端一个定义处（它自己归一化），这一侧不抄一份。
-        let body = serde_json::json!({
-            "type": "file",
-            "uuid": cache,
-            "maxUses": 0,
-        });
-        let value = self.post_share(&channel, &body).await?;
-        let raw = raw_url_of(&value);
-        if raw.is_empty() {
-            return Err(Msg::key("previewTokenFailed"));
-        }
-        self.store.remember_preview_token(
-            &channel.server,
-            &channel.room,
-            id,
-            raw.clone(),
-            num_field(&value, "expiresAt"),
-        );
-        Ok(raw)
+        let token = channel.auth_token.as_deref().unwrap_or("").trim();
+        clip9_client::endpoint::preview_url(&channel.server, &cache, &channel.room, token)
+            .map(|url| url.to_string())
+            .map_err(|_| Msg::key("entryPreviewUnavailable"))
     }
 
     /// 按需取回**选中房间**的历史（`GET /content`，不碰剪贴板）。

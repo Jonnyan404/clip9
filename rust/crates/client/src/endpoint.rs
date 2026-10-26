@@ -19,6 +19,13 @@
 //! 3. **凭据**：房间密码 / 会话令牌一律走 `Authorization: Bearer` 请求头。
 //!    进了 URL 就会进服务端访问日志、进反代日志、进用户随手分享的那串地址 ——
 //!    而这个项目为「密码泄进日志」付过代价（`dev-docs/api.md` §1.2 专门写了这一条）。
+//!
+//!    ⚠️★ **一个例外，且只有一个**：[`preview_url`] 把凭据挂进 query。理由是
+//!    「**浏览器自己发起的请求加不了请求头**」—— `<img src>` / `<video src>` 是浏览器直接发的，
+//!    不是我们写的 HTTP 客户端。这不是新发明：服务端 `extract_auth_token` 一直两种都认
+//!    （安卓捷径那份已发货的契约就是 `展示文件 GET {url}/file/{uuid}/{name}?auth={auth}`），
+//!    `clip9_core::ShareKey::preview_token` 的文档里也写着「浏览器直连的资源必须把凭据放进 URL」。
+//!    其余任何地方都不许这么干 —— `tools/desktop-ui-smoke.mjs` 判据 36 盯着。
 
 use url::Url;
 
@@ -31,7 +38,7 @@ pub type Endpoint = Url;
 ///
 /// - `path` 必须以 `/` 开头（接口路径，**不含**服务端的子路径前缀 —— 那个从 `server` 里读）；
 /// - `params` 会**按顺序 append** 到查询串（不是覆盖，所以同名参数不会互相吃掉）；
-/// - ⚠️ **凭据不该出现在 `params` 里**，见模块文档第 3 条。
+/// - ⚠️ **凭据不该出现在 `params` 里**，见模块文档第 3 条（唯一的例外是 [`preview_url`]）。
 pub fn api_url(server: &str, path: &str, params: &[(&str, &str)]) -> Result<Endpoint, Msg> {
     let trimmed = server.trim();
     if trimmed.is_empty() {
@@ -198,6 +205,32 @@ pub fn download_url(server: &str, cache: &str, name: &str) -> Result<Endpoint, M
     api_url(server, &format!("/file/{cache}/{safe}"), &[])
 }
 
+/// `GET /file/:cache` —— **显示用**的地址（`<img>` / `<video>` 的 `src`）。
+///
+/// ⚠️★ 这是 2026-10-26 补的一条：在这之前，桌面端凡是「把一张图放进 `<img>`」都先去
+/// `POST /share` 签一条分享令牌，再拿回来的 `rawUrl` 当预览地址。那是**拿分享换显示** ——
+/// 每看一眼图就多一条分享记录（`GET /share/list` 会把它列出来）、每张图多一次往返、
+/// 而且令牌有 TTL，过期之后预览地址就失效了（文件本身却还活着）。
+///
+/// ⚠️★ 服务端 `GET /file/<uuid>` 本来就认房间凭据（`require_file_read_access`），
+/// 所以这里只需要把地址拼对。`token` 走 **query**（`?auth=`）而不是请求头：
+/// `<img src>` 带不了 `Authorization`，而服务端 `extract_auth_token` 两种都认
+/// （WebSocket 那条路一直这么传）。
+///
+/// ⚠️ 地址里**不带文件名**：`serve_file` 的 MIME 与 `Content-Disposition` 都取自登记时的
+/// `info.name`，路径上那一段只是给人看的。少拼一段就少一处「名字里有 `/` 拼出别的路径」
+/// 的机会（那条由 [`download_url`] 的 sanitize 兜住，但预览根本用不上它）。
+pub fn preview_url(server: &str, cache: &str, room: &str, token: &str) -> Result<Endpoint, Msg> {
+    let mut query: Vec<(&str, &str)> = Vec::new();
+    if !room.is_empty() {
+        query.push(("room", room));
+    }
+    if !token.is_empty() {
+        query.push(("auth", token));
+    }
+    api_url(server, &format!("/file/{cache}"), &query)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -222,6 +255,30 @@ mod tests {
             api_url("http://host:9501", "/text", &[]).unwrap().as_str(),
             "http://host:9501/text"
         );
+    }
+
+    /// 预览地址：**不带文件名**，凭据走 query。
+    ///
+    /// ⚠️★ 三条一起钉住，每一条都对应一个「改错了不报错」的退化：
+    ///   · 带上 `?auth=` → 不带的话，配了密码的房间在 `<img>` 里全是碎图标；
+    ///   · 不带文件名 → 带上的话，名字里有 `/` 就能拼出别的路径（预览根本不需要它）；
+    ///   · 保留子路径前缀 → 丢了就是「主页能开、图片全 404」。
+    #[test]
+    fn preview_url_carries_room_and_token_in_the_query() {
+        let url = preview_url("http://h:9501/clip9", "abc-123", "work", "s3cr3t").unwrap();
+        assert_eq!(
+            url.as_str(),
+            "http://h:9501/clip9/file/abc-123?room=work&auth=s3cr3t"
+        );
+    }
+
+    /// 开放房间（没有凭据）**不许**挂一个空的 `?auth=` —— 那会让服务端把「空令牌」
+    /// 当成「带了但不对」，回 `unauthorized_invalid_token` 而不是放行。
+    #[test]
+    fn an_open_room_gets_no_auth_parameter_at_all() {
+        let url = preview_url("http://h:9501", "abc-123", "default", "").unwrap();
+        assert_eq!(url.as_str(), "http://h:9501/file/abc-123?room=default");
+        assert!(!url.as_str().contains("auth="));
     }
 
     /// ⚠️★ 这条钉的正是「`http://` 被吃成 `http:/`」那类路径清洗 ——

@@ -69,22 +69,26 @@ pub struct EntryView {
     ///
     /// ⚠️★ 它是**裸地址**（不带凭据）：房间**要密码**时这个地址一定 401 ——
     /// 那时 [`Self::preview_needs_token`] 为真，**快照里这一格是 `None`**，
-    /// 由页面回头找壳要一条带令牌的地址（见 [`crate::runtime::Runtime::preview_url`]）。
+    /// 由页面回头找壳要一条带 `?auth=` 的地址（见 [`crate::runtime::Runtime::preview_url`]）。
     pub preview_url: Option<String>,
-    /// 这条的预览**必须先换一条带令牌的地址**（房间要密码）——
+    /// 这条的预览**必须先换一条带凭据的地址**（房间要密码）——
     /// 页面看到它就**不要去读 `preview_url`**（那时它是 `None`），直接问壳。
     ///
     /// ⚠️★ 为什么必须有这个布尔：`<img>` / `<video>` 的 `src` **带不了
     /// `Authorization` 头**，而 `/file/...` 在配了密码的实例上要凭据
     /// （`server::auth_gate::require_file_read_access`）—— 裸地址一定 401，
     /// 而 `<img>` 的 error 会被静默换成一介文件行（2026-10-04 实测复现）。
-    /// 项目自己给的解法是**分享令牌**：只读、按条、会过期、**本来就是给人贴进地址栏的**
-    /// （与「房间凭据永远不进 URL」不冲突，见 `clip9_client::endpoint` 的模块文档第 3 条）。
+    ///
+    /// ⚠️★ 2026-10-26：壳现在把**房间凭据本身**挂进 query（`?auth=`）来拼这条地址，
+    /// 不再去 `/share` 换一条只读令牌。理由是分享令牌那套的三笔代价：
+    /// 每看一眼图就在 `GET /share/list` 里留一条记录、每张图多一次往返、令牌过期后
+    /// 预览地址失效而文件还活着。服务端 `extract_auth_token` 两种传法都认
+    /// （WebSocket 那条路一直是 query 传的）。
     pub preview_needs_token: bool,
     /// 文件在服务端那边的编号（= 协议里的 `cache`，通常就是 uuid）。
     ///
     /// ⚠️★ `#[serde(skip)]`：**它不出现在快照里**，界面用不上它（页面只递 id，地址由壳查）。
-    /// 壳自己要用：签分享令牌必须把 uuid 发给 `/share`（`payload.url` 里那段只是给人看的）。
+    /// 壳自己要用：拼预览地址必须拿 uuid（`payload.url` 里那段只是给人看的）。
     #[serde(skip)]
     pub file_cache: String,
     /// 发送端设备名（界面上「来自谁」）。
@@ -159,7 +163,7 @@ impl EntryView {
     /// - `server`：这个房间**自己的**服务端地址（拼预览地址用）——
     ///   传空就**不给**预览地址，而不是去猜一个（宁可少一个预览，不要指到别人的服务端）。
     /// - `needs_token`：这个房间**要不要密码**（= 那条通道上有没有凭据）——
-    ///   要的话预览地址必须换成带分享令牌的那一条，见 [`Self::preview_needs_token`]。
+    ///   要的话预览地址必须换成带 `?auth=` 的那一条，见 [`Self::preview_needs_token`]。
     #[must_use]
     pub fn from_holder(
         holder: &ReceiveHolder,
