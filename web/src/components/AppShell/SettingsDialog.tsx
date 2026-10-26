@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { Fragment, useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useColorScheme } from '@mui/material/styles';
 import {
@@ -46,14 +46,15 @@ const iconStyle = { marginRight: 8, color: 'var(--mui-palette-primary-main)' } a
  * 真正让「最小内容宽度」也跟着缩的那个值，`break-word` 不会）。
  */
 function SettingRow({ icon, primary, secondary, children }: {
-    icon: string;
+    /** 不给图标 = 「从属于上面那一行」的子项（如分享弹框那三个默认值）。 */
+    icon?: string;
     primary: React.ReactNode;
     secondary?: React.ReactNode;
     children?: React.ReactNode;
 }) {
     return (
         <ListItem disableGutters sx={{ flexWrap: 'wrap', columnGap: 1, rowGap: 1 }}>
-            <MdiIcon name={icon} style={iconStyle} />
+            {icon ? <MdiIcon name={icon} style={iconStyle} /> : null}
             <ListItemText
                 primary={primary}
                 secondary={secondary}
@@ -435,60 +436,64 @@ export function SettingsDialog({
                                     </Stack>
                                     <List dense disablePadding>
                                         {list.map((toggle) => (
-                                            <ListItem
-                                                key={toggle.key}
-                                                disableGutters
-                                                secondaryAction={
-                                                    <Switch
-                                                        size="small"
-                                                        checked={Boolean(display[toggle.key])}
-                                                        onChange={(e) => setDisplayToggle(toggle.key, e.target.checked)}
-                                                    />
-                                                }
-                                            >
-                                                <MdiIcon name={toggle.icon} style={iconStyle} />
-                                                <ListItemText primary={t(toggle.labelKey)} />
-                                            </ListItem>
+                                            <Fragment key={toggle.key}>
+                                                <ListItem
+                                                    disableGutters
+                                                    secondaryAction={
+                                                        <Switch
+                                                            size="small"
+                                                            checked={Boolean(display[toggle.key])}
+                                                            onChange={(e) => setDisplayToggle(toggle.key, e.target.checked)}
+                                                        />
+                                                    }
+                                                >
+                                                    <MdiIcon name={toggle.icon} style={iconStyle} />
+                                                    <ListItemText primary={t(toggle.labelKey)} />
+                                                </ListItem>
+                                                {/* ⚠️★ 这三项**紧跟着**「分享时弹出设置框」那一行，不能排在组末尾
+                                                    （2026-10-26 用户报的）：它们是**那个弹框的内容** ——
+                                                    关掉弹框时用的就是这三个默认值。排在「下载/预览/复制/分享/删除」
+                                                    后面，看起来像是「删除」的选项，而且离那个开关隔了五行。
+                                                    ⚠️ 走 `SettingRow`（不给图标 = 从属于上面那一行）：`secondaryAction`
+                                                    只留 48px，而默认密码那个输入框有 180px —— 窄屏上正文会钻到框底下
+                                                    （实测中文就撞了 22px）。 */}
+                                                {toggle.key === 'shareDialog' && !display.shareDialog && (
+                                                    <>
+                                                        <SettingRow primary={t('shareDefaultTtl')}>
+                                                            <TextField
+                                                                size="small"
+                                                                type="number"
+                                                                value={shareDefaults.ttlMinutes}
+                                                                onChange={(e) => setShareDefaults({ ttlMinutes: Number(e.target.value) })}
+                                                                slotProps={{ htmlInput: { 'aria-label': t('shareDefaultTtl') } }}
+                                                                sx={{ width: 96 }}
+                                                            />
+                                                        </SettingRow>
+                                                        <SettingRow primary={t('shareDefaultMaxUses')}>
+                                                            <TextField
+                                                                size="small"
+                                                                type="number"
+                                                                value={shareDefaults.maxUses}
+                                                                onChange={(e) => setShareDefaults({ maxUses: Number(e.target.value) })}
+                                                                slotProps={{ htmlInput: { 'aria-label': t('shareDefaultMaxUses') } }}
+                                                                sx={{ width: 96 }}
+                                                            />
+                                                        </SettingRow>
+                                                        <SettingRow primary={t('shareDefaultPassword')}>
+                                                            <TextField
+                                                                size="small"
+                                                                type="password"
+                                                                autoComplete="new-password"
+                                                                value={shareDefaults.password}
+                                                                onChange={(e) => setShareDefaults({ password: String(e.target.value || '') })}
+                                                                slotProps={{ htmlInput: { 'aria-label': t('shareDefaultPassword') } }}
+                                                                sx={{ width: 180 }}
+                                                            />
+                                                        </SettingRow>
+                                                    </>
+                                                )}
+                                            </Fragment>
                                         ))}
-                                        {/* 紧挨着「分享时弹出设置框」：关掉它之后，这三项就是那次弹框的全部内容 */}
-                                        {group.key === 'card' && !display.shareDialog && (
-                                            <>
-                                                <ListItem disableGutters secondaryAction={
-                                                    <TextField
-                                                        size="small"
-                                                        type="number"
-                                                        value={shareDefaults.ttlMinutes}
-                                                        onChange={(e) => setShareDefaults({ ttlMinutes: Number(e.target.value) })}
-                                                        sx={{ width: 96 }}
-                                                    />
-                                                }>
-                                                    <ListItemText primary={t('shareDefaultTtl')} />
-                                                </ListItem>
-                                                <ListItem disableGutters secondaryAction={
-                                                    <TextField
-                                                        size="small"
-                                                        type="number"
-                                                        value={shareDefaults.maxUses}
-                                                        onChange={(e) => setShareDefaults({ maxUses: Number(e.target.value) })}
-                                                        sx={{ width: 96 }}
-                                                    />
-                                                }>
-                                                    <ListItemText primary={t('shareDefaultMaxUses')} />
-                                                </ListItem>
-                                                <ListItem disableGutters secondaryAction={
-                                                    <TextField
-                                                        size="small"
-                                                        type="password"
-                                                        autoComplete="new-password"
-                                                        value={shareDefaults.password}
-                                                        onChange={(e) => setShareDefaults({ password: String(e.target.value || '') })}
-                                                        sx={{ width: 180 }}
-                                                    />
-                                                }>
-                                                    <ListItemText primary={t('shareDefaultPassword')} />
-                                                </ListItem>
-                                            </>
-                                        )}
                                     </List>
                                 </div>
                             );
