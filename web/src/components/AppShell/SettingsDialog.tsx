@@ -30,6 +30,49 @@ const LANGUAGE_OPTIONS = [
 const iconStyle = { marginRight: 8, color: 'var(--mui-palette-primary-main)' } as const;
 
 /**
+ * 一行设置：图标 + 标题/说明 + 右侧控件。
+ *
+ * ⚠️★ 为什么不用 MUI 的 `secondaryAction`（2026-10-26 用户报的「通用页文字重叠」）：
+ * 它给正文只留 **48px** 的右内边距，而这一页右侧的控件是 **140px 的 Select** 或
+ * 85px 的开关组 —— 窄屏上正文直接跑到控件**底下**（实测 390 宽时重叠 92px：
+ * 正文右边缘 x=396、Select 从 x=304 开始）。MUI 的解法是调用方自己写 `pr`，
+ * 而控件宽度**随语种变**（`Traditional colors` 比「中华传统色」宽一截），算不准。
+ *
+ * 所以改成**可换行**的 flex 行：放不下时控件整体换到下一行并靠右，
+ * 正文永远在自己的宽度里换行 —— 没有魔数，也不怕长译文。
+ *
+ * ⚠️ `minWidth: 0` 不能少：flex 项默认 `min-width: auto`，正文里那个
+ * `http://127.0.0.1:1210/` 这种长串会把整行撑宽（`overflow-wrap: anywhere` 才是
+ * 真正让「最小内容宽度」也跟着缩的那个值，`break-word` 不会）。
+ */
+function SettingRow({ icon, primary, secondary, children }: {
+    icon: string;
+    primary: React.ReactNode;
+    secondary?: React.ReactNode;
+    children?: React.ReactNode;
+}) {
+    return (
+        <ListItem disableGutters sx={{ flexWrap: 'wrap', columnGap: 1, rowGap: 1 }}>
+            <MdiIcon name={icon} style={iconStyle} />
+            <ListItemText
+                primary={primary}
+                secondary={secondary}
+                sx={{
+                    flex: '1 1 180px',
+                    minWidth: 0,
+                    '& .MuiListItemText-secondary': { overflowWrap: 'anywhere' },
+                }}
+            />
+            {children ? (
+                <Stack direction="row" spacing={1} alignItems="center" sx={{ ml: 'auto', flexShrink: 0 }}>
+                    {children}
+                </Stack>
+            ) : null}
+        </ListItem>
+    );
+}
+
+/**
  * 设置弹窗 —— 对应 web-vue3/src/App.vue 里的 `settingsDialog`（两个页签）。
  *
  * ⚠️ 个性化页只显示「当前模式真的能用」的开关（`togglesForMode`）—— 显示一个拨了没反应的
@@ -180,83 +223,69 @@ export function SettingsDialog({
                     <Stack spacing={1}>
                         <Typography variant="subtitle2" color="text.secondary">{t('appearance')}</Typography>
                         <List dense disablePadding>
-                            <ListItem
-                                disableGutters
-                                secondaryAction={
-                                    <Select
-                                        size="small"
-                                        value={dark}
-                                        onChange={(e) => useAppStore.setState({ dark: e.target.value as never })}
-                                        sx={{ minWidth: 140 }}
-                                    >
-                                        {darkModeOptions.map((option) => (
-                                            <MenuItem key={option.value} value={option.value}>{option.title}</MenuItem>
-                                        ))}
-                                    </Select>
-                                }
+                            <SettingRow
+                                icon="mdi-brightness-4"
+                                primary={t('darkMode')}
+                                secondary={darkModeDesc}
                             >
-                                <MdiIcon name="mdi-brightness-4" style={iconStyle} />
-                                <ListItemText primary={t('darkMode')} secondary={darkModeDesc} />
-                            </ListItem>
+                                <Select
+                                    size="small"
+                                    value={dark}
+                                    onChange={(e) => useAppStore.setState({ dark: e.target.value as never })}
+                                    sx={{ minWidth: 140 }}
+                                >
+                                    {darkModeOptions.map((option) => (
+                                        <MenuItem key={option.value} value={option.value}>{option.title}</MenuItem>
+                                    ))}
+                                </Select>
+                            </SettingRow>
                             {/* 菜单布局（2026-10-07）。⚠️ 与「暗色模式」并列：两者都是
                                 **外观**这一类的选择，而且都要求**即时生效 + 记住**。
                                 ⚠️ 它只影响工具栏排在哪 —— 不改任何功能的位置。 */}
-                            <ListItem
-                                disableGutters
-                                secondaryAction={
-                                    <ToggleButtonGroup
-                                        size="small"
-                                        exclusive
-                                        value={menuLayout}
-                                        onChange={(_e, v) => v && setMenuLayout(v)}
-                                    >
-                                        <ToggleButton value="top">{t('menuLayoutTop')}</ToggleButton>
-                                        <ToggleButton value="side">{t('menuLayoutSide')}</ToggleButton>
-                                    </ToggleButtonGroup>
-                                }
+                            <SettingRow
+                                icon="mdi-view-column-outline"
+                                primary={t('menuLayout')}
+                                secondary={t('menuLayoutHint')}
                             >
-                                <MdiIcon name="mdi-view-column-outline" style={iconStyle} />
-                                <ListItemText primary={t('menuLayout')} secondary={t('menuLayoutHint')} />
-                            </ListItem>
-                            <ListItem disableGutters>
-                                <MdiIcon name="mdi-palette" style={iconStyle} />
-                                <ListItemText primary={t('changeThemeColor')} />
-                                <Stack direction="row" spacing={1} alignItems="center">
-                                    <input
-                                        type="color"
-                                        value={currentPrimary}
-                                        onChange={(e) => setPrimary(isDark ? 'dark' : 'light', e.target.value)}
-                                        style={{ width: 36, height: 28, border: 'none', background: 'none', cursor: 'pointer' }}
-                                        title={t('selectThemeColor')}
-                                        aria-label={t('colorPicker')}
-                                    />
-                                    <Button
-                                        size="small"
-                                        variant="outlined"
-                                        startIcon={<MdiIcon name="mdi-palette-swatch" size={16} />}
-                                        onClick={onOpenTraditionalColors}
-                                    >
-                                        {t('traditionalColors')}
-                                    </Button>
-                                </Stack>
-                            </ListItem>
+                                <ToggleButtonGroup
+                                    size="small"
+                                    exclusive
+                                    value={menuLayout}
+                                    onChange={(_e, v) => v && setMenuLayout(v)}
+                                >
+                                    <ToggleButton value="top">{t('menuLayoutTop')}</ToggleButton>
+                                    <ToggleButton value="side">{t('menuLayoutSide')}</ToggleButton>
+                                </ToggleButtonGroup>
+                            </SettingRow>
+                            <SettingRow icon="mdi-palette" primary={t('changeThemeColor')}>
+                                <input
+                                    type="color"
+                                    value={currentPrimary}
+                                    onChange={(e) => setPrimary(isDark ? 'dark' : 'light', e.target.value)}
+                                    style={{ width: 36, height: 28, border: 'none', background: 'none', cursor: 'pointer' }}
+                                    title={t('selectThemeColor')}
+                                    aria-label={t('colorPicker')}
+                                />
+                                <Button
+                                    size="small"
+                                    variant="outlined"
+                                    startIcon={<MdiIcon name="mdi-palette-swatch" size={16} />}
+                                    onClick={onOpenTraditionalColors}
+                                >
+                                    {t('traditionalColors')}
+                                </Button>
+                            </SettingRow>
                         </List>
 
                         <Typography variant="subtitle2" color="text.secondary">{t('language')}</Typography>
                         <List dense disablePadding>
-                            <ListItem
-                                disableGutters
-                                secondaryAction={
-                                    <Select size="small" value={currentLocale} onChange={(e) => changeLocale(e.target.value)} sx={{ minWidth: 140 }}>
-                                        {LANGUAGE_OPTIONS.map((option) => (
-                                            <MenuItem key={option.code} value={option.code}>{option.name}</MenuItem>
-                                        ))}
-                                    </Select>
-                                }
-                            >
-                                <MdiIcon name="mdi-translate" style={iconStyle} />
-                                <ListItemText primary={t('language')} />
-                            </ListItem>
+                            <SettingRow icon="mdi-translate" primary={t('language')}>
+                                <Select size="small" value={currentLocale} onChange={(e) => changeLocale(e.target.value)} sx={{ minWidth: 140 }}>
+                                    {LANGUAGE_OPTIONS.map((option) => (
+                                        <MenuItem key={option.code} value={option.code}>{option.name}</MenuItem>
+                                    ))}
+                                </Select>
+                            </SettingRow>
                         </List>
 
                         <Typography variant="subtitle2" color="text.secondary">{t('shareSettings')}</Typography>
@@ -273,13 +302,11 @@ export function SettingsDialog({
                             <>
                                 <Typography variant="subtitle2" color="text.secondary">{t('serverSettings')}</Typography>
                                 <List dense disablePadding>
-                                    <ListItem disableGutters>
-                                        <MdiIcon name="mdi-server-network" style={iconStyle} />
-                                        <ListItemText
-                                            primary={t('serverAddress')}
-                                            secondary={t('serverAddressHint', { current: API_BASE_URL })}
-                                        />
-                                    </ListItem>
+                                    <SettingRow
+                                        icon="mdi-server-network"
+                                        primary={t('serverAddress')}
+                                        secondary={t('serverAddressHint', { current: API_BASE_URL })}
+                                    />
                                 </List>
                                 {/* 切换：改一行就生效（整页重新加载），不需要再点保存。
                                     ⚠️ 空值 = 「默认」，即 `config.js` / 同源 —— 与没配过一样。 */}

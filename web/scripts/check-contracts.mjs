@@ -514,10 +514,43 @@ for (const name of ['revoke', 'update']) {
     }
 }
 
+// ── N. 设置「通用」页不许用 `secondaryAction`（2026-10-26）──────────────────
+//
+// ⚠️★ 用户报的「移动端设置通用页文字重叠」：MUI 的 `secondaryAction` 只给正文留
+//    **48px** 右内边距，而那一页右侧的控件是 **140px 的 Select** 或 85px 的开关组 ——
+//    实测 390 宽时正文右边缘 x=396、Select 从 x=304 开始，**重叠 92px**。
+//    MUI 的解法是调用方自己写 `pr`，而控件宽度**随语种变**（`Traditional colors`
+//    比「中华传统色」宽一截），算不准；所以那一页统一走可换行的 `SettingRow`。
+//
+// ⚠️ 判据按**页签分界**切：个性化页里那个 `Switch` 只有 34px，48px 够用，不算问题 ——
+//    一刀切「全文件禁止」会把它也误伤，然后有人就把判据删了。
+{
+    const settingsPath = join(WEB, 'src/components/AppShell/SettingsDialog.tsx');
+    const settings = readFileSync(settingsPath, 'utf8');
+    const start = settings.indexOf("{tab === 'general' && (");
+    const end = settings.indexOf("{tab === 'personalization' && (");
+    if (start < 0 || end < start) {
+        // ⚠️ 找不到分界就**红**，别静默跳过 —— 那正是「判据自己坏了还报绿」的样子。
+        problems.push('`SettingsDialog.tsx` 里找不到「通用 / 个性化」两个页签的分界 —— 判据 N 失效了');
+    } else {
+        const general = stripLineComments(settings.slice(start, end));
+        if (/secondaryAction=/.test(general)) {
+            problems.push(
+                '设置「通用」页又用 `secondaryAction` 了 —— 它只给正文留 48px，而那一页的控件是'
+                + ' 140px 的 Select / 85px 的开关组，窄屏上正文会跑到控件底下（2026-10-26 用户报的重叠）。'
+                + '改用 `SettingRow`（可换行的 flex 行）',
+            );
+        }
+        if (!/function SettingRow\(/.test(settings)) {
+            problems.push('`SettingsDialog.tsx` 里没有 `SettingRow` —— 「通用」页那几行的可换行布局不见了');
+        }
+    }
+}
+
 // ── 结果 ────────────────────────────────────────────────────────────────
 if (problems.length) {
     console.error(`✗ 契约守卫失败（${problems.length} 处）：`);
     for (const line of problems) console.error(`    ${line}`);
     process.exit(1);
 }
-console.log('✓ 契约守卫通过：零依赖共享模块字节一致 · 外壳形状完整 · PWA 放行表一致 · dev 代理覆盖了每条服务端路由 · i18n 无死键 · 已删模式未复活 · revoke 只发 POST · WS 事件 id 已归一 · 后端地址与页面地址分开 · 选文件是追加 · 写请求都带 client');
+console.log('✓ 契约守卫通过：零依赖共享模块字节一致 · 外壳形状完整 · PWA 放行表一致 · dev 代理覆盖了每条服务端路由 · i18n 无死键 · 已删模式未复活 · revoke 只发 POST · WS 事件 id 已归一 · 后端地址与页面地址分开 · 选文件是追加 · 写请求都带 client · 设置通用页不靠 secondaryAction');
