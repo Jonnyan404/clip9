@@ -186,6 +186,10 @@ export class WebSocketRoom {
   async sendConfigMessage(webSocket, room, latestId = 0) {
     try {
       const fileLimit = parseInt(this.env.FILE_LIMIT) || 104857600;
+      // ⚠️★ 这个值会作为 `file.chunk` 下发给客户端，网页端**和桌面端**都按它切片。
+      //    R2 的 multipart 要求「除最后一片外每片至少 5 MiB」—— 这里不能回 1 MiB
+      //    （桌面端 2026-10-26 之前写死 1 MiB，大文件在 R2 上 500，小文件却正常）。
+      //    文件上限 ≤5 MiB 时回 `limit + 1`，让所有能上传的文件都走整份 POST。
       const multipartPartSize = fileLimit > 5 * 1024 * 1024
         ? Math.min(fileLimit, 8 * 1024 * 1024)
         : fileLimit + 1;

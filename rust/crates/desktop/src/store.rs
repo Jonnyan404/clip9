@@ -1995,6 +1995,7 @@ mod tests {
                 limits: ServerLimits {
                     text_limit: 4096,
                     file_limit: 268_435_456,
+                    file_chunk: 0,
                 },
             },
         )));

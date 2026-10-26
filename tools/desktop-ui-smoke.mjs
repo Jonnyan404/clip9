@@ -3067,9 +3067,22 @@ if (entryViewFiles.length !== 1) {
   if (!uploader || !endpoint) {
     problems.push('读不到 `client/src/uploader.rs` / `endpoint.rs` —— 判据要跟着仓库结构改');
   } else {
-    const up = scanRust(uploader).blanked;
-    if (!/UPLOAD_CHUNK_SIZE/.test(up)) {
-      problems.push('`uploader.rs` 里没有 `UPLOAD_CHUNK_SIZE` —— 大文件没有分片那一说');
+    const scannedUploader = scanRust(uploader);
+    const up = scannedUploader.blanked;
+    if (!/DEFAULT_UPLOAD_CHUNK_SIZE/.test(up)) {
+      problems.push('`uploader.rs` 里没有 `DEFAULT_UPLOAD_CHUNK_SIZE` —— 大文件没有分片那一说');
+    }
+    // ⚠️★ 分片大小**必须跟服务端的 `file.chunk` 走**：CF Worker 把分片交给 R2 的
+    // multipart，而那一边除最后一片外每片至少 5 MiB。客户端写死 1 MiB 的话
+    // 网页端正常（它读了下发值），桌面端大文件必 500 —— 2026-10-26 用户报的那条。
+    // ⚠️ `scanRust` 会把字符串字面量从 `blanked` 里抹掉（防止注释/示例骗过判据），
+    // 所以这里查的是**字面量表**，不是抹过的源码。
+    if (!scannedUploader.literals.some((literal) => literal.body === '/file/chunk')) {
+      problems.push('`uploader.rs` 没有读握手的 `file.chunk` —— CF 的 8 MiB 分片被忽略，'
+        + '桌面端大文件会被 R2 的 5 MiB 最小分片挡回 500');
+    }
+    if (!/MULTIPART_MIN_PART_SIZE/.test(up)) {
+      problems.push('`uploader.rs` 没有守住 R2 的最小分片（5 MiB）—— 小分片会静默上线');
     }
     if (!/enum UploadPayload[\s\S]*?LargeFile/.test(up)) {
       problems.push('`UploadPayload` 里没有 `LargeFile` —— 大文件还是整份读进内存');
@@ -3077,8 +3090,8 @@ if (entryViewFiles.length !== 1) {
     // ⚠️★ **光有 `LargeFile` 这个变体是不够的**：那是一条**死路**的话，
     // 上面那两条照样全绿（变异验证抓到过：把判据写成 `if false` 它还是绿的）。
     // 所以这里钉的是 `materialize` 里**那句按大小分流的条件**。
-    if (!/size >= UPLOAD_CHUNK_SIZE/.test(up)) {
-      problems.push('`materialize` 没有按大小分流到 `LargeFile` —— 那个变体是死的，'
+    if (!/size >= limits\.chunked_threshold\(\)/.test(up)) {
+      problems.push('`materialize` 没有按服务端的分片阈值分流到 `LargeFile` —— 那个变体是死的，'
         + '大文件仍然整份读进内存（内存里两份，而且发不出去）');
     }
     if (!/async fn upload_chunked\(/.test(up)) {

@@ -78,6 +78,13 @@ pub struct ServerLimits {
     pub text_limit: usize,
     /// `file.limit`（字节）。
     pub file_limit: u64,
+    /// `file.chunk`（字节）—— 服务端**建议**的分片大小；`0` = 没说。
+    ///
+    /// ⚠️★ 这个值**必须读**：Cloudflare Worker 把分片交给 R2 的 multipart，
+    /// 而 R2 要求**除最后一片外每片至少 5 MiB**。Worker 因此下发 8 MiB；客户端
+    /// 自己写死 1 MiB 的话，大文件的第一片就会被 R2 拒绝，Worker 回 500 ——
+    /// 而小文件（<1 MiB）走整份上传，看起来一切正常。
+    pub file_chunk: usize,
 }
 
 impl ServerLimits {
@@ -93,19 +100,48 @@ impl ServerLimits {
                 .pointer("/file/limit")
                 .and_then(serde_json::Value::as_u64)
                 .unwrap_or(0),
+            file_chunk: data
+                .pointer("/file/chunk")
+                .and_then(serde_json::Value::as_u64)
+                .unwrap_or(0) as usize,
         }
+    }
+
+    /// 一片发多大（字节）。
+    ///
+    /// · 服务端给了 `file.chunk` 就用它，但**夹到 [`DEFAULT_UPLOAD_CHUNK_SIZE`]** 以内
+    ///   （自建服务端单次请求上限 16 MiB，8 MiB 离它很远）。
+    /// · 没给（老服务端 / 还没握手）→ 8 MiB。**不能退回 1 MiB**：CF 的 R2 multipart
+    ///   除最后一片外每片至少 5 MiB，1 MiB 会被 500 掉。
+    #[must_use]
+    pub fn chunk_size(&self) -> usize {
+        if self.file_chunk == 0 {
+            DEFAULT_UPLOAD_CHUNK_SIZE
+        } else {
+            self.file_chunk.min(DEFAULT_UPLOAD_CHUNK_SIZE)
+        }
+    }
+
+    /// 达到多大才走分片。
+    ///
+    /// ⚠️ 在 CF 上不能把 1–5 MiB 也分片（R2 的最小分片是 5 MiB）。取
+    /// `min(chunk_size, 5 MiB)`：自建服务端下发 1 MiB 时行为不变；CF 下发 8 MiB 时，
+    /// 5–8 MiB 的文件作为**最后一片**发出去（合法），1–5 MiB 则走整份上传。
+    fn chunked_threshold(&self) -> u64 {
+        (self.chunk_size() as u64).min(MULTIPART_MIN_PART_SIZE)
     }
 }
 
-/// 一片有多大（字节）。
+/// 服务端**没给**分片大小时用它 —— 8 MiB。
 ///
-/// ⚠️★ 服务端**没有**要求某一片必须是多大：`files.rs` 的 `chunk` 就是往文件后面追加，
-/// 而握手下发的 `file.chunk` 只是它「建议」的那个数。所以这里**不读**那个建议值 ——
-/// 读了就要给 `ServerLimits` 加一个字段、还要处理「还没握手过 = 0」这一档，
-/// 换来的只是「和服务端建议的一样大」，而这件事**没有任何行为上的差别**。
-/// ⚠️ 但它有**上界**：`/upload/chunk/:uuid` 也挂着 `DefaultBodyLimit`（16 MiB），
-/// 超了就是一次 413。这里取 1 MiB（服务端配置的默认值），离那个上界很远。
-pub const UPLOAD_CHUNK_SIZE: usize = 1024 * 1024;
+/// ⚠️★ 不能再用 1 MiB：CF Worker 把分片落到 R2 的 multipart，而 R2 **除最后一片外
+/// 每片至少 5 MiB**。1 MiB 的分片会被 R2 拒绝，Worker 回 500（网页端没这个问题，
+/// 因为它读的正是握手下发的 `file.chunk` = 8 MiB）。自建服务端的单次请求上限是
+/// 16 MiB，8 MiB 也在范围内。
+pub const DEFAULT_UPLOAD_CHUNK_SIZE: usize = 8 * 1024 * 1024;
+
+/// R2 multipart 的最小分片（除最后一片）。
+const MULTIPART_MIN_PART_SIZE: u64 = 5 * 1024 * 1024;
 
 /// 上传进度的回调：`(已发字节, 总字节)`。
 ///
@@ -121,7 +157,7 @@ pub enum UploadPayload {
     Text(String),
     /// 一个**小**文件（图片也是它，文件名由这边生成）—— 字节已经读进来了。
     ///
-    /// ⚠️ 只在小于 [`UPLOAD_CHUNK_SIZE`] 时用它：那时「读进来」的代价可以忽略。
+    /// ⚠️ 只在小于分片阈值（`ServerLimits::chunked_threshold`）时用它：那时「读进来」的代价可以接受。
     File { name: String, bytes: Vec<u8> },
     /// 一个**大**文件 —— ⚠️★ **只有路径**，字节按片现读现发。
     ///
@@ -271,7 +307,7 @@ pub async fn materialize(
 
                 // ⚠️★ 够大就**只记路径、不读字节**（`LargeFile`）：整份读进来的那份
                 // 既占两份内存、又发不出去（服务端单次请求 16 MiB 的硬上限）。
-                if size >= UPLOAD_CHUNK_SIZE as u64 {
+                if size >= limits.chunked_threshold() {
                     out.push(UploadPayload::LargeFile {
                         name,
                         path: path.clone(),
@@ -598,9 +634,10 @@ async fn send_to(
         }
     };
 
+    let chunk_size = limits.chunk_size();
     for payload in payloads {
         report.payloads += 1;
-        let outcome = upload_payload(client, targets, cfg, &payload, progress).await;
+        let outcome = upload_payload(client, targets, cfg, &payload, chunk_size, progress).await;
         report.push(outcome);
     }
     report
@@ -612,6 +649,7 @@ async fn upload_payload(
     targets: &[&Channel],
     cfg: &ClientConfig,
     payload: &UploadPayload,
+    chunk_size: usize,
     progress: Option<&ProgressFn>,
 ) -> UploadOutcome {
     let mut succeeded = 0usize;
@@ -622,7 +660,7 @@ async fn upload_payload(
     for channel in targets {
         // ⚠️ 多个房间时进度**只跟着第一个**喊：界面上只有一条进度条，
         // 而「两个房间各自 40%」是没有意义的数（用户要的是「传完没有」）。
-        match post_to_channel(client, channel, cfg, payload, progress).await {
+        match post_to_channel(client, channel, cfg, payload, chunk_size, progress).await {
             Ok(id) => {
                 succeeded += 1;
                 if let Some(id) = id {
@@ -664,14 +702,17 @@ pub(crate) async fn post_to_channel(
     channel: &Channel,
     cfg: &ClientConfig,
     payload: &UploadPayload,
+    chunk_size: usize,
     progress: Option<&ProgressFn>,
 ) -> Result<Option<i32>, Msg> {
     let device_name = cfg.device_name.as_str();
 
     // ⚠️ 大文件**不走这里**：它要的是「初始化 → 逐片追加 → 收尾」那三趟，
     // 一趟 multipart 发不完（服务端单次请求 16 MiB 的硬上限会把它挡回来）。
-    if let UploadPayload::LargeFile { name, path, size } = payload {
-        return upload_chunked(client, channel, cfg, name, path, *size, progress).await;
+    if let UploadPayload::LargeFile { .. } = payload {
+        // ⚠️ 把 payload 整体传进去而不是拆成 name/path/size 三个参数：拆开之后
+        // `upload_chunked` 会有 8 个参数（clippy 的上限是 7），而这三样本来就同属一条载荷。
+        return upload_chunked(client, channel, cfg, payload, chunk_size, progress).await;
     }
 
     let mut builder = match payload {
@@ -754,7 +795,7 @@ fn with_auth(request: reqwest::RequestBuilder, token: Option<&str>) -> reqwest::
 /// ⚠️★ 形状照**服务端**那份（`files.rs` 的三个 handler），并照网页版
 /// `StickyComposer.vue` 的 `sendFiles` 那一段 —— 那一边已经跑通了，别另发明一种。
 ///
-/// ⚠️★ 每片都是**现读现发**：内存里同时只有 `UPLOAD_CHUNK_SIZE` 那么多字节。
+/// ⚠️★ 每片都是**现读现发**：内存里同时只有 `chunk_size` 那么多字节。
 /// 对照整份那条路（`tokio::fs::read` + `Part::bytes` 再 clone 一次）在 200MB 的
 /// 文件上是 400MB 常驻 —— 而且那一趟**发不出去**（服务端单次请求 16 MiB 的硬上限）。
 ///
@@ -764,11 +805,14 @@ async fn upload_chunked(
     client: &Client,
     channel: &Channel,
     cfg: &ClientConfig,
-    name: &str,
-    path: &std::path::Path,
-    size: u64,
+    payload: &UploadPayload,
+    chunk_size: usize,
     progress: Option<&ProgressFn>,
 ) -> Result<Option<i32>, Msg> {
+    let UploadPayload::LargeFile { name, path, size } = payload else {
+        unreachable!("upload_chunked 只接 LargeFile");
+    };
+    let size = *size;
     let token = channel
         .auth_token
         .as_deref()
@@ -821,10 +865,10 @@ async fn upload_chunked(
             .param("path", path.display())
             .param("reason", err)
     })?;
-    let mut buffer = vec![0u8; UPLOAD_CHUNK_SIZE];
+    let mut buffer = vec![0u8; chunk_size];
     let mut sent = 0u64;
     while sent < size {
-        let want = (size - sent).min(UPLOAD_CHUNK_SIZE as u64) as usize;
+        let want = (size - sent).min(chunk_size as u64) as usize;
         // ⚠️ `read_exact` 不够：文件在「看大小」与「读」之间被改小了的话它会一直等。
         // 这里按「读到了多少就发多少」处理，读不动就停 —— 少发的那截由服务端登记的
         // size 兜住（`files.rs` 每片都更新它），不会记出一个比实际大的文件。
@@ -1058,7 +1102,8 @@ mod tests {
             ServerLimits::from_ws_config(&ws_config),
             ServerLimits {
                 text_limit: 4096,
-                file_limit: 268435456
+                file_limit: 268435456,
+                file_chunk: 1048576,
             }
         );
 
@@ -1083,6 +1128,33 @@ mod tests {
             ServerLimits::from_ws_config(&real_server_response),
             ServerLimits::default(),
             "`/server` 里没有限额 —— 别在那边找"
+        );
+    }
+
+    /// 分片大小：读服务端建议值、夹到 8 MiB；没给就用 8 MiB。
+    ///
+    /// ⚠️ 这条是 CF 大文件 500 的回归判据 —— **1 MiB 的分片在 R2 上是不合法的**
+    ///（除最后一片外每片至少 5 MiB）。
+    #[test]
+    fn chunk_size_follows_the_server_and_stays_within_the_r2_limit() {
+        let limits = |chunk| ServerLimits {
+            file_chunk: chunk,
+            ..ServerLimits::default()
+        };
+
+        assert_eq!(limits(0).chunk_size(), DEFAULT_UPLOAD_CHUNK_SIZE);
+        assert_eq!(limits(1024 * 1024).chunk_size(), 1024 * 1024);
+        assert_eq!(
+            limits(16 * 1024 * 1024).chunk_size(),
+            DEFAULT_UPLOAD_CHUNK_SIZE
+        );
+
+        // 自建服务端的追加写：1 MiB 分片照旧。
+        assert_eq!(limits(1024 * 1024).chunked_threshold(), 1024 * 1024);
+        // CF：5 MiB 以上才走分片，避免 R2 的「非最后一片至少 5 MiB」。
+        assert_eq!(
+            limits(DEFAULT_UPLOAD_CHUNK_SIZE).chunked_threshold(),
+            MULTIPART_MIN_PART_SIZE
         );
     }
 
