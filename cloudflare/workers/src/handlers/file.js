@@ -167,6 +167,124 @@ async function finalizeUploadedFile({ request, env, url, room, uuid, fileName, f
   });
 }
 
+/**
+ * Multipart 里的文件 part：
+ *   - `file`     —— 单文件（Apple 快捷指令 / 网页 / 桌面端，旧形状）
+ *   - `file[]`   —— 多文件（HTTP Shortcuts 的 `file_picker_multi`）
+ *
+ * ⚠️ 多文件必须**一条 part 一条消息**，与网页端「每个文件一个请求」语义一致；
+ *    返回值也只在多文件（或显式 `file[]`）时才变成 `{count, ids, files}`，
+ *    单 `file` 仍然是 `{id, type, url}` —— 老客户端不用改。
+ */
+function collectFormFiles(formData) {
+  const files = [];
+  let multi = false;
+  for (const [field, value] of formData.entries()) {
+    if (field !== 'file' && field !== 'file[]') continue;
+    if (field === 'file[]') multi = true;
+    if (!value || typeof value !== 'object' || typeof value.stream !== 'function') continue;
+    const name = value.name || 'file';
+    files.push({
+      name,
+      size: Number(value.size || 0),
+      type: value.type || contentTypeFromName(name),
+      stream: () => value.stream(),
+    });
+  }
+  if (files.length > 1) multi = true;
+  return { files, multi };
+}
+
+async function uploadFormFiles({ request, env, url, room, authResult, formData }) {
+  const { files, multi } = collectFormFiles(formData);
+  if (!files.length) {
+    return errorResponse(400, 'no_file', 'No file provided', '未提供文件');
+  }
+
+  const fileLimit = getFileLimit(env);
+  const tooLarge = files.find((item) => item.size > fileLimit);
+  if (tooLarge) {
+    return errorResponse(
+      413,
+      'file_too_large',
+      'File too large',
+      `文件大小超出限制 (最大 ${Math.floor(fileLimit / 1024 / 1024)}MB，${tooLarge.name} 为 ${tooLarge.size} 字节)`
+    );
+  }
+
+  // ⚠️ 总量按**整个请求**一次判：分开判会在第一份落盘、第二份被拒时留下半批文件。
+  const totalSize = files.reduce((sum, item) => sum + item.size, 0);
+  const overBudget = await checkUploadBudget(env, totalSize);
+  if (overBudget) {
+    return overBudget;
+  }
+
+  const expireTime = resolveExpireTime(
+    Math.floor(Date.now() / 1000),
+    env,
+    authResult.requirement?.fileExpire
+  );
+  const prepared = files.map((item) => ({ ...item, uuid: generateUUID() }));
+  const storedKeys = [];
+
+  try {
+    for (const item of prepared) {
+      await env.R2_BUCKET.put(
+        createFileKey(item.uuid),
+        item.stream(),
+        buildMultipartOptions({
+          room,
+          fileName: item.name,
+          fileType: item.type,
+          expireTime,
+        })
+      );
+      storedKeys.push(createFileKey(item.uuid));
+    }
+  } catch (error) {
+    // 还一条消息都没建；把已经写进 R2 的字节删掉，别留孤儿。
+    for (const key of storedKeys) {
+      try { await env.R2_BUCKET.delete(key); } catch {}
+    }
+    throw error;
+  }
+
+  const results = [];
+  for (const item of prepared) {
+    const response = await finalizeUploadedFile({
+      request,
+      env,
+      url,
+      room,
+      uuid: item.uuid,
+      fileName: item.name,
+      fileSize: item.size,
+      expireTime,
+    });
+    const data = await response.json();
+    results.push({ ...data, name: item.name, size: item.size });
+  }
+
+  if (!multi) {
+    const first = results[0];
+    return new Response(JSON.stringify({
+      id: first.id,
+      type: first.type,
+      url: first.url,
+    }), {
+      headers: { 'Content-Type': 'application/json', ...corsHeaders }
+    });
+  }
+
+  return new Response(JSON.stringify({
+    count: results.length,
+    ids: results.map((item) => String(item.id)),
+    files: results,
+  }), {
+    headers: { 'Content-Type': 'application/json', ...corsHeaders }
+  });
+}
+
 export class FileHandler {
   static async upload(request, env) {
     try {
@@ -183,7 +301,6 @@ export class FileHandler {
 
       const rawFileName = request.headers.get('X-File-Name');
       const isStreamUpload = Boolean(rawFileName);
-      let file = null;
       let fileName = '';
       let fileSize = 0;
       let fileType = request.headers.get('Content-Type') || 'application/octet-stream';
@@ -196,20 +313,21 @@ export class FileHandler {
         hasRawFilenameHeader: isStreamUpload,
       });
 
-      if (isStreamUpload) {
-        fileName = decodeUploadFilename(rawFileName) || 'file';
-        fileSize = Number(request.headers.get('X-File-Size') || 0);
-        fileBody = request.body;
-      } else {
+      if (!isStreamUpload) {
         const formData = await request.formData();
-        file = formData.get('file');
-        if (file) {
-          fileName = file.name;
-          fileSize = file.size;
-          fileType = file.type || fileType;
-          fileBody = file.stream();
-        }
+        return await uploadFormFiles({
+          request,
+          env,
+          url,
+          room,
+          authResult,
+          formData,
+        });
       }
+
+      fileName = decodeUploadFilename(rawFileName) || 'file';
+      fileSize = Number(request.headers.get('X-File-Size') || 0);
+      fileBody = request.body;
 
       console.log('[upload] parsed', {
         room,

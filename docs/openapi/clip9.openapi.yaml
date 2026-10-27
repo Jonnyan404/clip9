@@ -1376,23 +1376,28 @@ paths:
       tags: [Files]
       summary: Whole-file upload (multipart)
       description: |
-        Uploads a small file in one request: writes the bytes, registers the file, stores a
-        file entry in the room, broadcasts `receive`, and returns the entry id and URL.
+        Uploads one or more small files in one request: writes the bytes, registers each file,
+        stores one file entry per part in the room, broadcasts `receive`, and returns the entry
+        ids and URLs.
 
-        The form field name is always **`file`**.
+        The form field name is **`file`** for a single upload (legacy response) and
+        **`file[]`** for a batch. A request with more than one file part is also treated as a
+        batch. Each `file[]` part becomes its own message with its own id.
 
         Special case: when `Content-Type` is exactly `text/plain` (character for character —
         `text/plain; charset=utf-8` does **not** count), the body is treated as a **filename**
         and this becomes the chunked-upload initialiser, exactly like `POST /upload/chunk`.
         That is a deliberate, documented quirk shared with the Go implementation.
 
-        `Content-Length`, when present, is checked against `file.limit` up front so an
-        oversized file is rejected before it is read into memory.
+        Each parsed file part is checked against `file.limit`; the whole request is still
+        bounded by the server's upload body cap (16 MiB for the Rust server). The limit is
+        **not** applied to the total `Content-Length`, because a multi-file request is
+        legitimately larger than one file.
 
-        NOTE (code): the success body is `{url, id, type}` — the same three fields as
-        `/text`. An older document showed `name` / `size` / `uuid` / `expire` here too; this
-        server does not return them. `type` is the detected media kind of the filename, not
-        the literal string `file`.
+        NOTE (code): for a single `file`, the success body is `{url, id, type}` — the same
+        three fields as `/text`. For `file[]` (or multiple file parts), the body is
+        `{count, ids, files}`. `type` is the detected media kind of the filename, not the
+        literal string `file`.
       operationId: uploadFile
       parameters:
         - $ref: '#/components/parameters/RoomQuery'
@@ -1408,12 +1413,19 @@ paths:
           multipart/form-data:
             schema:
               type: object
-              required: [file]
+              description: |
+                Exactly one of the two shapes:
+                - `file`: one file, legacy response.
+                - `file[]`: one or more files, batch response.
               properties:
                 file:
                   type: string
                   format: binary
                   description: The file bytes. The filename in the part header is the entry's `name`.
+                'file[]':
+                  type: string
+                  format: binary
+                  description: One file per part; each becomes its own entry and id.
           text/plain:
             schema:
               type: string
@@ -4530,7 +4542,7 @@ components:
     # ── Files ───────────────────────────────────────────────────────────
     UploadedEntry:
       type: object
-      description: Response of a completed upload (`/upload` with a file part, or `/upload/finish/{uuid}`).
+      description: Response of a completed single-file upload (`/upload` with one `file` part, or `/upload/finish/{uuid}`).
       required: [url, id, type]
       properties:
         url:
@@ -4543,6 +4555,40 @@ components:
           type: string
           description: The media kind detected from the filename.
           enum: [image, audio, video, document, archive, file]
+
+    UploadBatchResult:
+      type: object
+      description: Response of a multi-file upload (`/upload` with `file[]` or more than one file part).
+      required: [count, ids, files]
+      properties:
+        count:
+          type: integer
+          description: Number of files stored and announced.
+        ids:
+          type: array
+          description: Entry ids in part order.
+          items:
+            type: string
+        files:
+          type: array
+          items:
+            type: object
+            required: [id, url, type, name, size]
+            properties:
+              id:
+                type: string
+              url:
+                type: string
+                format: uri
+                description: The entry URL (`/content/{id}`), not the raw file URL.
+              type:
+                type: string
+                description: The media kind detected from the filename.
+                enum: [image, audio, video, document, archive, file]
+              name:
+                type: string
+              size:
+                type: integer
 
     ChunkInitResult:
       type: object
@@ -4558,9 +4604,10 @@ components:
               format: uuid
 
     UploadResult:
-      description: Either a completed upload, or (for the `text/plain` filename form) an initialisation result.
+      description: A completed single upload, a completed batch, or (for the `text/plain` filename form) an initialisation result.
       oneOf:
         - $ref: '#/components/schemas/UploadedEntry'
+        - $ref: '#/components/schemas/UploadBatchResult'
         - $ref: '#/components/schemas/ChunkInitResult'
 
     # ── Sharing ─────────────────────────────────────────────────────────

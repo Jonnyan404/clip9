@@ -1202,31 +1202,23 @@ paths:
       tags:
       - Files
       summary: 整份上传（multipart）
-      description: '一次请求传完一个小文件：写字节、登记文件、在房间里存一条文件条目、广播 `receive`，
-
+      description: |
+        一次请求传完一个或多个小文件：写字节、逐个登记文件、在房间里**每个文件存一条**条目、广播 `receive`，
         然后返回条目 id 与 URL。
 
-
-        表单字段名**永远是 `file`**。
-
+        表单字段名：单文件用 **`file`**（旧形状），多文件用 **`file[]`**（批量形状）。
+        出现不止一个文件 part 也按批量处理；每个 part 各自成为一条消息、各自有一个 id。
 
         特殊情况：当 `Content-Type` **逐字符**等于 `text/plain` 时（`text/plain; charset=utf-8` **不算**），
-
         请求体被当成一个**文件名**，这个接口就变成了分片上传的初始化 —— 与 `POST /upload/chunk` 完全一样。
-
         这是与 Go 实现共有的、刻意保留并且写进文档的怪癖。
 
+        每个解析出的文件 part 都会按 `file.limit` 单独判；整个请求仍受服务端上传 body 硬上限
+        （Rust 服务端是 16 MiB）约束。**不再**拿整段 `Content-Length` 跟单个文件上限比 ——
+        多文件请求合法地会比一个文件大。
 
-        有 `Content-Length` 时，会先拿它跟 `file.limit` 比，**在把文件读进内存之前**就拒掉超大的。
-
-
-        NOTE (code)：成功响应体是 `{url, id, type}` —— 与 `/text` 同样那三个字段。旧文档在这里还写了
-
-        `name` / `size` / `uuid` / `expire`，这个服务端不返回它们。`type` 是按文件名探测出的媒体种类，
-
-        **不是**字面量 `file`。
-
-        '
+        NOTE (code)：单个 `file` 的成功响应仍是 `{url, id, type}`；`file[]`（或不止一个 part）
+        是 `{count, ids, files}`。`type` 是按文件名探测出的媒体种类，**不是**字面量 `file`。
       operationId: uploadFile
       parameters:
       - $ref: '#/components/parameters/RoomQuery'
@@ -1242,13 +1234,19 @@ paths:
           multipart/form-data:
             schema:
               type: object
-              required:
-              - file
+              description: |
+                二选一：
+                - `file`：一个文件，旧响应形状。
+                - `file[]`：一个或多个文件，批量响应。
               properties:
                 file:
                   type: string
                   format: binary
                   description: 文件字节。part 头里的文件名会成为条目的 `name`。
+                'file[]':
+                  type: string
+                  format: binary
+                  description: 每个 part 一个文件；各自成为一条条目、各自有一个 id。
           text/plain:
             schema:
               type: string
@@ -4409,7 +4407,7 @@ components:
           description: '房间**确实**要不要密码（配了 `{"open": true}` 的房间报 `false`）。'
     UploadedEntry:
       type: object
-      description: 一次上传完成后的响应（`/upload` 带文件 part，或 `/upload/finish/{uuid}`）。
+      description: 一次**单文件**上传完成后的响应（`/upload` 带一个 `file` part，或 `/upload/finish/{uuid}`）。
       required:
       - url
       - id
@@ -4431,6 +4429,53 @@ components:
           - document
           - archive
           - file
+    UploadBatchResult:
+      type: object
+      description: 多文件上传的响应（`/upload` 带 `file[]`，或不止一个文件 part）。
+      required:
+      - count
+      - ids
+      - files
+      properties:
+        count:
+          type: integer
+          description: 存下并广播的文件数。
+        ids:
+          type: array
+          description: 按 part 顺序排列的条目 id。
+          items:
+            type: string
+        files:
+          type: array
+          items:
+            type: object
+            required:
+            - id
+            - url
+            - type
+            - name
+            - size
+            properties:
+              id:
+                type: string
+              url:
+                type: string
+                format: uri
+                description: '**条目**地址（`/content/{id}`），不是文件的裸地址。'
+              type:
+                type: string
+                description: 按文件名探测出的媒体种类。
+                enum:
+                - image
+                - audio
+                - video
+                - document
+                - archive
+                - file
+              name:
+                type: string
+              size:
+                type: integer
     ChunkInitResult:
       type: object
       description: 分片上传初始化的响应（`/upload/chunk`，或 `/upload` 带一个 `text/plain` 的文件名）。
@@ -4446,9 +4491,10 @@ components:
               type: string
               format: uuid
     UploadResult:
-      description: 要么是一次完成的上传，要么（`text/plain` 文件名那种形式）是一个初始化结果。
+      description: 一次完成的单文件上传、一次完成的多文件上传，或者（`text/plain` 文件名那种形式）一个初始化结果。
       oneOf:
       - $ref: '#/components/schemas/UploadedEntry'
+      - $ref: '#/components/schemas/UploadBatchResult'
       - $ref: '#/components/schemas/ChunkInitResult'
     ShareRequest:
       type: object

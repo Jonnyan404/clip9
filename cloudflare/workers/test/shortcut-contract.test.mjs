@@ -11,7 +11,8 @@
 // 请求形状取自 shortcuts/android/shortcuts.json 的导出（那个文件带密码不入库，
 // 所以这里只能照抄一份 —— **改捷径的 URL 时同步改这里**）：
 //   发送文本   POST {url}/text?room={room}&auth={auth}&name={name}         body: text/plain
-//   发送文件   POST {url}/upload?room={room}&auth={auth}&name={name}       multipart，字段名 file
+//   发送文件   POST {url}/upload?room={room}&auth={auth}&name={name}       multipart：Apple 用 file，
+//                                                                          Android 多选用 file[]
 //   接收最新   GET  {url}/content/latest?room={room}&auth={auth}&format=json
 //   接收指定ID GET  {url}/content/{ID}?room={room}&format=json&auth={auth}
 //   展示文件   GET  {url}/file/{uuid}/{name}?auth={auth}
@@ -244,6 +245,28 @@ console.log('\n── F. /content/* 的格式选择（?format= 优先，?json=1 
   const bad = await getByIdRaw(env, id, 'room=default&auth=123&format=html', null, '');
   check('?format=html → 400', bad.status, 400);
   check('  · code', bad.json?.code, 'unsupported_format');
+}
+
+console.log('\n── G. 多选文件（file[]）→ 每条一个 ID，且都能按 ID 取回 ──');
+{
+  const { env } = makeEnv();
+  const form = new FormData();
+  form.append('file[]', new Blob([PNG], { type: 'image/png' }), FILE_NAME);
+  form.append('file[]', new Blob([PNG], { type: 'image/png' }), '第二张.png');
+  const res = await FileHandler.upload(
+    new Request(`http://worker.local/upload?room=default&auth=123&name=${DEVICE}`, {
+      method: 'POST', body: form,
+    }), env);
+  const body = await res.json();
+  check('多文件 HTTP 200', res.status, 200);
+  check('多文件返回两个 ID', body.ids?.length, 2);
+  check('第一个文件名保真', body.files?.[0]?.name, FILE_NAME);
+  check('第二个文件名保真', body.files?.[1]?.name, '第二张.png');
+
+  const first = await getById(env, body.ids[0], 'room=default&format=json&auth=123', '123');
+  check('按第一个 ID 取回', first.json?.name, FILE_NAME);
+  const second = await getById(env, body.ids[1], 'room=default&format=json&auth=123', '123');
+  check('按第二个 ID 取回', second.json?.name, '第二张.png');
 }
 
 summary('Android 快捷指令的请求形状在 Worker 上成立');

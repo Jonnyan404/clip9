@@ -80,6 +80,32 @@ for (const name of Object.keys(EXPECTED_URLS)) {
   }
 }
 
+// 「发送文件」必须是多文件参数。HTTP Shortcuts 的 `file_picker` 只取分享进来的第一个文件，
+// 后面的会被静默丢掉；`file_picker_multi` 才会把它们都发成 `file[]`。
+// 服务端 `/upload` 已经按 `file[]` 拆成多条消息，这里钉住客户端那一半。
+{
+  const sendFile = allShortcuts.find(s => s.name === '发送文件');
+  const fileParam = sendFile?.parameters?.find(p => p.type === 'file');
+  if (!sendFile) {
+    shapeFailures.push('「发送文件」不见了');
+  } else if (!fileParam) {
+    shapeFailures.push('「发送文件」没有 file 参数');
+  } else {
+    if (fileParam.key !== 'file') {
+      shapeFailures.push(`[发送文件] 文件参数名应为 file，实际 ${fileParam.key}`);
+    }
+    if (fileParam.fileUploadOptions?.fileUploadType !== 'file_picker_multi') {
+      shapeFailures.push(
+        `[发送文件] fileUploadType 应为 file_picker_multi，实际 ${fileParam.fileUploadOptions?.fileUploadType}\n` +
+        '       → file_picker 只支持单文件，多选时后面的文件会被静默丢掉'
+      );
+    }
+  }
+  if (!String(sendFile?.codeOnSuccess || '').includes('ids')) {
+    shapeFailures.push('[发送文件] codeOnSuccess 没有读批量响应里的 ids —— 多文件时看不到各个 ID');
+  }
+}
+
 if (shapeFailures.length) {
   console.error('!! 请求形状自检失败（导出与契约不一致）：');
   for (const f of shapeFailures) console.error('  ✗ ' + f);

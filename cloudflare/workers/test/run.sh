@@ -14,6 +14,8 @@
 #   file-cleanup.test.mjs  —— 过期文件的后台回收（cron + scheduled 两半都要在；永不过期的文件不许碰）
 #   upload-quota.test.mjs  —— 文件**总量**上限（FILE_TOTAL_LIMIT）：整份 / 分片 / multipart 三条路都拦，
 #                             不设上限时行为不变（既有部署不受影响）
+#   upload-multi.test.mjs  —— /upload 的 `file[]` 多文件形态：一条请求多个文件 → 多条消息，
+#                             单 `file` 的旧响应不变；限流按整批判、拒绝时不留半批
 #
 # 端到端测试需要先打包处理器（Worker 源码用打包器风格的无后缀导入，Node 直接加载不了），
 # 并用 node:sqlite 充当 D1、Map 充当 R2，因此不需要 wrangler、不联网。
@@ -94,3 +96,7 @@ node --no-warnings test/file-cleanup.test.mjs
 echo
 echo "── 文件总量的闸（FILE_TOTAL_LIMIT；整份 / 分片 / multipart 每条路都要管）"
 node --no-warnings test/upload-quota.test.mjs
+
+echo
+echo "── 多文件上传（file[] → 多条消息；单 file 旧形状不变）"
+node --no-warnings test/upload-multi.test.mjs

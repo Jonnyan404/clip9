@@ -114,18 +114,9 @@ pub async fn upload(
         return resp;
     }
 
-    if let Some(len) = content_length(&headers)
-        && state.config.file.limit > 0
-        && len > state.config.file.limit as u64
-    {
-        return write_error(
-            StatusCode::PAYLOAD_TOO_LARGE,
-            "file_too_large",
-            "File too large",
-            &format!("文件大小超出限制 (最大 {} 字节)", state.config.file.limit),
-        );
-    }
-
+    // ⚠️ 这里**不再**拿整个请求体的 `Content-Length` 跟 `file.limit` 比。
+    //    多文件（`file[]`）时，请求体是「几个文件 + 边界」，合法地大于单个文件上限；
+    //    真正的判据在解析之后、按**每个 part** 的大小做（下面）。
     let content_type = headers
         .get(header::CONTENT_TYPE)
         .and_then(|v| v.to_str().ok())
@@ -155,7 +146,7 @@ pub async fn upload(
         );
     };
 
-    let Some((filename, data)) = read_multipart_file(body, boundary).await else {
+    let Some((files, multi)) = read_multipart_files(body, boundary).await else {
         return write_error(
             StatusCode::BAD_REQUEST,
             "file_field_missing",
@@ -164,38 +155,108 @@ pub async fn upload(
         );
     };
 
-    let uuid = uuid::Uuid::new_v4().to_string();
-    if let Err(e) = write_all(&state, &uuid, &data).await {
-        tracing::error!(error = %e, uuid, "写入文件失败");
+    // ⚠️ 按**每个 part** 判大小，而不是整个请求体：多文件请求天然比单个文件大。
+    if state.config.file.limit > 0
+        && let Some(too_large) = files
+            .iter()
+            .find(|item| item.data.len() as i64 > state.config.file.limit)
+    {
         return write_error(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "file_save_failed",
-            "Cannot save file",
-            "无法保存文件",
+            StatusCode::PAYLOAD_TOO_LARGE,
+            "file_too_large",
+            "File too large",
+            &format!(
+                "文件大小超出限制 (最大 {} 字节，{} 为 {} 字节)",
+                state.config.file.limit,
+                too_large.name,
+                too_large.data.len()
+            ),
         );
     }
 
-    let size = data.len() as i64;
     let expire = expire_at(&state, &room);
-    let file = File {
-        name: filename.clone(),
-        uuid: uuid.clone(),
-        size,
-        upload_time: now_secs(),
-        expire_time: expire,
-        room: room.clone(),
-    };
-    if let Err(e) = state.store.put_file(&file) {
-        tracing::error!(error = %e, "登记文件失败");
-        return write_error(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "file_save_failed",
-            "Cannot save file",
-            "无法保存文件",
-        );
+    let mut stored: Vec<File> = Vec::with_capacity(files.len());
+    for item in files {
+        let uuid = uuid::Uuid::new_v4().to_string();
+        if let Err(e) = write_all(&state, &uuid, &item.data).await {
+            tracing::error!(error = %e, uuid, "写入文件失败");
+            for file in &stored {
+                let _ = remove_stored_file(&state, &file.uuid).await;
+            }
+            return write_error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "file_save_failed",
+                "Cannot save file",
+                "无法保存文件",
+            );
+        }
+        stored.push(File {
+            name: item.name,
+            uuid,
+            size: item.data.len() as i64,
+            upload_time: now_secs(),
+            expire_time: expire,
+            room: room.clone(),
+        });
     }
 
-    finish_file_message(&state, &headers, peer, &query, file).await
+    for file in &stored {
+        if let Err(e) = state.store.put_file(file) {
+            tracing::error!(error = %e, uuid = %file.uuid, "登记文件失败");
+            for item in &stored {
+                let _ = state.store.remove_file(&item.uuid);
+                let _ = remove_stored_file(&state, &item.uuid).await;
+            }
+            return write_error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "file_save_failed",
+                "Cannot save file",
+                "无法保存文件",
+            );
+        }
+    }
+
+    if !multi {
+        let file = stored.pop().expect("read_multipart_files 保证至少一个文件");
+        return match record_file_message(&state, &headers, peer, &query, file.clone()).await {
+            Ok(recorded) => legacy_response(&recorded),
+            Err(resp) => {
+                let _ = state.store.remove_file(&file.uuid);
+                let _ = remove_stored_file(&state, &file.uuid).await;
+                *resp
+            }
+        };
+    }
+
+    let mut recorded = Vec::with_capacity(stored.len());
+    for file in &stored {
+        match record_file_message(&state, &headers, peer, &query, file.clone()).await {
+            Ok(entry) => recorded.push(entry),
+            Err(resp) => {
+                rollback_files(&state, &stored, &recorded, &room).await;
+                return *resp;
+            }
+        }
+    }
+
+    let ids: Vec<String> = recorded.iter().map(|entry| entry.id.to_string()).collect();
+    let files_json: Vec<serde_json::Value> = recorded
+        .iter()
+        .map(|entry| {
+            json!({
+                "id": entry.id.to_string(),
+                "url": entry.url,
+                "type": entry.kind,
+                "name": entry.name,
+                "size": entry.size,
+            })
+        })
+        .collect();
+    json_response(&json!({
+        "count": recorded.len(),
+        "ids": ids,
+        "files": files_json,
+    }))
 }
 
 /// `POST /upload/chunk` —— 分片上传的初始化。body 是**文件名**，回一个 uuid。
@@ -314,9 +375,20 @@ pub async fn finish(
     finish_file_message(&state, &headers, peer, &query, file).await
 }
 
+/// 一次上传在**消息层**的结果。`url` 是**条目**地址（`/content/{id}`），不是裸文件地址。
+#[derive(Debug, Clone)]
+struct RecordedFile {
+    id: i32,
+    url: String,
+    kind: String,
+    name: String,
+    size: i64,
+}
+
 /// 收尾：生成 FileReceive（含缩略图）→ 入库 → 广播 → 回 `{url, id, type}`。
 ///
 /// 整份上传和分片上传的最后一步**是同一件事**，所以抽出来 —— Go 那边是抄了两遍的。
+/// 多文件时走 [`record_file_message`]，由调用方自己拼批量响应。
 async fn finish_file_message(
     state: &Arc<AppState>,
     headers: &HeaderMap,
@@ -324,6 +396,28 @@ async fn finish_file_message(
     query: &HashMap<String, String>,
     file: File,
 ) -> Response {
+    match record_file_message(state, headers, peer, query, file).await {
+        Ok(recorded) => legacy_response(&recorded),
+        Err(resp) => *resp,
+    }
+}
+
+fn legacy_response(recorded: &RecordedFile) -> Response {
+    json_response(&json!({
+        "url": recorded.url,
+        "id": recorded.id.to_string(),
+        "type": recorded.kind,
+    }))
+}
+
+/// 把一个已经落盘、已登记的文件变成一条消息。**不写响应**，由调用方决定单条还是批量。
+async fn record_file_message(
+    state: &Arc<AppState>,
+    headers: &HeaderMap,
+    peer: SocketAddr,
+    query: &HashMap<String, String>,
+    file: File,
+) -> Result<RecordedFile, Box<Response>> {
     let room = normalize_room_name(&file.room);
     let (ip, device, client_id) = sender_base(headers, Some(peer), query);
     let url = format!(
@@ -365,23 +459,40 @@ async fn finish_file_message(
         Ok(e) => e,
         Err(e) => {
             tracing::error!(error = %e, "写入文件消息失败");
-            return write_error(
+            return Err(Box::new(write_error(
                 StatusCode::INTERNAL_SERVER_ERROR,
                 "store_failed",
                 "Failed to store message",
                 "保存消息失败",
-            );
+            )));
         }
     };
 
     state.broadcast("receive", &stored, &room);
 
     let id = stored.id();
-    json_response(&json!({
-        "url": content_url(headers, &state.config, id, &room),
-        "id": id.to_string(),
-        "type": determine_response_type(&file.name),
-    }))
+    Ok(RecordedFile {
+        id,
+        url: content_url(headers, &state.config, id, &room),
+        kind: determine_response_type(&file.name).to_owned(),
+        name: file.name,
+        size: file.size,
+    })
+}
+
+/// 多文件中途失败时的回滚：先撤已广播的消息（并广播 revoke），再删字节和登记。
+///
+/// ⚠️ 顺序与 `file_cleanup` 一致：字节先删、登记后删 —— 反过来会留下「登记没了、
+/// 字节还在」的孤儿。消息先撤，是为了让客户端别留着一张点不开的卡片。
+async fn rollback_files(state: &AppState, stored: &[File], recorded: &[RecordedFile], room: &str) {
+    for entry in recorded {
+        let _ = state.store.remove(entry.id);
+        state.broadcast("revoke", &json!({ "id": entry.id }), room);
+    }
+    for file in stored {
+        let _ = remove_stored_file(state, &file.uuid).await;
+        let _ = state.store.remove_file(&file.uuid);
+    }
 }
 
 // ── GET / DELETE /file/<uuid>[/<name>] ────────────────────────────────
@@ -548,13 +659,6 @@ async fn serve_file(
 
 // ── 工具 ──────────────────────────────────────────────────────────────
 
-fn content_length(headers: &HeaderMap) -> Option<u64> {
-    headers
-        .get(header::CONTENT_LENGTH)
-        .and_then(|v| v.to_str().ok())
-        .and_then(|v| v.parse().ok())
-}
-
 fn scheme_of(headers: &HeaderMap) -> &'static str {
     match headers
         .get("x-forwarded-proto")
@@ -573,19 +677,43 @@ fn host_of(headers: &HeaderMap) -> String {
         .to_owned()
 }
 
-/// 从 multipart body 里取 `file` 字段（文件名 + 字节）。
-async fn read_multipart_file(body: Bytes, boundary: String) -> Option<(String, Bytes)> {
+/// 一个 multipart 里的文件 part。
+struct UploadedFile {
+    name: String,
+    data: Bytes,
+}
+
+/// 从 multipart body 里取出所有 `file` / `file[]` 字段（文件名 + 字节），保持 part 顺序。
+///
+/// 返回 `(files, multi)`：`multi` 为真表示调用方应回**批量响应** ——
+/// 只要出现了 `file[]`（哪怕只有一项）或有不止一个文件 part，就算批量。
+/// 单文件走 `file` 时保持原来的 `{url, id, type}` 形状，旧客户端一个字都不用改。
+async fn read_multipart_files(body: Bytes, boundary: String) -> Option<(Vec<UploadedFile>, bool)> {
     let stream = futures_util::stream::once(async move { Ok::<Bytes, std::io::Error>(body) });
     let mut multipart = multer::Multipart::new(stream, boundary);
+    let mut files = Vec::new();
+    let mut multi = false;
     while let Some(field) = multipart.next_field().await.ok()? {
-        if field.name() != Some("file") {
+        let Some(field_name) = field.name().map(str::to_owned) else {
             continue;
+        };
+        if field_name != "file" && field_name != "file[]" {
+            continue;
+        }
+        if field_name == "file[]" {
+            multi = true;
         }
         let filename = field.file_name().unwrap_or("file").to_owned();
         let data = field.bytes().await.ok()?;
-        return Some((filename, data));
+        files.push(UploadedFile {
+            name: filename,
+            data,
+        });
     }
-    None
+    if files.len() > 1 {
+        multi = true;
+    }
+    (!files.is_empty()).then_some((files, multi))
 }
 
 async fn write_all(state: &AppState, uuid: &str, data: &[u8]) -> std::io::Result<()> {
