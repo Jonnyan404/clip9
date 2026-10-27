@@ -39,7 +39,7 @@ clip9 的版本历史。**按版本倒序**（最新的在最上面），内容�
 
 <!-- ↓↓↓ 新的一条加在这一行的下面 ↓↓↓ -->
 
-## v0.1.10 · 2026-10-27
+## v0.2.0 · 2026-10-27
 
 ### 这一版有什么
 
@@ -59,11 +59,11 @@ clip9 的版本历史。**按版本倒序**（最新的在最上面），内容�
 
 | 我要装在哪 | 下哪个 |
 | --- | --- |
-| 电脑 / 服务器（服务端） | `clip9-cli-v0.1.10-…` 打头的那个（Windows 是 `.zip`，其它是 `.tar.gz`） |
-| 电脑（桌面客户端） | `clip9-desktop-v0.1.10-…` 打头的那个（`.dmg` / `.msi` / `.exe` / `.AppImage` / `.deb`） |
-| Android 手机 | `clip9-android-v0.1.10.apk`（一个包三种架构都能装） |
-| OpenWrt 路由器 | `clip9-openwrt-v0.1.10-…`（带界面，一般选这个）；flash 很小就选 `clip9-noui-openwrt-v0.1.10-…`（不带界面） |
-| 路由器的 LuCI 界面 | `clip9-luci-openwrt-v0.1.10-all…` —— 和上面那个**分开装，两个都要** |
+| 电脑 / 服务器（服务端） | `clip9-cli-v0.2.0-…` 打头的那个（Windows 是 `.zip`，其它是 `.tar.gz`） |
+| 电脑（桌面客户端） | `clip9-desktop-v0.2.0-…` 打头的那个（`.dmg` / `.msi` / `.exe` / `.AppImage` / `.deb`） |
+| Android 手机 | `clip9-android-v0.2.0.apk`（一个包三种架构都能装） |
+| OpenWrt 路由器 | `clip9-openwrt-v0.2.0-…`（带界面，一般选这个）；flash 很小就选 `clip9-noui-openwrt-v0.2.0-…`（不带界面） |
+| 路由器的 LuCI 界面 | `clip9-luci-openwrt-v0.2.0-all…` —— 和上面那个**分开装，两个都要** |
 
 ## v0.1.9 · 2026-10-27
 
