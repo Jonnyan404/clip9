@@ -60,7 +60,7 @@
 | 特性 | 说明 |
 |---|---|
 | 🔒 **隐私安全** | 部署在自己的机器或服务器上，数据不经过任何第三方 |
-| 📦 **部署灵活** | 一个静态二进制同时供应 Docker、裸机、OpenWrt 与 Android；另有 Cloudflare Serverless 一路 |
+| 📦 **部署灵活** | 一个静态二进制同时供应 Docker、裸机、OpenWrt、Android 与飞牛 NAS（`.fpk`）；另有 Cloudflare Serverless 一路 |
 | 🌍 **跨平台** | 服务端覆盖 Linux / macOS / Windows / ARM 路由；客户端有桌面端、Android 与快捷指令 |
 | ⚡ **实时同步** | WebSocket 双向广播，历史走 HTTP 分页拉取（只推实时、不推全量） |
 | 🔐 **认证保护** | 全局密码、按房间独立密码、可续期的会话令牌、带密码的分享链接 |
@@ -156,12 +156,15 @@ docker compose up -d
 
 ### 🖥️ NAS（飞牛 fnOS / 群晖 / 绿联 / 极空间 …）
 
-**没有专用安装包，也不需要**：这些系统都带 Docker（fnOS 的「Docker」应用、群晖的 Container Manager），
-上面那份 compose 直接就能用。镜像覆盖 `amd64` / `arm64` / `armv7`，二进制是静态链接的，不挑发行版。
+这些系统都带 Docker（fnOS 的「Docker」应用、群晖的 Container Manager），上面那份 compose 直接就能用。
+镜像覆盖 `amd64` / `arm64` / `armv7`，二进制是静态链接的，不挑发行版。
+
+**飞牛 fnOS 另有一份原生安装包**：`clip9-fnos-v<版本>-x86.fpk` / `-arm.fpk`（[Releases](https://github.com/Jonnyan404/clip9/releases) 里），
+在「应用中心 → 手动安装」装上即可，不用开 Docker。详见 [`fnos/README.md`](./fnos/README.md)。
 
 - **数据目录放在共享文件夹里**，别放系统盘、也别放 Docker 自己的数据目录（`/vol1/@docker`）——
   放共享文件夹才能在 fnOS 的「文件管理」里看见上传的文件、也才能被它自带的备份任务带走。
-  例：`/vol1/1000/docker/clip9/data:/app/server-node/data`。
+  例：`/vol1/1000/docker/clip9/data:/app/server-node/data`。fpk 装的那份**本来就在**共享文件夹里。
 - **拉不动 `ghcr.io` 就换 Docker Hub**：`image: jonnyan404/clip9:latest`（同一份镜像）。
 - **要装成 PWA 就必须走 HTTPS**：浏览器只在安全上下文里注册 Service Worker，
   `http://<NAS-IP>:9501` 打开能用，但装不了。两条路：反代 + 真证书（推荐），
