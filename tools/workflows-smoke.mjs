@@ -1752,6 +1752,12 @@ const pkgApk = read('openwrt/scripts/package-openwrt-apk.sh');
     if (!/\bnoui\b/.test(readme)) {
       problems.push('README 里没有提 `noui` 镜像标签');
     }
+    // ⚠️ NAS 那一节是 2026-10-28 加的（飞牛 fnOS 的评估结论）：它同时是**唯一**写着
+    // 「PWA 要 HTTPS」「反代要放行 WebSocket」「数据目录别放系统盘」这三条的地方 ——
+    // 掉了不会有任何报错，只会有人照着旧文档装完发现装不成 PWA。
+    if (!/fnOS/.test(readme)) {
+      problems.push('README 里没有 NAS（飞牛 fnOS）那一节');
+    }
   }
 
   if (!problems.length) ok(label);

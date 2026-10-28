@@ -154,6 +154,24 @@ docker compose up -d
 
 </details>
 
+### 🖥️ NAS（飞牛 fnOS / 群晖 / 绿联 / 极空间 …）
+
+**没有专用安装包，也不需要**：这些系统都带 Docker（fnOS 的「Docker」应用、群晖的 Container Manager），
+上面那份 compose 直接就能用。镜像覆盖 `amd64` / `arm64` / `armv7`，二进制是静态链接的，不挑发行版。
+
+- **数据目录放在共享文件夹里**，别放系统盘、也别放 Docker 自己的数据目录（`/vol1/@docker`）——
+  放共享文件夹才能在 fnOS 的「文件管理」里看见上传的文件、也才能被它自带的备份任务带走。
+  例：`/vol1/1000/docker/clip9/data:/app/server-node/data`。
+- **拉不动 `ghcr.io` 就换 Docker Hub**：`image: jonnyan404/clip9:latest`（同一份镜像）。
+- **要装成 PWA 就必须走 HTTPS**：浏览器只在安全上下文里注册 Service Worker，
+  `http://<NAS-IP>:9501` 打开能用，但装不了。两条路：反代 + 真证书（推荐），
+  或设 `MKCERT_DOMAIN_OR_IP` 自签 —— 后者要把容器里 `/root/.local/share/mkcert/rootCA.pem`
+  取出来装到手机上才算信任；想让它跟着数据目录走，加一个环境变量 `CAROOT=/app/server-node/data/mkcert`。
+- **反代必须放行 WebSocket**（`/push` 的 `Upgrade`）：实时推送走的就是它。
+  要挂在子路径上就用 `PREFIX=/clip9`，别用反代去改写路径。
+- **文件属主**：容器默认以 root 跑，共享文件夹里会是 `root:root`。想以普通用户跑就给 compose 加
+  `user: "1000:1000"` 并把数据目录 `chown` 给它 —— 配置会自动落到数据目录里（容器里那个位置是 root 的）。
+
 ### 📦 其他装法
 
 <details>
