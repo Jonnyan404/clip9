@@ -1,0 +1,14 @@
+{
+    ".url": {
+        "clip9.Application": {
+            "title": "clip9",
+            "desc": "跨设备剪贴板",
+            "icon": "images/{0}.png",
+            "type": "url",
+            "port": "9501",
+            "protocol": "http",
+            "url": "/",
+            "allUsers": true
+        }
+    }
+}

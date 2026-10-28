@@ -1,0 +1,17 @@
+{
+    "port-config": {
+        "protocol-file": "clip9.sc"
+    },
+    "data-share": {
+        "shares": [
+            {
+                "name": "clip9",
+                "permission": {
+                    "rw": [
+                        "clip9"
+                    ]
+                }
+            }
+        ]
+    }
+}

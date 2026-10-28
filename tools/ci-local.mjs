@@ -94,6 +94,9 @@ const STEPS = [
   { job: 'frontend', cmd: 'node tools/share-bridge-smoke.mjs' },
   { job: 'frontend', cmd: 'node tools/shell-smoke.mjs' },
   { job: 'frontend', cmd: 'node tools/android-contract-smoke.mjs' },
+  // 飞牛 fnOS 的 .fpk：端口四处 / 桌面入口键 / manifest 占位符 / 二进制路径。
+  // 与 openwrt 那些包不一样，这条**不需要产物**（秒级），所以本机也跑。
+  { job: 'frontend', cmd: 'node tools/fnos-package-smoke.mjs' },
   { job: 'frontend', cmd: 'node tools/workflows-smoke.mjs' },
   { job: 'frontend', cmd: 'node tools/release-smoke.mjs' },
   { job: 'frontend', cmd: 'node tools/docs-links-smoke.mjs' },

@@ -1,0 +1,57 @@
+#!/bin/bash
+# 飞牛 fnOS 的服务脚本：应用中心按这里声明的变量起停 clip9。
+#
+# ⚠️★ 与 Docker 那条路（`entrypoint.sh`）**刻意不同**，别把两边改成一样：
+#
+#   · 这里**不跑** `entrypoint.sh` —— 那个脚本的职责是「把环境变量翻译成 config.json」，
+#     而 fpk 没有环境变量那一层（应用中心不传 env）。
+#   · 配置**不由这里生成**。服务端自己就会写：`config_file::load_or_create` 在文件不存在时
+#     写一份默认配置再照常启动（那是它的三条语义之一，也是「零配置启动」的来源）。
+#     在这里再抄一份 JSON = **多一处会漂的权威** —— 服务端加字段时这份不会跟着长。
+#   · 端口用 `-port` 传，**不去改 config.json**。`-port` 的语义就是「设置则覆盖配置文件」，
+#     所以对 fpk 来说 config.json 里的 `port` 是**不生效的**（`fnos/README.md` 里写明了）。
+
+APP_DIR="${TRIM_APPDEST}"
+APP_DATA_DIR="${TRIM_PKGVAR}"
+
+LOG_FILE="${APP_DATA_DIR}/${TRIM_APPNAME}.log"
+PID_FILE="${APP_DATA_DIR}/${TRIM_APPNAME}.pid"
+
+# 端口：应用中心改过就记在 `.port` 里（见 `service_postconfig`），没改过就是 9501。
+# ⚠️ 这个文件只由下面那个钩子写 —— 手改它不会同步到 `clip9.sc` / `ui/config` 里的声明，
+#    所以真要换端口请走应用中心。
+PORT_FILE="${APP_DATA_DIR}/.port"
+APP_PORT="$(cat "${PORT_FILE}" 2>/dev/null || true)"
+APP_PORT="${APP_PORT:-9501}"
+
+# ⚠️★ `-data` 是必须的：配置里的 `dbPath` / `storageDir` 写的是**相对路径**，
+#    它们相对 `-data` 解析（不是相对 cwd）。少了它，库和上传会落到进程的当前目录里 ——
+#    而那个目录在升级时会换，等于每次升级丢一次历史。
+SERVICE_COMMAND="${APP_DIR}/bin/clip9-cli -config ${APP_DATA_DIR}/config.json -data ${APP_DATA_DIR} -port ${APP_PORT}"
+
+SVC_BACKGROUND=y
+SVC_WRITE_PID=y
+
+service_postinst() {
+    mkdir -p "${APP_DATA_DIR}" 2>/dev/null || true
+    echo "clip9: 数据目录 ${APP_DATA_DIR}（首次启动时会在里面写一份默认 config.json）"
+}
+
+# 应用中心改端口时会调它（`wizard_port` 是平台给的新端口）。
+service_postconfig() {
+    [ -z "${wizard_port}" ] && return 0
+    echo "${wizard_port}" > "${PORT_FILE}"
+    echo "clip9: 端口改为 ${wizard_port}（记在 ${PORT_FILE}，下次启动生效）"
+}
+
+service_preuninst() {
+    # ⚠️ `-x` 精确匹配进程名：`pkill clip9` 会连带命中 `clip9-cli -config …` 之外的
+    # 那些「命令行里含 clip9」的进程（应用中心自己就是其中之一）。
+    pkill -x "clip9-cli" 2>/dev/null || true
+    sleep 1
+    pkill -9 -x "clip9-cli" 2>/dev/null || true
+}
+
+service_poststop() {
+    service_preuninst
+}

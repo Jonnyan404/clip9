@@ -1,0 +1,28 @@
+# 飞牛 fnOS 应用包的元数据。
+#
+# ⚠️★ `version` / `platform` / `checksum` 这三格是**占位符**，由
+#    `fnos/scripts/package-fnos.sh` 在打包时改写（它写进的是暂存目录里那份，不是这个文件）。
+#    所以这里的 `0.0.0` **不是**「忘了改」—— 直接拿这个文件去装是装不上的。
+#
+# ⚠️ `platform` 只有两个值：`x86`（= amd64）与 `arm`（= arm64）。
+#    两个架构是**两个包**（一个包只能声明一个 platform），文件名也分开。
+#
+# ⚠️ `service_port` 必须与 `clip9.sc` 的 `src.ports`、`ui/config` 的 `port` 三处一致 ——
+#    应用中心按它判断端口占用、桌面图标按它拼地址。判据：`tools/fnos-package-smoke.mjs`。
+#
+# ⚠️ `desktop_applaunchname` 必须与 `ui/config` 里 `.url` 的那个键一致，否则桌面**没有图标**
+#    （装得上、能跑、就是找不到入口）。
+appname         = clip9
+version         = 0.0.0
+display_name    = clip9
+platform        = x86
+maintainer      = Jonnyan404
+maintainer_url  = https://github.com/Jonnyan404/clip9
+distributor     = Jonnyan404
+distributor_url = https://github.com/Jonnyan404/clip9
+desktop_uidir   = ui
+desktop_applaunchname = clip9.Application
+service_port    = 9501
+desc            = 跨设备剪贴板：文字、图片、文件，自建服务端，数据只存在自己的机器上
+source          = thirdparty
+checksum        =

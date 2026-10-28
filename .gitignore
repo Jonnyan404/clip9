@@ -148,3 +148,8 @@ config.json
 # macOS
 .DS_Store
 **/.DS_Store
+
+# ── 飞牛 fnOS 的安装包（本地打包产物，每个 12 MB 左右）──
+# ⚠️ 与 `rust/crates/server/static/` 同一个道理：**产物不入库**，由 release.yml 现打。
+#    本机 `./fnos/scripts/package-fnos.sh` 的默认输出就在这儿。
+/fnos/build

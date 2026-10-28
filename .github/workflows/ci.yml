@@ -170,6 +170,12 @@ jobs:
       - name: Android 契约静态自检
         run: node tools/android-contract-smoke.mjs
 
+      # ⚠️★ 飞牛的 `.fpk` 安装包是一堆**约定**凑出来的目录树，而这里面的错没有一个是会报错的：
+      # 端口写在四处、桌面入口的键要对上、manifest 的三格靠打包脚本改写、二进制路径两处要对。
+      # 漂了的症状全是「装上了、能跑、但图标点开是白的」。见 tools/fnos-package-smoke.mjs 抬头。
+      - name: fnOS 安装包约定自检
+        run: node tools/fnos-package-smoke.mjs
+
       # ⚠️★ `release.yml` ↔ `openwrt.yml` / `android.yml` 之间靠一串**字符串**连着
       # （artifact 名字、glob 前缀、矩阵条目数）。而那两个工作流**本机跑不起来**
       # （要 runner、Android SDK、Docker 里的 apk-tools），断了只有到发版那天才知道。

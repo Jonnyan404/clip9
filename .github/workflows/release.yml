@@ -1311,6 +1311,74 @@ jobs:
           files: extra/*.apk
           overwrite_files: true
 
+  # ── 飞牛 fnOS 的 `.fpk`：**不编译**，用 linux 那两个 musl 二进制现打 ──────────
+  #
+  # ⚠️★ 为什么不在这格编：包里要装的必须是**发出去的那一份**（与 `Dockerfile` 同一个理由，
+  #    见文件头「产物清单」）。`fnos/scripts/package-fnos.sh` 只做「解包 → 组装 → tar」，
+  #    所以这一格是**秒级**的，`needs: linux` 等的是那个矩阵（armv7 那格我们不用，等它不亏）。
+  #
+  # ⚠️ 两个包：`x86`（= amd64）与 `arm`（= arm64）。**一个包只能声明一个 platform**，
+  #    所以是两次组装、两个文件 —— 想「一个包装两个架构」在 fnOS 上做不到。
+  #
+  # ⚠️ 产物名 `clip9-fnos-v<版本>-<平台>.fpk` 守全仓那条规则（`v<版本>` 紧跟 `clip9-<东西>`）；
+  #    判据：`tools/fnos-package-smoke.mjs`。
+  fnos:
+    needs: [info, linux]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      # ⚠️ 前缀 `clip9-cli-linux-*` **不会**命中 `clip9-cli-noui-linux-*`（那个是另一套名字）——
+      #    所以这里取到的就是带界面的那两份。
+      - uses: actions/download-artifact@v8
+        with:
+          path: cli
+          merge-multiple: true
+          pattern: clip9-cli-linux-*
+
+      - name: 打两个包（x86 + arm）
+        run: |
+          set -euo pipefail
+          ls -l cli
+          # ⚠️ 这个脚本打完**当场自检**（结构 / manifest 的 checksum / 二进制架构），
+          #    不过就非零退出 —— 不要在这里再抄一遍那些判据。
+          fnos/scripts/package-fnos.sh --version "${{ needs.info.outputs.tag }}" --in cli --out dist
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: clip9-fnos
+          path: dist/*.fpk
+          if-no-files-found: error
+
+  publish-fnos:
+    needs: [info, publish, fnos]
+    # 与 publish 同一个条件（手动跑、tag 留空的那次冒烟只构建、不上传）。
+    if: github.event_name == 'release' || inputs.tag != ''
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          path: extra
+          merge-multiple: true
+          pattern: clip9-fnos
+
+      - name: 待传清单
+        run: |
+          set -euo pipefail
+          ls -l extra
+          # ⚠️★ 期望 **2** 个（x86 + arm）。写死个数是故意的 —— `files: extra/*` 匹配空是
+          #    **静默**的（`action-gh-release` 会「成功地什么都没做」），少了也没人知道。
+          #    这个 2 必须与 `package-fnos.sh` 里那张平台表一致。
+          n=$(find extra -maxdepth 1 -name 'clip9-fnos-v*.fpk' | wc -l)
+          echo "fpk=${n}（期望 2：x86 + arm）"
+          [ "$n" = 2 ] || { echo "::error::fpk 有 ${n} 个，应当是 x86 + arm 两个（见 package-fnos.sh 的平台表）"; exit 1; }
+
+      - uses: softprops/action-gh-release@v3
+        with:
+          tag_name: ${{ needs.info.outputs.tag }}
+          files: extra/*
+          overwrite_files: true
+
   # ── 容器镜像：**不编译**，直接用 Release 里那份二进制 ─────────────────────
   #
   # ‼️ 所以这个 job 必须 `needs: publish` —— 镜像里是 `wget` Release 资产的，资产还没传完就
