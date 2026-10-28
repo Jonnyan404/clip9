@@ -1718,6 +1718,27 @@ const pkgApk = read('openwrt/scripts/package-openwrt-apk.sh');
           '键名写错时服务端会静默忽略（serde 的 `default`）',
       );
     }
+    // ⚠️★ 2026-10-28：容器**可以**以非 root 跑（NAS 上的 PUID 映射、fnOS 的 fpk 用
+    // `run-as: package`），而 `/app/server-node` 归 root —— 那时 `cat > config.json` 会
+    // `Permission denied`，**而 shell 的重定向失败不会中止脚本**：服务端拿默认配置起来，
+    // 密码 / 限额 / TLS 一条都没生效（实测 `auth: false`）。两条一起守：
+    //   ① 写不进去就落到数据目录（挂载卷，可写）；
+    //   ② 真写不出来就 `exit 1`，不许「起来了、但没密码」。
+    if (!/\[ ! -w "\$\(dirname "\$\{CONFIG_FILE\}"\)" \]/.test(entry)) {
+      problems.push(
+        'entrypoint.sh 没有探「配置目录可不可写」—— 非 root 跑时配置写不进去，' +
+          '而重定向失败不会中止脚本，服务端会拿默认配置起来（没密码）',
+      );
+    }
+    if (!/CONFIG_FILE="\$\{DATA_DIR\}\/config\.json"/.test(entry)) {
+      problems.push('entrypoint.sh 没有把配置回落到 `${DATA_DIR}/config.json`（非 root 时无处可写）');
+    }
+    if (!/if \[ ! -f "\$\{CONFIG_FILE\}" \]; then[\s\S]{0,400}?exit 1/.test(entry)) {
+      problems.push(
+        'entrypoint.sh 写完配置后没有「文件不存在就 exit 1」的收口 —— ' +
+          '带密码的部署「起来了、但没密码」比起不来危险得多',
+      );
+    }
   }
 
   // ⑤ 文档：这个变量得有人写出来，不然只能靠读 entrypoint

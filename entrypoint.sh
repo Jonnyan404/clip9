@@ -22,6 +22,21 @@ AUTH_JSON_VALUE="${AUTH_PASSWORD:-false}"
 # mkcert 会把证书写到数据目录里，而数据目录这时候可能还不存在（没挂卷时就是）。
 mkdir -p "${DATA_DIR}"
 
+# --- 配置写在哪：镜像里那个目录**归 root** -------------------------------------
+#
+# ⚠️★ 容器可以以非 root 跑（NAS 上的 PUID/PGID 映射、fnOS 的 fpk 用 `run-as: package`），
+#    而 `/app/server-node` 是 root 的 755 —— 那时下面那个 `cat > config.json` 会
+#    `Permission denied`，**而 shell 的重定向失败不会中止脚本**：
+#    服务端拿**默认配置**起来，密码 / 限额 / TLS / 跨源**一条都没生效**，
+#    日志里只有一行 shell 报错（2026-10-28 实测：`--user 1000:1000` 下 `/server` 报
+#    `auth: false`，而环境里明明给了 AUTH_PASSWORD）。
+#    这正是项目那条「失败可降级，但绝不静默丢」要挡的东西 —— 所以这里先探一下：
+#    写不进去就落到**数据目录**（挂载卷，通常可写），并且明说一句。
+if [ ! -w "$(dirname "${CONFIG_FILE}")" ]; then
+    echo "注意：/app/server-node 不可写（容器不是 root 跑的），配置改写到 ${DATA_DIR}/config.json" >&2
+    CONFIG_FILE="${DATA_DIR}/config.json"
+fi
+
 if [ -z "${ROOM_AUTH_JSON_VALUE}" ]; then
     ROOM_AUTH_JSON_VALUE='{}'
 fi
@@ -166,6 +181,15 @@ cat>"${CONFIG_FILE}"<<EOF
 EOF
 else
     echo "#####Configuration file already exists#####"
+fi
+
+# ⚠️★ 上面那段是**重定向**，失败时 shell 只打一行错、脚本继续往下跑。所以这里收一次口：
+#    配置没落盘就**不启动**。带密码的部署「起来了、但没密码」比起不来危险得多。
+if [ ! -f "${CONFIG_FILE}" ]; then
+    echo "错误：没能写出配置文件 ${CONFIG_FILE}" >&2
+    echo "      （数据目录不可写？挂载点要允许容器内的用户写入）" >&2
+    echo "      环境变量（密码 / 限额 / TLS）都不会生效，因此不启动。" >&2
+    exit 1
 fi
 
 # ⚠️ `dbPath` / `storageDir` 写的是**相对路径**，它们相对 `-data` 解析（不是相对 cwd）——
