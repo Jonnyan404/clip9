@@ -11,8 +11,11 @@ body {
     min-height: 100%;
 }
 
-/* 模式根容器：与 web-vue3/src/views/Home.vue 的 .mode-root 一致 */
+/* 模式根容器：与 web-vue3/src/views/Home.vue 的 .mode-root 对应。
+   ⚠️★ 外壳现在是 **100dvh 的 flex 列**（内容区有确定高度），所以这里用 `height: 100%`
+   填满内容区；**不要**再写 `min-height: 100dvh` —— 那会让模式内容按视口高度撑开，
+   在外壳内容区里溢出并被裁掉（时间线/画布等内部滚动区量到的高度会大于可用高度）。 */
 .mode-root {
-    min-height: 100vh;
-    min-height: 100dvh;
+    height: 100%;
+    min-height: 0;
 }

@@ -168,7 +168,7 @@ export default function ConvertWall() {
             className="convert-wall"
             // ⚠️ 根节点 `100dvh` + 内容区 `flex: 1` —— 与其余模式同一条规矩，
             // 见 `check-display-semantics.mjs` 的判据 7（`flex: 1` ⇒ 祖先要有确定高度）。
-            sx={{ display: 'flex', flexDirection: 'column', height: '100dvh', minHeight: 0 }}
+            sx={{ display: 'flex', flexDirection: 'column', height: '100%', minHeight: 0 }}
             onDragEnter={(event) => {
                 event.preventDefault();
                 dragDepth.current += 1;

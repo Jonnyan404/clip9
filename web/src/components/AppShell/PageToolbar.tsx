@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Badge, Box, Chip, IconButton, ListItemIcon, ListItemText, Menu, MenuItem, Stack, Tooltip, useTheme } from '@mui/material';
 import { MODES_META } from '@/modes/meta';
@@ -36,36 +36,18 @@ export function PageToolbar({ variant = 'default' }: { variant?: string }) {
 
     const [collapsed, setCollapsed] = useState(() => localStorage.getItem('pageToolbarCollapsed') === 'true');
     const [modeMenuAnchor, setModeMenuAnchor] = useState<HTMLElement | null>(null);
-    const rootRef = useRef<HTMLDivElement | null>(null);
 
     const menuLayout = useAppStore((s) => s.menuLayout);
     const isSide = menuLayout === 'side';
 
-    // ⚠️ 把工具栏**实际高度**写进 CSS 变量：标准模式里吸顶的输入区要拿它当 `top`，
-    // 否则向上滚动时输入区会被工具栏遮住一部分（工具栏是 sticky，输入区 top 写死 8px 就会滑到它下面）。
-    // 用 ResizeObserver 而不是写死数字：工具栏可折叠、模式不同、字号不同，高度都会变。
+    // ⚠️★ 侧栏模式下写**它自己占多宽**（2026-10-07）：收起时这条栏是**空的**，
+    // 而 `AppShell` 还给左边留着 56px —— 用户报的「点了隐藏只隐藏了图标」就是这个
+    //（图标没了，那一整条空位还在）。两处读**同一个变量**，就不会再各写一个数。
+    // ⚠️ 工具栏高度**不再**写 CSS 变量：标准模式的输入区现在是固定头部，不再吸顶；
+    // 每个模式的内容区自己滚（见 `DefaultMode` 的 `listScrollRef`）。
     useEffect(() => {
-        const el = rootRef.current;
-        if (!el) return;
-        const apply = () => {
-            // ⚠️★ 侧栏模式下必须写 **0**：那条栏是 `position: fixed` 的**竖**栏，
-            // 高度就是整屏（100dvh）。照实写进去的话，标准模式里那句
-            // `top: var(--page-toolbar-height)` 会把输入区推到**整整一屏之下** ——
-            // 用户看到的就是「切到侧栏之后输入区不见了」（2026-10-07 报的）。
-            // ⚠️ 竖栏占的是**横向**空间，那个由 `AppShell` 的 `padding-left` 让开，不是这里。
-            const height = isSide ? 0 : el.offsetHeight;
-            document.documentElement.style.setProperty('--page-toolbar-height', `${height}px`);
-            // ⚠️★ 侧栏模式下还要写**它自己占多宽**（2026-10-07）：收起时这条栏是**空的**，
-            // 而 `AppShell` 还给左边留着 56px —— 用户报的「点了隐藏只隐藏了图标」就是这个
-            //（图标没了，那一整条空位还在）。两处读**同一个变量**，就不会再各写一个数。
-            const width = isSide && !collapsed ? 56 : 0;
-            document.documentElement.style.setProperty('--page-sidebar-width', `${width}px`);
-        };
-        apply();
-        if (typeof ResizeObserver === 'undefined') return;
-        const observer = new ResizeObserver(apply);
-        observer.observe(el);
-        return () => observer.disconnect();
+        const width = isSide && !collapsed ? 56 : 0;
+        document.documentElement.style.setProperty('--page-sidebar-width', `${width}px`);
     }, [collapsed, isSide]);
 
     const currentMode = MODES_META.find((m) => m.key === uiMode) || MODES_META[0];
@@ -103,7 +85,6 @@ export function PageToolbar({ variant = 'default' }: { variant?: string }) {
 
     return (
         <Box
-            ref={rootRef}
             className={`page-toolbar page-toolbar--${variant}`}
             sx={{
                 // ⚠️★ 侧栏模式（2026-10-07）：**固定**在左边，而不是 `sticky` 在顶部 ——

@@ -296,14 +296,6 @@ const activeModes = MODES;
     position: sticky;
     top: 0;
     z-index: 40;
-    /* ⚠️★ 没有专属底色的模式（glance / board 等）以前是透明的，
-       页面向上滚动时头部会从工具栏下面透出来 —— 看起来就是和顶部菜单栏叠在一起。
-       实底取页面自己的底色；default / sticky 等变体下面会覆盖它。 */
-    background: #f4f7fb;
-}
-
-.page-toolbar--dark {
-    background: #0f172a;
 }
 
 .page-toolbar--collapsed .page-toolbar__inner {

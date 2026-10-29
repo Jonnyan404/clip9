@@ -279,19 +279,29 @@ for (const locale of LOCALES) {
     ok(`locale ${locale}: 已不残留 scOutdatedNotice / scUpdatedAt`, !('scOutdatedNotice' in dict) && !('scUpdatedAt' in dict));
 }
 
-// ── 5b. 工具栏必须是实底 ───────────────────────────────────────────────
+// ── 5b. 标准模式：卡片区自己滚，窗口不滚 ─────────────────────────────
 //
-// ⚠️★ 这不是审美：`page-toolbar` 是 `position: sticky`，页面向下滚动时头部/列表会从
-// 它下面穿过去。没有专属底色的模式（glance / board / timeline / bench / canvas / convert）
-// 以前是透明的，于是滚动时内容直接透出来，看起来就是「和顶部菜单栏叠在一起」
-// （2026-10-29 用户报的移动端问题；桌面端同一条 CSS 同样会中）。
-// 变体自己的背景（default / sticky）可以覆盖，但**兜底那层实底必须在**。
+// ⚠️★ 根因不是工具栏透明 —— 是外壳让**整个窗口**参与滚动：工具栏 sticky，
+// 页面内容从它下面穿过去。用户往上滑时，头部/卡片被推入菜单栏区域，才开始「叠」。
+// 正确结构：外壳 `100dvh` flex 列 + `overflow: hidden`，模式根 `100%`，
+// 工具栏和输入/搜索头固定，**只有卡片列表** `overflow-y: auto`。
 {
-    const css = readFileSync(join(WEB, 'src/styles/components.css'), 'utf8');
+    const shell = readFileSync(join(WEB, 'src/components/AppShell/AppShell.tsx'), 'utf8');
+    const defaultMode = readFileSync(join(WEB, 'src/modes/DefaultMode.tsx'), 'utf8');
     ok(
-        'page-toolbar 有跟随页面底色的实底（不能只靠透明变体）',
-        /\.page-toolbar\s*\{[^}]*background:\s*var\(--mui-palette-background-default/.test(css),
-        '透明工具栏在滚动时会和内容叠在一起；实底写成 var(--mui-palette-background-default, #fff)',
+        '外壳是 100dvh 的 flex 列且不滚动',
+        /height:\s*'100dvh'/.test(shell) && /flexDirection:\s*'column'/.test(shell) && /overflow:\s*'hidden'/.test(shell),
+        '外壳如果有 minHeight 而不是定高，窗口就会整体滚动，内容会从顶部工具栏下面穿过去',
+    );
+    ok(
+        '标准模式根节点填满内容区（100%）',
+        /height:\s*'100%'/.test(defaultMode) && /flexDirection:\s*'column'/.test(defaultMode),
+        '模式根节点要用 100% 填满外壳内容区；不要再用视口高度',
+    );
+    ok(
+        '标准模式的卡片列表自己滚（有 listScrollRef + overflowY）',
+        /listScrollRef/.test(defaultMode) && /overflowY:\s*'auto'/.test(defaultMode),
+        '卡片列表没有自己的滚动容器，只能靠窗口滚 —— 正是这次用户报的问题',
     );
 }
 
@@ -438,15 +448,20 @@ for (const problem of i18nProblems) console.log(`      · ${problem}`);
 // 看起来像「还没加载完」或者「这个模式就是这样」。静态读代码看不出来，
 // 必须真浏览器量一次才知道。**这就是为什么这条判据留在这儿而不是只写进注释。**
 //
-// ⚠️★ 判据的形式是「**有 `flex: 1` ⇒ 必须有 `100dvh`**」，不是「每个模式都必须有 `100dvh`」。
-// 这个区别是**验证过的**，不是猜的：`DefaultMode` / `BenchWall` 是滚动列表模式，
-// 一个 `flex: 1` 都没有，靠页面自然滚动 —— 要求它们撑满视口是**错的**
-// （第一版判据就是这么写的，当场误报了两个模式）。
-// 真正的不变式是：**`flex: 1` 只在祖先有确定高度时才有效**。
+// ⚠️★ 真正的不变式是：**`flex: 1` 只在祖先有确定高度时才有效**。
+// 2026-10-29 起外壳自己是 `height: '100dvh'` + `overflow: hidden` 的 flex 列，
+// 模式根节点统一用 `height: '100%'` 填满它；所以「确定高度」可以在模式自己身上
+// （`100dvh`），也可以由外壳提供（`100dvh` + 模式的 `100%`）。
+// 两种都要认；只认 `100dvh` 会误报所有模式，只认 `100%` 会漏掉外壳退化的情形。
 //
 // ⚠️ `dvh` 而不是 `vh`：移动端地址栏收起/展开时 `vh` 算的是**最大值**，
 // 底部会被切掉一截；`dvh` 跟当前可视高度走。
 {
+    const shellSource = stripComments(readFileSync(join(WEB, 'src/components/AppShell/AppShell.tsx'), 'utf8'));
+    const shellHasDefiniteHeight =
+        /height:\s*'100dvh'/.test(shellSource) &&
+        /flexDirection:\s*'column'/.test(shellSource) &&
+        /overflow:\s*'hidden'/.test(shellSource);
     const modesDir = join(WEB, 'src/modes');
     const modeFiles = readdirSync(modesDir).filter((f) => f.endsWith('.tsx'));
     const broken = [];
@@ -461,7 +476,9 @@ for (const problem of i18nProblems) console.log(`      · ${problem}`);
             continue;
         }
         withFlex += 1;
-        if (!/height:\s*'100dvh'/.test(source)) {
+        const hasOwnHeight = /height:\s*'100dvh'/.test(source);
+        const fillsDefiniteShell = shellHasDefiniteHeight && /height:\s*'100%'/.test(source);
+        if (!hasOwnHeight && !fillsDefiniteShell) {
             broken.push(file);
         }
     }
@@ -470,10 +487,10 @@ for (const problem of i18nProblems) console.log(`      · ${problem}`);
     ok(
         `用了 flex:1 的模式都有撑满视口的祖先（${withFlex} 个模式，≥3 说明判据没坏）`,
         broken.length === 0 && withFlex >= 3,
-        broken.length ? `${broken.join(', ')} 有 flex:1 但没有 100dvh —— 那块区域会塌成 0` : `只扫到 ${withFlex} 个`,
+        broken.length ? `${broken.join(', ')} 有 flex:1 但没有 100dvh/100%（外壳定高） —— 那块区域会塌成 0` : `只扫到 ${withFlex} 个`,
     );
     for (const file of broken) {
-        console.log(`      · ${file} 有 flex:1 却没有 100dvh —— 里面的区域会塌成 0 高（不报错，只是空白）`);
+        console.log(`      · ${file} 有 flex:1 却没有 100dvh 或（外壳定高时的）100% —— 里面的区域会塌成 0 高（不报错，只是空白）`);
     }
 }
 

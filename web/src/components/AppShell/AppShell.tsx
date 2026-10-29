@@ -153,17 +153,34 @@ export function AppShell({ children }: { children: ReactNode }) {
                 这个数**由 `PageToolbar` 写进 `--page-sidebar-width`**（两处各写一个数字的画，
                 「点了隐藏只隐藏了图标」就是那个漂：图标没了、这条空位还在）。
                 不留的话内容会被压在栏下面，而且**看起来只是「左边少了一块」**。 */}
-            <Box sx={{ minHeight: '100dvh', bgcolor: 'background.default', pl: isSide ? 'var(--page-sidebar-width, 56px)' : 0 }}>
+            {/* ⚠️★ 外壳是**100dvh 的 flex 列 + overflow hidden**：整个窗口不滚，
+                工具栏和模式头固定，每个模式的内容区自己滚。
+                ⚠️ 以前这里是 `minHeight: 100dvh`，窗口可以整体滚动 —— 工具栏是 sticky，
+                内容就会从它下面穿过去（2026-10-29 用户报的「往上滑头部内容滑进顶部菜单栏」）。
+                模式根节点因此也统一用 `height: 100%`（不是 100dvh）。 */}
+            <Box
+                sx={{
+                    height: '100dvh',
+                    minHeight: 0,
+                    display: 'flex',
+                    flexDirection: 'column',
+                    overflow: 'hidden',
+                    bgcolor: 'background.default',
+                    pl: isSide ? 'var(--page-sidebar-width, 56px)' : 0,
+                }}
+            >
                 {clearedVisible && (
-                    <Alert severity="error" onClose={() => setClearedVisible(false)} sx={{ borderRadius: 0, justifyContent: 'center' }}>
+                    <Alert severity="error" onClose={() => setClearedVisible(false)} sx={{ borderRadius: 0, justifyContent: 'center', flexShrink: 0 }}>
                         {t('clipboardClearedRefresh')}
                     </Alert>
                 )}
 
                 <Box
                     sx={{
+                        flex: 1,
+                        minHeight: 0,
                         display: 'flex',
-                        alignItems: 'flex-start',
+                        alignItems: 'stretch',
                         gap: desktopDockEnabled ? 0 : '20px',
                         // ⚠️★ 侧栏模式下**强制房间列表在右边**（`row`）：左边那条固定栏
                         // 与房间列表的「左右切换」按钮（`‹ / ›`）会叠在一起 ——
@@ -171,19 +188,18 @@ export function AppShell({ children }: { children: ReactNode }) {
                         // ⚠️ 只是**显示**上强制，`roomDockSide` 这个偏好没被改掉 ——
                         // 切回「顶部」之后它还是用户原来选的那一侧。
                         flexDirection: desktopDockEnabled && roomDockSide === 'left' && !isSide ? 'row-reverse' : 'row',
-                        minHeight: '100vh',
                     }}
                 >
-                    <Box sx={{ flex: 1, minWidth: 0 }}>{children}</Box>
+                    <Box sx={{ flex: 1, minWidth: 0, minHeight: 0, overflow: 'hidden' }}>{children}</Box>
 
                     {desktopDockVisible && (
                         <Box
                             component="aside"
                             sx={{
-                                position: 'sticky',
-                                top: 0,
-                                height: '100vh',
-                                alignSelf: 'flex-start',
+                                height: '100%',
+                                minHeight: 0,
+                                alignSelf: 'stretch',
+                                flexShrink: 0,
                             }}
                         >
                             <RoomList

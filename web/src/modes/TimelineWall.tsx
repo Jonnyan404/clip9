@@ -167,7 +167,7 @@ export default function TimelineWall() {
     }, [received.length]);
 
     return (
-        <Box className="timeline-wall" sx={{ display: 'flex', flexDirection: 'column', height: '100dvh' }}>
+        <Box className="timeline-wall" sx={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
             <PageToolbar variant="timeline" />
             <Box sx={{ flex: 1, minHeight: 0, width: '100%', maxWidth: 980, mx: 'auto', px: { xs: 1.5, md: 2.5 }, display: 'flex', flexDirection: 'column' }}>
                 <div className="timeline-wall__head">

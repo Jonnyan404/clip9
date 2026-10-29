@@ -499,14 +499,13 @@ export default function CanvasWall() {
     return (
         <Box
             className="canvas-wall"
-            // ⚠️★ `100dvh` 而**不是** `100%`：外壳**不给**模式组件一个确定的高度
-            // （它是普通块级流，不是定高 flex 容器），所以 `height: '100dvh'` 会退化成
-            // `auto` = 内容高度 —— 下面那个 `flex: 1` 的画布区随之塌成 **1px**。
-            // 症状极其隐蔽：**没有报错、没有警告**，画布元素在 DOM 里、`<canvas>` 也在，
-            // 只是 Excalidraw 量到的高度是 0，于是一片空白（看起来像「还没加载完」）。
-            // 其它模式的根节点都是 `100dvh`，这条是跟着它们来的。
-            // ⚠️ `dvh` 而不是 `vh`：移动端地址栏收起/展开时 `vh` 会算错，底部被切掉一截。
-            sx={{ display: 'flex', flexDirection: 'column', height: '100dvh', minHeight: 0 }}
+            // ⚠️★ 根节点用 `100%`（不是 `100dvh`）：外壳现在是 **100dvh 的 flex 列**，
+            // 内容区有确定高度；这里必须填满内容区，而不是再拿一个视口高度。
+            // 之前外壳是普通块级流时，`100%` 会退化成 `auto` = 内容高度，下面那个
+            // `flex: 1` 的画布区随之塌成 **1px** —— 症状是空白且没有报错。现在外壳
+            // 给了确定高度，`100%` 才是对的；其余模式同样统一成 `100%`。
+            // ⚠️ 不要让模式自己引入页面级滚动：内容区（画布/列表）自己滚。
+            sx={{ display: 'flex', flexDirection: 'column', height: '100%', minHeight: 0 }}
             onDragEnter={(event) => {
                 event.preventDefault();
                 dragDepth.current += 1;

@@ -144,7 +144,7 @@ export default function GlanceWall() {
     };
 
     return (
-        <Box sx={{ display: 'flex', flexDirection: 'column', height: '100dvh' }}>
+        <Box sx={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
             <PageToolbar variant="glance" />
             <Box sx={{ flex: 1, minHeight: 0, width: '100%', maxWidth: 1200, mx: 'auto', px: 1.75, pb: 1.5, display: 'flex', flexDirection: 'column' }}>
                 {/* 头部：搜索是这一屏的主操作，所以它不带外框、直接铺在头部 */}

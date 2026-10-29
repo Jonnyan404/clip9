@@ -39,6 +39,10 @@ const FILTER_OPTIONS: Array<{ key: TimelineFilter; labelKey: string; icon: strin
 export default function DefaultMode() {
     const { t } = useTranslation();
     const composerRef = useRef<UnifiedComposerHandle | null>(null);
+    // 卡片列表自己的滚动容器 —— 整个窗口不滚，只有这一块滚。
+    // ⚠️ 新消息吸顶 / 热力图跳转都要用这个 ref；用 window.scrollY 的话会误判
+    //「读者在顶部」，因为窗口根本不再滚了。
+    const listScrollRef = useRef<HTMLDivElement | null>(null);
 
     const display = useDisplaySettings();
     const received = useAppStore((s) => s.received);
@@ -144,8 +148,9 @@ export default function DefaultMode() {
     useEffect(() => {
         const prev = prevCountRef.current;
         prevCountRef.current = received.length;
-        if (received.length > prev && window.scrollY < 120) {
-            requestAnimationFrame(() => window.scrollTo({ top: 0, behavior: 'smooth' }));
+        const el = listScrollRef.current;
+        if (received.length > prev && el && el.scrollTop < 120) {
+            requestAnimationFrame(() => el.scrollTo({ top: 0, behavior: 'smooth' }));
         }
     }, [received.length]);
 
@@ -156,9 +161,13 @@ export default function DefaultMode() {
     const historyUsageLabel = `${received.length}/${historyLimit}`;
 
     return (
-        <Box>
+        // ⚠️★ 根节点必须是 **100dvh 的 flex 列 + overflow hidden**：
+        //    整个窗口不滚，工具栏和输入/搜索头固定，只有下面的卡片列表滚。
+        //    （2026-10-29 用户报的「往上滑头部内容滑进顶部菜单栏下面」—— 根因是这里
+        //    以前没有定高，整个窗口在滚，工具栏是 sticky，内容自然从它下面穿过去。）
+        <Box sx={{ display: 'flex', flexDirection: 'column', height: '100%', minHeight: 0, overflow: 'hidden' }}>
             <PageToolbar variant="default" />
-            <Box sx={{ maxWidth: 980, mx: 'auto', px: { xs: 1.5, md: 3 }, pb: 4, pt: 1 }}>
+            <Box sx={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', width: '100%', maxWidth: 980, mx: 'auto', px: { xs: 1.5, md: 3 }, pb: 2, pt: 1 }}>
                 {!composerFullyHidden && (
                     <Card
                         variant="outlined"
@@ -166,11 +175,7 @@ export default function DefaultMode() {
                             borderRadius: 4,
                             p: { xs: 0.5, md: 1.5 },
                             mb: 1,
-                            position: 'sticky',
-                            // ⚠️ 吸顶位置要**让开工具栏的实际高度**（由 PageToolbar 写进这个 CSS 变量）。
-                            // 写死 8px 的话，向上滚动时输入区会滑到工具栏底下被遮住一部分。
-                            top: 'var(--page-toolbar-height, 0px)',
-                            zIndex: 2,
+                            flexShrink: 0,
                         }}
                     >
                         <UnifiedComposer ref={composerRef} />
@@ -178,7 +183,7 @@ export default function DefaultMode() {
                 )}
 
                 {received.length > 0 && showTimelineSearch && (
-                    <Box sx={{ maxWidth: 420, mx: 'auto', mb: 1 }}>
+                    <Box sx={{ maxWidth: 420, mx: 'auto', mb: 1, flexShrink: 0 }}>
                         <TextField
                             fullWidth
                             size="small"
@@ -194,9 +199,21 @@ export default function DefaultMode() {
                     </Box>
                 )}
 
-                <Card variant="outlined" sx={{ borderRadius: 4, px: { xs: 1.5, md: 2.5 }, py: 1.5, minHeight: '24rem' }}>
+                <Card
+                    variant="outlined"
+                    sx={{
+                        borderRadius: 4,
+                        px: { xs: 1.5, md: 2.5 },
+                        py: 1.5,
+                        flex: 1,
+                        minHeight: 0,
+                        display: 'flex',
+                        flexDirection: 'column',
+                        overflow: 'hidden',
+                    }}
+                >
                     {received.length > 0 && display.timelineFilter && (
-                        <Stack direction="row" spacing={1} sx={{ flexWrap: 'wrap', justifyContent: 'center', pb: 1.5 }}>
+                        <Stack direction="row" spacing={1} sx={{ flexWrap: 'wrap', justifyContent: 'center', pb: 1.5, flexShrink: 0 }}>
                             {FILTER_OPTIONS.map((option) => (
                                 <Chip
                                     key={option.key}
@@ -222,7 +239,7 @@ export default function DefaultMode() {
                     )}
 
                     {received.length > 0 && (
-                        <Box sx={{ position: 'relative' }}>
+                        <Box ref={listScrollRef} sx={{ flex: 1, minHeight: 0, overflowY: 'auto', overflowX: 'hidden', position: 'relative', pr: 0.5 }}>
                             {filtered.length > 0 && (
                                 <Chip
                                     size="small"
@@ -259,7 +276,7 @@ export default function DefaultMode() {
                     )}
 
                     {received.length === 0 && (
-                        <Stack alignItems="center" spacing={1.5} sx={{ py: 6 }}>
+                        <Stack alignItems="center" justifyContent="center" spacing={1.5} sx={{ flex: 1, py: 6 }}>
                             <MdiIcon name="mdi-timeline" size={42} color="var(--mui-palette-primary-main)" />
                             <Typography variant="h6">{t('emptyTimelineTitle')}</Typography>
                             <Typography variant="body2" color="text.secondary">{t('timelineEmptySubtitle')}</Typography>

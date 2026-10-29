@@ -69,7 +69,7 @@ export default function StickyWall() {
             sx={{
                 display: 'flex',
                 flexDirection: 'column',
-                height: '100dvh',
+                height: '100%',
                 bgcolor: dragover ? 'rgba(217,119,6,0.06)' : 'transparent',
             }}
         >
