@@ -279,6 +279,22 @@ for (const locale of LOCALES) {
     ok(`locale ${locale}: 已不残留 scOutdatedNotice / scUpdatedAt`, !('scOutdatedNotice' in dict) && !('scUpdatedAt' in dict));
 }
 
+// ── 5b. 工具栏必须是实底 ───────────────────────────────────────────────
+//
+// ⚠️★ 这不是审美：`page-toolbar` 是 `position: sticky`，页面向下滚动时头部/列表会从
+// 它下面穿过去。没有专属底色的模式（glance / board / timeline / bench / canvas / convert）
+// 以前是透明的，于是滚动时内容直接透出来，看起来就是「和顶部菜单栏叠在一起」
+// （2026-10-29 用户报的移动端问题；桌面端同一条 CSS 同样会中）。
+// 变体自己的背景（default / sticky）可以覆盖，但**兜底那层实底必须在**。
+{
+    const css = readFileSync(join(WEB, 'src/styles/components.css'), 'utf8');
+    ok(
+        'page-toolbar 有跟随页面底色的实底（不能只靠透明变体）',
+        /\.page-toolbar\s*\{[^}]*background:\s*var\(--mui-palette-background-default/.test(css),
+        '透明工具栏在滚动时会和内容叠在一起；实底写成 var(--mui-palette-background-default, #fff)',
+    );
+}
+
 // ── 6. i18n 插值：`t('key', …)` 填的变量必须**覆盖**文案里的占位符 ──────────
 //
 // ⚠️★ 为什么必须有它：i18next 对「缺的变量」**不报错** —— 它把占位符原样吐出来，
