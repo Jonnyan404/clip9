@@ -173,6 +173,7 @@
   "close": "關閉",
   "clear": "清除",
   "roomList": "房間列表",
+  "roomListProtectedHint": "加密房間只在已解鎖或收藏的裝置上顯示；其他裝置可以用房間名稱或邀請連結進入。",
   "rooms": "個房間",
   "searchRooms": "搜尋房間...",
   "loadingRooms": "正在載入房間列表...",

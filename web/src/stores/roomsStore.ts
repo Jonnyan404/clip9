@@ -171,13 +171,36 @@ export const useRoomsStore = create<RoomsState>((set, get) => ({
             })) as RoomEntry[];
             // 合并：保留已有对象（角标/高亮不闪），只覆盖字段
             const existingByName = new Map(get().availableRooms.map((room) => [room.name, room]));
-            const ordered = nextRooms.map((roomData) => {
+            const serverRooms = nextRooms.map((roomData) => {
                 const existing = existingByName.get(roomData.name);
                 if (existing) {
                     return { ...existing, ...roomData };
                 }
                 return roomData;
             });
+            // ⚠️★ 服务端只返回「这个客户端有权限进」的房间（`/rooms` 用
+            // `X-Room-Auth-Tokens` 过滤；没权限的加密房间**根本不会出现**）。
+            // 但这样一来，token 过期 / 换设备之后，用户自己收藏过的加密房间会从列表里
+            // 消失，看起来像「房间没了」。
+            // 这里只把**本地收藏**补回来（名字本来就在本机 localStorage 里，不向服务端
+            // 多暴露任何东西）；点进去照样要密码。不要用本列表去补服务端没返回的
+            // **非收藏**房间 —— 那才是把加密房间名暴露给不该看的人。
+            const serverNames = new Set(serverRooms.map((room) => room.name));
+            const localFavorites = favorites
+                .filter((name) => !serverNames.has(name))
+                .map((name) => {
+                    const existing = existingByName.get(name);
+                    const base = existing || createOptimisticRoom(name);
+                    return {
+                        ...base,
+                        isFavorite: true,
+                        isActive: false,
+                        messageCount: existing?.messageCount ?? 0,
+                        deviceCount: existing?.deviceCount ?? 0,
+                        lastActive: existing?.lastActive ?? 0,
+                    };
+                });
+            const ordered = [...serverRooms, ...localFavorites];
             const currentRoomName = useWebSocketStore.getState().room || '';
             if (!ordered.some((room) => room.name === currentRoomName)) {
                 ordered.unshift(existingByName.get(currentRoomName) || createOptimisticRoom(currentRoomName));

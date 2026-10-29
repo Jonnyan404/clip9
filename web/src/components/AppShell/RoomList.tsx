@@ -430,6 +430,24 @@ export function RoomList({
                     </Box>
                 )}
             </Box>
+
+            {/* ⚠️ 服务端只返回「这个客户端有权限进」的房间；没权限的加密房间压根不在
+                `availableRooms` 里（不是在 UI 上藏起来）。这里说清楚，免得个人用户以为
+                自己的加密房间丢了。本地收藏会在 `fetchRoomList` 里补回来（带锁）。 */}
+            <Typography
+                component="div"
+                sx={{
+                    flexShrink: 0,
+                    px: variant === 'dock' ? '16px' : '20px',
+                    py: '10px',
+                    borderTop: '1px solid var(--rl-border)',
+                    fontSize: 'var(--rl-label-size)',
+                    lineHeight: 1.45,
+                    color: 'var(--rl-muted)',
+                }}
+            >
+                {t('roomListProtectedHint')}
+            </Typography>
         </Box>
     );
 }

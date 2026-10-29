@@ -173,6 +173,7 @@
   "close": "Close",
   "clear": "Clear",
   "roomList": "Room List",
+  "roomListProtectedHint": "Protected rooms only appear on devices that have unlocked or favorited them. Other devices can enter with the room name or invite link.",
   "rooms": "rooms",
   "loadingRooms": "Loading rooms...",
   "noRoomsFound": "No rooms found",
