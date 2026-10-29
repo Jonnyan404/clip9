@@ -94,6 +94,7 @@
   "filterFile": "Files",
   "filterTaskList": "Task list",
   "filterTable": "Table",
+  "slashMath": "Formula",
   "taskSaveFailed": "Could not save the tick — reverted",
   "filterEmpty": "Nothing in this category",
   "alreadyAtBottom": "Already at the bottom~",

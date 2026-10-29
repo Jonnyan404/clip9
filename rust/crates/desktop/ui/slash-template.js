@@ -22,6 +22,10 @@
 export const SLASH_TEMPLATES = [
     { key: 'filterTaskList', icon: 'mdi-checkbox-marked-outline', text: '- [ ] \n- [ ] \n- [ ] ' },
     { key: 'filterTable', icon: 'mdi-table', text: '| A | B |\n| --- | --- |\n|  |  |' },
+    // 块公式的骨架。⚠️ 光标落在最后那个 `$$` 之后（两侧的插入逻辑都把光标放在末尾），
+    // 用户点进去往上写 TeX 就行。
+    // 选块公式而不是行内 `$…$`：手写多行公式的概率更高，而块公式更依赖骨架提醒。
+    { key: 'slashMath', icon: 'mdi-function-variant', text: '$$\n\n$$' },
 
     // ── 生成类动作（direction=insert）────────────────────────────────
     // 「插入时间」这类动作的家在**输入框**，不在预览区 —— 它们不吃输入、只产出新文本。

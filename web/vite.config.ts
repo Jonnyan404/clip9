@@ -85,7 +85,21 @@ export default defineConfig(({ command }) => {
                     // 而 SW 的更新检查只看 SW 脚本本身，那个文件改了不会触发任何更新。
                     // ⚠️ 两种写法都列上：`**/` 在这里是否吃根目录取决于 glob 实现，
                     // 而漏掉它的症状是静默的（只是「改了不生效」）。
-                    globIgnores: ['**/whiteboard-*.js', '**/whiteboard-*.css', 'config.js', '**/config.js'],
+                    globIgnores: [
+                        '**/whiteboard-*.js',
+                        '**/whiteboard-*.css',
+                        'config.js',
+                        '**/config.js',
+                        // ⚠️★ KaTeX 的字体也不许预缓存（2026-10-30，加了公式渲染之后）。
+                        //    与上面同一条道理：公式是**懒加载**的，而 `globPatterns` 里的
+                        //    `woff2/woff/ttf` 会把 24 个字体（woff2 合计 254 KB）一次性塞进
+                        //    首次安装 —— 绝大多数剪贴板内容里根本没有公式。
+                        //    在线时用到哪个下哪个，离线时公式退回系统衬线字体
+                        //    （KaTeX 的排版靠 CSS 的定位，不靠具体字形，所以不会散架）。
+                        '**/KaTeX_*.woff2',
+                        '**/KaTeX_*.woff',
+                        '**/KaTeX_*.ttf',
+                    ],
                     cleanupOutdatedCaches: true,
                     navigateFallback: 'index.html',
                     // ⚠️★ 这份放行表是**契约**：服务端每加一条路由，这里漏了就出故障

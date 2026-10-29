@@ -181,6 +181,14 @@ function buildImplBundle() {
     '--bundle', '--minify', '--format=esm', '--splitting', '--target=es2020',
     `--alias:@=${join(ROOT, 'web/src')}`,
     '--external:./opencc.js',
+    // ⚠️★ KaTeX 标成 external：桌面端**不接公式**（见 `web/src/lib/actions/desktop.js`），
+    //    它那份代码会被 tree-shake 掉 —— 但 esbuild 在**解析阶段**仍会去读
+    //    `import('katex/dist/katex.min.css')`，于是卡在 `.woff2/.woff/.ttf` 没有 loader。
+    //    external 让它整段跳过解析，产物里也留不下 import（那段代码本来就被摇掉了）。
+    //    ⚠️ 别改成配 loader：那样虽然能编过，但 20 个字体 + CSS 会真的输出到 `ui/` 下
+    //    （实测 68 个产物 / 2.1 MB），而桌面端根本不会加载它们。
+    '--external:katex',
+    '--external:katex/*',
     `--outdir=${outdir}`,
     `--entry-names=${IMPL_OUT.entry.replace('.js', '')}`,
     '--chunk-names=actions-impl-[hash]-chunk',
@@ -211,6 +219,41 @@ function buildImplBundle() {
     if (name.endsWith('.js')) files.set(name, read(join(outdir, name)));
   }
   if (!files.has(IMPL_OUT.entry)) throw new Error(`esbuild 没产出 ${IMPL_OUT.entry}`);
+
+  // ⚠️★ 只保留**从入口可达**的 chunk。
+  //
+  // 为什么会有不可达的：esbuild 在**分析阶段**就把 `await import('...')` 切成了 chunk，
+  // 但引用它的那个函数（`runMarkdown`）随后被 tree-shake 掉了 —— 于是 chunk 文件还在，
+  // 却没有任何 import 指向它。2026-10-30 加公式时就踩到了：`markdown-math.js` 的
+  // 一小块（`MATH_HINT` / 正则）作为一个 1.2 KB 的孤儿 chunk 落进了 `ui/`，
+  // 而「桌面包里没有公式」这句话在文件层面就成了假的。
+  //
+  // ⚠️ 别改成「按文件名黑名单排除」：下次换一个懒加载模块，孤儿会换个名字再来。
+  //    可达性是从入口算的，与叫什么无关。
+  const reachable = new Set([IMPL_OUT.entry]);
+  const queue = [IMPL_OUT.entry];
+  while (queue.length) {
+    const text = files.get(queue.pop()) ?? '';
+    for (const name of files.keys()) {
+      if (!reachable.has(name) && text.includes(name)) {
+        reachable.add(name);
+        queue.push(name);
+      }
+    }
+  }
+  for (const name of [...files.keys()]) {
+    if (!reachable.has(name)) files.delete(name);
+  }
+  // ⚠️★ 桌面包里**不许**出现 KaTeX：桌面端不接公式（见 `web/src/lib/actions/desktop.js`
+  //    用 `runMarkdownPlain`）。哪天有人把那个导出改回 `runMarkdown`，20 个字体和 CSS
+  //    会悄悄跟着进包 —— 而且**不会报错**，只是桌面包胖 2.1 MB、多出几十个文件。
+  //    这条断言就是那个「悄悄」的拦截点。
+  const katexHit = [...files.entries()].find(([, text]) => /katex/i.test(text));
+  if (katexHit) {
+    throw new Error(`桌面包里混进了 KaTeX（${katexHit[0]}）——\n`
+      + '桌面端不接公式，`desktop.js` 导出的是 runMarkdownPlain。\n'
+      + '真要启用，先照那段注释把字体和 CSS 接上，再删掉这条断言。');
+  }
   // 拼音（449KB）必须**单独成 chunk**：主包是每次启动都要 parse 的那份，
   // 混进去就是「不用拼音的人也白背一遍」（判定靠导出名，minify 不会改导出的名字）。
   const pinyinChunks = [...files.entries()].filter(([name, text]) => name !== IMPL_OUT.entry && text.includes('toWordGroups'));

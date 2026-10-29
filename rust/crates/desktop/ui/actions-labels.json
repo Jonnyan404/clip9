@@ -85,7 +85,8 @@
     "inspectHashNeedsHttps": "哈希需要 HTTPS 或 localhost 打开（浏览器安全限制）",
     "inspectLines": "行",
     "inspectNoMatch": "未识别出已知格式",
-    "inspectWords": "词"
+    "inspectWords": "词",
+    "slashMath": "公式"
   },
   "en": {
     "actionBase64Decode": "Base64 decode",
@@ -168,6 +169,7 @@
     "inspectHashNeedsHttps": "Hashing needs HTTPS or localhost (browser security restriction)",
     "inspectLines": "Lines",
     "inspectNoMatch": "No known format detected",
-    "inspectWords": "Words"
+    "inspectWords": "Words",
+    "slashMath": "Formula"
   }
 }

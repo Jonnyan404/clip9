@@ -5,6 +5,11 @@
 //   · 这里只放**依赖 marked / DOMPurify** 的那一部分。
 // ⚠️ 为什么单独一个文件：`lib/actions/impl.js`（.js）要 import 它，而 impl.js 是
 //    「动作库的带依赖实现」—— 让 .js 与 .js 相互引用最省事，不牵扯 .ts 的解析。
+//
+// ⚠️★ 公式（`$…$` / `$$…$$`）**不在这里**，在 `markdown-math.js`。拆开是因为桌面端的
+//    动作包不接公式，而 `import('katex')` 被 esbuild 当成副作用摇不掉 —— 合在一起时
+//    katex 的 20 个字体和 CSS 会全进桌面包（实测 68 个产物 / 2.1 MB）。
+//    这个文件保持**纯同步**：它同时是桌面包和「没公式的路径」的底座。
 import { marked } from 'marked';
 import DOMPurify from 'dompurify';
 

@@ -83,6 +83,19 @@
     text-align: left;
 }
 
+/* 表头：主题色淡底 + 加粗。
+ *
+ * ⚠️ 用 `color-mix` 跟主题走，别写死颜色 —— 这个 app 有浅/暗两套（`--mui-palette-*` 会跟着切）。
+ *    12% 是试出来的：再淡就看不出「这是表头」，再浓正文的对比度会被压下去。
+ * ⚠️ `background-clip: padding-box` 不能省：`border-collapse: collapse` 下
+ *    单元格背景会盖住边框的一半，四个角看起来比 td 粗一圈。
+ */
+.markdown-body thead th {
+    background: color-mix(in srgb, var(--mui-palette-primary-main) 12%, transparent);
+    background-clip: padding-box;
+    font-weight: 600;
+}
+
 .markdown-body a { color: var(--mui-palette-primary-main); }
 .markdown-body img { max-width: 100%; border-radius: 8px; }
 .markdown-body hr {

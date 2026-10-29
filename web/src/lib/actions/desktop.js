@@ -17,13 +17,23 @@ export {
     REPLACE_MODE_KEYS,
     replaceLiteral,
     renderFenced,
-    runMarkdown,
     runCode,
     runReplace,
     runPinyin,
     runPinyinTable,
     runPinyinWord,
 } from './impl.js';
+
+// ⚠️★ 桌面端的 `format.markdown` 走**不带公式**的实现（`runMarkdownPlain`，导出成同名）。
+//
+//    带公式那条会在包里拉进 katex 的 CSS 和 20 个 woff2 字体 —— 实测 68 个产物、2.1 MB，
+//    而且 esbuild 不会替动态 import 的 CSS 注入样式，`app.js` 还得手动 link 一份。
+//    桌面端本来就有同样的取舍先例（简繁转换那两条 2.2MB 的词典也不进）。
+//
+//    ⚠️ 降级是**可解释的**：公式显示成 `$E=mc^2$` 的原文，内容不丢。
+//    这一行换成 `from './impl.js'` 里的 `runMarkdown` 就能启用公式，
+//    但请先照上面那段把字体和 CSS 一起接上，否则公式会变成错位的字符。
+export { runMarkdownPlain as runMarkdown } from './impl.js';
 
 // ⚠️★ markdown / 代码高亮吐出来的 `<pre><code class="language-x">` 是**没有颜色**的
 //（marked 的 renderer 是同步的，而高亮器只能 `import()` 按需加载，renderer 里 await 不了）—

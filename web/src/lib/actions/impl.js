@@ -53,10 +53,39 @@ export function renderFenced(code, language = '') {
 //
 // ⚠️ 但**文件预览那条路不接**：那边的正文是**截断过**的，按下标回写会把截断后的
 // 内容当成全文。用 `ctx.truncated` 区分（useMarkdown 传 `isMarkdownFile()`）。
-export function runMarkdown(text, ctx) {
-    return renderMarkdownHtml(text, {
+// ⚠️ 这个动作**可能是异步的**：正文里有 `$…$` 时要先把公式模块（连带 KaTeX 那个 chunk）
+// 拉下来。`runChain` 本来就 await，所以签名变了没影响；没有公式时它同步就返回了。
+//
+// ⚠️★ 公式模块用**动态** import，不是静态的：桌面端的动作包（`desktop.js`）不导出这个
+//    函数，但 esbuild 会把「静态 import 的模块」当成有副作用而保留 —— 那样 katex 的
+//    20 个字体和 CSS 会全进桌面包（实测 68 个产物 / 2.1 MB）。动态 import 挂在函数体里，
+//    函数被摇掉它就跟着消失。
+export async function runMarkdown(text, ctx) {
+    const { renderMarkdownHtmlAsync } = await import('@/lib/markdown-math.js');
+    return renderMarkdownHtmlAsync(text, markdownViewOptions(text, ctx));
+}
+
+/**
+ * 同一件事，但**不接公式** —— 桌面端用这个（`desktop.js` 把它导出成 `runMarkdown`）。
+ *
+ * ⚠️★ 为什么桌面端不带公式：KaTeX 的 HTML 输出**离不开它的 CSS**（`.katex` 的定位、
+ *    `vlist` 的 vertical-align 全靠它），而 CSS 又引着 20 个 woff2 字体。给桌面那条
+ *    esbuild 流水线补 loader 之后实测：产出 68 个文件、2.1 MB，还得在 `app.js` 里
+ *    手动 link 那份 CSS（esbuild 不会替动态 import 的 CSS 注入样式）。
+ *    为一个「桌面端看不看公式」的差异付这些，不划算 —— 何况简繁转换早就定过同样的取舍。
+ *
+ * ⚠️ 降级方式是**可解释的**：公式显示成 `$E=mc^2$` 的原文，而不是空白或乱码 ——
+ *    用户仍然读得到内容，不会「以为部署坏了」。网页版才有彩色公式。
+ */
+export function runMarkdownPlain(text, ctx) {
+    return renderMarkdownHtml(text, markdownViewOptions(text, ctx));
+}
+
+function markdownViewOptions(text, ctx) {
+    return {
+        // ⚠️ 文件预览那条路不接（正文是截断过的），见上面 runMarkdown 的说明。
         interactiveTasks: looksLikeTaskList(text) && !ctx?.truncated,
-    });
+    };
 }
 
 // 语言检测是**异步**的（highlight.js 的 highlightAuto），所以这个动作是 async。

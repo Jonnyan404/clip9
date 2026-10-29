@@ -4,9 +4,13 @@
 // （收发剪贴板）根本用不到它。`import()` 会让打包器单独切一个 chunk，
 // 只有真的预览到代码文件时才去下载 —— 不预览的人一个字节都不付。
 //
-// 为什么不用 `highlightAuto`：它要把所有语言都试一遍，慢，而且经常认错
-// （一段 YAML 被判成 Ruby 那种）。扩展名我们本来就有（`filePreviewKind` 也是按它判的），
-// 直接映射更准也更快；认不出来就老老实实按纯文本渲染。
+// 为什么**优先**按扩展名 / 语言标记映射：`highlightAuto` 要把所有语言都试一遍，慢，
+// 而且经常认错（一段 YAML 被判成 Ruby 那种）。扩展名我们本来就有（`filePreviewKind`
+// 也是按它判的），直接映射更准也更快。
+//
+// ⚠️ 但**没有**任何标记时（markdown 里 ``` 后面直接换行 —— 贴代码的人大多这么写）
+//    现在会猜一次，见 `highlightCodeBlocksIn` 的 `GUESS_MAX`：那些人恰恰最想要颜色，
+//    而一片黑白等于这个功能没做。猜错比不猜糟，所以有 relevance 门槛 + 长度上限。
 //
 // ⚠️ 映射表**只此一份**。要加语言：这里登记扩展名 + `highlight-langs.js` 里注册。
 
@@ -93,6 +97,13 @@ const LANGUAGE_IDS = new Set([
 ]);
 
 /**
+ * 「没有语言标记时猜一次」的长度上限（字符）。
+ * ⚠️ 不是性能洁癖：`highlightAuto` 会把注册过的 28 种语言挨个跑一遍，
+ *    20 KB 的日志实测要几百毫秒 —— 那是滚动时间线时的卡顿来源。
+ */
+const GUESS_MAX = 8192;
+
+/**
  * 该用哪个高亮语言。两种输入都认（认不出来返回空串）：
  *   · **文件名**：`app.ts` → typescript、`Dockerfile` → dockerfile；
  *   · **语言名本身**：```js → javascript、```python → python。
@@ -116,10 +127,17 @@ export function highlightLanguageFor(name) {
  *
  * 只在切到代码视图时调一次，别拿它到处跑 —— `highlightAuto` 会把注册过的语言挨个试一遍。
  *
+ * @param {string} code
+ * @param {number} [minRelevance] 匹配度门槛。默认 6 —— 给「代码视图」用：那段文本可能是
+ *        任何东西，宁可不上色也别乱配（认错比不认更糟，满屏乱配色）。
+ *        ⚠️ 但 markdown 里 ``` 围栏**已经声明这是代码**了，门槛可以放到 4（见
+ *        `highlightCodeBlocksIn`）。实测标定：一段普通 JS 是 4、中文句子是 0（language
+ *        也是 undefined）、一行日志是 2 且会被判成 yaml —— 所以 4 是「代码 / 非代码」的分界。
+ *
  * 返回已注册的语言名，**认不出来返回空串**（调用方按无语言渲染：格式照样是转义后的原文，
- * 只是没颜色 —— 认错比不认更糟，满屏乱配色）。
+ * 只是没颜色）。
  */
-export async function detectLanguage(code) {
+export async function detectLanguage(code, minRelevance = 6) {
     const source = String(code || '').trim();
     if (!source) {
         return '';
@@ -131,7 +149,7 @@ export async function detectLanguage(code) {
     try {
         const result = hljs.highlightAuto(source, [...LANGUAGE_IDS]);
         // relevance 是 highlight.js 给的匹配度，太低就别硬认。
-        return result.relevance > 5 ? result.language : '';
+        return result.relevance >= minRelevance ? result.language : '';
     } catch {
         return '';
     }
@@ -162,14 +180,24 @@ export async function highlightCodeBlocksIn(el) {
     if (!el) {
         return;
     }
-    const blocks = el.querySelectorAll('pre > code[class*="language-"]');
+    // ⚠️★ 选择器是 `pre > code`，**不是** `pre > code[class*="language-"]`：
+    //    后者只认 ```js 这种写了语言的块，而贴进来的代码大多没写（``` 后面直接换行）——
+    //    那些人恰恰最想要颜色。没有标记的走 `detectLanguage` 猜一次。
+    const blocks = el.querySelectorAll('pre > code');
     for (const block of blocks) {
         if (block.classList.contains('hljs')) {
             continue;
         }
-        const lang = (block.className.match(/language-([\w+#.-]+)/) || [])[1] || '';
+        const declared = (block.className.match(/language-([\w+#.-]+)/) || [])[1] || '';
         const source = block.textContent || '';
-        if (!lang || !source) {
+        if (!source) {
+            continue;
+        }
+        // ⚠️ 猜只对小段做：`highlightAuto` 会把注册过的语言挨个试一遍，
+        //    一段 20 KB 的日志能卡住主线程几百毫秒。超了就保持纯文本。
+        // ⚠️ 门槛传 4（默认 6）：围栏已经声明这是代码了，见 `detectLanguage` 的标定。
+        const lang = declared || (source.length <= GUESS_MAX ? await detectLanguage(source, 4) : '');
+        if (!lang) {
             continue;
         }
         const html = await highlightCode(source, lang);

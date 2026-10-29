@@ -94,6 +94,7 @@
   "filterFile": "ファイル",
   "filterTaskList": "タスクリスト",
   "filterTable": "表",
+  "slashMath": "数式",
   "taskSaveFailed": "チェックを保存できませんでした（元に戻しました）",
   "filterEmpty": "この分類にはまだ何もありません",
   "alreadyAtBottom": "すでに一番下です～",
