@@ -203,7 +203,14 @@ deploy_worker() {
 
     # 部署 Worker
     info "部署 Worker..."
-    DEPLOY_OUTPUT=$(wrangler deploy --env="" 2>&1)
+    # ⚠️ 走 `deploy-retry.mjs`：`assets-upload-session` 会间歇性返回 HTTP 500 /
+    #    code 10013（Cloudflare 侧故障），它只对这种临时错误退避重试，见该文件头。
+    #    ⚠️ 用 `if !` 而不是 `cmd || {…}`：后者块里的 `$?` 已经是块内上一条命令的了。
+    if ! DEPLOY_OUTPUT=$(node ../deploy-retry.mjs deploy --env="" 2>&1); then
+        printf '%s\n' "$DEPLOY_OUTPUT"
+        error "wrangler deploy 失败 —— 上面是 wrangler 的原话"
+        exit 1
+    fi
     
     # 提取 Worker URL
     if echo "$DEPLOY_OUTPUT" | grep -q "workers.dev"; then

@@ -298,7 +298,10 @@ jobs:
         working-directory: cloudflare/workers
         run: |
           set -euo pipefail
-          out="$(wrangler deploy 2>&1)" || { printf '%s\n' "$out"; exit 1; }
+          # ⚠️ 与生产同一条路：`deploy-retry.mjs` 只对「认得出的临时错误」重试
+          #    （code 10013 / HTTP 500 等，见该文件头）。直接调 wrangler 的话，
+          #    Cloudflare 侧抽一次风就得手动重跑一次。
+          out="$(node ../deploy-retry.mjs deploy 2>&1)" || { printf '%s\n' "$out"; exit 1; }
           printf '%s\n' "$out"
           url="$(printf '%s' "$out" | grep -o 'https://[^ ]*\.workers\.dev' | head -1 || true)"
           # ⚠️ 拿不到 URL **不算失败**（自定义域、或输出格式变了都能导致），但要说出来 ——

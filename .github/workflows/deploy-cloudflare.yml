@@ -299,7 +299,12 @@ jobs:
           with open("wrangler.toml", "w", encoding="utf-8") as f:
               f.write(toml)
 
-          proc = subprocess.Popen(["wrangler", "deploy"], stdout=subprocess.PIPE,
+          # ⚠️★ 走 `../deploy-retry.mjs` 而不是直接 `wrangler deploy`：2026-10-29 起
+          #    `assets-upload-session` 会间歇性返回 HTTP 500 / code 10013（Cloudflare 侧
+          #    故障，1 个文件的 manifest 也 500，升级 wrangler 到 4.155 同样中招）。
+          #    重试策略只在那个脚本里维护一份，这里只透传输出与退出码。
+          proc = subprocess.Popen(["node", "../deploy-retry.mjs", "deploy"],
+                                  stdout=subprocess.PIPE,
                                   stderr=subprocess.STDOUT, text=True)
           lines = []
           for line in proc.stdout:

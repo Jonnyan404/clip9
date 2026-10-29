@@ -1912,6 +1912,85 @@ const pkgApk = read('openwrt/scripts/package-openwrt-apk.sh');
   if (problems.length) fail(label, problems.join('\n    '));
 }
 
+// ── 部署入口必须走重试包装 ──────────────────────────────────────────────────
+//
+// ⚠️★ 2026-10-29：`assets-upload-session` 开始间歇性返回 HTTP 500 / `code: 10013`
+//    （Cloudflare 侧故障 —— 最小 1 个文件的 manifest 也 500，升级 wrangler 到 4.155
+//    同样中招，见 workers-sdk #16447 / #16517）。唯一有效的对策是**退避重试**，
+//    而那条策略只在 `cloudflare/deploy-retry.mjs` 里维护一份。
+//
+// 所以三个部署入口都得走它，且不能留一条裸 `wrangler deploy`（裸调 = 抽一次风就得
+// 手动重跑一次，而且失败信息里看不出该不该重跑）。
+// ⚠️ 判之前要**剥掉注释**：注释里提到「别直接 wrangler deploy」是正常的，不剥就会
+//    被自己那句说明满足（这条判据就永远绿了）。
+{
+  const label = '三个部署入口都走 deploy-retry.mjs（10013 只能靠重试）';
+  const problems = [];
+  const WRAPPER = 'deploy-retry.mjs';
+  // 上面那条判据里的 PROD / DEMO 是块作用域，这里重新取一次。
+  const ENTRIES = ['.github/workflows/deploy-cloudflare.yml', '.github/workflows/deploy-cloudflare-demo.yml'];
+
+  if (read('cloudflare/deploy-retry.mjs') === null) {
+    problems.push('缺 cloudflare/deploy-retry.mjs —— 重试策略没有落点');
+  }
+
+  /** 去掉行内注释，避免判据被说明文字满足。 */
+  const stripComments = (text) =>
+    text
+      .split('\n')
+      .map((line) => line.replace(/(^|\s)#.*$/, ''))
+      .join('\n');
+
+  /**
+   * 有没有**真的在调** `wrangler deploy`。
+   * ⚠️ 只认「命令位」：行首、`$(`、`&&`、`||`、`;`、`|` 之后，可带 `npx`。
+   *    不能直接搜 `wrangler deploy` —— 错误文案（`error "wrangler deploy 失败…"`）
+   *    里也会出现这几个字，那样判据会被一句人话打红，最后只能去改文案迁就它。
+   */
+  const callsWranglerDeploy = (text) =>
+    text
+      .split('\n')
+      .some((line) => /(^|[|&;(]\s*)(npx\s+)?wrangler\s+deploy\b/.test(line.trim()));
+
+  /** 取 `- name: 部署 Worker` 这一步的正文（到下一个 step 为止）。 */
+  const deployStep = (text) => {
+    const m = text.match(/^ {6}- name: 部署 Worker\n([\s\S]*?)(?=^ {6}- |(?![\s\S]))/m);
+    return m ? m[1] : null;
+  };
+
+  for (const file of ENTRIES) {
+    const text = read(file);
+    if (text === null) continue;
+
+    const step = deployStep(text);
+    if (step === null) {
+      problems.push(`${file} 里找不到 \`- name: 部署 Worker\` 这一步`);
+      continue;
+    }
+    const body = stripComments(step);
+    if (!body.includes(WRAPPER)) {
+      problems.push(`${file} 的部署步骤没走 ${WRAPPER} —— 10013 会直接把整条流水线打红`);
+    } else if (callsWranglerDeploy(body)) {
+      problems.push(`${file} 的部署步骤里还留着裸 \`wrangler deploy\` —— 那一行没有重试`);
+    }
+  }
+
+  const sh = read('cloudflare/deploy.sh');
+  if (sh === null) {
+    problems.push('读不到 cloudflare/deploy.sh');
+  } else {
+    const body = stripComments(sh);
+    if (!body.includes(WRAPPER)) {
+      problems.push(`cloudflare/deploy.sh 还是直接调 wrangler deploy —— 本地这条路径没有重试`);
+    } else if (callsWranglerDeploy(body)) {
+      problems.push('cloudflare/deploy.sh 里还留着裸 `wrangler deploy`');
+    }
+  }
+
+  if (!problems.length) ok(label);
+  if (problems.length) fail(label, problems.join('\n    '));
+}
+
 // ── 输出 ────────────────────────────────────────────────────────────────────
 
 if (failures.length) {
