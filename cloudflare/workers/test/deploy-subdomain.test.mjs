@@ -79,24 +79,48 @@ check.check('Worker 名从配置里读出来', workerNameOf('name = "clip9-worke
 
 // ── ④ 两条部署路径都真的调了它，而且**在 deploy 之前** ──────────────────────
 const workflow = readFileSync(join(repoRoot, '.github/workflows/deploy-cloudflare.yml'), 'utf8');
-const syncAt = workflow.indexOf('sync-workers-dev.mjs');
-// ⚠️ 锚在**真的那一次部署调用**上（Python 里 `Popen(["wrangler", "deploy"], …)`），
-//    不锚在步骤名上 —— 步骤名改了不该让这条判据红，而部署调用改了正是该红的时候。
-const deployMatch = workflow.match(/\[\s*["']wrangler["']\s*,\s*["']deploy["']/);
+const shell = readFileSync(join(cloudflareDir, 'deploy.sh'), 'utf8');
+
+// ⚠️ 先剥注释：两处都写着「走 deploy-retry.mjs，别直接 wrangler deploy」这类说明，
+//    不剥就会锚到那句说明上 —— 索引位置全错，而且错得看起来像「链子坏了」。
+const stripComments = (text) =>
+    text
+        .split('\n')
+        .map((line) => line.replace(/(^|\s)#.*$/, ''))
+        .join('\n');
+
+// ⚠️ 锚在**真的那一次部署调用**上，不锚在步骤名上 —— 步骤名改了不该让这条判据红，
+//    而部署调用改了正是该红的时候。
+// ⚠️★ 两种形态都要认：
+//      · `wrangler deploy` / `["wrangler", "deploy"]` —— 直接调；
+//      · `deploy-retry.mjs` —— 2026-10-29 起的默认路径（Cloudflare 的 10013 要退避重试）。
+//    只认前者的话，换成包装器就变成「找不到部署」→ 这条红，而链子其实是好的
+//    （2026-10-29 就这么红过一次）。判「部署有没有走包装器」是 workflows-smoke 判据 25 的事，
+//    这里只管**顺序**。
+const deployCallAt = (text) => {
+    const body = stripComments(text);
+    const viaWrapper = body.indexOf('deploy-retry.mjs');
+    if (viaWrapper >= 0) return viaWrapper;
+    return body.search(/\[\s*["']wrangler["']\s*,\s*["']deploy["']|wrangler\s+deploy\b/);
+};
+
+const syncAt = stripComments(workflow).indexOf('sync-workers-dev.mjs');
+const deployAt = deployCallAt(workflow);
 check.check('工作流调了 sync-workers-dev.mjs', syncAt > 0, true);
-check.check('工作流里找得到那次 wrangler deploy', Boolean(deployMatch), true);
+check.check('工作流里找得到那次部署调用', deployAt > 0, true);
 check.check(
     '写回**排在 deploy 之前**（排后面等于没写）',
-    syncAt > 0 && Boolean(deployMatch) && syncAt < deployMatch.index,
+    syncAt > 0 && deployAt > 0 && syncAt < deployAt,
     true,
 );
 
-const shell = readFileSync(join(cloudflareDir, 'deploy.sh'), 'utf8');
-check.check('本地 deploy.sh 也调了同一个脚本', shell.includes('sync-workers-dev.mjs'), true);
+const shellBody = stripComments(shell);
+const shellSyncAt = shellBody.indexOf('sync-workers-dev.mjs');
+const shellDeployAt = deployCallAt(shell);
+check.check('本地 deploy.sh 也调了同一个脚本', shellSyncAt > 0, true);
 check.check(
     'deploy.sh 里也在 deploy 之前',
-    shell.indexOf('sync-workers-dev.mjs') > 0 &&
-        shell.indexOf('sync-workers-dev.mjs') < shell.indexOf('wrangler deploy --env=""'),
+    shellSyncAt > 0 && shellDeployAt > 0 && shellSyncAt < shellDeployAt,
     true,
 );
 
