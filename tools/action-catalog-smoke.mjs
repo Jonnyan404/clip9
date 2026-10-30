@@ -311,20 +311,40 @@ if (copied.length) {
       ok(`判据 9b：${htmlActions.length} 条 html 动作的实现都走 renderMarkdownHtml（DOMPurify）`);
     }
 
-    // ③ highlight.css：逐字节一致 + 暗色选择器认两种挂法。
+    // ③ highlight.css：逐字节一致 + 暗色选择器认**三种**挂法。
     //    ⚠️ 夹具模式下**照比**：源永远是真的，拷贝与源不一致就该红 ——
     //    写成「夹具跳过」的话，变异验证里「手改 highlight.css」的三组会假绿
     //    （2026-10-03 实测：三组全红，红的却全是这一条误报）。
+    //    ⚠️★ 三种挂法一种都不能少（`.v-theme--dark` 老 Vue / `[data-theme='dark']` 桌面端 /
+    //    `.dark` 现在这个 React 前端的 MUI）：2026-10-30 就是漏了 `.dark`，
+    //    暗色下一直用浅色配色 —— 字符串 `#032f62` 贴在深底上等于没上色，
+    //    用户报的是「md 渲染了但代码块还是黑白」，而这里当时只盯着 `[data-theme='dark']`，全绿。
     const cssTo = join(F.ui, 'highlight.css');
     const cssFrom = join(ROOT, 'web/src/styles/highlight.css');
     if (!existsSync(cssTo)) {
       bad('判据 9c：ui/ 里没有 highlight.css —— 代码块的令牌配色全丢');
     } else if (readFileSync(cssTo, 'utf8') !== readFileSync(cssFrom, 'utf8')) {
       bad('判据 9c：highlight.css 与源不一致（手改过？）—— 跑 node tools/sync-action-catalog.mjs');
-    } else if (!/\[data-theme='dark'\]/.test(readFileSync(cssTo, 'utf8'))) {
-      bad("判据 9c：highlight.css 的暗色选择器不认 `[data-theme='dark']` —— 桌面深色下代码块还是浅色配色");
     } else {
-      ok('判据 9c：highlight.css 与源逐字节一致，且暗色选择器两种主题挂法都认');
+      const cssText = readFileSync(cssTo, 'utf8');
+      // 只认那一条暗色规则本身（`:where(...) code.hljs {`），别拿整份文件去凑 ——
+      // 注释里也写着这三个名字，凑整份的话把规则删了照样绿。
+      const darkRule = cssText.split('\n').find((line) => /^\s*:where\(.*\)\s*code\.hljs\s*\{/.test(line));
+      if (!darkRule) {
+        bad('判据 9c：highlight.css 没有 `:where(…) code.hljs {` 这条暗色规则 —— 暗色下会用浅色配色');
+      } else {
+        const missing = [
+          ['.v-theme--dark', /\.v-theme--dark/],
+          ["[data-theme='dark']", /\[data-theme='dark'\]/],
+          ['.dark', /(^|[\s,(])\.dark\b/],
+        ].filter(([, re]) => !re.test(darkRule)).map(([name]) => name);
+        if (missing.length) {
+          bad(`判据 9c：highlight.css 的暗色选择器不认 ${missing.join(' / ')} —— `
+            + '那个主题下代码块会用另一套配色（React 端挂 .dark，桌面端挂 data-theme）');
+        } else {
+          ok(`判据 9c：highlight.css 与源逐字节一致，暗色选择器三种主题挂法都认（${darkRule.trim().slice(0, 48)}…）`);
+        }
+      }
     }
 
     // ④ 桌面端真的按清单放行（`resolveFn` 里查的是清单）。

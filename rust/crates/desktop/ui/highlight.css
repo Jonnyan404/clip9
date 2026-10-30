@@ -1,6 +1,6 @@
 /* 代码高亮的**令牌配色** —— 全局一份。
  *
- * 谁用：`components/CodeBlock.vue`（分享页的文件预览）和 `components/MarkdownBody.vue`
+ * 谁用：`components/CodeBlock.tsx`（分享页的文件预览）和 `components/MarkdownBody.tsx`
  * （markdown 里的 ``` 代码块）。两处的容器类不同，但 highlight.js 吐出来的令牌类名是一样的
  * （`hljs-keyword` / `hljs-string` …），所以规则挂在**令牌的宿主元素**上就够两边用。
  *
@@ -11,11 +11,25 @@
  * ⚠️ 变量挂在 `code.hljs` 自己身上（不是 `:root`）：暗色主题的类挂在应用根上，
  * 祖先选择器能命中；而 `:root` 上取不到主题，浅/暗就没法切。
  *
- * ⚠️★ 暗色那个选择器**同时认两种写法**：网页版把 `.v-theme--dark` 挂在应用根上
- *（Vuetify 的约定），桌面端把 `data-theme="dark"` 挂在 `<html>` 上。两边**共用这一个文件**
- *（`tools/sync-action-catalog.mjs` 逐字节搬到 `rust/crates/desktop/ui/`），
- * 所以**别**为桌面再抄一份配色 —— 抄的第二份一定会漂。`:where()` 是为了让这两条
- * 选择器各自保持零特异性，不去压下面的令牌规则。
+ * ⚠️★ 暗色那个选择器必须**同时认三种挂法**，少一种就是整夜的黑白：
+ *   · `.v-theme--dark` —— 老 Vue 版（Vuetify 的约定），`web-vue3/` 里还在用；
+ *   · `[data-theme='dark']` —— 桌面端（`desktop/ui/app.js` 往 `<html>` 上贴 `data-theme`）；
+ *   · `.dark` —— 现在这个 React 前端的（`web/src/theme/index.ts` 里
+ *     `cssVariables: { colorSchemeSelector: 'class' }`，MUI 往根元素挂 `.dark`）。
+ *   2026-10-30 的真事：迁到 React 之后这里只认前两种，于是**暗色下一律在用浅色配色** ——
+ *   字符串是 `#032f62`（近黑的深蓝）、数字是 `#005cc5`，贴在深底上等于没上色，
+ *   用户看到的就是「md 渲染了，代码块还是黑白」。
+ *   ⚠️ 判据在 `tools/action-catalog-smoke.mjs` 的 9c，那一条盯的就是这行选择器。
+ *
+ * 两边**共用这一个文件**（`tools/sync-action-catalog.mjs` 逐字节搬到 `rust/crates/desktop/ui/`），
+ * 所以**别**为桌面再抄一份配色 —— 抄的第二份一定会漂。
+ * `:where()` 是为了让这几条选择器各自保持零特异性，不去压下面的令牌规则。
+ *
+ * ⚠️ 配色的取向：浅色那套是 GitHub Light，暗色那套是 **GitHub Dark**。
+ *   暗色的每个值都在深底上校过对比度 —— 字符串 `#a5d6ff`、数字 `#79c0ff` 是亮蓝，
+ *   而不是把浅色那套直接翻过来（翻过来必然糊成一团黑）。
+ *   ⚠️ 别拿 Artalk 当配色参考：它的代码高亮走 `hanabi`（内联上色，不产 `hljs-*` 类名），
+ *   仓库里根本没有令牌配色可抄；它的 `code` 只有灰底 + 圆角那点排版，那部分我们本来一样。
  */
 
 code.hljs {
@@ -32,18 +46,18 @@ code.hljs {
     --cb-insert: #22863a;
 }
 
-:where(.v-theme--dark, [data-theme='dark']) code.hljs {
-    --cb-comment: #7f848e;
-    --cb-keyword: #c678dd;
-    --cb-string: #98c379;
-    --cb-number: #d19a66;
-    --cb-title: #61afef;
-    --cb-attr: #d19a66;
-    --cb-type: #e5c07b;
-    --cb-meta: #7f848e;
-    --cb-tag: #e06c75;
-    --cb-delete: #e06c75;
-    --cb-insert: #98c379;
+:where(.v-theme--dark, [data-theme='dark'], .dark) code.hljs {
+    --cb-comment: #8b949e;
+    --cb-keyword: #ff7b72;
+    --cb-string: #a5d6ff;
+    --cb-number: #79c0ff;
+    --cb-title: #d2a8ff;
+    --cb-attr: #79c0ff;
+    --cb-type: #ffa657;
+    --cb-meta: #8b949e;
+    --cb-tag: #7ee787;
+    --cb-delete: #ffa198;
+    --cb-insert: #aff5b4;
 }
 
 code.hljs .hljs-comment,
@@ -55,7 +69,8 @@ code.hljs .hljs-keyword,
 code.hljs .hljs-selector-tag,
 code.hljs .hljs-literal,
 code.hljs .hljs-doctag,
-code.hljs .hljs-formula {
+code.hljs .hljs-formula,
+code.hljs .hljs-subst {
     color: var(--cb-keyword);
 }
 code.hljs .hljs-string,
