@@ -852,7 +852,12 @@ export function looksLikeMarkdown(text) {
         || /\[[^\]]+\]\([^)\s]+\)/.test(s)                    // [文字](链接)
         || /\*\*[^\s][^*]*\*\*|__[^\s][^_]*__/.test(s)         // 粗体
         || /`[^`\n]+`/.test(s)                                  // 行内代码
-        || looksLikeTable(s);                                   // 表格：上面几条都认不出来
+        || looksLikeTable(s)                                    // 表格：上面几条都认不出来
+        // ⚠️★ 公式也必须在这里认（2026-10-30 加）：`prefersRenderedView` 只决定「默认值」，
+        //    而渲染路径上还有一道闸 —— `useMarkdown` 的 `available` 来自 `targetedActions`，
+        //    也就是这个函数。不认的话：默认值设了、图标不出现、渲染照样不发生，
+        //    屏幕上还是一片 `$E=mc^2$` 原文。代码不用单独加（` 和 ``` 上面两条已经覆盖）。
+        || hasMathMarkup(s);
 }
 
 /**
@@ -895,6 +900,65 @@ export function hasCodeMarkup(text) {
         return true;
     }
     return (s.match(/`/g) || []).length >= 2;
+}
+
+// ── 数学公式的判定规则（`$…$` / `$$…$$`）────────────────────────────────
+//
+// ⚠️★ 这几条正则**住在这里**，因为有两个用户，抄两份必然漂：
+//   ① `lib/markdown-math.js` 拿它们做 marked 的 tokenizer（真正决定怎么渲染）；
+//   ② 下面的 `hasMathMarkup` 拿它们决定「这条内容该不该默认进渲染视图」。
+//   漂了的症状很具体：**默认渲染了，但没渲染成公式** —— 屏幕上是一片 `$E=mc^2$` 原文。
+//
+// 判定规则（比第三方那两档都合适，来龙去脉见 `markdown-math.js` 抬头）：
+// 结尾 `$` 后面是**空白 / 标点 / 汉字**才算公式结束，**字母数字不算**。
+// 于是中文紧邻的公式能用（`质能方程$E=mc^2$成立`），而 `苹果 $5，香蕉 $3`、
+// `$HOME 和 $PATH` 不会被误吞成公式。
+export const CJK = /[\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff]/;
+export const MATH_BOUNDARY = /[\s?!.,:;、，。：；？！)\]}>】」』"'’”]/;
+// 内容里不允许裸 `$` 和换行；`\$` 转义算内容。
+export const INLINE_MATH = /^(\${1,2})(?!\$)((?:\\.|[^\\\n])*?(?:\\.|[^\\\n$]))\1/;
+// 块公式：`$$` 单独一行开头、单独一行结尾（与 CommonMark 的围栏代码块同一个形状）。
+export const BLOCK_MATH = /^(\${1,2})\n((?:\\[^]|[^\\])+?)\n\1(?:\n|$)/;
+
+/**
+ * 内容里有数学公式（能真的被 `markdown-math.js` 渲染成公式的那种）。
+ *
+ * 用途只有一个：进 `prefersRenderedView`，让含公式的内容**默认就渲染** ——
+ * 让人先点一下「Markdown 渲染」才看见公式，等于这个功能藏在菜单里。
+ *
+ * ⚠️★ 判据必须和 tokenizer **同一套**（所以共用上面那几个常量），而且要用**同样的边界规则**：
+ * 只判「有两个 `$`」的话，`苹果 $5，香蕉 $3`、`$HOME 和 $PATH` 这些会被判成公式 →
+ * 内容被强行切进渲染视图，而渲染出来根本不是公式，用户只会觉得「这东西乱切视图」。
+ * ⚠️ 行内代码里的 `$`（`` `$HOME` ``）这里分辨不出来，会被算成公式 —— 无害：
+ * markdown 先切 code span，那段 `$` 渲染时不会变成公式，只是这条内容默认用渲染视图看，
+ * 而它本来也确实是一条带行内代码的内容。
+ */
+export function hasMathMarkup(text) {
+    const s = String(text || '');
+    if (!s) {
+        return false;
+    }
+    // 块公式：`$$` 起一行、`$$` 收一行。
+    if (/(^|\n)\${1,2}\n[\s\S]*?\n\${1,2}(?=\n|$)/.test(s)) {
+        return true;
+    }
+    // 行内公式：逐个 `$` 试一次（`INLINE_MATH` 是 `^` 锚定的，所以要切片）。
+    for (let i = 0; i < s.length; i += 1) {
+        if (s[i] !== '$') {
+            continue;
+        }
+        const m = INLINE_MATH.exec(s.slice(i));
+        if (!m) {
+            continue;
+        }
+        // ⚠️ 与 tokenizer 里那一行一字不差：结尾 `$` 后面紧跟字母/数字时不当公式。
+        const next = s.charAt(i + m[0].length);
+        if (next && !MATH_BOUNDARY.test(next) && !CJK.test(next)) {
+            continue;
+        }
+        return true;
+    }
+    return false;
 }
 
 /**

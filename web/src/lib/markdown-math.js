@@ -8,6 +8,7 @@
 // ⚠️ 两个文件共用同一个 `marked` 实例，所以 `marked.use()` 注册的扩展是**全局**的：
 //    网页版一旦加载过公式，`markdown.js` 的同步渲染也会走它。这是想要的（同一个页面）。
 import { marked } from 'marked';
+import { BLOCK_MATH, CJK, INLINE_MATH, MATH_BOUNDARY } from './actions/pure.js';
 import { renderMarkdownHtml } from './markdown.js';
 
 // ── 数学公式（`$…$` / `$$…$$`）──────────────────────────────────────────────
@@ -35,13 +36,11 @@ const MATH_HINT = /\$\$|\$[^$\n]+\$/;
 //        都会被吞成公式，中文还会被塞进 math mode（KaTeX 刷一串 unicodeTextInMathMode 警告）。
 //    这里的规则是第三档：**空白 / 标点 / 汉字** 都算公式结束，**字母数字不算**。
 //    于是中文紧邻的公式能用，价格和 shell 变量不会被误吞。
-//    判定规则只有下面四个正则，比读一个第三方包的实现更直接。
-const CJK = /[\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff]/;
-const MATH_BOUNDARY = /[\s?!.,:;、，。：；？！)\]}>】」』"'’”]/;
-// 内容里不允许裸 `$` 和换行；`\$` 转义算内容。
-const INLINE_MATH = /^(\${1,2})(?!\$)((?:\\.|[^\\\n])*?(?:\\.|[^\\\n$]))\1/;
-// 块公式：`$$` 单独一行开头、单独一行结尾（与 CommonMark 的围栏代码块同一个形状）。
-const BLOCK_MATH = /^(\${1,2})\n((?:\\[^]|[^\\])+?)\n\1(?:\n|$)/;
+//
+// ⚠️★ 那四条正则**不在这个文件里**，在 `actions/pure.js`（`CJK` / `MATH_BOUNDARY` /
+//    `INLINE_MATH` / `BLOCK_MATH`）。原因：`hasMathMarkup` 要用**同一套**判「这条内容该不该
+//    默认进渲染视图」—— 抄两份必然漂，而漂了的症状是「默认渲染了、却没渲染成公式」，
+//    屏幕上剩一片 `$E=mc^2$` 原文。要改规则请去 `pure.js` 改。
 
 /**
  * 公式扩展。`katex` 是**传进来**的 —— 它属于那个懒加载的 chunk，不能在这里静态 import。

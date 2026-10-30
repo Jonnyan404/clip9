@@ -42,7 +42,7 @@ const WEB = resolve(HERE, '..');
 const REPO = resolve(WEB, '..');
 
 // 零 import 的两个模块：可以直接 import（它们本来就要被桌面端原样加载）。
-const { hasCodeMarkup, looksLikeMarkdown, looksLikeTable, looksLikeTaskList } = await import(
+const { hasCodeMarkup, hasMathMarkup, looksLikeMarkdown, looksLikeTable, looksLikeTaskList } = await import(
     new URL('../src/lib/actions/pure.js', import.meta.url).href
 );
 const { DISPLAY_TOGGLES, DEFAULT_DISPLAY } = await import(
@@ -111,12 +111,13 @@ if (prefersBody) {
             'looksLikeTable',
             'looksLikeMarkdown',
             'hasCodeMarkup',
+            'hasMathMarkup',
             prefersBody,
         );
         // ⚠️ 抠出来的体里若引用了没注入的标识符，下面这一行就会 ReferenceError —— 那样要红，不是跳过。
-        const probe = compiled('# 标题', looksLikeTaskList, looksLikeTable, looksLikeMarkdown, hasCodeMarkup);
+        const probe = compiled('# 标题', looksLikeTaskList, looksLikeTable, looksLikeMarkdown, hasCodeMarkup, hasMathMarkup);
         if (typeof probe !== 'boolean') throw new Error(`返回值是 ${typeof probe}，不是 boolean`);
-        prefersRenderedView = (text) => compiled(text, looksLikeTaskList, looksLikeTable, looksLikeMarkdown, hasCodeMarkup);
+        prefersRenderedView = (text) => compiled(text, looksLikeTaskList, looksLikeTable, looksLikeMarkdown, hasCodeMarkup, hasMathMarkup);
     } catch (error) {
         ok('抠出来的 prefersRenderedView 跑得动', false, String(error));
     }
@@ -133,6 +134,12 @@ const CASES = [
     ['```js\nconst a = 1;\n```', true, '围栏代码块 → 默认渲染'],
     ['```\n没写语言也算\n```', true, '没标语言的围栏也算'],
     ['只有一个反引号 ` 的句子', false, '单个反引号不算（中文里偶尔出现）'],
+    // ⚠️ 公式同理（2026-10-30）：原文 `$E=mc^2$` 比没上色的代码更没法读。
+    // 反例必须有 —— 价格和 shell 变量里到处都是 `$`，误判会把纯文本硬切进渲染视图。
+    ['质能方程 $E=mc^2$ 成立', true, '行内公式 → 默认渲染'],
+    ['$$\nE = mc^2\n$$', true, '块公式 → 默认渲染'],
+    ['苹果 $5，香蕉 $3', false, '价格不是公式（结尾 $ 后面是数字）'],
+    ['$HOME 和 $PATH 都在', false, 'shell 变量不是公式'],
     ['# 标题', false, '普通 markdown 默认原文'],
     ['**加粗** 的文本', false, '纯行内强调默认原文'],
     ['- 普通列表项', false, '普通无序列表默认原文'],
