@@ -72,6 +72,45 @@ export default function TimelineWall() {
         });
     }, []);
 
+    // ── 日头柱状图：点柱子 → 展开当天并滚到那个钟点的第一条 ─────────────────
+    // ⚠️★ 触摸屏上 `title` 不出现（没有 hover），柱状图原本是**只能看形状、拿不到任何文字**的装饰；
+    //    柱子又是 4px 宽，精确命中一小时在 64px 宽的图上根本点不到（≈2.7px/小时），
+    //    所以按**最近的柱子吸附**，不是「点哪根算哪根」。
+    // ⚠️★ 跳转信号走 state + effect，**不能**在点击里直接 `querySelector`：那天若是折叠的，
+    //    行还没渲染出来，DOM 里什么都没有 —— 必须等这一帧提交完再找。
+    const [hourJump, setHourJump] = useState<{ day: string; hour: number } | null>(null);
+    const [flashId, setFlashId] = useState<string | null>(null);
+    const flashTimer = useRef<number | null>(null);
+
+    const jumpToHour = useCallback((day: string, hour: number) => {
+        setFoldedDays((prev) => {
+            if (!prev.has(day)) return prev;
+            const next = new Set(prev);
+            next.delete(day);
+            return next;
+        });
+        setHourJump({ day, hour });
+    }, []);
+
+    useEffect(() => {
+        if (!hourJump) return;
+        setHourJump(null);
+        const row = scrollRef.current
+            ?.querySelector<HTMLElement>(`[data-day="${hourJump.day}"]`)
+            ?.querySelector<HTMLElement>(`[data-hour="${hourJump.hour}"]`);
+        if (!row) return;
+        row.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        const id = row.dataset.id;
+        if (!id) return;
+        setFlashId(id);
+        if (flashTimer.current) window.clearTimeout(flashTimer.current);
+        flashTimer.current = window.setTimeout(() => setFlashId(null), 1600);
+    }, [hourJump]);
+
+    useEffect(() => () => {
+        if (flashTimer.current) window.clearTimeout(flashTimer.current);
+    }, []);
+
     // 切房间时清掉展开 / 折叠状态：条目 id 是**每个房间各自**的，跨房间保留会让新房间的
     // 第 5 条莫名其妙地是展开的（两个房间都有 id=5）。
     const room = useWebSocketStore((s) => s.room);
@@ -81,6 +120,7 @@ export default function TimelineWall() {
         prevRoomRef.current = room;
         setExpandedIds(new Set());
         setFoldedDays(new Set());
+        setFlashId(null);
     }, [room]);
 
     // ⚠️ 用 useMemo 组合而不是 `useAppStore(selectVisibleReceived)`：有搜索词时它每次返回**新数组**，
@@ -240,6 +280,21 @@ export default function TimelineWall() {
                                             className="timeline-day__hist"
                                             aria-hidden="true"
                                             title={bars.map((bar) => `${String(bar.hour).padStart(2, '0')}:00 · ${t('timelineDayCount', { count: bar.count })}`).join(' / ')}
+                                            onClick={(event) => {
+                                                // ⚠️ 柱状图在「折叠当天」的 `<button>` 里面：不拦冒泡的话
+                                                // 点柱子会顺手把这一天收起来（跳转目标当场消失）。
+                                                event.stopPropagation();
+                                                const rect = event.currentTarget.getBoundingClientRect();
+                                                if (rect.width <= 0) return;
+                                                const tapped = ((event.clientX - rect.left) / rect.width) * 24;
+                                                let nearest = bars[0];
+                                                for (const bar of bars) {
+                                                    if (Math.abs(bar.hour - tapped) < Math.abs(nearest.hour - tapped)) {
+                                                        nearest = bar;
+                                                    }
+                                                }
+                                                jumpToHour(group.key, nearest.hour);
+                                            }}
                                         >
                                             <span className="timeline-day__track" />
                                             {bars.map((bar) => (
@@ -277,6 +332,7 @@ export default function TimelineWall() {
                                                 meta={item}
                                                 category={categories.get(item.id) || 'text'}
                                                 expanded={expandedIds.has(item.id)}
+                                                flash={flashId === item.id}
                                                 onToggle={toggleRow}
                                                 onOpen={openViewer}
                                             />

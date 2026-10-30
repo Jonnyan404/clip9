@@ -20,17 +20,22 @@ import { categoryIcon, categoryLabelKey, type TimelineCategory } from './categor
  *    这个模式的意义就是「什么时候来的」。
  * ⚠️ 复制按钮是 `<button>` 而不是 MUI 的 IconButton：一屏几十个，别为一个小图标套 Tooltip +
  *    IconButton 两层组件（标准模式用 IconButton 是因为卡片数量少一半）。
+ * ⚠️ `data-hour` / `data-id` 是**日头柱状图的跳转锚点**（点柱子 → 滚到那个钟点的第一条）。
+ *    改这两个属性会静默打断那条交互 —— 它找不到目标就只是不跳，不报错。
  */
 export const TimelineRow = memo(function TimelineRow({
     meta,
     category,
     expanded,
+    flash,
     onToggle,
     onOpen,
 }: {
     meta: ReceivedItem;
     category: TimelineCategory;
     expanded: boolean;
+    /** 被柱状图跳到的那一行短暂高亮（否则滚过去之后看不出是哪一条）。 */
+    flash?: boolean;
     onToggle: (id: string) => void;
     onOpen: (item: ReceivedItem) => void;
 }) {
@@ -54,7 +59,12 @@ export const TimelineRow = memo(function TimelineRow({
     };
 
     return (
-        <div className={`timeline-row${expanded ? ' is-open' : ''}`} data-category={category}>
+        <div
+            className={`timeline-row${expanded ? ' is-open' : ''}${flash ? ' is-flash' : ''}`}
+            data-category={category}
+            data-id={meta.id}
+            data-hour={hourOf(meta.timestamp)}
+        >
             <button
                 type="button"
                 className="timeline-row__main"
@@ -141,6 +151,12 @@ function clockOf(timestamp?: number): string {
     if (!timestamp) return '';
     const date = new Date(timestamp * 1000);
     return `${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`;
+}
+
+/** 本地小时（0-23），给日头柱状图当锚点用。⚠️ 与 `dayBars()` 的分桶必须是同一个 `getHours()`。 */
+function hourOf(timestamp?: number): string {
+    if (!timestamp) return '';
+    return String(new Date(timestamp * 1000).getHours());
 }
 
 /** 一行的摘要：文件用文件名，文本压平空白（任务列表顺手去掉复选框记号）。 */

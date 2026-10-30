@@ -1825,13 +1825,32 @@
 /* 日头的小时分布：只画有内容的钟点，按时间顺序排，不铺满 24 格。 */
 /* 一条 24 小时的细基线 + 按钟点定位的小柱：只有一条记录时也能看出「是几点」。
    ⚠️ 以前是「把有内容的钟点按先后排成一排」—— 只有一根柱子时既没有分布信息，
-   看着还像一条杂线，所以一度被藏掉；改成按比例定位之后就没有这个问题了。 */
+   看着还像一条杂线，所以一度被藏掉；改成按比例定位之后就没有这个问题了。
+   ⚠️★ 这张图是**可点的**（点一下跳到那个钟点的第一条）：触摸屏没有 hover，`title` 不出现，
+   不点的话它就只有「形状」没有内容。柱子只有 4px 宽，命中区靠 `::before` 撑开 —— 
+   别把它当成装饰再 `pointer-events: none` 掉。 */
 .timeline-day__hist {
     position: relative;
     flex: none;
     width: 88px;
     height: 16px;
     margin-left: 8px;
+    cursor: pointer;
+    /* 去掉移动端双击缩放的等待，点下去立刻有反应 */
+    touch-action: manipulation;
+    -webkit-tap-highlight-color: transparent;
+}
+
+/* 撑开触摸热区（16px 高、64px 宽在手机上偏小）。上下各 7px 仍在日头的 9px 内边距里，
+   不会盖到上一块的最后一行。 */
+.timeline-day__hist::before {
+    content: "";
+    position: absolute;
+    inset: -7px -4px -1px;
+}
+
+.timeline-day__hist:active .timeline-day__bar {
+    background: color-mix(in srgb, #0ea5e9 92%, transparent);
 }
 
 .timeline-day__track {
@@ -1934,6 +1953,18 @@
 
 .timeline-row:hover {
     background: var(--timeline-hover);
+}
+
+/* 被日头柱状图跳到的行：闪一下再淡掉 —— 否则 smooth 滚过去之后，一行和上面几十行长得一样，
+   用户不知道「跳成功了没有」。时长与 `TimelineWall` 里清 `flashId` 的 1600ms 对齐。 */
+@keyframes timeline-row-flash {
+    0% { background: color-mix(in srgb, #0ea5e9 26%, transparent); }
+    60% { background: color-mix(in srgb, #0ea5e9 14%, transparent); }
+    100% { background: transparent; }
+}
+
+.timeline-row.is-flash {
+    animation: timeline-row-flash 1.6s ease-out;
 }
 
 .timeline-row__main {
