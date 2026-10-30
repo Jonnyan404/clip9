@@ -8,9 +8,10 @@
 // 而且经常认错（一段 YAML 被判成 Ruby 那种）。扩展名我们本来就有（`filePreviewKind`
 // 也是按它判的），直接映射更准也更快。
 //
-// ⚠️ 但**没有**任何标记时（markdown 里 ``` 后面直接换行 —— 贴代码的人大多这么写）
-//    现在会猜一次，见 `highlightCodeBlocksIn` 的 `GUESS_MAX`：那些人恰恰最想要颜色，
-//    而一片黑白等于这个功能没做。猜错比不猜糟，所以有 relevance 门槛 + 长度上限。
+// ⚠️ 但**没有**任何标记时（markdown 里 ``` 后面直接换行 —— 贴代码的人大多这么写），
+//    **不猜语言**（2026-10-30 Jonny 的决定，`highlightAuto` 对短片段实测全崩：
+//    sql 判成 bash、rust 判成 javascript、单行 js 判不出），改用 `colorizePlain`
+//    按词轮流上色 —— 不声称知道语言，所以不会给出错误结论。
 //
 // ⚠️ 映射表**只此一份**。要加语言：这里登记扩展名 + `highlight-langs.js` 里注册。
 
@@ -96,12 +97,6 @@ const LANGUAGE_IDS = new Set([
     'xml', 'yaml',
 ]);
 
-/**
- * 「没有语言标记时猜一次」的长度上限（字符）。
- * ⚠️ 不是性能洁癖：`highlightAuto` 会把注册过的 28 种语言挨个跑一遍，
- *    20 KB 的日志实测要几百毫秒 —— 那是滚动时间线时的卡顿来源。
- */
-const GUESS_MAX = 8192;
 
 /**
  * 该用哪个高亮语言。两种输入都认（认不出来返回空串）：
@@ -120,39 +115,6 @@ export function highlightLanguageFor(name) {
     // 没有扩展名时拿整个名字去查 —— `Dockerfile` 就是这么被认出来的。
     const ext = dot < 0 ? value : value.slice(dot + 1);
     return LANGUAGE_BY_EXT[ext] || '';
-}
-
-/**
- * 猜一段源码是什么语言（给「代码视图」用）。
- *
- * 只在切到代码视图时调一次，别拿它到处跑 —— `highlightAuto` 会把注册过的语言挨个试一遍。
- *
- * @param {string} code
- * @param {number} [minRelevance] 匹配度门槛。默认 6 —— 给「代码视图」用：那段文本可能是
- *        任何东西，宁可不上色也别乱配（认错比不认更糟，满屏乱配色）。
- *        ⚠️ 但 markdown 里 ``` 围栏**已经声明这是代码**了，门槛可以放到 4（见
- *        `highlightCodeBlocksIn`）。实测标定：一段普通 JS 是 4、中文句子是 0（language
- *        也是 undefined）、一行日志是 2 且会被判成 yaml —— 所以 4 是「代码 / 非代码」的分界。
- *
- * 返回已注册的语言名，**认不出来返回空串**（调用方按无语言渲染：格式照样是转义后的原文，
- * 只是没颜色）。
- */
-export async function detectLanguage(code, minRelevance = 6) {
-    const source = String(code || '').trim();
-    if (!source) {
-        return '';
-    }
-    const hljs = await loadHighlighter();
-    if (!hljs) {
-        return '';
-    }
-    try {
-        const result = hljs.highlightAuto(source, [...LANGUAGE_IDS]);
-        // relevance 是 highlight.js 给的匹配度，太低就别硬认。
-        return result.relevance >= minRelevance ? result.language : '';
-    } catch {
-        return '';
-    }
 }
 
 /**
@@ -242,16 +204,20 @@ export async function highlightCodeBlocksIn(el) {
     if (!el) {
         return;
     }
-    // ⚠️★ 选择器是 `pre > code`，**不是** `pre > code[class*="language-"]`：
-    //    后者只认 ```js 这种写了语言的块，而贴进来的代码大多没写（``` 后面直接换行）——
-    //    那些人恰恰最想要颜色。
-    const blocks = el.querySelectorAll('pre > code');
-    for (const block of blocks) {
-        if (block.classList.contains('hljs')) {
+    // ⚠️★ 选择器是 `code`（不是 `pre > code`），**行内代码也要上色**（2026-10-30 Jonny：
+    //    「包括单行代码也是」）。行内代码本来只有一颗底色、文字还是正文色；
+    //    走同一套之后 `npm run dev` 也会是两个颜色。
+    //    之前只选 `pre > code` 是因为那时只有「按语言的语法高亮」这一条路 ——
+    //    行内代码没有语言可言，自然被排除。现在有 `colorizePlain`，这个限制就没理由了。
+    // ⚠️ 行内代码**永远**走 `colorizePlain`：markdown 的行内代码语法不支持指定语言，
+    //    真出现 `language-` 类（页面里嵌的原始 HTML）也照旧按语言处理，不特殊对待。
+    const codes = el.querySelectorAll('code');
+    for (const code of codes) {
+        if (code.classList.contains('hljs')) {
             continue;
         }
-        const declared = (block.className.match(/language-([\w+#.-]+)/) || [])[1] || '';
-        const source = block.textContent || '';
+        const declared = (code.className.match(/language-([\w+#.-]+)/) || [])[1] || '';
+        const source = code.textContent || '';
         if (!source) {
             continue;
         }
@@ -270,8 +236,8 @@ export async function highlightCodeBlocksIn(el) {
         if (html) {
             // ⚠️ 直接进 innerHTML：上面两条路（highlight.js / colorizePlain）都自己转义了输入，
             // 所以是安全的；也正因为如此，**不要再往上拼任何没转义的内容**。
-            block.innerHTML = html;
-            block.classList.add('hljs');
+            code.innerHTML = html;
+            code.classList.add('hljs');
         }
     }
 }

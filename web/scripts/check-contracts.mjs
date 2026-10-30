@@ -723,30 +723,43 @@ for (const name of ['revoke', 'update']) {
     }
 }
 
-// ── Q. 代码高亮：没写语言**不许猜**，要走语言无关的通用着色 ──────────────
+// ── Q. 代码高亮：**不许猜语言**，没写语言就走语言无关的通用着色 ──────────
 //
 // ⚠️★ 2026-10-30 的真事：没写语言的代码块原来拿 `highlightAuto` 猜，而短片段根本猜不准 ——
 // `select … from users` 被猜成 bash（sql 连前三都没进）、`fn main(){}` 被猜成 javascript
 // （和 rust 同分）、单行 js 干脆猜不出。猜错是给出**错误结论**（一段 JS 顶着 C++ 的语法色），
-// 比「没颜色」更糟。现在改成不猜 + `colorizePlain` 按词轮流上色（Artalk 的 hanabi 那套）。
+// 比「没颜色」更糟。Jonny 的要求是「把猜语言的代码**全都删了**」—— 所以判据盯的是
+// 「这套东西不存在」，而不是「没人调它」：留着函数，早晚有人又接回去。
 //
-// 这条盯两件事：
-//   ① `highlightCodeBlocksIn` 里不许再出现 `detectLanguage(`；
-//   ② `colorizePlain` 必须存在，且必须调 `escapeHtml` —— 它是**自己拼 HTML** 的，
-//      不走 highlight.js 的内部转义，漏了就是一个 XSS 口子（内容来自别人的剪贴板）。
+// 这条盯四件事：
+//   ① 整个文件里没有 `detectLanguage` 这个导出；
+//   ② 没有 `hljs.highlightAuto(` 调用；
+//   ③ `highlightCodeBlocksIn` 用 `colorizePlain`；
+//   ④ 选的是 `code`（**含行内**），不是 `pre > code` —— 行内代码也要上色。
 {
     const hiPath = join(WEB, 'src/lib/highlight.js');
     const hi = existsSync(hiPath) ? readFileSync(hiPath, 'utf8') : '';
     const blocksFn = /export async function highlightCodeBlocksIn[\s\S]*?\n\}/.exec(hi)?.[0] ?? '';
     if (!blocksFn) {
         problems.push('highlight.js 里找不到 highlightCodeBlocksIn');
-    } else if (/detectLanguage\s*\(/.test(blocksFn)) {
-        problems.push(
-            'highlightCodeBlocksIn 又在猜语言了（`detectLanguage(`）—— 短片段猜不准，'
-            + '猜错会给出错误的语法色。没写语言就交给 colorizePlain',
-        );
-    } else if (!/colorizePlain\s*\(/.test(blocksFn)) {
-        problems.push('highlightCodeBlocksIn 没有用 colorizePlain —— 没写语言的代码块会是一坨纯文本');
+    } else {
+        if (/colorizePlain\s*\(/.test(blocksFn) === false) {
+            problems.push('highlightCodeBlocksIn 没有用 colorizePlain —— 没写语言的代码块会是一坨纯文本');
+        }
+        // ⚠️ 行内代码（`<code>` 不在 `<pre>` 里）也算：2026-10-30 起它们同一套处理。
+        //    写回 `pre > code` 的话，行内代码又只剩一颗底色。
+        if (!/querySelectorAll\(['"]code['"]\)/.test(blocksFn)) {
+            problems.push(
+                "highlightCodeBlocksIn 的选择器不是 `querySelectorAll('code')` —— "
+                + '行内代码（不在 pre 里的 code）不会上色',
+            );
+        }
+    }
+    if (/export\s+(async\s+)?function\s+detectLanguage\b/.test(hi)) {
+        problems.push('highlight.js 里 `detectLanguage` 又回来了 —— 猜语言已经废弃，短片段猜不准反而误导');
+    }
+    if (/hljs\.highlightAuto\s*\(/.test(hi)) {
+        problems.push('highlight.js 里又出现了 `hljs.highlightAuto(` —— 那是猜语言的入口，已经删掉的东西别加回来');
     }
 
     const plainFn = /export function colorizePlain[\s\S]*?\n\}/.exec(hi)?.[0] ?? '';

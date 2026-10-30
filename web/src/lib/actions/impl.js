@@ -5,7 +5,6 @@
 // ⚠️ 别把这里的东西挪进 `pure.js`：那个文件的铁律是「零 import」，而这里每一条都是 import。
 
 import { looksLikeTaskList, translator } from './pure.js';
-import { detectLanguage } from '@/lib/highlight.js';
 import { renderMarkdownHtml } from '@/lib/markdown.js';
 // ⚠️ 这个文件住在 `data/actions/` 里，替换模式表在 `data/` 下 —— 少一层 `../` 的后果
 // 是**构建期**报错（Could not resolve），不是运行期；构建时就炸反而是好事。
@@ -88,12 +87,14 @@ function markdownViewOptions(text, ctx) {
     };
 }
 
-// 语言检测是**异步**的（highlight.js 的 highlightAuto），所以这个动作是 async。
-// 不检测也能渲染（只是没颜色），但「代码高亮」的全部价值就在颜色上 ——
-// 原来的 useMarkdown 里就有这一步，别在重构里弄丢。
+// ⚠️★ 不猜语言（2026-10-30，Jonny：「把猜语言的代码全都删了」）。
+// 原来这里靠 `detectLanguage` 猜一次再写进围栏，问题是**猜错会把错误的语言标记
+// 写进用户的文本** —— 那段文本是要被复制走、贴到别处的，比渲染错更糟。
+// 留空标记，渲染时走 `colorizePlain`（按词上色），照样有颜色。
+// 保留 `async`：调用方 `runChain` 一律 await，同步返回值也能被 await，
+// 但别在这一步无谓地改动调用链的形状。
 export async function runCode(text) {
-    const language = await detectLanguage(text);
-    return renderFenced(text, language);
+    return renderFenced(text, '');
 }
 
 export function runReplace(text, ctx, params) {
