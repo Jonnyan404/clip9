@@ -18,6 +18,16 @@ import { installShareBridge } from '@/services/shareBridge';
 import { useAppStore, type DarkMode } from '@/stores/appStore';
 import { App } from './App';
 
+// ⚠️★ 上一次加载失败时 `index.html` 那段内联兜底脚本埋下的标记（原因见那个文件的注释）：
+// 走到这一行 = 所有 import 都成功了 = 这一趟加载是好的 → 清掉，下次部署还能再救一次。
+// 不清的后果是「只有第一次部署能自动救」，之后每次又退回手动刷新。
+// ⚠️ 键名必须与 `index.html` 里那个 KEY **一字不差**（判据 R 比对两处）。
+try {
+    sessionStorage.removeItem('__clip9-reload-once__');
+} catch {
+    // 无痕模式 / 存储被禁：与 index.html 那边同一处理 —— 不刷即可
+}
+
 /**
  * 应用引导 —— 与 web-vue3/src/main.js **一一对应**，顺序敏感（每一步都写了原因）。
  *

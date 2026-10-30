@@ -16,6 +16,91 @@
          （见 rust/crates/server/src/spa_shell.rs），重写前端时**形状不许改**。 -->
     <meta name="clip9-web" content="1">
     <title>clip9</title>
+    <script>
+        /* 部署后第一次进来白屏的兜底（2026-10-30）。
+         *
+         * 根因不是「没加载到」，而是**加载到的是一份过期的壳**：
+         *   · PWA 的 Service Worker 里配了 `navigateFallback: 'index.html'`，导航请求直接由
+         *     **它预缓存的那份 index.html** 应答 —— 那是上一次部署的壳；
+         *   · 旧壳里的 `<script src="./assets/index-<旧hash>.js">` 在新部署里**已经被删掉**；
+         *   · 于是请求 404、页面一片白。而「负责发现新版本并刷新」的代码（`swUpdate.ts`）
+         *     就住在那个加载失败的 bundle 里 —— 没有任何代码能救场，只能人手动刷新。
+         *
+         * 这段内联脚本在 bundle **之前**执行，是唯一能救的位置。它做两件事：
+         *   ① 抓到「入口 script 挂了」或「懒加载 chunk 挂了」；
+         *   ② 先催一次 SW 更新并**等它接管**，再刷新 —— 直接 reload 大概率还是旧壳（新 SW
+         *      此刻多半还在下载几十个预缓存文件），白刷一次就再也没机会了。
+         *
+         * ⚠️★ 只刷**一次**：标记存在 `sessionStorage` 里，加载成功后由 `main.tsx` 清掉。
+         *    真 404 或断网时无限刷新比白屏更难受。
+         * ⚠️ 故意写成 ES5 + Promise（这段**不经过**打包和 Babel）：用 `async` 的话，
+         *    老 WebView 会整段语法错误 —— 兜底本身失效，比没有更糟。
+         */
+        (function () {
+            var KEY = '__clip9-reload-once__';
+            var busy = false;
+
+            function markOnce() {
+                try {
+                    if (sessionStorage.getItem(KEY)) return false;
+                    sessionStorage.setItem(KEY, '1');
+                    return true;
+                } catch (e) {
+                    // 无痕 / 禁用存储：宁可不刷，也不要冒死循环的险
+                    return false;
+                }
+            }
+
+            function activateNewWorker() {
+                if (!('serviceWorker' in navigator) || !navigator.serviceWorker.getRegistration) {
+                    return Promise.resolve();
+                }
+                return navigator.serviceWorker
+                    .getRegistration()
+                    .then(function (reg) {
+                        if (!reg) return undefined;
+                        return reg.update().catch(function () {}).then(function () {
+                            var next = reg.installing || reg.waiting;
+                            if (!next) return undefined;
+                            return new Promise(function (resolve) {
+                                var timer = setTimeout(resolve, 3000);
+                                function check() {
+                                    if (next.state === 'activated' || next.state === 'redundant') {
+                                        clearTimeout(timer);
+                                        resolve();
+                                    }
+                                }
+                                next.addEventListener('statechange', check);
+                                check();
+                            });
+                        });
+                    })
+                    .catch(function () {});
+            }
+
+            function recover() {
+                if (busy || !markOnce()) return;
+                busy = true;
+                activateNewWorker().then(function () {
+                    location.reload();
+                });
+            }
+
+            // 入口那个 module 脚本或任何资源 404：error 不冒泡，只能 capture 阶段捞。
+            window.addEventListener('error', function (event) {
+                var el = event.target;
+                if (el && el.tagName === 'SCRIPT' && el.src) recover();
+            }, true);
+
+            // 懒加载 chunk 404：Vite 抛 preloadError，同时伴随一个未处理的 rejection。
+            window.addEventListener('vite:preloadError', recover);
+            window.addEventListener('unhandledrejection', function (event) {
+                var reason = event && event.reason;
+                var msg = String((reason && reason.message) || reason || '');
+                if (/dynamically imported module|Importing a module script failed|preload/i.test(msg)) recover();
+            });
+        })();
+    </script>
     <style>
         html, body { height: 100%; margin: 0; }
     </style>

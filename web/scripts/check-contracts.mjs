@@ -295,7 +295,10 @@ for (const name of ['revoke', 'update']) {
     // index.html：必须在模块 bundle **之前**加载（`lib/base.ts` 在模块求值时就读它）。
     // ⚠️ 用**相对**地址：绝对 `/config.js` 在子路径部署（服务端 `-prefix` / 静态托管子目录）下会指错地方。
     const configTag = html.indexOf('src="./config.js"');
-    const bundleTag = html.indexOf('type="module"');
+    // ⚠️ 必须匹配**真正的标签**（`<script … type="module"`），不能用 `indexOf('type="module"')`：
+    //    注释里写一个这个字面量就能把判据骗成「排在 bundle 之后」（2026-10-30 实测，
+    //    新加的那段内联兜底脚本的注释里正好有它）。
+    const bundleTag = html.search(/<script[^>]*type="module"/);
     if (configTag < 0) {
         problems.push('index.html 没有引用 `./config.js`（部署方的后端地址读不到）');
     } else if (bundleTag >= 0 && configTag > bundleTag) {
@@ -781,6 +784,54 @@ for (const name of ['revoke', 'update']) {
                 + '它是自己拼 HTML 的（不走 highlight.js 的转义），漏一处就是 XSS',
             );
         }
+    }
+}
+
+// ── R. 部署后白屏的兜底：入口 404 时要能自己救回来 ────────────────────────
+//
+// ⚠️★ 2026-10-30 的真事：部署完第一次进演示站一片白，必须手动刷新一下。
+// 根因：PWA 的 SW 配了 `navigateFallback: 'index.html'`，导航请求由**它预缓存的旧壳**应答，
+// 而旧壳里的 `assets/index-<旧hash>.js` 在新部署里已经被删掉 → 404 → 白屏。
+// 最难受的是「负责发现新版本并刷新」的代码（`services/swUpdate.ts`）就住在那份加载失败的
+// bundle 里 —— 没有任何代码能救场。
+// 所以兜底只能写在 `index.html` 里、bundle **之前**（那段内联脚本一定执行得到）。
+//
+// 这条盯四件事，少一件兜底就是死的：
+//   ① 挂了 `vite:preloadError`（懒加载 chunk 404 走这条）；
+//   ② 挂了 `error` 的 **capture** 监听（入口 `<script>` 404 走这条 —— error 不冒泡，
+//      不加 `true` 永远收不到）；
+//   ③ 两处用的 sessionStorage 键**一字不差**；
+//   ④ `main.tsx` 真的清它 —— 不清的话只有第一次部署能自动救，之后又回到手动刷新。
+{
+    const htmlPath = join(WEB, 'index.html');
+    const shellHtml = existsSync(htmlPath) ? readFileSync(htmlPath, 'utf8') : '';
+    const mainPath = join(WEB, 'src/main.tsx');
+    const mainSrc = existsSync(mainPath) ? readFileSync(mainPath, 'utf8') : '';
+
+    if (!/vite:preloadError/.test(shellHtml)) {
+        problems.push('index.html 里没有 `vite:preloadError` 兜底 —— 懒加载 chunk 404 时页面会白屏');
+    }
+    if (!/addEventListener\(\s*'error'[\s\S]{0,240}?true\s*\)/.test(shellHtml)) {
+        problems.push(
+            "index.html 里没有 `addEventListener('error', …, true)` —— 入口 `<script>` 404 时 "
+            + 'error 不冒泡，只有 capture 阶段能捞到',
+        );
+    }
+    // 键名在两处各写一次（内联脚本不参与打包，没法共享常量），所以这里比对字面量。
+    const pickKey = (src) => (/['"](__clip9-[a-z-]+__)['"]/.exec(src) || [])[1] || '';
+    const keyInHtml = pickKey(shellHtml);
+    const keyInMain = pickKey(mainSrc);
+    if (!keyInHtml || !keyInMain) {
+        problems.push(
+            '「加载失败只刷一次」的 sessionStorage 键缺了一半：'
+            + `index.html ${keyInHtml ? `有（${keyInHtml}）` : '没有'}、`
+            + `main.tsx ${keyInMain ? `有（${keyInMain}）` : '没有'}`,
+        );
+    } else if (keyInHtml !== keyInMain) {
+        problems.push(
+            `两处的键不一致（index.html: ${keyInHtml} / main.tsx: ${keyInMain}）—— `
+            + '那样标记永远清不掉，只有第一次部署能自动救',
+        );
     }
 }
 
