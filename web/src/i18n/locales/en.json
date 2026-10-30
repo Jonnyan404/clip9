@@ -48,6 +48,7 @@
   "clearClipboardConfirmText": "Are you sure you want to clear all clipboard content in the current room?",
   "enterTextToSend": "Enter text to send",
   "composerSlashHint": "/ to insert a markdown template",
+  "fullscreenEdit": "Full-screen editor",
   "fullscreenCloseAfterSendOn": "Auto-close fullscreen after sending",
   "fullscreenCloseAfterSendOff": "Keep fullscreen open after sending",
   "fullscreenOpacity": "Fullscreen input background opacity",

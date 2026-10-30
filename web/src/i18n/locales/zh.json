@@ -48,6 +48,7 @@
   "clearClipboardConfirmText": "是否要清空当前房间的所有剪贴板内容？",
   "enterTextToSend": "请输入需要发送的文本",
   "composerSlashHint": "/ 可触发 markdown 模板插入",
+  "fullscreenEdit": "全屏编辑",
   "fullscreenCloseAfterSendOn": "发送后自动收起全屏",
   "fullscreenCloseAfterSendOff": "发送后保持全屏打开",
   "fullscreenOpacity": "全屏输入框背景透明度",

@@ -260,25 +260,32 @@ export const UnifiedComposer = forwardRef<UnifiedComposerHandle>(function Unifie
                 }}
             >
                 {display.composerText && (
-                    <Box sx={{ position: 'relative', order: isFilePrimary ? 3 : 1 }}>
+                    <Box sx={{ order: isFilePrimary ? 3 : 1 }}>
                         {slashMenu && <ComposerSlashMenu items={SLASH_TEMPLATES as SlashTemplate[]} onPick={(item) => void insertSlashTemplate(item)} />}
-                        <Tooltip title={t('enterTextToSend')}>
-                            <IconButton size="small" aria-label={t('enterTextToSend')} sx={{ position: 'absolute', top: 4, right: 4, zIndex: 1 }} onClick={() => setTextFullscreen(true)}>
-                                <MdiIcon name="mdi-fullscreen" size={18} />
-                            </IconButton>
-                        </Tooltip>
-                        <TextField
-                            inputRef={textareaRef}
-                            fullWidth
-                            multiline
-                            rows={isFilePrimary ? 1 : 3}
-                            value={send.text}
-                            placeholder={textareaPlaceholder}
-                            onChange={(e) => useAppStore.setState({ send: { ...useAppStore.getState().send, text: e.target.value } })}
-                            onKeyDown={onKeyDown}
-                            onInput={onTextareaInput}
-                            onCompositionEnd={onTextareaInput}
-                        />
+                        {/* ⚠️★ 「全屏编辑」按钮的定位祖先只能是**输入框这一层**，不能是整个 Box。
+                            `/` 模板菜单（`ComposerSlashMenu`）是普通流式元素，插在输入框**上面** ——
+                            菜单一出现 Box 顶部就变成了菜单，`top: 4` 的按钮于是跑上去跟模板挤成一行
+                            （2026-10-30 用户报的「模板显示时按钮跟模板一行了」）。
+                            锚在这一层之后，菜单显不显示它都贴着输入框右上角。 */}
+                        <Box sx={{ position: 'relative' }}>
+                            <Tooltip title={t('fullscreenEdit')}>
+                                <IconButton size="small" aria-label={t('fullscreenEdit')} sx={{ position: 'absolute', top: 4, right: 4, zIndex: 1 }} onClick={() => setTextFullscreen(true)}>
+                                    <MdiIcon name="mdi-fullscreen" size={18} />
+                                </IconButton>
+                            </Tooltip>
+                            <TextField
+                                inputRef={textareaRef}
+                                fullWidth
+                                multiline
+                                rows={isFilePrimary ? 1 : 3}
+                                value={send.text}
+                                placeholder={textareaPlaceholder}
+                                onChange={(e) => useAppStore.setState({ send: { ...useAppStore.getState().send, text: e.target.value } })}
+                                onKeyDown={onKeyDown}
+                                onInput={onTextareaInput}
+                                onCompositionEnd={onTextareaInput}
+                            />
+                        </Box>
                     </Box>
                 )}
 

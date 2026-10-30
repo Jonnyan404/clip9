@@ -48,6 +48,7 @@
   "clearClipboardConfirmText": "現在のルームのすべてのクリップボードコンテンツをクリアしてもよろしいですか？",
   "enterTextToSend": "送信するテキストを入力してください",
   "composerSlashHint": "/ で markdown テンプレートを挿入",
+  "fullscreenEdit": "全画面で編集",
   "fullscreenCloseAfterSendOn": "送信後に全画面を自動で閉じる",
   "fullscreenCloseAfterSendOff": "送信後も全画面を開いたままにする",
   "fullscreenOpacity": "全画面入力の背景の不透明度",
