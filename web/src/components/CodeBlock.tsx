@@ -1,9 +1,9 @@
 import { useEffect, useRef, useState } from 'react';
-import { highlightCode } from '@/lib/highlight.js';
+import { colorizePlain, highlightCode } from '@/lib/highlight.js';
 
 /**
  * 代码块 —— 从 web-vue3/src/components/CodeBlock.vue 移植。
- * 按文件名（扩展名）选语言高亮，认不出来就按纯文本渲染。
+ * 按文件名（扩展名）选语言高亮；认不出来就**不猜**，走语言无关的通用着色。
  *
  * ⚠️ 竞态：换文件时上一次高亮可能还在飞（高亮器是动态 import 的）。用自增序号挡住 ——
  * 回来时序号已经不是当前那次就丢掉，否则会出现「B 的正文配 A 的高亮」。
@@ -22,7 +22,9 @@ export function CodeBlock({ text, name }: { text: string; name?: string }) {
         void (async () => {
             const result = await highlightCode(text, name || '');
             if (!cancelled && mine === seqRef.current) {
-                setHtml(result || '');
+                // ⚠️ 认不出语言（按文件名判断）就**不猜**，走语言无关的通用着色 ——
+                //    与 md 里那些没写语言的代码块同一个实现，别在两处各留一条「纯文本」的路。
+                setHtml(result || colorizePlain(text));
             }
         })();
         return () => {

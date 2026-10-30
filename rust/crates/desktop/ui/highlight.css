@@ -44,6 +44,15 @@ code.hljs {
     --cb-tag: #22863a;
     --cb-delete: #b31d28;
     --cb-insert: #22863a;
+    /* 语言无关着色用的调色板（见 `colorizePlain`）。色号取 GitHub Light 的语法色。 */
+    --cb-tone-0: #0550ae;
+    --cb-tone-1: #8250df;
+    --cb-tone-2: #bf3989;
+    --cb-tone-3: #116329;
+    --cb-tone-4: #953800;
+    --cb-tone-5: #0a3069;
+    --cb-tone-6: #6e7781;
+    --cb-tone-7: #cf222e;
 }
 
 :where(.v-theme--dark, [data-theme='dark'], .dark) code.hljs {
@@ -58,6 +67,14 @@ code.hljs {
     --cb-tag: #7ee787;
     --cb-delete: #ffa198;
     --cb-insert: #aff5b4;
+    --cb-tone-0: #79c0ff;
+    --cb-tone-1: #d2a8ff;
+    --cb-tone-2: #ff9bce;
+    --cb-tone-3: #7ee787;
+    --cb-tone-4: #ffa657;
+    --cb-tone-5: #a5d6ff;
+    --cb-tone-6: #8b949e;
+    --cb-tone-7: #ffa198;
 }
 
 code.hljs .hljs-comment,
@@ -118,3 +135,19 @@ code.hljs .hljs-emphasis {
 code.hljs .hljs-strong {
     font-weight: 600;
 }
+
+/* 语言无关着色（`colorizePlain`，没写语言的代码块走这条）。
+ *
+ * 每个「词」一个类，同一个词永远同一个 tone —— 这是 Artalk 的 `hanabi` 那套：
+ * 不声称知道语言，但不同标识符颜色不同，扫一眼能看出谁是谁。
+ * ⚠️ 类名不用 `hljs-*` 语义前缀（`hljs-keyword` 那些是"这门语言的关键字"），
+ *    这批是"第 N 号颜色"，混进去会让读样式的人以为在按语法着色。
+ */
+code.hljs .hljs-tone-0 { color: var(--cb-tone-0); }
+code.hljs .hljs-tone-1 { color: var(--cb-tone-1); }
+code.hljs .hljs-tone-2 { color: var(--cb-tone-2); }
+code.hljs .hljs-tone-3 { color: var(--cb-tone-3); }
+code.hljs .hljs-tone-4 { color: var(--cb-tone-4); }
+code.hljs .hljs-tone-5 { color: var(--cb-tone-5); }
+code.hljs .hljs-tone-6 { color: var(--cb-tone-6); }
+code.hljs .hljs-tone-7 { color: var(--cb-tone-7); }

@@ -723,10 +723,58 @@ for (const name of ['revoke', 'update']) {
     }
 }
 
+// ── Q. 代码高亮：没写语言**不许猜**，要走语言无关的通用着色 ──────────────
+//
+// ⚠️★ 2026-10-30 的真事：没写语言的代码块原来拿 `highlightAuto` 猜，而短片段根本猜不准 ——
+// `select … from users` 被猜成 bash（sql 连前三都没进）、`fn main(){}` 被猜成 javascript
+// （和 rust 同分）、单行 js 干脆猜不出。猜错是给出**错误结论**（一段 JS 顶着 C++ 的语法色），
+// 比「没颜色」更糟。现在改成不猜 + `colorizePlain` 按词轮流上色（Artalk 的 hanabi 那套）。
+//
+// 这条盯两件事：
+//   ① `highlightCodeBlocksIn` 里不许再出现 `detectLanguage(`；
+//   ② `colorizePlain` 必须存在，且必须调 `escapeHtml` —— 它是**自己拼 HTML** 的，
+//      不走 highlight.js 的内部转义，漏了就是一个 XSS 口子（内容来自别人的剪贴板）。
+{
+    const hiPath = join(WEB, 'src/lib/highlight.js');
+    const hi = existsSync(hiPath) ? readFileSync(hiPath, 'utf8') : '';
+    const blocksFn = /export async function highlightCodeBlocksIn[\s\S]*?\n\}/.exec(hi)?.[0] ?? '';
+    if (!blocksFn) {
+        problems.push('highlight.js 里找不到 highlightCodeBlocksIn');
+    } else if (/detectLanguage\s*\(/.test(blocksFn)) {
+        problems.push(
+            'highlightCodeBlocksIn 又在猜语言了（`detectLanguage(`）—— 短片段猜不准，'
+            + '猜错会给出错误的语法色。没写语言就交给 colorizePlain',
+        );
+    } else if (!/colorizePlain\s*\(/.test(blocksFn)) {
+        problems.push('highlightCodeBlocksIn 没有用 colorizePlain —— 没写语言的代码块会是一坨纯文本');
+    }
+
+    const plainFn = /export function colorizePlain[\s\S]*?\n\}/.exec(hi)?.[0] ?? '';
+    if (!plainFn) {
+        problems.push('highlight.js 里没有 colorizePlain —— 没写语言的代码块没有颜色');
+    } else {
+        // ⚠️ 三个「往外吐内容」的地方逐个点名，**不是**只看函数里有没有 `escapeHtml(`：
+        // 只要还留着一处没转义的调用，光查 `escapeHtml(` 就照样绿（实测过：
+        // 把 `${escapeHtml(word)}` 改成 `${word}` 时，旧的写法一点反应都没有）。
+        const needs = [
+            ['escapeHtml(word)', '词（tone span 里那段）'],
+            ['escapeHtml(comment)', '注释'],
+            ['escapeHtml(source.slice', '词与词之间的原文'],
+        ];
+        const missing = needs.filter(([needle]) => !plainFn.includes(needle)).map(([, why]) => why);
+        if (missing.length) {
+            problems.push(
+                `colorizePlain 里这几处没有转义：${missing.join('、')} —— `
+                + '它是自己拼 HTML 的（不走 highlight.js 的转义），漏一处就是 XSS',
+            );
+        }
+    }
+}
+
 // ── 结果 ────────────────────────────────────────────────────────────────
 if (problems.length) {
     console.error(`✗ 契约守卫失败（${problems.length} 处）：`);
     for (const line of problems) console.error(`    ${line}`);
     process.exit(1);
 }
-console.log('✓ 契约守卫通过：零依赖共享模块字节一致 · 外壳形状完整 · PWA 放行表一致 · dev 代理覆盖了每条服务端路由 · i18n 无死键 · 已删模式未复活 · revoke 只发 POST · WS 事件 id 已归一 · 后端地址与页面地址分开 · 选文件是追加 · 写请求都带 client · 预览不为显示签分享令牌 · 设置通用页不靠 secondaryAction · 便签进全屏先关阅读器 · 图片工具条住在顶栏');
+console.log('✓ 契约守卫通过：零依赖共享模块字节一致 · 外壳形状完整 · PWA 放行表一致 · dev 代理覆盖了每条服务端路由 · i18n 无死键 · 已删模式未复活 · revoke 只发 POST · WS 事件 id 已归一 · 后端地址与页面地址分开 · 选文件是追加 · 写请求都带 client · 预览不为显示签分享令牌 · 设置通用页不靠 secondaryAction · 便签进全屏先关阅读器 · 图片工具条住在顶栏 · 没写语言的代码块不猜语言');

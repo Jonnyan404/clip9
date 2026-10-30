@@ -156,6 +156,68 @@ export async function detectLanguage(code, minRelevance = 6) {
 }
 
 /**
+ * **没有语言标记**时用的着色：不看语法，按「词」轮流上色。
+ *
+ * 这套抄的是 Artalk 用的 `hanabi`（「Highlight any code, in a colorful way」）：不判断语言，
+ * 只把连续的「词」按调色板顺序染色，**同一个词永远同一个颜色** —— 于是 `function` 出现五次
+ * 是同一个色，`foo` / `bar` 各一色，扫一眼就能认出哪两个标识符是同一个。注释单独灰掉。
+ *
+ * 为什么值得单独一个实现：
+ *   · 没写语言的代码块占多数（``` 后面直接换行），而**猜语言猜不准**：实测
+ *     `select … from users` 被猜成 bash、`fn main(){}` 被猜成 javascript、单行 js 干脆猜不出
+ *     （见 `highlightCodeBlocksIn` 里那段）。猜错是给出**错误结论**；通用着色压根不声称
+ *     自己知道那是什么语言，所以不会错，只是"每个词一个色"。
+ *   · 对非代码同样无害：中文/日文也被当成「词」，贴一段诗进去也是彩色的。
+ *     反倒按某门语言的语法去染，会把中文标点周围染得一塌糊涂。
+ *
+ * ⚠️★ **这条路是自己拼 HTML 的，必须自己转义**。highlight.js 那条路是它内部转义的。
+ *   漏了就是一个 XSS 口子（内容来自别人的剪贴板）。
+ * ⚠️ `https://…` 里的 `//` 不是注释 —— 判定前先看它前一个字符是不是冒号。
+ */
+const TONE_COUNT = 8;
+
+const HTML_ESCAPE = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' };
+const escapeHtml = (text) => String(text).replace(/[&<>"']/g, (ch) => HTML_ESCAPE[ch]);
+
+// 注释那个分支在前：同一位置上优先命中它。
+// `\p{L}` / `\p{N}` 覆盖所有语言的字母与数字（含中日韩），所以中文诗句会整句算一个「词」。
+const PLAIN_TOKEN_RE = /(\/\/[^\n]*|\/\*[\s\S]*?\*\/)|([\p{L}\p{N}_]+)/gu;
+
+export function colorizePlain(code) {
+    const source = String(code || '');
+    if (!source) {
+        return '';
+    }
+    const tones = new Map();
+    let next = 0;
+    let out = '';
+    let last = 0;
+    for (const match of source.matchAll(PLAIN_TOKEN_RE)) {
+        out += escapeHtml(source.slice(last, match.index));
+        const [, comment, word] = match;
+        if (comment) {
+            // ⚠️ `https://…` / `curl x://y` 里的 `//` 不是注释：前一个是冒号就当普通文本。
+            if (comment.startsWith('//') && source[match.index - 1] === ':') {
+                out += escapeHtml(comment);
+            } else {
+                out += `<span class="hljs-comment">${escapeHtml(comment)}</span>`;
+            }
+        } else {
+            let tone = tones.get(word);
+            if (tone === undefined) {
+                tone = next;
+                tones.set(word, tone);
+                next = (next + 1) % TONE_COUNT;
+            }
+            out += `<span class="hljs-tone-${tone}">${escapeHtml(word)}</span>`;
+        }
+        last = match.index + match[0].length;
+    }
+    out += escapeHtml(source.slice(last));
+    return out;
+}
+
+/**
  * 把源码转成高亮后的 HTML。
  *
  * **返回 `null` 表示「按纯文本渲染」**：认不出语言、语言包没注册、高亮器没加载起来，
@@ -182,7 +244,7 @@ export async function highlightCodeBlocksIn(el) {
     }
     // ⚠️★ 选择器是 `pre > code`，**不是** `pre > code[class*="language-"]`：
     //    后者只认 ```js 这种写了语言的块，而贴进来的代码大多没写（``` 后面直接换行）——
-    //    那些人恰恰最想要颜色。没有标记的走 `detectLanguage` 猜一次。
+    //    那些人恰恰最想要颜色。
     const blocks = el.querySelectorAll('pre > code');
     for (const block of blocks) {
         if (block.classList.contains('hljs')) {
@@ -193,17 +255,21 @@ export async function highlightCodeBlocksIn(el) {
         if (!source) {
             continue;
         }
-        // ⚠️ 猜只对小段做：`highlightAuto` 会把注册过的语言挨个试一遍，
-        //    一段 20 KB 的日志能卡住主线程几百毫秒。超了就保持纯文本。
-        // ⚠️ 门槛传 4（默认 6）：围栏已经声明这是代码了，见 `detectLanguage` 的标定。
-        const lang = declared || (source.length <= GUESS_MAX ? await detectLanguage(source, 4) : '');
-        if (!lang) {
-            continue;
-        }
-        const html = await highlightCode(source, lang);
+        // ⚠️★ 写了语言 → 按那门语言高亮；**没写就完全不猜**，走语言无关的通用着色。
+        //
+        // 原来是「没写就拿 `highlightAuto` 猜一次」，2026-10-30 撤掉：实测短片段根本猜不准 ——
+        // `select … from users` 被猜成 bash（sql 连前三都没进）、`fn main(){}` 被猜成
+        // javascript（和 rust 同分 4）、`const greeting = "hello";` 干脆猜不出。
+        // 这不是阈值调得低不低的问题：这些片段 relevance 只有 1~5 分，第一名和第二名基本
+        // 并列，还有 `ini`（`key = value` 就能拿分）在抢。降阈值只会把「漏掉」换成「猜错」，
+        // 而**猜错比漏掉更糟** —— 用户看到的是「这段 JS 被标成了 C++ 的语法色」。
+        //
+        // 不猜之后用什么：`colorizePlain` 按「词」轮流上色（Artalk 的 `hanabi` 那套），
+        // 不看语法、所以对任何内容都不会给出错误结论，纯文本也有颜色。
+        const html = declared ? await highlightCode(source, declared) : colorizePlain(source);
         if (html) {
-            // ⚠️ 直接进 innerHTML：highlight.js 自己会转义输入，所以是安全的；
-            // 也正因为如此，**不要再往上拼任何没转义的内容**。
+            // ⚠️ 直接进 innerHTML：上面两条路（highlight.js / colorizePlain）都自己转义了输入，
+            // 所以是安全的；也正因为如此，**不要再往上拼任何没转义的内容**。
             block.innerHTML = html;
             block.classList.add('hljs');
         }
