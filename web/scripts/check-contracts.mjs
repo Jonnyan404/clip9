@@ -10,34 +10,32 @@
 //   D. PWA 的 navigateFallbackDenylist（漏一条服务端路由 → SW 导航兜底吞掉点击）
 // 所以这里用脚本钉住，让「改坏了」变成**构建期可见**的失败。
 
-import { createHash } from 'node:crypto';
 import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
 import { dirname, extname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const WEB = resolve(HERE, '..');
-const REPO = resolve(WEB, '..');
-const LEGACY = join(REPO, 'web-vue3');
 
 const problems = [];
-const sha = (file) => createHash('sha256').update(readFileSync(file)).digest('hex');
 
-// ── A. 零 import 共享模块：与 web-vue3 逐字节一致 ─────────────────────────
+// ── A. 零 import 共享模块（会被逐字节拷到桌面端，那边没有构建步骤）──────
 // ⚠️ 这些文件由 tools/sync-action-catalog.mjs 逐字节拷到 rust/crates/desktop/ui/，
 // 桌面端没有构建步骤 —— 一旦引入 `@/` 别名或第三方 import，那边运行时加载失败
 // （症状是「点分享没反应」，不是报错）。
+// ⚠️★ 2026-10-30：`web-vue3/` 删了，这条原先还跟它那份副本逐字节比。
+// 「页面这份和桌面那份一字不差」现在由 `action-catalog-smoke` 的判据 4 负责
+// （它比的是真源与拷贝）；这里只留「零 import」这一半。两处各管一件事，别都松掉。
 const SHARED = [
-    ['src/lib/actions/pure.js', 'src/data/actions/pure.js'],
-    ['src/lib/actions/catalog.json', 'src/data/actions/catalog.json'],
-    ['src/lib/share-config.js', 'src/share-config.js'],
-    ['src/lib/slash-template.js', 'src/slash-template.js'],
-    ['src/lib/replace-modes.json', 'src/data/replace-modes.json'],
+    'src/lib/actions/pure.js',
+    'src/lib/actions/catalog.json',
+    'src/lib/share-config.js',
+    'src/lib/slash-template.js',
+    'src/lib/replace-modes.json',
 ];
 
-for (const [mine, theirs] of SHARED) {
+for (const mine of SHARED) {
     const minePath = join(WEB, mine);
-    const theirsPath = join(LEGACY, theirs);
     if (!existsSync(minePath)) {
         problems.push(`缺文件 ${mine}`);
         continue;
@@ -49,9 +47,6 @@ for (const [mine, theirs] of SHARED) {
         if (imports.length) {
             problems.push(`${mine} 出现了 import（必须零 import）：${imports.join(', ')}`);
         }
-    }
-    if (existsSync(theirsPath) && sha(minePath) !== sha(theirsPath)) {
-        problems.push(`${mine} 与 web-vue3/${theirs} 不再逐字节一致（桌面端同步会失败）`);
     }
 }
 
@@ -68,21 +63,30 @@ for (const [needle, why] of SHELL) {
     }
 }
 
-// ── D. PWA 放行表：与 web-vue3 的条目集合一致 ─────────────────────────────
+// ── D. PWA 放行表：服务端路由一条都不能漏 ────────────────────────────────
+// ⚠️★ 2026-10-30：原先对着 `web-vue3/vite.config.js` 的条目集合比 —— 那个目录删了。
+// 改成把「必须放行」的这几条写在这里。这条判据的意图本来就是「服务端路由不能被 SW 的
+// 导航兜底吞掉」，而条目全集不该由另一份前端决定：两边一起漏掉一条新路由时，对照法
+// 永远发现不了（这就是原先那句注释自己承认的漏洞）。
+// ⚠️ 加服务端路由时**这里和 vite.config.ts 一起改**；下面 D2（dev 代理）盯的是同一批路由，
+// 两处都漏才叫真漏。
+const DENY_REQUIRED = [
+    's', 'server', 'text', 'auth', 'upload', 'push', 'rooms', 'share',
+    'file', 'revoke', 'content', 'automation', 'tasks', 'convert',
+];
 const extractDenylist = (source) => {
     const match = source.match(/navigateFallbackDenylist:\s*\[([\s\S]*?)\]/);
     if (!match) return null;
     return [...match[1].matchAll(/\/\^\\\/([a-z]+)/g)].map((m) => m[1]).sort();
 };
 const mineDenylist = extractDenylist(readFileSync(join(WEB, 'vite.config.ts'), 'utf8'));
-const theirsDenylist = extractDenylist(readFileSync(join(LEGACY, 'vite.config.js'), 'utf8'));
 if (!mineDenylist) {
     problems.push('vite.config.ts 里找不到 navigateFallbackDenylist');
-} else if (theirsDenylist) {
-    const missing = theirsDenylist.filter((entry) => !mineDenylist.includes(entry));
-    const extra = mineDenylist.filter((entry) => !theirsDenylist.includes(entry));
-    if (missing.length) problems.push(`PWA 放行表缺条目：${missing.join(', ')}`);
-    if (extra.length) problems.push(`PWA 放行表多出条目（web-vue3 没有）：${extra.join(', ')}`);
+} else {
+    const missing = DENY_REQUIRED.filter((entry) => !mineDenylist.includes(entry));
+    if (missing.length) {
+        problems.push(`PWA 放行表缺条目：${missing.join(', ')}（这些服务端路由会被 SW 的导航兜底吞掉）`);
+    }
 }
 
 // ── D2. dev 代理：服务端路由一条都不能漏 ─────────────────────────────────

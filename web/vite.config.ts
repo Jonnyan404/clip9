@@ -8,8 +8,7 @@ import { VitePWA } from 'vite-plugin-pwa';
 //   1. build id 注入（bundle + `<html data-build-id>` 两处）；
 //   2. PWA 的 `navigateFallbackDenylist`（漏一条服务端路由 → SW 导航兜底吞掉点击）；
 //   3. dev 下注入 `<base href="/">`（history 深路径 `/s/<token>` 靠它把相对地址拉回根目录）。
-// ⚠️ 与 web-vue3 的差异只有插件（@vitejs/plugin-vue → @vitejs/plugin-react-swc）与
-//    manualChunks 的分组（vue-core → react-core，vuetify → mui）。
+// ⚠️ 2026-10-30 起 `web-vue3/`（Vue 版）已从仓库删掉 —— 这份配置现在只有一份，不用再对齐谁。
 export default defineConfig(({ command }) => {
     // 每次构建生成一个唯一指纹，注入到 bundle 和 <html data-build-id> 两处，用来核对
     // 「线上跑的是哪次构建」。判据用 `command` 而不是 `process.env.NODE_ENV`：开发服务器
@@ -107,8 +106,8 @@ export default defineConfig(({ command }) => {
                     //
                     // ⚠️ 这条契约**现在没有守卫**：原来盯着它的是 Go 侧的
                     // `TestSpaServiceWorkerCoversEveryServerRoute`，随前身实现一起没了。
-                    // `web/scripts/check-contracts.mjs` 的判据 D 只比「与 web-vue3 的条目集合一致」，
-                    // **它永远发现不了「两边都漏了一条新路由」** —— 加服务端路由时记得手改这里。
+// `web/scripts/check-contracts.mjs` 的判据 D 里有一张**必须放行**的清单
+// （`DENY_REQUIRED`）—— 加服务端路由时记得手改这里和那张清单，两处都漏才是真漏。
                     navigateFallbackDenylist: [
                         /^\/s\//,
                         /^\/server/,
