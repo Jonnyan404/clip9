@@ -42,7 +42,7 @@ const WEB = resolve(HERE, '..');
 const REPO = resolve(WEB, '..');
 
 // 零 import 的两个模块：可以直接 import（它们本来就要被桌面端原样加载）。
-const { looksLikeMarkdown, looksLikeTable, looksLikeTaskList } = await import(
+const { hasCodeMarkup, looksLikeMarkdown, looksLikeTable, looksLikeTaskList } = await import(
     new URL('../src/lib/actions/pure.js', import.meta.url).href
 );
 const { DISPLAY_TOGGLES, DEFAULT_DISPLAY } = await import(
@@ -110,12 +110,13 @@ if (prefersBody) {
             'looksLikeTaskList',
             'looksLikeTable',
             'looksLikeMarkdown',
+            'hasCodeMarkup',
             prefersBody,
         );
         // ⚠️ 抠出来的体里若引用了没注入的标识符，下面这一行就会 ReferenceError —— 那样要红，不是跳过。
-        const probe = compiled('# 标题', looksLikeTaskList, looksLikeTable, looksLikeMarkdown);
+        const probe = compiled('# 标题', looksLikeTaskList, looksLikeTable, looksLikeMarkdown, hasCodeMarkup);
         if (typeof probe !== 'boolean') throw new Error(`返回值是 ${typeof probe}，不是 boolean`);
-        prefersRenderedView = (text) => compiled(text, looksLikeTaskList, looksLikeTable, looksLikeMarkdown);
+        prefersRenderedView = (text) => compiled(text, looksLikeTaskList, looksLikeTable, looksLikeMarkdown, hasCodeMarkup);
     } catch (error) {
         ok('抠出来的 prefersRenderedView 跑得动', false, String(error));
     }
@@ -126,8 +127,14 @@ const CASES = [
     ['- [ ] 买牛奶\n- [x] 写周报', true, '任务列表'],
     ['1. [ ] 有序任务列表', true, '有序任务列表'],
     ['| a | b |\n| --- | --- |\n| 1 | 2 |', true, 'GFM 表格'],
+    // ⚠️ 2026-10-30 起「含代码标记」也算默认渲染（Jonny 的要求）：代码贴进来是给读者看的，
+    // 让人先点一下「Markdown 渲染」才见到颜色说不通。
+    ['跑 `npm run dev` 就行', true, '行内代码 → 默认渲染'],
+    ['```js\nconst a = 1;\n```', true, '围栏代码块 → 默认渲染'],
+    ['```\n没写语言也算\n```', true, '没标语言的围栏也算'],
+    ['只有一个反引号 ` 的句子', false, '单个反引号不算（中文里偶尔出现）'],
     ['# 标题', false, '普通 markdown 默认原文'],
-    ['**加粗** 和 `inline code`', false, '行内标记默认原文'],
+    ['**加粗** 的文本', false, '纯行内强调默认原文'],
     ['- 普通列表项', false, '普通无序列表默认原文'],
     ['5 * 3 = 15', false, '普通文本不能被误判成 markdown'],
     ['这是一句普通的话', false, '中文普通文本'],

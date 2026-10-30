@@ -6,13 +6,14 @@
  * ⚠️ 与 `lib/markdown.js` 的分工：依赖 marked / DOMPurify 的 `renderMarkdownHtml` 在那边。
  */
 import { APP_BASE_URL } from './base';
-import { looksLikeTable, looksLikeTaskList } from './actions/pure.js';
+import { hasCodeMarkup, looksLikeTable, looksLikeTaskList } from './actions/pure.js';
 
 // 这些**纯函数**住在 `actions/pure.js`（零 import，两端共用）—— 这里只是再导出一次，
 // 让调用点（`import { looksLikeTable } from '@/lib/util'`）保持与 Vue 版一致的写法。
 export {
     decodeHtmlEntities,
     formatJson,
+    hasCodeMarkup,
     looksLikeCode,
     looksLikeMarkdown,
     looksLikeTable,
@@ -290,10 +291,14 @@ export function errorMessage(error: unknown): string {
  *
  * 这是「默认值」的**唯一**判断处，标准模式卡片、便签阅读器、速览预览、看板卡片都走它 ——
  * 各写一套的话，同一条内容在不同界面里长相不同，用户没法预期。
- * 规则：任务列表和表格默认渲染，其余默认原文。
+ * 规则：任务列表、表格、**含代码标记的**（``` 围栏或行内 `` `x` ``）默认渲染，其余默认原文。
+ *
+ * ⚠️ 代码那条是 2026-10-30 加的，Jonny 的要求。理由和任务列表一样：代码块贴进来一片黑白
+ * （或没上色的等宽），而「点一下 Markdown 渲染」这个动作对读者是隐藏的 —— 贴代码的人
+ * 预期对方**直接看见**语法高亮，不是看见一坨原文。判据 `hasCodeMarkup`。
  */
 export function prefersRenderedView(text: string): boolean {
-    return Boolean(looksLikeTaskList(text) || looksLikeTable(text));
+    return Boolean(looksLikeTaskList(text) || looksLikeTable(text) || hasCodeMarkup(text));
 }
 
 /**
