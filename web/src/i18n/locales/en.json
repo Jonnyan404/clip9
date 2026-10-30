@@ -94,6 +94,8 @@
   "filterFile": "Files",
   "filterTaskList": "Task list",
   "filterTable": "Table",
+  "slashInlineCode": "Inline code",
+  "slashCodeBlock": "Code block",
   "slashMath": "Formula",
   "taskSaveFailed": "Could not save the tick — reverted",
   "filterEmpty": "Nothing in this category",

@@ -7,6 +7,8 @@ export interface SlashTemplate {
     icon: string;
     text?: string;
     actionId?: string;
+    /** 插入后光标相对插入起点的偏移。不写 = 插入文本的末尾（见 `slash-template.js`）。 */
+    caret?: number;
 }
 
 /**

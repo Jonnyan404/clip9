@@ -86,6 +86,8 @@
     "inspectLines": "行",
     "inspectNoMatch": "未识别出已知格式",
     "inspectWords": "词",
+    "slashCodeBlock": "代码块",
+    "slashInlineCode": "行内代码",
     "slashMath": "公式"
   },
   "en": {
@@ -170,6 +172,8 @@
     "inspectLines": "Lines",
     "inspectNoMatch": "No known format detected",
     "inspectWords": "Words",
+    "slashCodeBlock": "Code block",
+    "slashInlineCode": "Inline code",
     "slashMath": "Formula"
   }
 }

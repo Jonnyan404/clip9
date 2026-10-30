@@ -94,6 +94,8 @@
   "filterFile": "ファイル",
   "filterTaskList": "タスクリスト",
   "filterTable": "表",
+  "slashInlineCode": "インラインコード",
+  "slashCodeBlock": "コードブロック",
   "slashMath": "数式",
   "taskSaveFailed": "チェックを保存できませんでした（元に戻しました）",
   "filterEmpty": "この分類にはまだ何もありません",

@@ -3503,7 +3503,9 @@ async function insertSlashTemplate(input, item) {
   }
   input.value = head + insert + tail;
   // ⚠️ 光标落在插入内容的**后面**（不是原地）：插模板就是为了接着往下写那几行。
-  const caret = head.length + insert.length;
+  // 例外是模板自己指定了落点（`item.caret`，代码模板用）—— 那时代码的闭合符在末尾，
+  // 光标停在那儿等于插完还得自己左移。三处插入逻辑（这里 / 标准输入框 / 便签）规则一致。
+  const caret = head.length + (typeof item.caret === 'number' ? item.caret : insert.length);
   input.focus();
   input.setSelectionRange(caret, caret);
   updateCounter();

@@ -136,7 +136,9 @@ export const UnifiedComposer = forwardRef<UnifiedComposerHandle>(function Unifie
         const insert = await resolveSlashText(item, runActionById);
         useAppStore.setState({ send: { ...useAppStore.getState().send, text: head + insert + tail } });
         setSlashMenu(false);
-        const caret = head.length + insert.length;
+        // ⚠️ 模板可以指定落点（`item.caret`）—— 代码模板的闭合符在末尾，
+        // 光标停在那儿等于插完还得自己左移。没指定就是「插入内容之后」。
+        const caret = head.length + (typeof item.caret === 'number' ? item.caret : insert.length);
         requestAnimationFrame(() => {
             el?.focus?.();
             el?.setSelectionRange?.(caret, caret);

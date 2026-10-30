@@ -22,6 +22,12 @@
 export const SLASH_TEMPLATES = [
     { key: 'filterTaskList', icon: 'mdi-checkbox-marked-outline', text: '- [ ] \n- [ ] \n- [ ] ' },
     { key: 'filterTable', icon: 'mdi-table', text: '| A | B |\n| --- | --- |\n|  |  |' },
+    // 代码。⚠️★ 这两个必须带 `caret`：三处插入逻辑（标准 / 便签 / 桌面）默认把光标放在
+    // **插入文本的末尾**，而代码的闭合符号全在末尾 —— 光标会落在 `` ` `` 后面、
+    // ``` 的闭合围栏之后，用户得先自己左移几格才能打字，模板反而多一道手续。
+    // `caret` 是「插入后，光标相对插入起点的偏移」，三处插入逻辑都读它（不写就还是末尾）。
+    { key: 'slashInlineCode', icon: 'mdi-code-tags', text: '``', caret: 1 },
+    { key: 'slashCodeBlock', icon: 'mdi-code-block-tags', text: '```\n\n```', caret: 4 },
     // 块公式的骨架。⚠️ 光标落在最后那个 `$$` 之后（两侧的插入逻辑都把光标放在末尾），
     // 用户点进去往上写 TeX 就行。
     // 选块公式而不是行内 `$…$`：手写多行公式的概率更高，而块公式更依赖骨架提醒。
