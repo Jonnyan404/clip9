@@ -75,6 +75,17 @@
 }
 .markdown-body pre code { background: none; box-shadow: none; padding: 0; }
 
+/* 块公式（KaTeX）的兜底：`lib/fit-math.js` 会先把它缩到容器宽度以内，
+   但缩到下限（0.55）仍放不下的超宽公式得有个出路 —— 让它**自己**横向滚，
+   而不是把外层容器（便签卡片、消息卡）撑出一条横向滚动条。 */
+.markdown-body .katex-display {
+    max-width: 100%;
+    overflow-x: auto;
+    overflow-y: hidden;
+    /* 细滚动条：这块通常是「完整但需要滑一下」的少数情况，别用它抢走注意力。 */
+    scrollbar-width: thin;
+}
+
 .markdown-body blockquote {
     border-left: 3px solid color-mix(in srgb, currentColor 25%, transparent);
     padding-left: 10px;
@@ -235,7 +246,12 @@
     -webkit-line-clamp: unset;
     white-space: normal;
     max-height: 46vh;
-    overflow: auto;
+    /* ⚠️ 横向**不许**进这条滚动条（2026-10-30）：
+       一张便签里放一条长公式，KaTeX 的块公式比卡片宽 → 出现横向滚动条，
+       而横向滚动条自己又吃掉 3px 高度，连带把纵向也撑出滚动条。
+       现在横向由 `lib/fit-math.js` 把公式缩到适宽；缩到下限还超出时，滚的是公式自己（见下面 `.katex-display`）。 */
+    overflow-y: auto;
+    overflow-x: hidden;
 }
 
 .sticky-note__text--rendered .markdown-body {

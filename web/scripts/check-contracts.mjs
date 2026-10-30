@@ -841,10 +841,38 @@ for (const name of ['revoke', 'update']) {
     }
 }
 
+// ── S. 块公式在窄容器里要缩到适宽，不能撑出横向滚动条 ──────────────────────
+//
+// ⚠️★ 2026-10-30 用户报的「便签模式首页的数学公式卡片预览有滚动条」：KaTeX 的块公式是
+// **一整块不可断行**的盒子，宽度由内容决定 —— 一条长公式比卡片宽，卡片就出一条横向滚动条，
+// 而横向滚动条自己又吃掉 3px 高，连带把纵向也撑出滚动条（实测 330 宽的卡片装 361 宽的内容）。
+// 只靠 CSS 治不了：KaTeX 不换行、也不会自己变小。必须渲染后按容器宽度缩一次（`lib/fit-math.js`）。
+{
+    const bodyPath = join(WEB, 'src/components/MarkdownBody.tsx');
+    const body = existsSync(bodyPath) ? readFileSync(bodyPath, 'utf8') : '';
+    if (!/fitDisplayMathIn\s*\(/.test(body)) {
+        problems.push(
+            'MarkdownBody 没有调用 fitDisplayMathIn —— 窄卡片（便签 / 手机）里的长公式会撑出横向滚动条',
+        );
+    }
+
+    // 便签卡片的渲染态不许再靠「横向滚动」兜底：那是公式溢出的直接症状。
+    const cssPath = join(WEB, 'src/styles/components.css');
+    const css = existsSync(cssPath) ? readFileSync(cssPath, 'utf8') : '';
+    const rule = /\.sticky-note__text--rendered\s*\{([^}]*)\}/.exec(css)?.[1] ?? '';
+    if (!rule) {
+        problems.push('components.css 里找不到 `.sticky-note__text--rendered`（便签卡片正文的限高盒）');
+    } else if (!/overflow-x:\s*hidden/.test(rule)) {
+        problems.push(
+            '便签卡片正文的 `overflow-x` 不是 hidden —— 长公式会让整张卡片出横向滚动条',
+        );
+    }
+}
+
 // ── 结果 ────────────────────────────────────────────────────────────────
 if (problems.length) {
     console.error(`✗ 契约守卫失败（${problems.length} 处）：`);
     for (const line of problems) console.error(`    ${line}`);
     process.exit(1);
 }
-console.log('✓ 契约守卫通过：零依赖共享模块字节一致 · 外壳形状完整 · PWA 放行表一致 · dev 代理覆盖了每条服务端路由 · i18n 无死键 · 已删模式未复活 · revoke 只发 POST · WS 事件 id 已归一 · 后端地址与页面地址分开 · 选文件是追加 · 写请求都带 client · 预览不为显示签分享令牌 · 设置通用页不靠 secondaryAction · 便签进全屏先关阅读器 · 图片工具条住在顶栏 · 没写语言的代码块不猜语言');
+console.log('✓ 契约守卫通过：零依赖共享模块字节一致 · 外壳形状完整 · PWA 放行表一致 · dev 代理覆盖了每条服务端路由 · i18n 无死键 · 已删模式未复活 · revoke 只发 POST · WS 事件 id 已归一 · 后端地址与页面地址分开 · 选文件是追加 · 写请求都带 client · 预览不为显示签分享令牌 · 设置通用页不靠 secondaryAction · 便签进全屏先关阅读器 · 图片工具条住在顶栏 · 没写语言的代码块不猜语言 · 块公式缩到适宽');
