@@ -28,10 +28,12 @@ export const SLASH_TEMPLATES = [
     // `caret` 是「插入后，光标相对插入起点的偏移」，三处插入逻辑都读它（不写就还是末尾）。
     { key: 'slashInlineCode', icon: 'mdi-code-tags', text: '``', caret: 1 },
     { key: 'slashCodeBlock', icon: 'mdi-code-block-tags', text: '```\n\n```', caret: 4 },
-    // 块公式的骨架。⚠️ 光标落在最后那个 `$$` 之后（两侧的插入逻辑都把光标放在末尾），
-    // 用户点进去往上写 TeX 就行。
+    // 块公式的骨架。
     // 选块公式而不是行内 `$…$`：手写多行公式的概率更高，而块公式更依赖骨架提醒。
-    { key: 'slashMath', icon: 'mdi-function-variant', text: '$$\n\n$$' },
+    // ⚠️★ `caret: 3` = 停在 `$$\n` 之后那个空行上（不设的话光标落在末尾 `$$` 之后 ——
+    // 用户得先左移、再上移才能开始写 TeX，等于这个模板只帮他打了两对美元号）。
+    // 与代码块同一个思路，只是那个是三个反引号、偏移是 4。
+    { key: 'slashMath', icon: 'mdi-function-variant', text: '$$\n\n$$', caret: 3 },
 
     // ── 生成类动作（direction=insert）────────────────────────────────
     // 「插入时间」这类动作的家在**输入框**，不在预览区 —— 它们不吃输入、只产出新文本。

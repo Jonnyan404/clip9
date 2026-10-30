@@ -1,10 +1,10 @@
 {
   "_comment": "由 tools/sync-action-catalog.mjs 生成。--check 用 source 指纹 + files 里的 sha 比对。",
-  "source": "9c9b7ec5202d60ac",
+  "source": "bbcad35e2ce5db53",
   "files": {
     "actions-catalog.json": "2b00bc916cbea4d6",
     "actions-pure.js": "cf7871fe5df045a9",
-    "slash-template.js": "1b63fb884e7fbf79",
+    "slash-template.js": "544236f3dee338ef",
     "highlight.css": "75b04c1c48fb634c",
     "share-config.js": "bc6a7a1a15932747",
     "actions-labels.json": "ca17a24cde356052",
