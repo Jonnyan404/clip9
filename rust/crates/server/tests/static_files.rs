@@ -15,6 +15,7 @@ use axum::body::Body;
 use axum::extract::ConnectInfo;
 use axum::http::{Request, StatusCode, header};
 use clip9_core::Config;
+use clip9_server::static_files::entry_script_src;
 use clip9_server::{AppState, router};
 use clip9_store::Store;
 use tower::ServiceExt;
@@ -122,13 +123,12 @@ fn require_web_artifact(test: &str) -> bool {
 /// 外壳里引用的那个入口 bundle（`./assets/index-<hash>.js` → `assets/index-<hash>.js`）。
 ///
 /// ⚠️ 不写死名字：前端一改，hash 就变，而写死的名字会把「产物换了」误报成「服务端坏了」。
+/// ⚠️ 解析交给 `static_files::entry_script_src`（**单一来源**）：这里原来自己写
+/// `html.split("src=\"")`，取的其实是排在前面的 `config.js`，而且注释里出现一个
+/// `src="…"` 就会被当入口 —— 2026-10-30 就是这么红的。
 fn entry_bundle() -> String {
     let html = std::fs::read_to_string(static_dir().join("index.html")).expect("读外壳");
-    html.split("src=\"")
-        .nth(1)
-        .and_then(|rest| rest.split('"').next())
-        .map(|src| src.trim_start_matches("./").to_owned())
-        .expect("外壳里应该有入口 script")
+    entry_script_src(&html).expect("外壳里应该有 type=\"module\" 的入口 script")
 }
 
 /// ⚠️★ 这一条就是那个 404 的回归测试：**一个 `-static` 都不给，根路径也得有界面**。

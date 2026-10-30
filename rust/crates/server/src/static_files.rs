@@ -406,6 +406,61 @@ fn hex_byte(hi: u8, lo: u8) -> Option<u8> {
     Some(digit(hi)? * 16 + digit(lo)?)
 }
 
+/// 去掉 HTML 注释。
+///
+/// ⚠️★ 不剥注释就会把**注释里写的示例标签**当成真标签。2026-10-30 就这么红过一次：
+/// `index.html` 里一句解释白屏兜底的说明写着 `<script src="./assets/index-<旧hash>.js">`，
+/// 于是 `the_embedded_copy_is_a_real_front_end` 报「入口 assets/index-<旧hash>.js
+/// 不在内嵌表里」—— 红的是一个根本不存在的东西。
+/// 同类坑在 `web/scripts/check-contracts.mjs` 判据 B 也踩过（那边是找 `type="module"` 字面量）：
+/// **查 HTML 永远别拿裸字面量去 indexOf/split，先剥注释再按标签解析。**
+fn strip_html_comments(html: &str) -> String {
+    let mut out = String::with_capacity(html.len());
+    let mut rest = html;
+    while let Some(start) = rest.find("<!--") {
+        out.push_str(&rest[..start]);
+        match rest[start + 4..].find("-->") {
+            Some(end) => rest = &rest[start + 4 + end + 3..],
+            // 注释没闭合：按 HTML 的规矩，后面全算注释。
+            None => return out,
+        }
+    }
+    out.push_str(rest);
+    out
+}
+
+/// 外壳里**入口模块**的 src（`<script type="module" src="…">`）。
+///
+/// 放在模块顶层而不是 `mod tests` 里，是因为**集成测试也要用**（`tests/static_files.rs`
+/// 拿它去找要请求的那个 bundle）。各写一份必然漂，而漂了的症状是「测试绿着，验的却是别的东西」。
+///
+/// ⚠️★ 两个坑都要绕开，这条用例 2026-10-30 各踩一次：
+///   ① 注释里的示例标签 —— 先 `strip_html_comments`；
+///   ② 取「整个 HTML 里第一处 `src="`」拿到的是 **`config.js`**（它排在入口前面），
+///      于是这条用例一直在验 `config.js` 在不在内嵌表里，**从没验过入口 bundle** ——
+///      而它要挡的恰恰是「有 HTML 没有 JS」那种白屏。必须限定在 `type="module"`
+///      的那个 `<script>` 标签**内部**找 `src`，且属性顺序不固定
+///      （实际产物是 `type="module" crossorigin src="./assets/index-….js"`，`crossorigin` 夹在中间）。
+pub fn entry_script_src(html: &str) -> Option<String> {
+    let stripped = strip_html_comments(html);
+    let mut rest = stripped.as_str();
+    while let Some(at) = rest.find("<script") {
+        let after = &rest[at + "<script".len()..];
+        let close = after.find('>')?;
+        let tag = &after[..close];
+        rest = &after[close..];
+        if !tag.contains("type=\"module\"") {
+            continue;
+        }
+        let Some(src_at) = tag.find("src=\"") else {
+            continue;
+        };
+        let src = tag[src_at + "src=\"".len()..].split('"').next()?;
+        return Some(src.trim_start_matches("./").to_owned());
+    }
+    None
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -443,6 +498,53 @@ mod tests {
         false
     }
 
+    /// `entry_script_src` 要绕开的两个坑，各一条 —— 都是 2026-10-30 真发生过的，不是想象。
+    ///
+    /// ⚠️ 这条**不需要前端产物**：输入是手写的 HTML 片段，所以它在本机、在任何时候都跑得起来
+    /// （那几条要用真产物的用例会被 `require_web_artifact` 跳过，坑就没人守了）。
+    #[test]
+    fn the_entry_script_is_found_despite_the_noise_around_it() {
+        // ① 注释里先出现一个 `src="…"`：`index.html` 解释白屏兜底时就是这么写的。
+        //    不剥注释 → 拿它当入口 → 报「assets/index-<旧hash>.js 不在内嵌表里」，
+        //    红的是一个**根本不存在的东西**。
+        let with_comment = concat!(
+            r#"<!-- 旧壳里的 <script src="./assets/index-<旧hash>.js"> 在新部署里已经被删掉 -->"#,
+            r#"<script src="./config.js"></script>"#,
+            r#"<script type="module" crossorigin src="./assets/index-abc123.js"></script>"#,
+        );
+        assert_eq!(
+            entry_script_src(with_comment).as_deref(),
+            Some("assets/index-abc123.js"),
+            "注释里的示例标签不能当入口"
+        );
+
+        // ② `config.js` 排在入口前面（**实际产物就是这样**）：取「整个 HTML 里第一处 src="」
+        //    会拿到 `config.js`，于是这条判据一直在验 config.js 在不在表里，
+        //    而它要挡的是「有 HTML 没有 JS」。必须限定在 module 那个标签内部找。
+        let config_first = concat!(
+            r#"<script src="./config.js"></script>"#,
+            r#"<script type="module" src="./assets/index-def456.js"></script>"#,
+        );
+        assert_eq!(
+            entry_script_src(config_first).as_deref(),
+            Some("assets/index-def456.js"),
+            "不能把 config.js 当成入口 bundle"
+        );
+
+        // ③ 属性顺序不固定：`type` 在 `src` 后面也得认出来。
+        assert_eq!(
+            entry_script_src(r#"<script src="./assets/index-ghi789.js" type="module"></script>"#)
+                .as_deref(),
+            Some("assets/index-ghi789.js"),
+        );
+
+        // ④ 没有 module 脚本 = 没有入口（`build.rs` 的占位页就是这个形状）。
+        assert_eq!(
+            entry_script_src(r#"<script src="./config.js"></script>"#),
+            None,
+        );
+    }
+
     /// 内嵌的那一份必须是**一份真的前端产物**，不是一个空壳。
     ///
     /// ⚠️ 这条挡的是「同步进来的是一个半成品」（`build.rs` 只保证 `index.html` 存在）。
@@ -456,12 +558,7 @@ mod tests {
         assert!(html.contains("<body>"), "外壳得有 body：{}", &html[..80]);
         assert!(html.contains("id=\"app\""), "外壳里得有 SPA 的挂载点");
         // 入口 bundle 必须**也在表里** —— 少了它就是「有 HTML 没有 JS」的白屏。
-        let entry = html
-            .split("src=\"")
-            .nth(1)
-            .and_then(|rest| rest.split('"').next())
-            .map(|src| src.trim_start_matches("./").to_owned())
-            .expect("外壳里应该有入口 script");
+        let entry = entry_script_src(&html).expect("外壳里应该有 type=\"module\" 的入口 script");
         assert!(
             embedded(&entry).is_some(),
             "外壳引用的入口 {entry} 不在内嵌表里（同步漏了？）"

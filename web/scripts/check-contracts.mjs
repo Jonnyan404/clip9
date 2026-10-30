@@ -52,13 +52,18 @@ for (const mine of SHARED) {
 
 // ── B. index.html 的外壳形状（服务端注入契约）─────────────────────────────
 const html = readFileSync(join(WEB, 'index.html'), 'utf8');
+// ⚠️★ 查标签之前**先剥 HTML 注释**。注释里写一段示例标签，就能把下面「config.js 在 bundle 之前」
+// 这条判据骗过去 —— 2026-10-30 一天之内踩了三次同一个坑（判据 B 的 `type="module"`
+// 一次、Rust 侧 `static_files` 的用例两次），三次都是「注释里的字面量被当成了代码」。
+// 规则：**解析 HTML 永远先剥注释，别拿裸字符串去 indexOf。**
+const htmlCode = html.replace(/<!--[\s\S]*?-->/g, '');
 const SHELL = [
     ['data-build-id="__BUILD_ID__"', '构建指纹占位符（vite 插件替换）'],
     ['name="clip9-web"', '桌面端探测标记'],
     ['id="app"', '挂载点 id'],
 ];
 for (const [needle, why] of SHELL) {
-    if (!html.includes(needle)) {
+    if (!htmlCode.includes(needle)) {
         problems.push(`index.html 缺少 ${needle}（${why}）`);
     }
 }
@@ -294,11 +299,12 @@ for (const name of ['revoke', 'update']) {
 
     // index.html：必须在模块 bundle **之前**加载（`lib/base.ts` 在模块求值时就读它）。
     // ⚠️ 用**相对**地址：绝对 `/config.js` 在子路径部署（服务端 `-prefix` / 静态托管子目录）下会指错地方。
-    const configTag = html.indexOf('src="./config.js"');
+    const configTag = htmlCode.indexOf('src="./config.js"');
     // ⚠️ 必须匹配**真正的标签**（`<script … type="module"`），不能用 `indexOf('type="module"')`：
     //    注释里写一个这个字面量就能把判据骗成「排在 bundle 之后」（2026-10-30 实测，
-    //    新加的那段内联兜底脚本的注释里正好有它）。
-    const bundleTag = html.search(/<script[^>]*type="module"/);
+    //    新加的那段内联兜底脚本的注释里正好有它）。两头都要防：注释先剥（`htmlCode`），
+    //    匹配也限定到标签里，不能只靠前者 —— 注释之外还可能有 **行内脚本** 里的字符串。
+    const bundleTag = htmlCode.search(/<script[^>]*type="module"/);
     if (configTag < 0) {
         problems.push('index.html 没有引用 `./config.js`（部署方的后端地址读不到）');
     } else if (bundleTag >= 0 && configTag > bundleTag) {
