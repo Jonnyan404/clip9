@@ -37,7 +37,14 @@ export default defineConfig(({ command }) => {
             VitePWA({
                 registerType: 'autoUpdate',
                 injectRegister: null,
-                includeAssets: ['favicon.svg', 'favicon.ico', 'apple-touch-icon.png', 'pwa-192x192.png', 'pwa-512x512.png', 'reward-wechat.png', 'reward-alipay.png'],
+                // ⚠️★ 这里列的东西会**绕过 `globIgnores` 直接进预缓存**（vite-plugin-pwa 把它们
+                //    单独塞进 manifest）。所以「预缓存瘦身」既要改 `globIgnores`，也要看这份清单 ——
+                //    2026-10-31 就踩了：两个赞赏二维码在 `globIgnores` 里排掉了，却一直挂在
+                //    这份 includeAssets 上，照样每次首屏都下（0.39 MB）。
+                //    它们从 `public/` 复制到 dist 照旧，只是不再预缓存 —— 那两行 <img> 只在
+                //    赞赏弹窗里显示，在线取就够；「离线也能看赞赏码」不是任何人的需求。
+                //    ⚠️ 图标（favicon / pwa-* / apple-touch）必须留着：离线可用与主屏安装都靠它们。
+                includeAssets: ['favicon.svg', 'favicon.ico', 'apple-touch-icon.png', 'pwa-192x192.png', 'pwa-512x512.png'],
                 manifest: {
                     name: 'clip9',
                     short_name: 'clip9',
@@ -98,6 +105,29 @@ export default defineConfig(({ command }) => {
                         '**/KaTeX_*.woff2',
                         '**/KaTeX_*.woff',
                         '**/KaTeX_*.ttf',
+                        // ⚠️★ 2026-10-31：下面三类同属「懒加载 / 永远不会被请求」，一律不许预缓存。
+                        //    改之前实测首屏 **38 个文件 7.36 MB**，其中 4.68 MB（64%）属于这一类 ——
+                        //    每个用户第一次访问就把它们下完，而绝大多数人一辈子用不上。
+                        //
+                        // ① MDI 图标字体**只留 woff2**（394 KB）。eot / ttf / woff 是老浏览器兜底：
+                        //    `@mdi/font` 的 `@font-face` 里 woff2 排在第一个支持的格式，
+                        //    现代浏览器**只下它一个**，那三种永远不会被请求 —— 但 `globPatterns`
+                        //    里的 `eot,woff,ttf` 照样把它们塞进了预缓存（1.25 + 0.56 + 1.25 MB）。
+                        //    ⚠️ `*.woff` **不会**匹配 `*.woff2`（后缀不同），所以 woff2 还在。
+                        // ② opencc（1.14 MB）与 pinyin（0.29 MB）：动作库里本来就是 `await import()`
+                        //    （见 `lib/actions/impl.js`），只有「转简体/繁体」「拼音排序」才用得到。
+                        //    ⚠️ 代码上是懒的，**下载上不是** —— 这就是本节标题那句「懒加载唯一一只有牙」。
+                        // ③ 赞赏二维码：只在赞赏弹窗里显示，没人盼着它离线可用。
+                        '**/materialdesignicons-webfont*.eot',
+                        '**/materialdesignicons-webfont*.woff',
+                        '**/materialdesignicons-webfont*.ttf',
+                        '**/opencc-*.js',
+                        '**/pinyin-*.js',
+                        // ⚠️ 两种写法都列上（同 `config.js` 那条）：`reward-*.png` 在 **dist 根目录**，
+                        //    而 `**/` 前缀是否吃根目录取决于 glob 实现 —— 2026-10-31 实测：只写
+                        //    `**/` 那份**没生效**，两个二维码照样进了预缓存。
+                        'reward-*.png',
+                        '**/reward-*.png',
                     ],
                     cleanupOutdatedCaches: true,
                     navigateFallback: 'index.html',
@@ -195,6 +225,17 @@ export default defineConfig(({ command }) => {
                         }
                         if (id.includes('/i18next') || id.includes('/react-i18next')) {
                             return 'i18n';
+                        }
+                        // ⚠️ 这两个**显式**分组（2026-10-31）：它们虽然是 `await import()` 的懒加载模块，
+                        //    但 `globIgnores` 是按**文件名**排除的 —— 靠 vite 自动命名的话，
+                        //    哪天包名变了（或换实现）chunk 就叫不出 `opencc-*` / `pinyin-*`，
+                        //    排除规则会**静默失效**（症状：构建正常、回访不受影响，只是首屏多下 1.4 MB）。
+                        //    钉死组名，`globIgnores` 才有稳定的东西可指。
+                        if (id.includes('/opencc-js/')) {
+                            return 'opencc';
+                        }
+                        if (id.includes('/pinyin-pro/')) {
+                            return 'pinyin';
                         }
                         if (id.includes('/axios') || id.includes('/qrcode.react')) {
                             return 'vendor';

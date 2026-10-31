@@ -16,7 +16,7 @@
 //   · 反过来，如果把断言写成「标题在 (0,0)」，那调一下间距就会红一片，
 //     于是下一个人会去改断言而不是想清楚 —— 那种测试不如没有。
 
-import { existsSync, readFileSync, readdirSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
 
 import { markdownToPlan, stripInline, estimateTextWidth } from '../src/lib/whiteboard/markdown-plan.ts';
 
@@ -219,18 +219,22 @@ const overlaps = (a, b) => a.y < b.y + b.height && b.y < a.y + a.height;
         plan.width === plan.nodes[0].width && plan.height === plan.nodes[0].height);
 }
 
-// ── 8. 懒加载的**下载**侧：白板 chunk 不许进 PWA 预缓存 ─────────────────
+// ── 8. 懒加载的**下载**侧：不许进 PWA 预缓存 ────────────────────────────
 //
-// ⚠️★ 这一节是「白板懒加载」这件事**唯一**的牙，别删。
+// ⚠️★ 这一节是「懒加载」这件事**唯一**的牙，别删。
 //
-// `React.lazy` 只保证**执行**推迟，**不保证下载推迟** —— 下载推迟靠的是
-// 「不进预缓存 + 用到才 fetch」。而 vite-plugin-pwa 的 `globPatterns` 默认会把
-// `dist/assets/` 下**所有** js/css 都塞进预缓存，包括懒加载的那些。
+// `React.lazy` / `await import()` 只保证**执行**推迟，**不保证下载推迟** ——
+// 下载推迟靠的是「不进预缓存 + 用到才 fetch」。而 vite-plugin-pwa 的 `globPatterns`
+// 会把 `dist/assets/` 下**所有** js/css/字体都塞进预缓存，包括懒加载的那些。
 // 于是「只在白板 mode 才加载」会被**一笔勾销**：每个人第一次访问都在后台把它下完，
 // 而且每次发版（hash 变了）都要重下。
 //
 // ⚠️ 这个坑的可怕之处在于**构建产物看起来完全正常** —— 没有报错、没有警告，
 // 只是每个人多下几 MB。所以只能靠这条判据。
+//
+// ⚠️★ 2026-10-31 起这一节管的是**整份预缓存计划**，不只是白板：实测当时首屏
+// 38 个文件 7.36 MB，其中 4.68 MB（64%）是「懒加载或永远不会被请求」的东西
+// （MDI 的 eot/ttf/woff 3.06 MB、opencc 1.14 MB、pinyin 0.29 MB、赞赏二维码 0.19 MB）。
 //
 // ⚠️ 没构建过就**跳过**（不是判红）：这一步在 `npm run build` 之前跑是完全合法的，
 // 而「因为没构建所以判红」会逼着下一个人去绕过它。
@@ -240,10 +244,58 @@ const overlaps = (a, b) => a.y < b.y + b.height && b.y < a.y + a.height;
         console.log('  － 还没构建过（dist/sw.js 不在），跳过预缓存那条判据');
     } else {
         const sw = readFileSync(swPath, 'utf8');
+        // workbox 生成的清单形如 `{url:"assets/x.js",revision:null}`。
+        // ⚠️ 去重：同一个 url 在 sw.js 里会出现不止一次（预缓存清单一份、运行期路由那份也可能提到），
+        //    不去重的话总量会重复计（实测 `pwa-512x512.png` 被算了两次，多出 0.2 MB）。
+        const urls = [...new Set([...sw.matchAll(/url:"([^"]+)"/g)].map((match) => match[1]))];
+        const distDir = new URL('../dist/', import.meta.url);
+        const sizeOf = (rel) => {
+            try {
+                return statSync(new URL(rel, distDir)).size;
+            } catch {
+                return 0;   // `index.html` 之类不带 hash 的条目偶尔对不上，按 0 算
+            }
+        };
+
+        // ① 懒加载 / 永不请求的，一个都不许在里面。
+        //    逐条点名而不是只卡体积：体积闸门只能告诉你「变大了」，点名的能告诉你**是哪个**。
+        const banned = [
+            [/whiteboard-[A-Za-z0-9_-]+\.(js|css)/, '白板 chunk（懒加载）'],
+            [/opencc-[A-Za-z0-9_-]+\.js/, 'opencc（转简繁才用）'],
+            [/pinyin-[A-Za-z0-9_-]+\.js/, 'pinyin（拼音排序才用）'],
+            [/KaTeX_[^"]*\.(woff2?|ttf)/, 'KaTeX 字体（有公式才用）'],
+            // ⚠️ `(eot|ttf|woff)$` 的 `$` 不能省：`\.woff` 也能匹配 `.woff2` 的前半截，
+            //    写漏了就会把**唯一该留的**那份判成违规（2026-10-31 实测，判据先红在这）。
+            [/materialdesignicons-webfont[^"]*\.(eot|ttf|woff)$/, 'MDI 字体的 eot/ttf/woff（现代浏览器只用 woff2）'],
+            [/reward-[^"]*\.png/, '赞赏二维码（只在弹窗里显示）'],
+        ];
+        for (const [pattern, why] of banned) {
+            const hit = urls.find((url) => pattern.test(url));
+            check(
+                `预缓存里没有${why}`,
+                !hit,
+                hit ? `命中 ${hit} —— 检查 vite.config.ts 的 globIgnores` : '',
+            );
+        }
+
+        // ② 正向断言：图标字体的 **woff2 必须留着**。
+        //    上面那几条都是「排掉」，只有这条防的是「排过头」—— 真排掉了的症状是
+        //    「离线时所有图标变成方块」，而在线时一切正常，很难联想到预缓存。
         check(
-            '白板 chunk 不在 PWA 预缓存清单里（否则懒加载的「下载推迟」失效）',
-            !/whiteboard-[A-Za-z0-9_-]+\.(js|css)/.test(sw),
-            'sw.js 里出现了 whiteboard-*：检查 vite.config.ts 的 globIgnores 与 manualChunks',
+            'MDI 的 woff2 仍在预缓存里（离线时图标还得显示）',
+            urls.some((url) => /materialdesignicons-webfont[^"]*\.woff2/.test(url)),
+            '排除规则写宽了？`*.woff` 不该吃掉 `*.woff2`',
+        );
+
+        // ③ 总量闸门 —— 逐个列举挡不住「以后新增的懒加载库」，只能靠体积。
+        //    改之前的实测值是 7.36 MB，改完约 2.6 MB。留一截余量给正常的代码增长。
+        const total = urls.reduce((sum, url) => sum + sizeOf(url), 0);
+        const limit = 3 * 1024 * 1024;
+        check(
+            `预缓存总量 ${(total / 1048576).toFixed(2)} MB ≤ 3 MB`,
+            total <= limit,
+            '超了先看是不是又有个懒加载的库被 globPatterns 收进去了：'
+            + '按大小排序 `ls -lS dist/assets/*.js`，把「用到才下」的那些加进 globIgnores',
         );
     }
 }
