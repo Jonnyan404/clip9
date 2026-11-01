@@ -159,21 +159,114 @@ docker compose up -d
 这些系统都带 Docker（fnOS 的「Docker」应用、群晖的 Container Manager），上面那份 compose 直接就能用。
 镜像覆盖 `amd64` / `arm64` / `armv7`，二进制是静态链接的，不挑发行版。
 
-**飞牛 fnOS 另有一份原生安装包**：`clip9-fnos-v<版本>-x86.fpk` / `-arm.fpk`（[Releases](https://github.com/Jonnyan404/clip9/releases) 里），
-在「应用中心 → 手动安装」装上即可，不用开 Docker。详见 [`fnos/README.md`](./fnos/README.md)。
+<details>
+<summary><b>🐮 飞牛 fnOS：原生安装包（不用 Docker）</b></summary>
+
+**fnOS 另有一份原生安装包**：`clip9-fnos-v<版本>-x86.fpk` / `-arm.fpk`（[Releases](https://github.com/Jonnyan404/clip9/releases) 里），
+在「应用中心 → 手动安装」装上即可，不用开 Docker、不用 compose、不用映射端口。
+详见 [`fnos/README.md`](./fnos/README.md)。
+
+- **数据本来就在共享文件夹里**，不用像 Docker 那样另外挂载 —— Docker 那份要自己写 `volumes`，
+  挂错了就在「文件管理」里看不到上传的文件。
+- **服务以 `clip9` 用户运行**（包声明了 `run-as: package`），共享文件夹里上传的文件也归它。
+  以 root 跑的话是 `root:root`，SMB 用普通账号连删都删不掉。
+- **应用中心不会自动跟版本**：升级就是下载新包再装一次，数据目录保留。
+
+</details>
 
 - **数据目录放在共享文件夹里**，别放系统盘、也别放 Docker 自己的数据目录（`/vol1/@docker`）——
   放共享文件夹才能在 fnOS 的「文件管理」里看见上传的文件、也才能被它自带的备份任务带走。
-  例：`/vol1/1000/docker/clip9/data:/app/server-node/data`。fpk 装的那份**本来就在**共享文件夹里。
+  例：`/vol1/1000/docker/clip9/data:/app/server-node/data`。
 - **拉不动 `ghcr.io` 就换 Docker Hub**：`image: jonnyan404/clip9:latest`（同一份镜像）。
 - **要装成 PWA 就必须走 HTTPS**：浏览器只在安全上下文里注册 Service Worker，
   `http://<NAS-IP>:9501` 打开能用，但装不了。两条路：反代 + 真证书（推荐），
   或设 `MKCERT_DOMAIN_OR_IP` 自签 —— 后者要把容器里 `/root/.local/share/mkcert/rootCA.pem`
   取出来装到手机上才算信任；想让它跟着数据目录走，加一个环境变量 `CAROOT=/app/server-node/data/mkcert`。
 - **反代必须放行 WebSocket**（`/push` 的 `Upgrade`）：实时推送走的就是它。
-  要挂在子路径上就用 `PREFIX=/clip9`，别用反代去改写路径。
+  要挂在子路径上就用 `PREFIX=/clip9`，别用反代去改写路径。**配置见下面那份示例。**
 - **文件属主**：容器默认以 root 跑，共享文件夹里会是 `root:root`。想以普通用户跑就给 compose 加
   `user: "1000:1000"` 并把数据目录 `chown` 给它 —— 配置会自动落到数据目录里（容器里那个位置是 root 的）。
+
+<details>
+<summary><b>🔒 反向代理配置示例（nginx / Caddy）</b></summary>
+
+一份能直接抄的配置。两个都处理好了三件容易漏的事：**WebSocket**、**上传体积上限**、**长连接超时**。
+
+**nginx**
+
+```nginx
+# 放在 http { } 里（不是 server 里）—— 给 WebSocket 挑 Connection 头用
+map $http_upgrade $connection_upgrade {
+    default upgrade;
+    ''      close;
+}
+
+server {
+    listen 443 ssl http2;
+    server_name clip.example.com;
+
+    # 证书：certbot 的默认路径，用别的就改这两行
+    ssl_certificate     /etc/letsencrypt/live/clip.example.com/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/clip.example.com/privkey.pem;
+
+    # ⚠️ nginx 默认只放行 1 MB 的请求体，传一张截图就 413。调到比服务端的上限更大。
+    client_max_body_size 512m;
+
+    location / {
+        proxy_pass http://127.0.0.1:9501;   # ⚠️ 结尾**不要**带 `/`，也别带子路径
+        proxy_http_version 1.1;
+
+        # ⚠️ 这两行是 WebSocket 能连上的关键。缺了以后的症状很有迷惑性：
+        #    界面能打开、能发消息，**但收不到别人发的** —— 而且不报错。
+        proxy_set_header Upgrade    $http_upgrade;
+        proxy_set_header Connection $connection_upgrade;
+
+        proxy_set_header Host              $host;
+        proxy_set_header X-Real-IP         $remote_addr;
+        proxy_set_header X-Forwarded-For   $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+
+        # ⚠️ `/push` 是长连接，nginx 默认 60 秒就读超时掐断。
+        #    症状：每隔一分钟断一次，然后自动重连 —— 看起来像网络不稳。
+        proxy_read_timeout 1h;
+        proxy_send_timeout 1h;
+    }
+}
+```
+
+**Caddy**
+
+```caddy
+# Caddyfile —— 证书自动申请和续期，不用 certbot
+clip.example.com {
+    encode zstd gzip
+
+    # WebSocket 的 Upgrade 头 Caddy **默认就透传**，不需要像 nginx 那样手动加；
+    # 长连接也不会被默认超时掐断。
+    reverse_proxy 127.0.0.1:9501
+
+    # 上传上限（防止有人拿它传超大文件把盘塞满；按需要调）
+    request_body {
+        max_size 512MB
+    }
+}
+```
+
+**挂子路径（`https://example.com/clip9/`）**
+
+服务端自己认前缀，用 `PREFIX=/clip9` 启动（或 `config.json` 里的 `server.prefix`），
+**反代不要改写路径** —— `proxy_pass` 只写到 `host:port`，让 `/clip9/...` 原样转过去：
+
+```nginx
+location /clip9/ {
+    proxy_pass http://127.0.0.1:9501;   # ⚠️ 这里加了 `/` 或 `/clip9/` 都会把路径改坏
+}
+```
+
+Caddy 同理，`reverse_proxy 127.0.0.1:9501` 一行就够，不需要 `handle_path`。
+
+</details>
+
 
 ### 📦 其他装法
 

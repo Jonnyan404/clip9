@@ -53,6 +53,9 @@
 - 反代**必须放行 `/push` 的 `Upgrade`** —— 实时推送走的就是 WebSocket；
 - 挂在子路径上用 `PREFIX=/clip9`（`config.json` 里的 `server.prefix`），**不要**让反代去改写路径。
 
+> 可直接抄的 nginx / Caddy 配置在**主 README 的「NAS」那节**里（折叠块「反向代理配置示例」），
+> 三个容易漏的点都标了：WebSocket 升级头、上传体积上限、长连接超时。
+
 ## 权限
 
 包声明了 `run-as: package`（`config/privilege`），服务以 `clip9` 用户跑，数据目录里的文件也归它。
