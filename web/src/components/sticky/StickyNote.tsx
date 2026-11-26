@@ -277,7 +277,7 @@ export function StickyNote({ meta }: { meta: ReceivedItem }) {
                         </>
                     ) : (
                         <div className="md-preview" onClick={onMdClick}>
-                            {md.available && <MarkdownToggle mode={md.mode} actions={md.actions} onModeChange={md.setMode} />}
+                            {md.available && <MarkdownToggle mode={md.mode} actions={md.actions} text={md.copyText} onModeChange={md.setMode} />}
                             <div
                                 className={`sticky-note__reader-text${isLink ? ' sticky-note__text--link' : ''}${md.available ? ' sticky-note__reader-text--md' : ''}${md.leadsWithBlock ? ' sticky-note__reader-text--block' : ''}${md.html ? ' sticky-note__reader-text--rendered' : ''}`}
                             >
@@ -315,7 +315,7 @@ export function StickyNote({ meta }: { meta: ReceivedItem }) {
                                 <audio src={previewSrc} controls preload="metadata" style={{ width: '100%' }} />
                             ) : kind === 'text' ? (
                                 <div className="md-preview" style={{ '--md-toggle-gutter': md.gutter } as React.CSSProperties}>
-                                    {md.available && <MarkdownToggle mode={md.mode} actions={md.actions} onModeChange={md.setMode} />}
+                                    {md.available && <MarkdownToggle mode={md.mode} actions={md.actions} text={md.copyText} onModeChange={md.setMode} />}
                                     {md.html ? (
                                         <div className={`sticky-note__preview-scroll${md.available ? ' sticky-note__preview-scroll--md' : ''}${md.leadsWithBlock ? ' sticky-note__preview-scroll--block' : ''}`}>
                                             <MarkdownBody html={md.html} />

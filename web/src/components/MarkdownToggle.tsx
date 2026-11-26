@@ -20,10 +20,13 @@ import { sortActions, useActionPrefStore } from '@/stores/actionPrefStore';
 export function MarkdownToggle({
     mode,
     actions,
+    text = '',
     onModeChange,
 }: {
     mode: string | null;
     actions: MarkdownAction[];
+    /** 当前正文。用来判断「这个动作对这段文本适不适用」—— 不适用的按钮要置灰。 */
+    text?: string;
     onModeChange: (next: string | null, params?: Record<string, string>) => void;
 }) {
     const { t } = useTranslation();
@@ -89,6 +92,13 @@ export function MarkdownToggle({
         return list;
     }, [usage]);
 
+    /**
+     * ⚠️★ 只保留**对这段文本适用**的动作（用户 2026-11-26：「直接在动作选择列表里置灰，
+     *    不要点了不生效才置灰」）。
+     *    预览条是「这一屏能看到的几个选项」，摆一个点了没反应的按钮在这里是误导；
+     *    「不适用」这件事属于**动作选择列表**（`ActionPicker` 里本来就有 `--dim` 置灰），
+     *    那里用户是在浏览全集，置灰是信息；这里是在快捷操作，置灰是噪音。
+     */
     const orderedActions = useMemo(() => {
         const map = new Map<string, MarkdownAction>();
         for (const action of actions) {
@@ -97,8 +107,11 @@ export function MarkdownToggle({
         for (const action of frequentPool) {
             map.set(action.id, action);
         }
-        return sortActions([...map.values()], usage);
-    }, [actions, frequentPool, usage]);
+        return sortActions([...map.values()], usage).filter((action) => {
+            const matcher = (action as { match?: (value: string) => boolean }).match;
+            return !matcher || matcher(text);
+        });
+    }, [actions, frequentPool, usage, text]);
 
     /**
      * 露在外面的两颗：**当前正在跑的那个动作固定第一**（占原来「原文」按钮的位置），
@@ -113,13 +126,29 @@ export function MarkdownToggle({
     // ⚠️★ 兜底到全量动作：当前动作**不一定在 `actions`（targeted）里** ——
     //    比如默认视图 `format.markdown` 在文本不像 markdown 时连 `match` 都不成立。
     //    找不到就不 pin，等于「当前在跑什么」看不见（用户报的「dev 里没效果」就可能是这一条）。
+    /**
+     * 这一段文本「适不适用」。没有 `match` 的动作 = 通用动作，永远适用。
+     * ⚠️ 预览条的候选集现在包含「用过但不 match」的动作（见 `frequentPool`），
+     *    所以必须能判出来并且**置灰** —— 否则用户点一个不适用的动作，`useMarkdown`
+     *    会静默吞掉错误，表现就是「点了没反应」。
+     */
     const activeAction = mode
         ? orderedActions.find((action) => action.id === mode) ?? (findAction(mode) as MarkdownAction | undefined)
         : undefined;
+
+    /**
+     * 三个槽位：**第一个留给「当前在用的动作」**（没有就空着、不占位），
+     * 后面按频次补到 3 颗。
+     *
+     * ⚠️ 用户 2026-11-26 的原话是「当前在用的动作(初始留空) / 文本统计 / Markdown 渲染 / 更多」——
+     *    即当前动作**不参与**频次竞争，它有位置就坐第一个；没动作时这一格空着。
+     */
     const shownActions = activeAction
-        ? [activeAction, ...orderedActions.filter((action) => action.id !== activeAction.id)].slice(0, 2)
+        ? [activeAction, ...orderedActions.filter((action) => action.id !== activeAction.id)].slice(0, 3)
         : orderedActions.slice(0, 2);
-    const hasMore = orderedActions.length > 2;
+    // ⚠️ ⋯ 是**动作库的唯一入口**，它必须一直在：预览条过滤掉不适用的动作之后，
+    //    剩余数量可能等于 `shownActions.length`，按「数量比大小」这条就会被吞掉。
+    const hasMore = true;
 
     return (
         <div className="md-toggle">
@@ -172,6 +201,10 @@ export function MarkdownToggle({
                             （2026-11-26 实际发生，tsc 不报错 —— 只能靠眼睛发现）。 */}
                         <div style={{ width: 340, maxWidth: 'calc(100vw - 32px)', maxHeight: 320, padding: 10, display: 'flex', flexDirection: 'column', minHeight: 0, overflow: 'hidden' }}>
                             <ActionPicker
+                                // ⚠️★ 必须把正文传进去，否则 `ActionPicker` 里「这段文本适不适用」的判定
+                                //    永远走 `if (!text) return true` 那条兜底 —— 菜单里一个置灰项都不会有，
+                                //    和动作台（那边传了 text）的表现就对不上（用户 2026-11-26 报的）。
+                                text={text}
                                 onPick={(id) => {
                                     // ⚠️ 锚点要在 `setMenuAnchor(null)` **之前**取：菜单一关，
                                     // 那个「⋯」按钮虽然还在，但这个 state 已经被清掉了。

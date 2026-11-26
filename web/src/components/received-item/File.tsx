@@ -278,7 +278,7 @@ export const ReceivedFile = memo(function ReceivedFile({ meta, onOpen }: { meta:
                         )}
                         {isText && (
                             <div className="md-preview" style={{ '--md-toggle-gutter': md.gutter } as React.CSSProperties}>
-                                {md.available && <MarkdownToggle mode={md.mode} actions={md.actions} onModeChange={md.setMode} />}
+                                {md.available && <MarkdownToggle mode={md.mode} actions={md.actions} text={md.copyText} onModeChange={md.setMode} />}
                                 {md.html
                                     ? <MarkdownBody html={md.html} />
                                     : <pre className="code-block" style={{ maxHeight: '30rem' }}>{displayedText}</pre>}

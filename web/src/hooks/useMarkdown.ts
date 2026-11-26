@@ -161,8 +161,9 @@ export function useMarkdown(
     // ⚠️★ 2026-11-26：原文按钮删掉之后最多只有 **3 颗**（2 个动作 + ⋯），
     //    原来按 4 颗算的 124px 会在正文右边空出一条。3 颗实测 ≈ 90px + 右缩进 12 = 102，
     //    取 100px 留 2px 余量；只有 2 颗时不带 ⋯，64px 够。
-    const iconCount = !available ? 0 : Math.min(targeted.length, 2) + (targeted.length > 2 ? 1 : 0);
-    const gutter = iconCount > 2 ? '100px' : '64px';
+    // 最多 4 颗（当前动作 + 2 个频次动作 + ⋯）；没有任何动作在跑时是 3 颗。
+    const iconCount = !available ? 0 : (mode ? 4 : 3);
+    const gutter = iconCount >= 4 ? '124px' : '96px';
 
     const setMode = useCallback((next: string | null, params?: Record<string, string>) => {
         setOverride(next ?? null);

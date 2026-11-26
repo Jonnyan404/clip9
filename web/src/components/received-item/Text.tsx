@@ -221,7 +221,7 @@ export const ReceivedText = memo(function ReceivedText({ meta }: { meta: Receive
                             onClick={onMdClick}
                         >
                             {md.available && (
-                                <MarkdownToggle mode={md.mode} actions={md.actions} onModeChange={md.setMode} />
+                                <MarkdownToggle mode={md.mode} actions={md.actions} text={md.copyText} onModeChange={md.setMode} />
                             )}
                             {/* ⚠️ 「切出词」的结果要能按词点选 —— 卡片上也一样，
                                 不能只在动作台里能用（用户 2026-11-26 报的）。 */}

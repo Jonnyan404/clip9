@@ -195,7 +195,7 @@ export function GlancePreview({ item, enableTaskToggle = false, inline = false, 
                     style={{ '--md-toggle-gutter': md.gutter } as React.CSSProperties}
                     onClick={enableTaskToggle ? onMdClick : undefined}
                 >
-                    {md.available && <MarkdownToggle mode={md.mode} actions={md.actions} onModeChange={md.setMode} />}
+                    {md.available && <MarkdownToggle mode={md.mode} actions={md.actions} text={md.copyText} onModeChange={md.setMode} />}
                     {md.mode === 'zh.segment' ? (
                         <SegmentWords text={md.copyText} />
                     ) : md.html ? (
