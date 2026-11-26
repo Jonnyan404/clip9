@@ -251,13 +251,16 @@ export default function DefaultMode() {
                                 />
                             )}
                             {filtered.slice(0, renderLimit).map((item: ReceivedItem) => (
-                                // ⚠️★ `timeline-item` 带着 `content-visibility: auto` ——
+                                // ⚠️ `timeline-item` 带着 `content-visibility: auto` ——
                                 // 屏外卡片**不参与布局与绘制**，切换时省掉约 20%（实测中位 323→258ms）。
                                 // 详见 components.css 里那段注释。
+                                // ⚠️★ 第一条的 `pt` 必须够放下上面那个 `4/50` 计数胶囊（22px）：
+                                //    原来是 1.5（12px），胶囊会压在卡片顶上 —— 正好盖住那条 4px 渐变带，
+                                //    看起来像渐变缺了一段。3（24px）= 22px 胶囊 + 2px 缝。
                                 <Box
                                     key={item.id}
                                     className="timeline-item"
-                                    sx={{ pt: item === filtered[0] ? 1.5 : 0 }}
+                                    sx={{ pt: item === filtered[0] ? 3 : 0 }}
                                 >
                                     {item.type === 'text' ? <ReceivedText meta={item} /> : <ReceivedFile meta={item} onOpen={openViewer} />}
                                 </Box>

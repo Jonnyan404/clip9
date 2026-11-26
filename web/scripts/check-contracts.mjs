@@ -891,10 +891,49 @@ for (const name of ['revoke', 'update']) {
     }
 }
 
+// ── T. 品牌渐变的第二色必须换个色相 ────────────────────────────────────
+//
+// ⚠️★ 2026-11-26 用户报的「恢复消息卡片顶部横条的渐变色效果」：`--brand-2` 曾经被写成
+// `var(--mui-palette-primary-dark)`（为了「跟着主色走」），于是 4px 的细带变成**同一支蓝的
+// 深浅**，肉眼看就是一条纯色线。最初的写死值是 `#0ea5e9 → #14b8a6`，色相差 25° —— 那才是
+// 「渐变」。现在从主色派生邻近色（色相 -25°、明度 +7%），主色换成胭脂 / 藤黄一样是双色。
+//
+// 这条判据盯三件事：
+//   ① 第二色是 `hsl(from …)` 派生的，不是同色相的 `primary-dark`；
+//   ② 派生语法包在 `@supports` 里 —— 自定义属性**不做语法校验**（只做 token 化），
+//      不支持的写法照样存得下来，然后在 `linear-gradient` 里解析失败、**整条渐变失效**
+//      （细带直接消失，比单色更糟）。所以必须有 `@supports` 而不是「重复声明两条」；
+//   ③ 兜底那条（同色相 dark）不许被删 —— 老浏览器就靠它。
+//
+// ⚠️ 先剥注释再判：上面这段解释里就原样写着 `--brand-2: var(--mui-palette-primary-dark)`，
+//    不剥的话判据会被**散文**满足（这个仓库已经被同一种假绿骗过好几次了）。
+{
+    const globalCssPath = join(WEB, 'src/styles/global.css');
+    const globalCss = existsSync(globalCssPath) ? readFileSync(globalCssPath, 'utf8') : '';
+    const css = globalCss.replace(/\/\*[\s\S]*?\*\//g, '');
+    if (!/--brand-1:\s*var\(--mui-palette-primary-main\)/.test(css)) {
+        problems.push('`--brand-1` 不再跟随主色（`var(--mui-palette-primary-main)`）');
+    }
+    if (!/@supports\s*\(\s*color:\s*hsl\(\s*from\b/.test(css)) {
+        problems.push(
+            '`--brand-2` 的派生化没有包在 `@supports (color: hsl(from …))` 里 —— '
+            + '自定义属性不做语法校验，老浏览器上整条渐变会失效（横带消失）而不是退回单色',
+        );
+    }
+    if (!/--brand-2:\s*hsl\(\s*from var\(--mui-palette-primary-main\)\s+calc\(h - 25\)/.test(css)) {
+        problems.push(
+            '`--brand-2` 不是从主色派生的邻近色（色相 -25°）—— 渐变会变成同色相的深浅，看不出过渡',
+        );
+    }
+    if (!/--brand-2:\s*var\(--mui-palette-primary-dark\)/.test(css)) {
+        problems.push('`--brand-2` 的老浏览器兜底（`var(--mui-palette-primary-dark)`）被删了');
+    }
+}
+
 // ── 结果 ────────────────────────────────────────────────────────────────
 if (problems.length) {
     console.error(`✗ 契约守卫失败（${problems.length} 处）：`);
     for (const line of problems) console.error(`    ${line}`);
     process.exit(1);
 }
-console.log('✓ 契约守卫通过：零依赖共享模块字节一致 · 外壳形状完整 · PWA 放行表一致 · dev 代理覆盖了每条服务端路由 · i18n 无死键 · 已删模式未复活 · revoke 只发 POST · WS 事件 id 已归一 · 后端地址与页面地址分开 · 选文件是追加 · 写请求都带 client · 预览不为显示签分享令牌 · 设置通用页不靠 secondaryAction · 便签进全屏先关阅读器 · 图片工具条住在顶栏 · 没写语言的代码块不猜语言 · 块公式缩到适宽');
+console.log('✓ 契约守卫通过：零依赖共享模块字节一致 · 外壳形状完整 · PWA 放行表一致 · dev 代理覆盖了每条服务端路由 · i18n 无死键 · 已删模式未复活 · revoke 只发 POST · WS 事件 id 已归一 · 后端地址与页面地址分开 · 选文件是追加 · 写请求都带 client · 预览不为显示签分享令牌 · 设置通用页不靠 secondaryAction · 便签进全屏先关阅读器 · 图片工具条住在顶栏 · 没写语言的代码块不猜语言 · 块公式缩到适宽 · 品牌渐变第二色换色相');

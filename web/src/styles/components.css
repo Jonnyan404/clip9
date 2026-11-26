@@ -1491,15 +1491,27 @@
     margin-bottom: 8px;
     flex-wrap: nowrap;
     overflow: hidden;
+    /* ⚠️ 有 `gap` 之后间距才算得准：原来靠 JSX 里的换行空白撑开（约 4px），
+       而 chip 比旁边的 caption 高、字更重，两者贴太近会显得挤成一团。
+       8px 让「类型标签」和「时间 / 设备」分得开，又不至于散。 */
+    gap: 8px;
 }
 
 .text-card__meta-item {
     white-space: nowrap;
 }
 
+/* ── 卡片左上角那个「文本消息 / 图片…」类型标签 ──────────────────────────
+   ⚠️★ 2026-11-26 放大过一次（20px/10px → 22px/11px + 600 字重）：
+   原来 10px、默认字重、上下只剩 5px 余量，中文小字在彩色底上**发虚**，
+   加上全圆角 pill 与卡片的 12px 圆角不搭 —— 用户的原话是「整体效果不够清晰」。
+   现在给它「标签」的形状（6px 方角 + 字重 600 + 一点字距），并在 meta 行用 gap 分开。 */
 .text-card__chip.MuiChip-root {
-    height: 20px;
-    font-size: 10px;
+    height: 22px;
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.02em;
+    border-radius: 6px;
 }
 
 .text-card__chip .MuiChip-label {

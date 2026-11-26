@@ -20,7 +20,25 @@ body {
       换主色不该把「图片」从紫改成红。 */
 :root {
     --brand-1: var(--mui-palette-primary-main);
+    /* ⚠️★ 第二色**必须换一个色相**，不能只是「同色相深一号」。
+       2026-11-26：因为跟着主色走，它一度被写成 `primary-dark` —— 于是渐变变成
+       同一支蓝的深浅，4px 的细带在深色底上根本看不出过渡，用户报「渐变效果没了」。
+       原设计是**写死的蓝→青**（`#0ea5e9` → `#14b8a6`，色相 199° → 174°，差 -25°），
+       这里改成从主色**派生**同一个方向（色相 -25°、明度 +7%、饱和略降）：
+       主色换成胭脂 / 藤黄，也照样是双色过渡，而不是一条单色线。
+       ↓ 这一条是给不支持相对颜色语法的浏览器兜底（同色相深一号，聊胜于无）。 */
     --brand-2: var(--mui-palette-primary-dark);
+}
+
+/* ⚠️ 为什么用 `@supports` 而不是「重复声明两条 --brand-2」：
+   自定义属性**不做语法校验**（只做 token 化），不支持的写法照样会被存下来，
+   然后在 `linear-gradient` 里解析失败、整条渐变失效（细带直接消失）。
+   `@supports` 才会真的测语法。需要 Chrome 119 / Safari 16.4 / Firefox 128 以上；
+   比 `color-mix`（Chrome 111）晚一些，所以必须留着上面那条兜底。 */
+@supports (color: hsl(from red calc(h - 25) calc(s * 0.93) calc(l + 7))) {
+    :root {
+        --brand-2: hsl(from var(--mui-palette-primary-main) calc(h - 25) calc(s * 0.93) calc(l + 7));
+    }
 }
 
 /* 模式根容器：与 web-vue3/src/views/Home.vue 的 .mode-root 对应。
