@@ -159,6 +159,10 @@ export function AppShell({ children }: { children: ReactNode }) {
                 内容就会从它下面穿过去（2026-10-29 用户报的「往上滑头部内容滑进顶部菜单栏」）。
                 模式根节点因此也统一用 `height: 100%`（不是 100dvh）。 */}
             <Box
+                // ⚠️★ `data-mode` 是**给栅格变量用的**：`.mode-root` 在 `<PageToolbar>` 的兄弟分支里，
+                //    两者拿不到同一个祖先变量。挂在这里（共同祖先），CSS 就能按模式给出
+                //    `--mode-max`，工具栏与内容盒因此**必然对齐**（原来是 1100 vs 980/1200，永远差一点）。
+                data-mode={uiMode}
                 sx={{
                     height: '100dvh',
                     minHeight: 0,

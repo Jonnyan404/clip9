@@ -7,6 +7,7 @@ import { toast } from '@/stores/toastStore';
 import { useDisplaySettings } from '@/hooks/useDisplaySettings';
 import { useInView } from '@/hooks/useInView';
 import { useMarkdown } from '@/hooks/useMarkdown';
+import { cardActionKey, orderCardActions, useActionPrefStore } from '@/stores/actionPrefStore';
 import {
     deviceLabel, errorMessage, filePreviewKind,
     formatTimestamp, isImageName, prettyFileSize,
@@ -60,8 +61,13 @@ export const ReceivedFile = memo(function ReceivedFile({ meta, onOpen }: { meta:
     );
 
     // ⚠️ 同步的：地址本地拼（`services/file-url`），不再为「看一眼」去签一条分享令牌。
+    const recordUse = useActionPrefStore((s) => s.recordUse);
+    // ⚠️ 存字符串（原因见 Text.tsx 同一处注释：数组引用会让 50 张卡全部重渲染）
+    const actionOrder = useActionPrefStore((s) => orderCardActions(s.usage, ['download', 'preview', 'share', 'delete']));
+
     const downloadFile = () => {
         if (expired || !meta.cache) return;
+        recordUse(cardActionKey('download'));
         saveFileToDisk(meta.cache, meta.name, room);
     };
 
@@ -95,6 +101,7 @@ export const ReceivedFile = memo(function ReceivedFile({ meta, onOpen }: { meta:
      */
     const previewFile = () => {
         if (expired) return;
+        recordUse(cardActionKey('preview'));
         if (expand) {
             setExpand(false);
             return;
@@ -118,6 +125,7 @@ export const ReceivedFile = memo(function ReceivedFile({ meta, onOpen }: { meta:
             if (!expired && meta.cache) {
                 await axios.delete(`file/${meta.cache}`);
             }
+            recordUse(cardActionKey('delete'));
             toast(t('deleteSuccessFile', { name: meta.name }));
         } catch (error) {
             const msg = errorMessage(error);
@@ -181,35 +189,51 @@ export const ReceivedFile = memo(function ReceivedFile({ meta, onOpen }: { meta:
                                 : t('neverExpires')}
                         </Typography>
                     </div>
+                    {/* ⚠️★ 按使用频率排（删除永远最后 —— 它不可逆，不该被「我删得多」推到最左） */}
                     <div className="text-card__actions">
-                        {display.cardDownload && (
-                            <Tooltip title={expired ? t('expired') : t('download')}>
-                                <span>
-                                    <IconButton size="small" disabled={expired} onClick={downloadFile} aria-label={t('download')}>
-                                        <MdiIcon name={expired ? 'mdi-download-off' : 'mdi-download'} size={18} />
-                                    </IconButton>
-                                </span>
-                            </Tooltip>
-                        )}
-                        {display.cardPreview && canPreview && (
-                            // ⚠️ 过期就**置灰**（与下载按钮同一套）：`previewFile` 里那句
-                            // `if (expired) return` 会让它点了没反应 —— 而**看起来能点**才是问题。
-                            <Tooltip title={expired ? t('expired') : t('preview')}>
-                                <span>
-                                    <IconButton size="small" disabled={expired} onClick={previewFile} aria-label={t('preview')}>
-                                        <MdiIcon name={previewIcon} size={18} />
-                                    </IconButton>
-                                </span>
-                            </Tooltip>
-                        )}
-                        <ShareLinkButton meta={meta} />
-                        {display.cardDelete && (
-                            <Tooltip title={t('delete')}>
-                                <IconButton size="small" onClick={deleteItem} aria-label={t('delete')}>
-                                    <MdiIcon name="mdi-close" size={18} />
-                                </IconButton>
-                            </Tooltip>
-                        )}
+                        {actionOrder.split(',').map((id) => {
+                            if (id === 'download') {
+                                return display.cardDownload ? (
+                                    <Tooltip key="download" title={expired ? t('expired') : t('download')}>
+                                        <span>
+                                            <IconButton size="small" disabled={expired} onClick={downloadFile} aria-label={t('download')}>
+                                                <MdiIcon name={expired ? 'mdi-download-off' : 'mdi-download'} size={18} />
+                                            </IconButton>
+                                        </span>
+                                    </Tooltip>
+                                ) : null;
+                            }
+                            if (id === 'preview') {
+                                return display.cardPreview && canPreview ? (
+                                    // ⚠️ 过期就**置灰**（与下载按钮同一套）：`previewFile` 里那句
+                                    // `if (expired) return` 会让它点了没反应 —— 而**看起来能点**才是问题。
+                                    <Tooltip key="preview" title={expired ? t('expired') : t('preview')}>
+                                        <span>
+                                            <IconButton size="small" disabled={expired} onClick={previewFile} aria-label={t('preview')}>
+                                                <MdiIcon name={previewIcon} size={18} />
+                                            </IconButton>
+                                        </span>
+                                    </Tooltip>
+                                ) : null;
+                            }
+                            if (id === 'share') {
+                                return (
+                                    <span key="share" onClick={() => recordUse(cardActionKey('share'))} style={{ display: 'inline-flex' }}>
+                                        <ShareLinkButton meta={meta} />
+                                    </span>
+                                );
+                            }
+                            if (id === 'delete') {
+                                return display.cardDelete ? (
+                                    <Tooltip key="delete" title={t('delete')}>
+                                        <IconButton size="small" onClick={deleteItem} aria-label={t('delete')}>
+                                            <MdiIcon name="mdi-close" size={18} />
+                                        </IconButton>
+                                    </Tooltip>
+                                ) : null;
+                            }
+                            return null;
+                        })}
                     </div>
                 </div>
 

@@ -106,13 +106,16 @@ export default function BoardWall() {
         // 少了它：浅色下靠 var() 兜底值看着还正常，**暗色下会白底配浅字**（等于看不见）。
         <Box className="board-wall" sx={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
             <PageToolbar variant="board" />
-            <Box sx={{ flex: 1, minHeight: 0, width: '100%', maxWidth: 1200, mx: 'auto', px: 1.5, display: 'flex', flexDirection: 'column' }}>
+            <Box sx={{ flex: 1, minHeight: 0, width: '100%', maxWidth: 'var(--mode-max)', mx: 'auto', px: 'var(--mode-gutter)', display: 'flex', flexDirection: 'column' }}>
                 <Stack direction="row" justifyContent="space-between" sx={{ py: 1 }}>
                     <Typography variant="body2" fontWeight={500}>{t('uiModeBoard')}</Typography>
                     <Typography variant="caption" color="text.secondary">{historyUsageLabel}</Typography>
                 </Stack>
 
-                <Box sx={{ flex: 1, minHeight: 0, display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0, 1fr))', gridTemplateRows: 'minmax(0, 1fr)', gap: 1.25, overflowX: 'auto' }}>
+                <Box sx={{ flex: 1, minHeight: 0, display: 'grid', // ⚠️★ `minmax(0, 1fr)` 会让三列在窄屏上压到各 110px（一个中文词就换行、`⋮` 和正文重叠），
+                    // 而 `overflowX: 'auto'` 永远不触发 —— 因为列**没有下限**，永远「装得下」。
+                    // 窄屏给 200px 下限，横向滚动才会真的出现。
+                    gridTemplateColumns: { xs: 'repeat(3, minmax(200px, 1fr))', md: 'repeat(3, minmax(0, 1fr))' }, gridTemplateRows: 'minmax(0, 1fr)', gap: 1.25, overflowX: 'auto' }}>
                     {COLUMNS.map((column) => (
                         <Box
                             key={column.key}
@@ -142,6 +145,14 @@ export default function BoardWall() {
                                 <Typography variant="caption" color="text.secondary">{itemsIn(column.key).length}</Typography>
                             </Stack>
                             <Box sx={{ flex: 1, minHeight: 0, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 0.75 }}>
+                                {/* ⚠️★ 空列必须有话：原来列是空的就什么都不渲染，
+                                    用户看到的是一只 1px 边框的空筒子，分不清「这列还没东西」
+                                    和「加载失败」。 */}
+                                {itemsIn(column.key).length === 0 && (
+                                    <Typography variant="caption" color="text.secondary" sx={{ px: 0.5, py: 1.5, textAlign: 'center', opacity: 0.9 }}>
+                                        {t('boardColumnEmpty')}
+                                    </Typography>
+                                )}
                                 {itemsIn(column.key).map((item) => (
                                     <Box
                                         key={item.id}
@@ -154,6 +165,16 @@ export default function BoardWall() {
                                         }}
                                         onDragEnd={() => setDraggingId(null)}
                                         onClick={() => setDetailItem(item)}
+                                        // ⚠️ 卡片是 `div`，不加这几个属性的话**键盘完全到不了**
+                                        //    （看板里唯一能做的事就是打开详情，鼠标专属等于该模式对键盘用户不可用）
+                                        role="button"
+                                        tabIndex={0}
+                                        onKeyDown={(event) => {
+                                            if (event.key === 'Enter' || event.key === ' ') {
+                                                event.preventDefault();
+                                                setDetailItem(item);
+                                            }
+                                        }}
                                         sx={{
                                             position: 'relative',
                                             border: 1,

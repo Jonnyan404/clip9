@@ -209,7 +209,7 @@ export default function TimelineWall() {
     return (
         <Box className="timeline-wall" sx={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
             <PageToolbar variant="timeline" />
-            <Box sx={{ flex: 1, minHeight: 0, width: '100%', maxWidth: 980, mx: 'auto', px: { xs: 1.5, md: 2.5 }, display: 'flex', flexDirection: 'column' }}>
+            <Box sx={{ flex: 1, minHeight: 0, width: '100%', maxWidth: 'var(--mode-max)', mx: 'auto', px: 'var(--mode-gutter)', display: 'flex', flexDirection: 'column' }}>
                 <div className="timeline-wall__head">
                     <span className="timeline-wall__title">{t('uiModeTimeline')}</span>
                     <span className="timeline-wall__usage">{received.length}/{historyLimit}</span>

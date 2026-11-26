@@ -329,7 +329,11 @@
     z-index: 3;
 }
 
-.sticky-note:hover .sticky-note__ops {
+/* ⚠️★ `:focus-within` 不能少：`display:none` 的子元素**不进 tab 序列**，
+   于是「只在 :hover 出现」= 桌面键盘用户永远够不到复制/删除。
+   手机反而能用（下面 `@media (hover:none)` 兜住了）—— 最惨的是键盘。 */
+.sticky-note:hover .sticky-note__ops,
+.sticky-note:focus-within .sticky-note__ops {
     display: flex;
 }
 
@@ -978,7 +982,8 @@
     display: flex;
     flex-direction: column;
     gap: 10px;
-    padding: 10px 12px 14px;
+    /* 用栅格变量，和大工具栏/其它模式同一个左边距（原来是硬编码 12） */
+    padding: 10px var(--mode-gutter) 14px;
 }
 
 /* ⚠️ 两处 CSS 一起才能让内部真的滚起来：容器给 flex 项 `min-height: 0`，
@@ -1118,7 +1123,8 @@
 /* 暗色（对应 Vue 的 `.bench-wall--dark`） */
 .dark .bench-wall__list,
 .dark .bench-wall__panel {
-    background: rgba(15, 23, 42, 0.9);
+    /* 同上：走纸面变量，别在这里再来第三种深色 */
+    background: var(--mui-palette-background-paper);
     border-color: rgba(71, 85, 105, 0.72);
 }
 
@@ -1618,8 +1624,10 @@
     gap: 4px;
 }
 
+/* ⚠️★ 原来是 2px：删除（灰色 ×）和复制（图标）几乎贴在一起，
+   是全站最容易误触的一对 —— 而删除又没有撤销。8px 让两次点击分得开。 */
 .text-card__actions {
-    gap: 2px;
+    gap: 8px;
 }
 
 .text-card__divider {
@@ -1701,7 +1709,7 @@
     /* 侧栏自己的底色。Vue 那边是 `rgb(var(--v-theme-background))`，而 Vuetify 的
        background 只有 sticky 那套被覆盖过 —— 其余模式就是主题默认值，
        即浅色 #fff / 暗色 #121212（与 MUI 的 `background.paper` 同值）。 */
-    --rl-panel-bg: #ffffff;
+    --rl-panel-bg: var(--mui-palette-background-paper);
     font-family: var(--rl-font);
     color: var(--rl-text);
 }
@@ -1716,7 +1724,8 @@
     --rl-text: #e2e8f0;
     --rl-muted: #94a3b8;
     --rl-border: rgba(71, 85, 105, 0.7);
-    --rl-panel-bg: #121212;
+    /* ⚠️ 原来写死 `#121212`（MUI 默认纸面）：房间侧栏会和对话框差一个色相 */
+    --rl-panel-bg: var(--mui-palette-background-paper);
 }
 
 /* sticky：手写体、行高 52，当前房间整行马卡龙底（所以那一套里色条要藏掉） */
@@ -1823,7 +1832,9 @@
     --timeline-line: rgba(148, 163, 184, 0.24);
     --timeline-hover: rgba(14, 165, 233, 0.045);
     --timeline-muted: #5f6b78;
-    --timeline-panel: #fff;
+    /* ⚠️ 面板 = 纸面（`background.paper`），不自己写色值：深色下这里原来是一层
+       `rgba(30,41,59,.62)`，和 Dialog/Menu 的纸面是两个不同的深色。 */
+    --timeline-panel: var(--mui-palette-background-paper);
     --timeline-panel-2: #fbfdff;
     /* 内容分类色 —— **语义色**（文本/图片/文件/任务/表格），刻意不跟随主色：
        换主色不该把「图片」从紫改成红。浅色值一律对白底、页底都 ≥4.5:1
@@ -1839,7 +1850,7 @@
     --timeline-line: rgba(71, 85, 105, 0.55);
     --timeline-hover: rgba(56, 189, 248, 0.07);
     --timeline-muted: #8092ad;
-    --timeline-panel: rgba(30, 41, 59, 0.62);
+    --timeline-panel: var(--mui-palette-background-paper);
     --timeline-panel-2: rgba(2, 6, 23, 0.34);
     /* 深色版单独一支：同一批色在深底上要提亮，不能沿用浅色值。 */
     --cat-text: #38bdf8;

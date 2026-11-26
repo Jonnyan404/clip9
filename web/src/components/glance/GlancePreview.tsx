@@ -14,6 +14,7 @@ import { MarkdownBody } from '@/components/MarkdownBody';
 import { MarkdownToggle } from '@/components/MarkdownToggle';
 import { ShareLinkButton } from '@/components/ShareLinkButton';
 import { MdiIcon } from '@/components/ui/MdiIcon';
+import { cardActionKey, useActionPrefStore } from '@/stores/actionPrefStore';
 import type { ReceivedItem } from '@/stores/appStore';
 
 /**
@@ -98,13 +99,20 @@ export function GlancePreview({ item, enableTaskToggle = false, inline = false, 
     // ⚠️ 同步的：地址是本地拼的（`services/file-url`），没有「等令牌」这一拍。
     const downloadFile = () => {
         if (!item?.cache) return;
+        recordUse(cardActionKey('download'));
         saveFileToDisk(item.cache, item.name, room);
     };
+
+    // ⚠️ 这里只有「复制/下载 + 分享」两个动作，删除已经被 `flex:1` 的占位推到最右 ——
+    //    没有「顺序」可排，所以只记使用次数（否则标准模式的频次统计会缺掉 glance / timeline
+    //    这一大块入口，排出来的顺序不反映真实习惯）。
+    const recordUse = useActionPrefStore((s) => s.recordUse);
 
     const copyContent = async () => {
         try {
             // ⚠️ 复制**当前视图**的正文（`md.copyText`）。
             await copyTextToClipboard(md.copyText);
+            recordUse(cardActionKey('copy'));
             toast(t('copySuccess'));
         } catch {
             toast(t('copyFailedGeneral'));
@@ -115,6 +123,7 @@ export function GlancePreview({ item, enableTaskToggle = false, inline = false, 
         if (!item) return;
         try {
             await axios.post(`revoke/${item.id}`, null, { params: new URLSearchParams([['room', room]]) });
+            recordUse(cardActionKey('delete'));
             toast(t('deleteSuccessText', { name: item.name || '' }));
         } catch (error) {
             toast(errorMessage(error) || t('deleteFailedMessage'));
@@ -215,7 +224,9 @@ export function GlancePreview({ item, enableTaskToggle = false, inline = false, 
                         {t('copyText')}
                     </Button>
                 )}
-                <ShareLinkButton meta={item} iconOnly={false} />
+                <span onClick={() => recordUse(cardActionKey('share'))} style={{ display: 'inline-flex' }}>
+                    <ShareLinkButton meta={item} iconOnly={false} />
+                </span>
                 <span style={{ flex: 1 }} />
                 <Button size="small" variant="text" color="error" onClick={deleteItem} startIcon={<MdiIcon name="mdi-close-circle-outline" size={16} />}>
                     {t('delete')}

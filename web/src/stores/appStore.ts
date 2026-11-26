@@ -206,9 +206,12 @@ export const useAppStore = create<AppState>((set, get) => ({
         ? localStorage.getItem('fullscreenSendClose') === 'true'
         : true,
     fullscreenOpacity: loadFullscreenOpacity(),
-    // 界面模式：**地址里的 `?mode=` 优先**，其次是上次用过的，最后是标准模式。
-    // 这样「一个 tab 一个模式」——每个 tab 有自己的地址，就互不干扰。
-    uiMode: readLocationParam('mode') || localStorage.getItem('uiMode') || 'default',
+    // 界面模式：**地址里的 `?mode=` 优先**，没有就是标准模式。
+    // ⚠️★ 2026-11-26 去掉了「上次用过的」（`localStorage.uiMode`）这一档：
+    //    它让「我上次是白板」这个**偶然状态变成永久默认** —— 别人发来的裸链接，
+    //    你点开看到的却是自己上回的模式，还会以为链接坏了。
+    //    地址栏已经是唯一真相（`AppShell` 每次切模式都会 `replace` 进去），够用了。
+    uiMode: readLocationParam('mode') || 'default',
     // 嵌入态（桌面端把网页版塞进 iframe 时带 `?embed=1`）。
     embedded: readLocationParam('embed') === '1',
 
@@ -247,8 +250,8 @@ export const useAppStore = create<AppState>((set, get) => ({
     setUiMode: (mode) => {
         // 搜索条只存在于标准模式；不清掉的话，切到别的模式会看到一份被悄悄过滤过的列表，
         // 而那个模式里根本没有搜索框可以清。
+        // ⚠️ 不再写 `localStorage`：见上面 `uiMode` 的初值注释（地址栏是唯一真相）。
         set({ uiMode: mode, searchQuery: '' });
-        localStorage.setItem('uiMode', mode);
     },
 
     // 拨动的是**当前模式**的开关。持久化写在 action 里（跟 uiMode / composerPrimary 同一写法）。

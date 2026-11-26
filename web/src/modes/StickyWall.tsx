@@ -96,7 +96,7 @@ export default function StickyWall() {
                     {t('stickyDropHere')}
                 </Box>
             )}
-            <Box sx={{ width: '100%', maxWidth: 1100, mx: 'auto', flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', px: 2, pb: 3 }}>
+            <Box sx={{ width: '100%', maxWidth: 'var(--mode-max)', mx: 'auto', flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', px: { xs: 1.5, md: 'var(--mode-gutter)' }, pb: 3 }}>
                 <Stack direction="row" alignItems="center" spacing={1} sx={{ pt: 2.25, pb: 1.25, flexShrink: 0 }}>
                     <span>📌</span>
                     <Typography variant="body2" fontWeight={700}>

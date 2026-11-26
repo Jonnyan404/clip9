@@ -111,7 +111,8 @@ export function PageToolbar({ variant = 'default' }: { variant?: string }) {
                     spacing={1}
                     sx={isSide
                         ? { height: '100%', py: 1.5, px: 0.5 }
-                        : { maxWidth: 1100, mx: 'auto', px: 2, py: 1 }}
+                        // ⚠️ 跟随当前模式的栅格（原来是写死的 1100，和任何模式都对不齐）
+                        : { maxWidth: 'var(--mode-max)', mx: 'auto', px: 2, py: 1 }}
                 >
                     {/* 左侧：回公共房间 / 连接态 / 房间 chip
                         ⚠️★ 侧栏模式下**这一组也要竖排** —— 只改外层是不够的：

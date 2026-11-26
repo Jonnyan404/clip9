@@ -41,6 +41,51 @@ body {
     }
 }
 
+/* ── 统一的键盘焦点环 ───────────────────────────────────────────────────
+   ⚠️★ 2026-11-26 之前全站只有 **2 条** `:focus-visible` 规则（`.rl-row__fav`、`.timeline-row__copy`）。
+   其余元素要么拿浏览器默认的黑圈（原生 `<button>`），要么拿 MUI 的主题色圈 ——
+   同一屏两种焦点圈，而且更多元素**根本没有**可见焦点。
+   ⚠️ 用 `:where()` 是为了拿到 **0 权重**：它只提供兜底，任何一条更具体的
+   `:focus-visible` 规则（比如便签那条虚线）都能盖住它，不会反过来打乱既有顺序。
+   ⚠️ 只给 `:focus-visible`，不给 `:focus` —— 鼠标点击不该出现焦点环。 */
+:where(a, button, [role='button'], input, textarea, select, [tabindex]):focus-visible {
+    outline: 2px solid var(--mui-palette-primary-main);
+    outline-offset: 2px;
+}
+
+/* ── 栅格令牌 ───────────────────────────────────────────────────────────
+   ⚠️★ 2026-11-26：8 个模式原来各写各的 `maxWidth`（980 / 1100 / 1200 / 无上限），
+   内容左边界落在 **7 个不同位置**（bench 12px → default 174px，切一次模式横跳 162px）。
+   视觉上最直接的体感就是「这不是一个应用，是八个页面」。
+   现在只有三档，由 `[data-mode]` 挂在 AppShell 根上（工具栏也是它的后代，所以
+   「标题栏和内容左边不齐」也一并消失 —— 工具栏原来是写死的 1100）。
+   ⚠️ `full` 必须是 `max-width:100%`，不能写成「居中限宽」：canvas 的 Excalidraw 容器
+   要的是**满幅**，套一层 padding/margin 会让它的尺寸测量与 `scrollToContent` 一起偏移。 */
+:root {
+    --mode-max-doc: 980px;
+    --mode-max-wide: 1200px;
+    --mode-max: var(--mode-max-doc);
+    --mode-gutter: 12px;
+}
+
+@media (min-width: 900px) {
+    :root {
+        --mode-gutter: 24px;
+    }
+}
+
+[data-mode='glance'],
+[data-mode='board'],
+[data-mode='sticky'] {
+    --mode-max: var(--mode-max-wide);
+}
+
+[data-mode='bench'],
+[data-mode='convert'],
+[data-mode='canvas'] {
+    --mode-max: 100%;
+}
+
 /* 模式根容器：与 web-vue3/src/views/Home.vue 的 .mode-root 对应。
    ⚠️★ 外壳现在是 **100dvh 的 flex 列**（内容区有确定高度），所以这里用 `height: 100%`
    填满内容区；**不要**再写 `min-height: 100dvh` —— 那会让模式内容按视口高度撑开，

@@ -20,11 +20,18 @@ export function PageQrDialog({ open, onClose }: { open: boolean; onClose: () => 
     const [mode, setMode] = useState<'page' | 'latest'>('page');
 
     const currentPageUrl = useMemo(() => {
-        const params = new URLSearchParams();
-        if (room) params.set('room', room);
+        // ⚠️★ 从**当前地址的 query** 起手，只覆盖 `room`。
+        //    原来是从零新建一个只带 room 的 query —— 于是 `?mode=timeline` 被丢掉，
+        //    扫码的人拿到的是**他自己**上次的模式，不是页面上这个。
+        const params = new URLSearchParams(router.state.location.search);
+        if (room) {
+            params.set('room', room);
+        } else {
+            params.delete('room');
+        }
         const search = params.toString();
         return new URL(`${router.state.location.pathname}${search ? `?${search}` : ''}`, window.location.origin).toString();
-    }, [room]);
+    }, [room, router.state.location.search]);
 
     const latestContentUrl = useMemo(() => {
         const roomQuery = room ? `?room=${encodeURIComponent(room)}` : '';

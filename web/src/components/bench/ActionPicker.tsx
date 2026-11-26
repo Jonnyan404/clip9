@@ -1,9 +1,9 @@
 import { useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { TextField, ToggleButton, ToggleButtonGroup, Tooltip } from '@mui/material';
+import { TextField } from '@mui/material';
 import { ACTION_GROUPS, ACTIONS } from '@/lib/actions/index.js';
 import { MdiIcon } from '@/components/ui/MdiIcon';
-import { sortActions, useActionPrefStore, type ActionSortMode } from '@/stores/actionPrefStore';
+import { sortActions, useActionPrefStore } from '@/stores/actionPrefStore';
 
 /**
  * 动作选择面板 —— 从 web-vue3/src/components/bench/ActionPicker.vue 移植。
@@ -16,14 +16,12 @@ import { sortActions, useActionPrefStore, type ActionSortMode } from '@/stores/a
  * ⚠️ 这个面板**住在弹层里**，宿主（`.action-chain__picker`）负责给它一个**有界**的高度，
  *    否则里面的 `.action-picker__body` 滚不起来。
  *
- * # 排序（2026-11-26）
+ * # 排序（2026-11-26 简化）
  *
- * 三种方式，各解决一个不同的场景 —— 混在一起就会互相打架：
- *   · `default`  —— 计划里的顺序 + **适用的排前面**。新用户没有任何使用记录，这个最可预期。
- *   · `frequent` —— 按「用了几次 → 最近一次用的时间」。⚠️ 两个都要比：只比次数的话，
- *                   一堆 `count = 1` 的动作会按 catalog 顺序排回来，等于没排。
- *   · `custom`   —— 用户自己排，**严格生效**。⚠️ 这个模式里**不加**「适用优先」：
- *                   刚排好的顺序被自动打乱，等于这个模式没有意义（不适用的仍然置灰）。
+ * ⚠️★ 这里原来有一排「默认 / 常用 / 自定义」开关，用户要求去掉：每次打开面板都要先
+ *    做一个跟当下任务无关的决定，而三档里真正被用的只有一档。
+ *    现在只有一条规则：**适用的在前，其次按用过多少次（同次数比最近一次）**。
+ *    新用户没有记录 → 就是目录顺序，和「默认」一模一样，所以这个简化不会让任何人迷失。
  */
 interface ActionSpec {
     id: string;
@@ -34,12 +32,6 @@ interface ActionSpec {
     direction?: string;
     match?: (text: string) => boolean;
 }
-
-const SORT_OPTIONS: Array<{ value: ActionSortMode; labelKey: string }> = [
-    { value: 'default', labelKey: 'actionSortDefault' },
-    { value: 'frequent', labelKey: 'actionSortFrequent' },
-    { value: 'custom', labelKey: 'actionSortCustom' },
-];
 
 export function ActionPicker({
     text = '',
@@ -53,12 +45,8 @@ export function ActionPicker({
     const { t } = useTranslation();
     const [query, setQuery] = useState('');
 
-    const sortMode = useActionPrefStore((s) => s.sortMode);
     const usage = useActionPrefStore((s) => s.usage);
-    const order = useActionPrefStore((s) => s.order);
-    const setSortMode = useActionPrefStore((s) => s.setSortMode);
     const recordUse = useActionPrefStore((s) => s.recordUse);
-    const moveAction = useActionPrefStore((s) => s.moveAction);
 
     const isApplicable = (action: ActionSpec) => {
         if (!action.match) {
@@ -77,9 +65,6 @@ export function ActionPicker({
         onPick(id);
     };
 
-    // 全部动作的 id —— 自定义排序需要一份「完整默认顺序」作底
-    const allIds = useMemo(() => (ACTIONS as ActionSpec[]).map((action) => action.id), []);
-
     const groups = useMemo(() => {
         const q = query.trim().toLowerCase();
         const pool = (ACTIONS as ActionSpec[]).filter(
@@ -95,21 +80,20 @@ export function ActionPicker({
                 ...group,
                 actions: sortActions(
                     pool.filter((action) => action.group === group.key),
-                    sortMode,
                     usage,
-                    order,
                     isApplicable,
                 ),
             }))
             .filter((group) => group.actions.length);
-    }, [query, text, direction, t, sortMode, usage, order]);
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [query, text, direction, t, usage]);
 
     const titleOf = (action: ActionSpec) => {
         const name = t(action.nameKey);
         if (!isApplicable(action)) {
             return `${name} — ${t('actionNotApplicable')}`;
         }
-        // 描述只在**有**的时候拼上去：46 条动作里带 descKey 的目前只有新增的那几条，
+        // 描述只在**有**的时候拼上去：动作里带 descKey 的只有少数几条，
         // 拼一个空串会得到「名称 — 」这种尾巴。
         return action.descKey ? `${name} — ${t(action.descKey)}` : name;
     };
@@ -125,99 +109,27 @@ export function ActionPicker({
                 onChange={(e) => setQuery(e.target.value)}
             />
 
-            {/* ⚠️ 排序条放在搜索下面、列表上面：它是**这一整个面板**的视图设置，
-                放进每一组里会变成 N 份互不同步的开关。 */}
-            <div className="action-picker__sortbar">
-                <span className="action-picker__sortlabel">{t('actionSortLabel')}</span>
-                <ToggleButtonGroup
-                    size="small"
-                    exclusive
-                    value={sortMode}
-                    onChange={(_e, next: ActionSortMode | null) => next && setSortMode(next)}
-                    aria-label={t('actionSortLabel')}
-                >
-                    {SORT_OPTIONS.map((option) => (
-                        <ToggleButton
-                            key={option.value}
-                            value={option.value}
-                            sx={{ px: 1, py: 0.25, fontSize: 12, textTransform: 'none' }}
-                        >
-                            {t(option.labelKey)}
-                        </ToggleButton>
-                    ))}
-                </ToggleButtonGroup>
-                {sortMode === 'custom' && (
-                    <span className="action-picker__sorthint">{t('actionSortCustomHint')}</span>
-                )}
-            </div>
-
             <div className="action-picker__body">
                 {groups.map((group) => (
                     <div key={group.key}>
                         <div className="action-picker__group">{t(group.labelKey)}</div>
-                        {sortMode === 'custom' ? (
-                            // 自定义顺序要一条条挪，所以这一模式下换成竖排 ——
-                            // grid 里每个格子塞两个箭头会挤成一条缝，点不中。
-                            <div className="action-picker__list">
-                                {group.actions.map((action) => {
-                                    const applicable = isApplicable(action);
-                                    return (
-                                        <div
-                                            key={action.id}
-                                            className={`action-picker__row${applicable ? '' : ' action-picker__row--dim'}`}
-                                        >
-                                            <button
-                                                type="button"
-                                                className="action-picker__rowbtn"
-                                                title={titleOf(action)}
-                                                onClick={() => pick(action.id)}
-                                            >
-                                                <MdiIcon name={action.icon} size={16} />
-                                                <span className="action-picker__label">{t(action.nameKey)}</span>
-                                            </button>
-                                            <Tooltip title={t('actionMoveUp')}>
-                                                <button
-                                                    type="button"
-                                                    className="action-picker__move"
-                                                    aria-label={`${t('actionMoveUp')} ${t(action.nameKey)}`}
-                                                    onClick={() => moveAction(action.id, -1, allIds)}
-                                                >
-                                                    <MdiIcon name="mdi-chevron-up" size={16} />
-                                                </button>
-                                            </Tooltip>
-                                            <Tooltip title={t('actionMoveDown')}>
-                                                <button
-                                                    type="button"
-                                                    className="action-picker__move"
-                                                    aria-label={`${t('actionMoveDown')} ${t(action.nameKey)}`}
-                                                    onClick={() => moveAction(action.id, 1, allIds)}
-                                                >
-                                                    <MdiIcon name="mdi-chevron-down" size={16} />
-                                                </button>
-                                            </Tooltip>
-                                        </div>
-                                    );
-                                })}
-                            </div>
-                        ) : (
-                            <div className="action-picker__grid">
-                                {group.actions.map((action) => {
-                                    const applicable = isApplicable(action);
-                                    return (
-                                        <button
-                                            key={action.id}
-                                            type="button"
-                                            className={applicable ? 'action-picker__item' : 'action-picker__item action-picker__item--dim'}
-                                            title={titleOf(action)}
-                                            onClick={() => pick(action.id)}
-                                        >
-                                            <MdiIcon name={action.icon} size={16} />
-                                            <span className="action-picker__label">{t(action.nameKey)}</span>
-                                        </button>
-                                    );
-                                })}
-                            </div>
-                        )}
+                        <div className="action-picker__grid">
+                            {group.actions.map((action) => {
+                                const applicable = isApplicable(action);
+                                return (
+                                    <button
+                                        key={action.id}
+                                        type="button"
+                                        className={applicable ? 'action-picker__item' : 'action-picker__item action-picker__item--dim'}
+                                        title={titleOf(action)}
+                                        onClick={() => pick(action.id)}
+                                    >
+                                        <MdiIcon name={action.icon} size={16} />
+                                        <span className="action-picker__label">{t(action.nameKey)}</span>
+                                    </button>
+                                );
+                            })}
+                        </div>
                     </div>
                 ))}
                 {!groups.length && <div className="action-picker__empty">{t('actionSearchEmpty')}</div>}

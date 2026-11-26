@@ -183,7 +183,7 @@ export default function ConvertWall() {
         >
             <PageToolbar variant="convert" />
 
-            <Stack direction="row" spacing={1} alignItems="center" sx={{ px: 1.5, py: 1, flexWrap: 'wrap', rowGap: 1 }}>
+            <Stack direction="row" spacing={1} alignItems="center" sx={{ px: 'var(--mode-gutter)', py: 1, flexWrap: 'wrap', rowGap: 1 }}>
                 <Button
                     size="small"
                     variant="outlined"
@@ -212,7 +212,7 @@ export default function ConvertWall() {
                 )}
             </Stack>
 
-            <Box sx={{ flex: 1, minHeight: 0, overflow: 'auto', px: 1.5, pb: 3 }}>
+            <Box sx={{ flex: 1, minHeight: 0, overflow: 'auto', px: 'var(--mode-gutter)', pb: 3 }}>
                 {!supported && capability && (
                     <Alert severity="info" sx={{ mb: 2 }}>
                         {t(convertUnsupportedKey(capability.reason))}
@@ -235,6 +235,14 @@ export default function ConvertWall() {
                         <Typography variant="body2" color="text.secondary" sx={{ mt: 1.5 }}>
                             {supported ? t('convertWallDropHint') : t('convertWallNeedFeature')}
                         </Typography>
+                        {/* ⚠️★ 这一步有**副作用**：转换前会把文件上传进房间（`services/convert.ts`
+                            的 `uploadDocument`），于是标准模式 / 时间线里会多出一条文件条目。
+                            原来界面从不说明 —— 用户只想看一眼 Markdown，结果房里冒出 10 个文件。 */}
+                        {supported && (
+                            <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 0.5, opacity: 0.9 }}>
+                                {t('convertUploadNote')}
+                            </Typography>
+                        )}
                     </Box>
                 ) : (
                     <Stack spacing={1.5}>

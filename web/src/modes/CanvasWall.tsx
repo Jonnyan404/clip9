@@ -525,7 +525,7 @@ export default function CanvasWall() {
                 direction="row"
                 spacing={1}
                 alignItems="center"
-                sx={{ px: 1.5, py: 1, flexWrap: 'wrap', rowGap: 1 }}
+                sx={{ px: 'var(--mode-gutter)', py: 1, flexWrap: 'wrap', rowGap: 1 }}
             >
                 <Button
                     size="small"

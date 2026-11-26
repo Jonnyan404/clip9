@@ -9,7 +9,7 @@ import './styles/components.css';
 import './styles/global.css';
 
 // i18n 实例必须在使用 `t()` 的代码之前初始化（资源随包打进 bundle，所以是同步完成的）。
-import '@/i18n';
+import i18n from '@/i18n';
 
 import { readLocationParam } from '@/lib/util';
 import { setupAxios } from '@/services/http';
@@ -35,7 +35,24 @@ try {
  * 会自己初始化（手动再调一次会让 history 注册两个监听器、整树挂掉 —— 真浏览器验收抓到过），
  * 实时连接改由路由树内的 `RootLayout` 在挂载后启动（见 services/bootstrap.ts）。
  */
+/**
+ * `html[lang]` 跟着界面语言走。
+ *
+ * ⚠️★ `index.html` 里写死的是 `lang="zh"`，而 `changeLanguage()` 只改 i18next 的当前语言 ——
+ *    于是切到 en / ja 之后读屏仍然按中文发音、浏览器翻译也会认错源语言。
+ *    （2026-11-26 评审发现：全仓 0 处同步这个属性。）
+ */
+function syncDocumentLang(): void {
+    document.documentElement.lang = i18n.language || 'zh';
+    i18n.on('languageChanged', (next: string) => {
+        document.documentElement.lang = next;
+    });
+}
+
 function bootstrap(): void {
+    // 0. 语言 → `<html lang>`。放在最前：后面任何一次渲染都可能被读屏先读到。
+    syncDocumentLang();
+
     // 1. axios：baseURL（= 外壳基准目录）+ 拦截器。必须最先 —— 后面所有请求都靠它。
     setupAxios();
 

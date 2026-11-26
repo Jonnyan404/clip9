@@ -114,6 +114,12 @@ export default function GlanceWall() {
         const onKeyDown = (event: KeyboardEvent) => {
             if (event.key !== 'ArrowDown' && event.key !== 'ArrowUp') return;
             if (previewDialog || newRoomOpen) return;
+            // ⚠️★ 焦点在输入框/可编辑区里时**让开**：搜索框里按 ↑↓ 是在移光标，
+            //    不是「切到下一条」。少了这一句，一次按键会同时做两件事（照 BenchWall 的写法）。
+            const target = event.target as HTMLElement | null;
+            if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable)) {
+                return;
+            }
             // ⚠️★ 全屏查看器开着时**让开**：它也用 ↑↓ 翻条目，两边一起动就是「按一下跳两条」。
             // 在这里 `stopPropagation` 没用 —— 同一个 window 上的监听器照样会跑。
             if (isViewerOpen()) return;
@@ -146,7 +152,7 @@ export default function GlanceWall() {
     return (
         <Box sx={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
             <PageToolbar variant="glance" />
-            <Box sx={{ flex: 1, minHeight: 0, width: '100%', maxWidth: 1200, mx: 'auto', px: 1.75, pb: 1.5, display: 'flex', flexDirection: 'column' }}>
+            <Box sx={{ flex: 1, minHeight: 0, width: '100%', maxWidth: 'var(--mode-max)', mx: 'auto', px: 'var(--mode-gutter)', pb: 1.5, display: 'flex', flexDirection: 'column' }}>
                 {/* 头部：搜索是这一屏的主操作，所以它不带外框、直接铺在头部 */}
                 <Stack direction="row" alignItems="center" spacing={1} sx={{ py: 0.5, borderBottom: 1, borderColor: 'divider', flexShrink: 0 }}>
                     <MdiIcon name="mdi-magnify" size={18} />

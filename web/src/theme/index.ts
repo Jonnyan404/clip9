@@ -1,5 +1,5 @@
 import { createTheme } from '@mui/material/styles';
-import { SURFACE_DARK, SURFACE_LIGHT } from '@/lib/contrast';
+import { PAPER_DARK, PAPER_LIGHT, SURFACE_DARK, SURFACE_LIGHT } from '@/lib/contrast';
 
 /**
  * 应用主题 —— 从 web-vue3/src/plugins/vuetify.js 移植。
@@ -27,7 +27,9 @@ export function createAppTheme(primaryLight: string, primaryDark: string) {
                     // MUI 默认是纯白，跟 Vue 的浅灰蓝对不上。
                     // ⚠️ 值住在 `lib/contrast.js`（传统色板要拿它算「这支色在浅底上看得见吗」），
                     //    两处各写一份迟早会漂。
-                    background: { default: SURFACE_LIGHT },
+                    // ⚠️ `paper` 是**纸面**（卡片 / 对话框 / 菜单），`default` 是页面。
+                    //    两个都显式给，别让 MUI 回落它的默认值。
+                    background: { default: SURFACE_LIGHT, paper: PAPER_LIGHT },
                 },
             },
             dark: {
@@ -36,7 +38,11 @@ export function createAppTheme(primaryLight: string, primaryDark: string) {
                     secondary: { main: '#424242' },
                     error: { main: '#ff5252' },
                     // Vue：`.app-shell--dark { background: #0f172a }`
-                    background: { default: SURFACE_DARK },
+                    // ⚠️★ `paper` **必须显式给**：不给的话 MUI 回落 `#121212`（中性黑），
+                    //    于是卡片 / 看板列 / 所有 Dialog·Menu 都成了浮在墨蓝页面上的一块暖黑 ——
+                    //    明度只差 1.05:1，肉眼看到的是「两种黑」而不是层次。
+                    //    受影响面全局（14 个文件用了 Dialog），所以这个值只该有一个来源。
+                    background: { default: SURFACE_DARK, paper: PAPER_DARK },
                 },
             },
         },

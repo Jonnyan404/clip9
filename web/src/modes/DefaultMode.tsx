@@ -167,7 +167,7 @@ export default function DefaultMode() {
         //    以前没有定高，整个窗口在滚，工具栏是 sticky，内容自然从它下面穿过去。）
         <Box sx={{ display: 'flex', flexDirection: 'column', height: '100%', minHeight: 0, overflow: 'hidden' }}>
             <PageToolbar variant="default" />
-            <Box sx={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', width: '100%', maxWidth: 980, mx: 'auto', px: { xs: 1.5, md: 3 }, pb: 2, pt: 1 }}>
+            <Box sx={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', width: '100%', maxWidth: 'var(--mode-max)', mx: 'auto', px: 'var(--mode-gutter)', pb: 2, pt: 1 }}>
                 {!composerFullyHidden && (
                     <Card
                         variant="outlined"

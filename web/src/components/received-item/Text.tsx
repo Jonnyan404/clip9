@@ -1,4 +1,4 @@
-import { memo, useState } from 'react';
+import { Fragment, memo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Box, Card, CardContent, Chip, Divider, IconButton, Tooltip, Typography } from '@mui/material';
 import axios from 'axios';
@@ -7,6 +7,7 @@ import { toast } from '@/stores/toastStore';
 import { useDisplaySettings } from '@/hooks/useDisplaySettings';
 import { useInView } from '@/hooks/useInView';
 import { useMarkdown } from '@/hooks/useMarkdown';
+import { cardActionKey, orderCardActions, useActionPrefStore } from '@/stores/actionPrefStore';
 import { useTaskListToggle } from '@/hooks/useTaskListToggle';
 import {
     copyTextToClipboard, deviceLabel, errorMessage, formatTimestamp, isAutomationMessage, isLateMessage,
@@ -42,6 +43,11 @@ export const ReceivedText = memo(function ReceivedText({ meta }: { meta: Receive
     const { ref: cardRef, inView } = useInView<HTMLDivElement>();
     const md = useMarkdown(() => decodedContent, undefined, inView);
 
+    const recordUse = useActionPrefStore((s) => s.recordUse);
+    // ⚠️ 只存**字符串**（zustand 用 Object.is 比较）：存数组的话每帧都是新引用，
+    //    50 张卡片会全部重渲染，而 `memo` 也救不了 —— 是这个组件自己的订阅变了。
+    const actionOrder = useActionPrefStore((s) => orderCardActions(s.usage));
+
     // 定时消息的两个标记。**判定在 lib/util**（单点），这里只负责画。
     const isAutomation = isAutomationMessage(meta);
     const isLate = isLateMessage(meta);
@@ -50,6 +56,7 @@ export const ReceivedText = memo(function ReceivedText({ meta }: { meta: Receive
         try {
             // 复制**当前视图**的正文（`md.copyText`）：切到压缩 JSON 后拿到的就是压缩后的那一行。
             await copyTextToClipboard(md.copyText);
+            recordUse(cardActionKey('copy'));
             toast(t('copySuccess'));
         } catch {
             toast(t('copyFailedGeneral'));
@@ -59,6 +66,7 @@ export const ReceivedText = memo(function ReceivedText({ meta }: { meta: Receive
     const deleteItem = async () => {
         try {
             await axios.post(`revoke/${meta.id}`, null, { params: new URLSearchParams([['room', useWebSocketStore.getState().room]]) });
+            recordUse(cardActionKey('delete'));
             toast(t('deleteSuccessText'));
         } catch (error) {
             const msg = errorMessage(error);
@@ -130,22 +138,40 @@ export const ReceivedText = memo(function ReceivedText({ meta }: { meta: Receive
                             {decodedContent}
                         </Typography>
                     </div>
+                    {/* ⚠️★ 动作按**使用频率**排（用户 2026-11-26 的要求），但删除不参与：
+                        它是不可逆的，永远留在最右 —— 「我删得多」不该把删除挪到复制旁边。 */}
                     <div className="text-card__actions" onClick={(e) => e.stopPropagation()}>
-                        {display.cardCopy && (
-                            <Tooltip title={t('copyText')}>
-                                <IconButton size="small" onClick={copyText} aria-label={t('copyText')}>
-                                    <MdiIcon name="mdi-content-copy" size={18} />
-                                </IconButton>
-                            </Tooltip>
-                        )}
-                        <ShareLinkButton meta={meta} />
-                        {display.cardDelete && (
-                            <Tooltip title={t('delete')}>
-                                <IconButton size="small" onClick={deleteItem} aria-label={t('delete')}>
-                                    <MdiIcon name="mdi-close" size={18} />
-                                </IconButton>
-                            </Tooltip>
-                        )}
+                        {actionOrder.split(',').map((id) => {
+                            if (id === 'copy') {
+                                return display.cardCopy ? (
+                                    <Tooltip key="copy" title={t('copyText')}>
+                                        <IconButton size="small" onClick={copyText} aria-label={t('copyText')}>
+                                            <MdiIcon name="mdi-content-copy" size={18} />
+                                        </IconButton>
+                                    </Tooltip>
+                                ) : null;
+                            }
+                            if (id === 'share') {
+                                // 分享的点击在 `ShareLinkButton` 内部，这里靠冒泡记一次使用
+                                return (
+                                    <Fragment key="share">
+                                        <span onClick={() => recordUse(cardActionKey('share'))} style={{ display: 'inline-flex' }}>
+                                            <ShareLinkButton meta={meta} />
+                                        </span>
+                                    </Fragment>
+                                );
+                            }
+                            if (id === 'delete') {
+                                return display.cardDelete ? (
+                                    <Tooltip key="delete" title={t('delete')}>
+                                        <IconButton size="small" onClick={deleteItem} aria-label={t('delete')}>
+                                            <MdiIcon name="mdi-close" size={18} />
+                                        </IconButton>
+                                    </Tooltip>
+                                ) : null;
+                            }
+                            return null;
+                        })}
                     </div>
                 </div>
 
