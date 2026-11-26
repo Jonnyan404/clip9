@@ -4,6 +4,29 @@ import { copyTextToClipboard } from '@/lib/util';
 import { toast } from '@/stores/toastStore';
 
 /**
+ * 把选中的词拼成一段文本。
+ *
+ * ⚠️★ 中文**不加**分隔符（用户 2026-11-26 的要求）：`今天 天气 不错` 多选合并后要是
+ *    `今天天气不错`，插空格等于把词又切开了。
+ * ⚠️ 但纯拉丁字母/数字之间**必须留一个空格**：`I` `love` `you` 拼成 `Iloveyou` 是错的
+ *    （英文没有词内空格，粘起来就变成了另一个词）。判据是「前一词尾字符 + 后一词首字符
+ *    都是 `\w`」才补空格 —— 中文、标点两侧都不补。
+ */
+function joinWords(words: string[]): string {
+    let out = '';
+    for (const word of words) {
+        if (!out) {
+            out = word;
+            continue;
+        }
+        const prev = out[out.length - 1];
+        const next = word[0];
+        out += /[\w]/.test(prev) && /[\w]/.test(next) ? ` ${word}` : word;
+    }
+    return out;
+}
+
+/**
  * 分词结果 —— 一颗词一颗胶囊，**点选后只复制选中的那几个**。
  *
  * ⚠️★ 为什么要单独一个组件：`切出词`（`zh.segment`）这个动作在**每个模式**里都能用
@@ -31,7 +54,8 @@ export function SegmentWords({ text, className }: { text: string; className?: st
     const copy = async () => {
         const selected = words.filter((_word, index) => picked.has(index));
         try {
-            await copyTextToClipboard(selected.length ? selected.join(' ') : text);
+            // ⚠️ 一个都没选时照旧复制全部 —— 那是「分词结果」本身，保持原来的空格分隔。
+            await copyTextToClipboard(selected.length ? joinWords(selected) : text);
             toast(t('copySuccess'));
         } catch {
             toast(t('copyFailedGeneral'));
