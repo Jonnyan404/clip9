@@ -142,7 +142,7 @@ export const ReceivedFile = memo(function ReceivedFile({ meta, onOpen }: { meta:
             <CardContent className="text-card__content">
                 {showMeta && (
                     <div className="text-card__meta">
-                        <Chip size="small" label={t('fileMessage')} color="secondary" className="text-card__chip" />
+                        <Chip size="small" label={t('fileMessage')} className="text-card__chip text-card__chip--file" />
                         {display.timestamp && (
                             <Typography variant="caption" className="text-card__meta-item">
                                 <MdiIcon name="mdi-clock-outline" size={12} /> {formatTimestamp(meta.timestamp)}

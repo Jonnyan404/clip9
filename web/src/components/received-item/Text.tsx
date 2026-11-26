@@ -87,7 +87,7 @@ export const ReceivedText = memo(function ReceivedText({ meta }: { meta: Receive
             <CardContent className="text-card__content">
                 {showMeta && (
                     <div className="text-card__meta">
-                        <Chip size="small" label={t('textMessage')} color="primary" className="text-card__chip" />
+                        <Chip size="small" label={t('textMessage')} className="text-card__chip" />
                         {/* 定时消息的来源标记：**刻意不受** display 开关管 —— 那是「这条不是人发的」这个事实本身。 */}
                         {isAutomation && (
                             <Typography variant="caption" className="text-card__meta-item">

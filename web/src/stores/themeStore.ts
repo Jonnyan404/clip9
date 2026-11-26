@@ -13,7 +13,15 @@ import { create } from 'zustand';
  *    所以切到另一个模式颜色不变是预期行为，界面上必须把这件事说出来（见传统色对话框的作用域提示）。
  */
 
-export const DEFAULT_PRIMARY = '#1e88e5';
+/**
+ * 默认主色。
+ *
+ * ⚠️★ 2026-11-26 从 `#1e88e5` 改成 `#1976d2`：前者上的**白字只有 3.68:1** ——
+ *    而主色最常干的活就是「实心按钮 + 白字」（发送键、今天 chip、便签贴）。
+ *    压深一档到 `#1976d2` 之后白字是 **4.60:1**，颜色还是那个蓝，改动只是一行。
+ *    ⚠️ 只影响**没设置过主色**的用户；老用户 localStorage 里那份不动。
+ */
+export const DEFAULT_PRIMARY = '#1976d2';
 
 const LIGHT_KEY = 'lightPrimary';
 const DARK_KEY = 'darkPrimary';

@@ -182,6 +182,27 @@
 .sticky-note--c3 { background: #d9e6ff; }
 .sticky-note--c4 { background: #e9d9ff; }
 
+/* ⚠️★ 深色模式便签纸**必须换**：原来五色写死、没有 `.dark` 覆盖，
+   深色下就是 12 张亮纸铺在墨蓝底上（纸对页面 ≈14.9:1 的亮度差），整屏亮度由便签决定。
+   这里保持各自的色相（黄/粉/绿/蓝/紫），只压暗、去饱和。
+   ⚠️ 必须同时给 1px 描边：深色纸上纸对页底的对比只有 1.21–1.44:1，
+   不描边的话 12 张纸会「融进背景」，看不出边界。 */
+.dark .sticky-note {
+    color: #ece6d6;
+    border: 1px solid rgba(255, 255, 255, 0.14);
+}
+
+.dark .sticky-note--c0 { background: #3a3320; }
+.dark .sticky-note--c1 { background: #3c2426; }
+.dark .sticky-note--c2 { background: #233328; }
+.dark .sticky-note--c3 { background: #24303f; }
+.dark .sticky-note--c4 { background: #2c2340; }
+
+/* 深色纸上的次级字：不能再压 0.55 透明，给一支对深纸 5.7–6.6:1 的实色 */
+.dark .sticky-note__label,
+.dark .sticky-note__meta,
+.dark .sticky-note__time { color: #b9b1a0; }
+
 /* 过期文件：文件名划掉（过期信息本身只出现在阅读器里，卡片上不放） */
 .sticky-note--expired .sticky-note__fname {
     text-decoration: line-through;
@@ -190,9 +211,11 @@
 .sticky-note__label {
     font-size: 10px;
     font-weight: 700;
-    opacity: 0.55;
     margin-bottom: 6px;
     letter-spacing: 0.06em;
+    /* ⚠️ 原来这里（和下面的 time）用 `opacity` 做「次级」——
+       在彩色便签纸上直接把 10px 小字压到 2.7:1。次级靠**换一支实色**，
+       不靠透明（透明度会和纸色相乘，纸越深越糊）。 */
 }
 
 .sticky-note__file {
@@ -223,7 +246,7 @@
 .sticky-note__meta {
     font-size: 11px;
     margin-top: 6px;
-    opacity: 0.7;
+    color: #57503f;
 }
 
 /* 卡片正文。⚠️ 卡片**本身就渲染 md**（任务列表 / 表格默认就是 md），
@@ -287,7 +310,7 @@
 /* `margin-top: auto` 把时间行顶到卡片底部（卡片是 flex 列）。 */
 .sticky-note__time {
     font-size: 10px;
-    opacity: 0.55;
+    color: #57503f;
     margin-top: auto;
     padding-top: 8px;
 }
@@ -377,6 +400,14 @@
 .sticky-note__reader--c2 { background: #d6f0d6; }
 .sticky-note__reader--c3 { background: #d9e6ff; }
 .sticky-note__reader--c4 { background: #e9d9ff; }
+
+/* 阅读器是「大号那张便签」，深色下要跟卡片同色，否则点开一张深纸会跳成一张亮纸 */
+.dark .sticky-note__reader { color: #ece6d6; }
+.dark .sticky-note__reader--c0 { background: #3a3320; }
+.dark .sticky-note__reader--c1 { background: #3c2426; }
+.dark .sticky-note__reader--c2 { background: #233328; }
+.dark .sticky-note__reader--c3 { background: #24303f; }
+.dark .sticky-note__reader--c4 { background: #2c2340; }
 
 .sticky-note__reader-head {
     display: flex;
@@ -597,7 +628,7 @@
    皮肤按模式给：默认（sticky，米黄虚线纸）、`--board`（看板：正文独占一行 + 动作另起一行）。 */
 .sticky-composer {
     background: #fffbe8;
-    border: 1.5px dashed #d5c49a;
+    border: 1.5px dashed #a3905f;
     border-radius: 12px;
     padding: 10px 13px;
     box-shadow: 0 2px 6px rgba(68, 64, 42, 0.08);
@@ -644,7 +675,7 @@
     cursor: pointer;
     padding: 0;
     line-height: 1;
-    color: #b8ae9a;
+    color: #7d7358;
 }
 
 .sticky-composer__area {
@@ -665,12 +696,14 @@
 }
 
 .sticky-composer__area::placeholder {
-    color: #b8ae9a;
+    /* 原 #b8ae9a 对米黄底只有 2.11:1，占位符也是要读的字 */
+    color: #7d7358;
 }
 
 .sticky-composer__go {
-    background: #d97706;
-    color: #fff;
+    /* 原来 #d97706 上的白字只有 3.19:1 —— 12px/650 也救不回来，压深一档到 5.02 */
+    background: #b45309;
+    color: var(--mui-palette-primary-contrastText);
     border: none;
     border-radius: 8px;
     font-size: 12px;
@@ -681,7 +714,11 @@
 }
 
 .sticky-composer__go:disabled {
-    opacity: 0.55;
+    /* ⚠️★ 不能再写 `opacity: .55`：它把「白字压琥珀」压到 **1.89:1**，
+       用户根本看不出那里有颗按钮（实测就是这个数）。
+       禁用态应该是「淡底 + 深字」——一眼看出不可点，但字还得读得清。 */
+    background: #ded2b6;
+    color: #5d5334;
     cursor: not-allowed;
 }
 
@@ -781,7 +818,7 @@
 
 .sticky-composer__go--board {
     background: var(--mui-palette-primary-main);
-    color: #fff;
+    color: var(--mui-palette-primary-contrastText);
     border-radius: 8px;
     font-size: 12px;
     padding: 6px 14px;
@@ -792,13 +829,14 @@
 .board-wall {
     --board-panel-bg: #fff;
     --board-hairline: rgba(148, 163, 184, 0.32);
-    --board-hint: #a8b1bd;
+    --board-hint: #64748b;
 }
 
 .dark .board-wall {
     --board-panel-bg: rgba(15, 23, 42, 0.9);
     --board-hairline: rgba(71, 85, 105, 0.6);
-    --board-hint: #64748b;
+    /* 深色下 #64748b 对墨蓝只有 3.35:1，提亮一档 */
+    --board-hint: #94a3b8;
 }
 
 /* ── 工具栏（web-vue3/src/components/PageToolbar.vue）────────────────────
@@ -982,7 +1020,8 @@
     font-size: 0.6875rem;
     font-weight: 700;
     letter-spacing: 0.04em;
-    color: rgba(71, 85, 105, 0.75);
+    /* 走主题的 text.secondary（浅色 5.74 / 深色自动翻），不再写死 slate + 透明度 */
+    color: var(--mui-palette-text-secondary);
     flex: 0 0 auto;
 }
 
@@ -1029,7 +1068,7 @@
 .bench-wall__item-time {
     flex: 0 0 auto;
     font-size: 0.625rem;
-    color: rgba(71, 85, 105, 0.7);
+    color: var(--mui-palette-text-secondary);
     font-variant-numeric: tabular-nums;
 }
 
@@ -1045,7 +1084,7 @@
     padding: 24px 8px;
     text-align: center;
     font-size: 0.75rem;
-    color: rgba(71, 85, 105, 0.7);
+    color: var(--mui-palette-text-secondary);
 }
 
 .bench-wall__empty--panel { margin: auto; }
@@ -1082,11 +1121,6 @@
     background: rgba(15, 23, 42, 0.9);
     border-color: rgba(71, 85, 105, 0.72);
 }
-
-.dark .bench-wall__list-head,
-.dark .bench-wall__empty { color: rgba(148, 163, 184, 0.8); }
-
-.dark .bench-wall__item-time { color: rgba(148, 163, 184, 0.7); }
 
 /* ── 动作链 ──────────────────────────────────────────────────────── */
 .action-chain {
@@ -1505,13 +1539,28 @@
    ⚠️★ 2026-11-26 放大过一次（20px/10px → 22px/11px + 600 字重）：
    原来 10px、默认字重、上下只剩 5px 余量，中文小字在彩色底上**发虚**，
    加上全圆角 pill 与卡片的 12px 圆角不搭 —— 用户的原话是「整体效果不够清晰」。
-   现在给它「标签」的形状（6px 方角 + 字重 600 + 一点字距），并在 meta 行用 gap 分开。 */
+   现在给它「标签」的形状（6px 方角 + 字重 600 + 一点字距），并在 meta 行用 gap 分开。
+
+   ⚠️★ **嵌入态（tonal）而不是实心填充**：实心主色 + 白字在默认主色上只有 3.68:1
+   （11px 要 4.5），而且卡片正文只有一行，一块饱和实心色比内容更抢眼。
+   12% 底 + 主色深字：文字对比拉到 6:1 以上，且**用户换任何传统色都不会翻车**
+   （实心方案下用户选一支亮色，白字就糊了 —— CSS 里没法像 `readableOn` 那样换字色，
+   只能靠「低饱和底 + 深字」绕开）。
+   ⚠️ 权重说明：MUI 的 `.MuiChip-filledPrimary` 是单类，这里是双类（0,2,0），能压住。 */
 .text-card__chip.MuiChip-root {
     height: 22px;
     font-size: 11px;
     font-weight: 600;
     letter-spacing: 0.02em;
     border-radius: 6px;
+    background: color-mix(in srgb, var(--mui-palette-primary-main) 12%, transparent);
+    color: var(--mui-palette-primary-dark);
+}
+
+/* 文件条目用中性灰那一支，和「文本」区分开（两者都跟随主题，不写死色值） */
+.text-card__chip--file.MuiChip-root {
+    background: color-mix(in srgb, var(--mui-palette-text-primary) 9%, transparent);
+    color: var(--mui-palette-text-secondary);
 }
 
 .text-card__chip .MuiChip-label {
@@ -1773,9 +1822,17 @@
 .timeline-wall {
     --timeline-line: rgba(148, 163, 184, 0.24);
     --timeline-hover: rgba(14, 165, 233, 0.045);
-    --timeline-muted: #7b8794;
+    --timeline-muted: #5f6b78;
     --timeline-panel: #fff;
     --timeline-panel-2: #fbfdff;
+    /* 内容分类色 —— **语义色**（文本/图片/文件/任务/表格），刻意不跟随主色：
+       换主色不该把「图片」从紫改成红。浅色值一律对白底、页底都 ≥4.5:1
+       （它们当 10px 标签字用），也 ≥3:1 压在自己 12% 的底上。 */
+    --cat-text: #0369a1;
+    --cat-image: #6d28d9;
+    --cat-file: #c2410c;
+    --cat-task: #047857;
+    --cat-table: #a16207;
 }
 
 .dark .timeline-wall {
@@ -1784,6 +1841,12 @@
     --timeline-muted: #8092ad;
     --timeline-panel: rgba(30, 41, 59, 0.62);
     --timeline-panel-2: rgba(2, 6, 23, 0.34);
+    /* 深色版单独一支：同一批色在深底上要提亮，不能沿用浅色值。 */
+    --cat-text: #38bdf8;
+    --cat-image: #a78bfa;
+    --cat-file: #fb923c;
+    --cat-task: #34d399;
+    --cat-table: #fbbf24;
 }
 
 .timeline-wall__head {
@@ -1915,10 +1978,13 @@
 .timeline-day__today {
     padding: 2px 6px;
     border-radius: 5px;
-    font-size: 9.5px;
+    font-size: 10.5px;
     font-weight: 700;
-    color: #fff;
-    background: linear-gradient(135deg, var(--brand-1), var(--brand-2));
+    /* ⚠️★ 原来用 `linear-gradient(--brand-1, --brand-2)` 做底、9.5px 白字：
+       渐变**末端**是一支亮青（#40c4d8），白字压上去只有 **2.08:1** ——
+       全站最小的字配了全站最差的一段底。这么小的块看不出渐变，直接用纯主色。 */
+    color: var(--mui-palette-primary-contrastText);
+    background: var(--mui-palette-primary-main);
     white-space: nowrap;
 }
 
@@ -2004,20 +2070,23 @@
     background: var(--cat, var(--timeline-muted));
 }
 
+/* ⚠️ 这里只做**映射**，不写色值：色值全在上面 `.timeline-wall` 的 `--cat-*` 里
+   （浅/深各一套）。写成内联色值的话，深色要再重复 5 条选择器，
+   而且 check-contrast 没法只扫令牌。 */
 .timeline-day__type[data-category="text"],
-.timeline-row[data-category="text"] { --cat: #0ea5e9; }
+.timeline-row[data-category="text"] { --cat: var(--cat-text); }
 
 .timeline-day__type[data-category="image"],
-.timeline-row[data-category="image"] { --cat: #8b5cf6; }
+.timeline-row[data-category="image"] { --cat: var(--cat-image); }
 
 .timeline-day__type[data-category="file"],
-.timeline-row[data-category="file"] { --cat: #f97316; }
+.timeline-row[data-category="file"] { --cat: var(--cat-file); }
 
 .timeline-day__type[data-category="task"],
-.timeline-row[data-category="task"] { --cat: #10b981; }
+.timeline-row[data-category="task"] { --cat: var(--cat-task); }
 
 .timeline-day__type[data-category="table"],
-.timeline-row[data-category="table"] { --cat: #f59e0b; }
+.timeline-row[data-category="table"] { --cat: var(--cat-table); }
 
 .timeline-day__type--more::before {
     display: none;
@@ -2305,7 +2374,7 @@
 
 .sticky-composer__go--timeline {
     background: var(--mui-palette-primary-main);
-    color: #fff;
+    color: var(--mui-palette-primary-contrastText);
     border-radius: 8px;
     padding: 6px 14px;
     font-size: 12px;
