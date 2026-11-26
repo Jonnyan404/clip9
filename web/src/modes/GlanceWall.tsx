@@ -10,7 +10,9 @@ import { isViewerOpen, useViewerStore } from '@/stores/viewerStore';
 import { useLocalRooms } from '@/hooks/useLocalRooms';
 import { filePreviewKind, isFileEntry, isImageName, looksLikeTable, looksLikeTaskList } from '@/lib/util';
 
-const WIDE_MIN = 500;
+// ⚠️ 600（MUI `sm`）：原来 500 是自造值，比其它断点都窄，于是 500–600 这一段里
+// 「一瞥已经是两栏、但别的地方还当它是手机」。
+const WIDE_MIN = 600;
 const TIMELINE_FILTER_KEY = 'timelineFilter';
 const FILTER_OPTIONS = [
     { key: 'all', labelKey: 'filterAll' },

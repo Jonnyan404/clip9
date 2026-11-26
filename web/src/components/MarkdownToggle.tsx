@@ -94,10 +94,13 @@ export function MarkdownToggle({
                         </button>
                     </Tooltip>
                     <Menu anchorEl={menuAnchor} open={Boolean(menuAnchor)} onClose={() => setMenuAnchor(null)}>
-                        // ⚠️★ 必须是 flex 列 + `minHeight: 0`：`ActionPicker` 的 `.action-picker__body`
-                        // 靠 `overflow-y: auto` 自己滚，而它需要**有界**的父高。
-                        // 原来这个 div 是 `display: block` + `overflow: hidden` ——
-                        // 内容直接被裁掉、滚不动（用户报的「动作卡片无法滚动」就是这个）。
+                        {/* ⚠️★ 必须是 flex 列 + `minHeight: 0`：`ActionPicker` 的 `.action-picker__body`
+                            靠 `overflow-y: auto` 自己滚，而它需要**有界**的父高。
+                            原来这个 div 是 `display: block` + `overflow: hidden` ——
+                            内容直接被裁掉、滚不动（用户报的「动作卡片无法滚动」就是这个）。
+                            ⚠️ 这段是 JSX children，注释必须用花括号包成 JSX 注释块：
+                            写成 `//` 会被当成**文本**渲染，在面板顶上糊出一条长注释
+                            （2026-11-26 实际发生，tsc 不报错 —— 只能靠眼睛发现）。 */}
                         <div style={{ width: 340, maxWidth: 'calc(100vw - 32px)', maxHeight: 320, padding: 10, display: 'flex', flexDirection: 'column', minHeight: 0, overflow: 'hidden' }}>
                             <ActionPicker
                                 onPick={(id) => {

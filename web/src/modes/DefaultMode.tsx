@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { toast } from '@/stores/toastStore';
 import { Box, Card, Chip, Stack, TextField, Typography } from '@mui/material';
+import { EmptyState } from '@/components/ui/EmptyState';
 import { PageToolbar } from '@/components/AppShell/PageToolbar';
 import { UnifiedComposer, type UnifiedComposerHandle } from '@/components/UnifiedComposer';
 import { ReceivedText } from '@/components/received-item/Text';
@@ -235,7 +236,8 @@ export default function DefaultMode() {
                                     onClick={() => setTimelineFilter(option.key)}
                                     sx={{
                                         '& .MuiChip-icon': { ml: 1, mr: 0.5 },
-                                        '@media (max-width: 768px)': {
+                                        // ⚠️ 断点统一到 600（MUI `sm`），不再自造 768：同一个「窄屏」在这套 UI 里只该有一个值。
+                                        '@media (max-width: 600px)': {
                                             '& .timeline-filter-label': { display: 'none' },
                                             '& .MuiChip-icon': { ml: '7px', mr: '7px' },
                                         },
@@ -246,7 +248,7 @@ export default function DefaultMode() {
                     )}
 
                     {received.length > 0 && (
-                        <Box ref={listScrollRef} sx={{ flex: 1, minHeight: 0, overflowY: 'auto', overflowX: 'hidden', position: 'relative', pr: 0.5 }}>
+                        <Box ref={listScrollRef} className="mode-scroll" sx={{ flex: 1, minHeight: 0, overflowY: 'auto', overflowX: 'hidden', position: 'relative', pr: 0.5 }}>
                             {/* ⚠️★ 计数 chip **嵌在第一条卡片的顶部边框上**，不是浮在列表上方：
                                 做法是让它在正常流里、再用负 `mb` 压到卡片顶边上 ——
                                 浮层（`position: absolute`）会被滚动容器的 `overflow` 裁掉上半截，
@@ -291,14 +293,13 @@ export default function DefaultMode() {
                     )}
 
                     {received.length === 0 && (
-                        <Stack alignItems="center" justifyContent="center" spacing={1.5} sx={{ flex: 1, py: 6 }}>
-                            <MdiIcon name="mdi-timeline" size={42} color="var(--mui-palette-primary-main)" />
-                            <Typography variant="h6">{t('emptyTimelineTitle')}</Typography>
-                            <Typography variant="body2" color="text.secondary">{t('timelineEmptySubtitle')}</Typography>
-                            <Box sx={{ pt: 1 }}>
-                                <Chip label={t('quickSend')} color="primary" onClick={() => focusComposer('text')} />
-                            </Box>
-                        </Stack>
+                        <EmptyState
+                            className="empty-state--fill"
+                            icon="mdi-timeline"
+                            title={t('emptyTimelineTitle')}
+                            desc={t('timelineEmptySubtitle')}
+                            action={<Chip label={t('quickSend')} color="primary" onClick={() => focusComposer('text')} />}
+                        />
                     )}
                 </Card>
             </Box>

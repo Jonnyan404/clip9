@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Box, Button, Chip } from '@mui/material';
+import { Typography } from '@mui/material';
+import { EmptyState } from '@/components/ui/EmptyState';
 import { PageToolbar } from '@/components/AppShell/PageToolbar';
 import { StickyComposer, type StickyComposerHandle } from '@/components/sticky/StickyComposer';
 import {
@@ -344,22 +346,21 @@ export default function TimelineWall() {
                     })}
 
                     {groups.length === 0 && (
-                        <div className="timeline-wall__empty">
-                            <MdiIcon name="mdi-timeline-text-outline" size={38} color="var(--mui-palette-primary-main)" />
-                            {received.length > 0 ? (
-                                <span>{t('filterEmpty')}</span>
-                            ) : (
-                                <>
-                                    <strong>{t('timelineEmptyTitle')}</strong>
-                                    <span>{t('timelineEmptySubtitle')}</span>
-                                    {canCompose && (
-                                        <Button size="small" variant="contained" onClick={() => composerRef.current?.focus()}>
-                                            {t('quickSend')}
-                                        </Button>
-                                    )}
-                                </>
-                            )}
-                        </div>
+                        received.length > 0 ? (
+                            <Typography variant="caption" color="text.secondary" sx={{ display: 'block', textAlign: 'center', py: 4 }}>
+                                {t('filterEmpty')}
+                            </Typography>
+                        ) : (
+                            <EmptyState
+                                className="empty-state--fill"
+                                icon="mdi-timeline-text-outline"
+                                title={t('timelineEmptyTitle')}
+                                desc={t('timelineEmptySubtitle')}
+                                action={canCompose
+                                    ? <Button size="small" variant="contained" onClick={() => composerRef.current?.focus()}>{t('quickSend')}</Button>
+                                    : undefined}
+                            />
+                        )
                     )}
                 </Box>
             </Box>

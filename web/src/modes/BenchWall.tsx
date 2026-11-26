@@ -41,9 +41,10 @@ export default function BenchWall() {
     const setDraft = useDraftStore((s) => s.setBenchDraft);
     const [activeIndex, setActiveIndex] = useState(-1);
 
-    const [isWide, setIsWide] = useState(() => window.innerWidth >= 1024);
+    // ⚠️ 900 = MUI 的 `md`（原来是自造的 1024，和别处的断点各说各话）
+    const [isWide, setIsWide] = useState(() => window.innerWidth >= 900);
     useEffect(() => {
-        const onResize = () => setIsWide(window.innerWidth >= 1024);
+        const onResize = () => setIsWide(window.innerWidth >= 900);
         window.addEventListener('resize', onResize);
         return () => window.removeEventListener('resize', onResize);
     }, []);

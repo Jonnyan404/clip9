@@ -1,6 +1,7 @@
 import { useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Box, Button, Stack, Typography } from '@mui/material';
+import { EmptyState } from '@/components/ui/EmptyState';
 import { PageToolbar } from '@/components/AppShell/PageToolbar';
 import { StickyNote } from '@/components/sticky/StickyNote';
 import { StickyComposer, type StickyComposerHandle } from '@/components/sticky/StickyComposer';
@@ -96,7 +97,7 @@ export default function StickyWall() {
                     {t('stickyDropHere')}
                 </Box>
             )}
-            <Box sx={{ width: '100%', maxWidth: 'var(--mode-max)', mx: 'auto', flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', px: { xs: 1.5, md: 'var(--mode-gutter)' }, pb: 3 }}>
+            <Box className="sticky-wall__shell" sx={{ width: '100%', maxWidth: 'var(--mode-max)', mx: 'auto', flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', px: { xs: 1.5, md: 'var(--mode-gutter)' }, pb: 3 }}>
                 <Stack direction="row" alignItems="center" spacing={1} sx={{ pt: 2.25, pb: 1.25, flexShrink: 0 }}>
                     <span>📌</span>
                     <Typography variant="body2" fontWeight={700}>
@@ -119,11 +120,12 @@ export default function StickyWall() {
                         ))}
                     </Box>
                 ) : (
-                    <Stack alignItems="center" spacing={1.5} sx={{ flex: 1, justifyContent: 'center', border: '1.5px dashed', borderColor: 'divider', borderRadius: 2 }}>
-                        <Typography variant="h6">{t('emptyTimelineTitle')}</Typography>
-                        <Typography variant="body2" color="text.secondary">{t('timelineEmptySubtitle')}</Typography>
-                        <Button size="small" variant="contained" onClick={() => composerRef.current?.focus()}>{t('quickSend')}</Button>
-                    </Stack>
+                    <EmptyState
+                        className="empty-state--fill empty-state--dashed"
+                        title={t('emptyTimelineTitle')}
+                        desc={t('timelineEmptySubtitle')}
+                        action={<Button size="small" variant="contained" onClick={() => composerRef.current?.focus()}>{t('quickSend')}</Button>}
+                    />
                 )}
 
                 <Box sx={{ flexShrink: 0, pt: 1.75 }}>

@@ -150,6 +150,9 @@
     /* 旋转角由 JS 给的 `--rt` 决定（同一张便签每次都长一样） */
     transform: rotate(var(--rt, 0deg));
     font-family: 'Comic Sans MS', 'Kaiti', 'PingFang SC', sans-serif;
+    /* ⚠️ 1px 描边不能省：便签墙的页面底色就是米黄 `#fffbe8`，而黄色那张便签是
+       `#fff8c5` —— 两者几乎同色，只靠阴影分不出边界（阴影在同色底上几乎看不见）。 */
+    border: 1px solid rgba(120, 90, 40, 0.16);
     min-height: 92px;
     height: 100%;
     display: flex;
@@ -857,11 +860,11 @@
 }
 
 .page-toolbar--sticky {
-    /* ⚠️★ 2026-11-26：便签墙的**外壳**回到中性色，和标准模式同一套。
-       彩色只属于「便签纸」本身 —— 让顶栏和输入条也是米黄，等于整个模式在换皮肤，
-       切过去/切回来都会觉得「进了另一个应用」。 */
-    background: #f5f7fa;
-    border-bottom: 1px solid rgba(148, 163, 184, 0.18);
+    /* ⚠️★ 2026-11-26（第二次）：按用户要求，便签墙**整个背景**都用输入条那张纸的颜色
+       （`#fffbe8`），顶栏也跟着 —— 之前试过中性化，用户看完觉得不对：
+       这个模式的「纸感」应该是一整片，而不是只有卡片是纸。 */
+    background: #fffbe8;
+    border-bottom: 1px solid rgba(120, 90, 40, 0.16);
 }
 
 .dark .page-toolbar--default {
@@ -870,8 +873,8 @@
 }
 
 .dark .page-toolbar--sticky {
-    background: #1e1e24;
-    border-bottom-color: rgba(148, 163, 184, 0.22);
+    background: #211d12;
+    border-bottom-color: rgba(238, 232, 214, 0.12);
 }
 
 /* ── 时间流：历史用量 chip（web-vue3 DefaultMode.vue 的 .timeline-panel__count-chip--overlay）──
@@ -962,6 +965,71 @@
 }
 .md-preview--block pre:first-child {
     padding-right: var(--md-toggle-gutter);
+}
+
+/* ── 统一空态（components/ui/EmptyState.tsx）────────────────────────────
+   ⚠️ 只固定结构，不固定外观：`--fill` 撑满、`--dashed` 虚线框（「这里能写」的暗示）。
+   两者的差异是**语义**（没内容 / 还没开始写），不是各模式的皮肤。 */
+.empty-state {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    padding: 28px 16px;
+    text-align: center;
+}
+
+.empty-state--fill {
+    flex: 1;
+    min-height: 0;
+}
+
+.empty-state--dashed {
+    border: 1.5px dashed var(--mui-palette-divider);
+    border-radius: 8px;
+}
+
+.empty-state__title {
+    font-size: 15px;
+    font-weight: 600;
+    color: var(--mui-palette-text-primary);
+}
+
+.empty-state__desc {
+    font-size: 12.5px;
+    line-height: 1.6;
+    color: var(--mui-palette-text-secondary);
+    max-width: 420px;
+}
+
+.empty-state__action { margin-top: 6px; }
+
+/* ── 模式内的滚动条：轨道透明，融进背景 ─────────────────────────────────
+   ⚠️ 原来用浏览器默认样式，轨道是一块白/浅灰 —— 卡片和输入区都透明之后，
+   那条白边成了整屏最显眼的一条线（用户报「滚动条背景也要融入背景」）。
+   ⚠️ 只写 `scrollbar-color` / `scrollbar-width`，**不写** `::-webkit-scrollbar`：
+   Chrome 一旦认了前两个就会忽略后者，两套一起写等于白写一套。
+   ⚠️ 不加 `scrollbar-gutter`：它会永久占住一条槽，透明轨道就没意义了。 */
+.mode-scroll {
+    scrollbar-width: thin;
+    scrollbar-color: rgba(148, 163, 184, 0.5) transparent;
+}
+
+.dark .mode-scroll {
+    scrollbar-color: rgba(148, 163, 184, 0.38) transparent;
+}
+
+/* 便签墙：整个模式的背景就是输入条那张「纸」的颜色
+   （⚠️ 挂在 `[data-mode='sticky']` 上而不是 `.sticky-wall`：顶栏在模式根之外，
+   只染内容区的话顶栏和页面会是两个色。） */
+[data-mode='sticky'] .mode-root {
+    background: #fffbe8;
+}
+
+.dark[data-mode='sticky'] .mode-root,
+.dark [data-mode='sticky'] .mode-root {
+    background: #211d12;
 }
 
 /* ══ 动作台（web-vue3/src/views/modes/BenchWall.vue + components/bench/*.vue）══
@@ -1304,6 +1372,42 @@
 
 /* ⚠️ 结果区**不自己滚**（没有 max-height / overflow）—— 滚动交给外层 `.action-chain`。
    两层滚动容器在触屏上很糟：手指在里面滑只滚内层，滚到底外层不动，看着像卡住了。 */
+/* ── 分词结果的词块（`切出词` 那个动作）────────────────────────────────
+   ⚠️ 一颗词一颗胶囊、可点选：这个动作的下游是「挑几个词去查/去拼」，
+   整段复制出去再删是它原来唯一的用法。 */
+.action-chain__words {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+    align-content: flex-start;
+    padding: 2px 0;
+}
+
+.action-chain__word {
+    font: inherit;
+    font-size: 12.5px;
+    line-height: 1.45;
+    padding: 2px 7px;
+    border-radius: 6px;
+    border: 1px solid transparent;
+    background: color-mix(in srgb, var(--mui-palette-text-primary) 7%, transparent);
+    color: var(--mui-palette-text-primary);
+    cursor: pointer;
+    transition: background-color .1s ease;
+}
+
+.action-chain__word:hover {
+    background: color-mix(in srgb, var(--mui-palette-primary-main) 16%, transparent);
+}
+
+/* 选中：填实主色。⚠️ 文字色必须用 contrastText —— 白字硬编码在用户选亮色主色时会糊。 */
+.action-chain__word--on,
+.action-chain__word--on:hover {
+    background: var(--mui-palette-primary-main);
+    border-color: var(--mui-palette-primary-main);
+    color: var(--mui-palette-primary-contrastText);
+}
+
 .action-chain__result {
     min-height: 140px;
     border: 1px solid rgba(148, 163, 184, 0.42);
@@ -2437,7 +2541,10 @@
 /* ── 窄屏 ───────────────────────────────────────────────────────────────
    分类条只留图标（六个带字的胶囊在手机上会折成两行）；日头让出类型摘要；
    行收窄时间列与缩进；缩略图隐藏（文件名已经够了）。 */
-@media (max-width: 768px) {
+/* ⚠️ 2026-11-26：原来这里、`DefaultMode` 的 sx、`BenchWall` 的 resize、`GlanceWall` 的
+   `WIDE_MIN` 各用各的值（768 / 768 / 1024 / 500），同一次「窗口变窄」在四个地方触发。
+   现在只有两档：**600（MUI sm）** 和 **900（md）**。 */
+@media (max-width: 600px) {
     .timeline-filter-label {
         display: none;
     }
