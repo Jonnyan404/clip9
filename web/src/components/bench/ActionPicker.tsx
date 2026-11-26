@@ -88,6 +88,23 @@ export function ActionPicker({
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [query, text, direction, t, usage]);
 
+    /**
+     * 「最近使用」—— 按频次取前 6 条（`count → lastUsedAt`）。
+     *
+     * ⚠️★ 为什么在**保留分组**的前提下再加这一块，而不是把分组整个拆掉按频次平铺：
+     *    分组是「我不知道那个动作叫什么」时的唯一入口（46 条动作里靠名字找不到的占多数），
+     *    频次解决的是「我天天用这个、每次都要翻下去找」。两件事，不是二选一。
+     * ⚠️ 搜索时隐藏它：搜索已经在做「筛」，再叠一块频次区只会让结果看起来重复。
+     */
+    const recent = useMemo(() => {
+        if (query.trim()) {
+            return [];
+        }
+        const pool = (ACTIONS as ActionSpec[]).filter((action) => action.direction === direction && usage[action.id]);
+        return sortActions(pool, usage, isApplicable).slice(0, 6);
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [query, direction, usage, text]);
+
     const titleOf = (action: ActionSpec) => {
         const name = t(action.nameKey);
         if (!isApplicable(action)) {
@@ -110,6 +127,25 @@ export function ActionPicker({
             />
 
             <div className="action-picker__body">
+                {recent.length > 0 && (
+                    <div>
+                        <div className="action-picker__group">{t('actionRecent')}</div>
+                        <div className="action-picker__grid">
+                            {recent.map((action) => (
+                                <button
+                                    key={`recent-${action.id}`}
+                                    type="button"
+                                    className="action-picker__item"
+                                    title={titleOf(action)}
+                                    onClick={() => pick(action.id)}
+                                >
+                                    <MdiIcon name={action.icon} size={16} />
+                                    <span className="action-picker__label">{t(action.nameKey)}</span>
+                                </button>
+                            ))}
+                        </div>
+                    </div>
+                )}
                 {groups.map((group) => (
                     <div key={group.key}>
                         <div className="action-picker__group">{t(group.labelKey)}</div>

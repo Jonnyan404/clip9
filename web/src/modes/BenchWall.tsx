@@ -5,6 +5,7 @@ import { ActionChain } from '@/components/bench/ActionChain';
 import { MdiIcon } from '@/components/ui/MdiIcon';
 import { useAppStore, selectVisibleReceived, type ReceivedItem } from '@/stores/appStore';
 import { useWebSocketStore } from '@/stores/wsStore';
+import { useDraftStore } from '@/stores/draftStore';
 import { toast } from '@/stores/toastStore';
 import { decodeHtmlEntities, errorMessage, formatTimestamp } from '@/lib/util';
 import { postText } from '@/services/send';
@@ -34,7 +35,10 @@ export default function BenchWall() {
         [received, searchQuery],
     );
 
-    const [draft, setDraft] = useState('');
+    // ⚠️★ 草稿在 store 里，不在组件 state 里：切模式会卸载这个组件，
+    //    粘了一段文本、去标准模式看一眼再回来就没了（用户报过）。
+    const draft = useDraftStore((s) => s.benchDraft);
+    const setDraft = useDraftStore((s) => s.setBenchDraft);
     const [activeIndex, setActiveIndex] = useState(-1);
 
     const [isWide, setIsWide] = useState(() => window.innerWidth >= 1024);

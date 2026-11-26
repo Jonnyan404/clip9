@@ -166,6 +166,17 @@ export interface AppState {
     toggleFullscreenSendClose: () => void;
     setFullscreenOpacity: (value: number) => void;
     setUiMode: (mode: string) => void;
+    /**
+     * 从列表里**本地**摘掉一条（不发请求）。
+     *
+     * ⚠️★ 给「延迟删除」用的：点删除时先从列表消失、给 5 秒撤销窗口，
+     *    超时才真的 `revoke`。文件是 `revoke + DELETE file/{cache}` 双写 ——
+     *    字节一旦删掉就没有撤销可言，所以**唯一能撤销的做法是推迟提交**。
+     *    返回被摘掉的条目和它原来的下标，撤销时按原位插回去。
+     */
+    removeReceivedLocal: (id: string | number) => { item: ReceivedItem; index: number } | null;
+    /** 按原下标把条目插回去（撤销）。 */
+    restoreReceivedLocal: (item: ReceivedItem, index: number) => void;
     setDisplayToggle: (key: string, value: boolean) => void;
 }
 
@@ -216,6 +227,24 @@ export const useAppStore = create<AppState>((set, get) => ({
     embedded: readLocationParam('embed') === '1',
 
     setSearchQuery: (value) => set({ searchQuery: String(value || '') }),
+
+    removeReceivedLocal: (id) => {
+        const list = get().received;
+        // ⚠️ 只比 `String(id)`：WS 推来的 id 是**数字**，历史接口给的是**字符串**（同一个条目两种形状）。
+        const index = list.findIndex((entry) => String(entry.id) === String(id));
+        if (index < 0) {
+            return null;
+        }
+        const item = list[index];
+        set({ received: list.filter((_entry, i) => i !== index) });
+        return { item, index };
+    },
+
+    restoreReceivedLocal: (item, index) => {
+        const list = [...get().received];
+        list.splice(Math.max(0, Math.min(index, list.length)), 0, item);
+        set({ received: list });
+    },
 
     // 分享默认值：改完立刻落盘，不弹窗时要用
     setShareDefaults: (next) => {

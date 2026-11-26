@@ -857,8 +857,11 @@
 }
 
 .page-toolbar--sticky {
-    background: #f3ead2;
-    border-bottom: 1px solid rgba(120, 90, 40, 0.16);
+    /* ⚠️★ 2026-11-26：便签墙的**外壳**回到中性色，和标准模式同一套。
+       彩色只属于「便签纸」本身 —— 让顶栏和输入条也是米黄，等于整个模式在换皮肤，
+       切过去/切回来都会觉得「进了另一个应用」。 */
+    background: #f5f7fa;
+    border-bottom: 1px solid rgba(148, 163, 184, 0.18);
 }
 
 .dark .page-toolbar--default {
@@ -867,8 +870,8 @@
 }
 
 .dark .page-toolbar--sticky {
-    background: #211d12;
-    border-bottom-color: rgba(238, 232, 214, 0.12);
+    background: #1e1e24;
+    border-bottom-color: rgba(148, 163, 184, 0.22);
 }
 
 /* ── 时间流：历史用量 chip（web-vue3 DefaultMode.vue 的 .timeline-panel__count-chip--overlay）──
@@ -1330,7 +1333,7 @@
 }
 
 /* ── 动作选择面板 ─────────────────────────────────────────────────── */
-.action-picker { display: flex; flex-direction: column; min-height: 0; }
+.action-picker { display: flex; flex-direction: column; min-height: 0; flex: 1; }
 .action-picker__search { margin-bottom: 8px; }
 .action-picker__body { overflow-y: auto; min-height: 0; padding-right: 2px; }
 
@@ -1502,6 +1505,18 @@
     border-radius: 12px;
     margin-bottom: 12px;
     overflow: hidden;
+    /* ⚠️★ 2026-11-26「消息区融入背景」：卡片不再是一块白底 + 1px 边，
+       而是直接坐在页面底上 —— 结构只靠顶部那条渐变带和间距表达。
+       ⚠️ 但**不能完全没有反馈**：点整行是「展开」，那就必须让「这一行是一个可点的整块」
+       看得出来。所以 hover 给一层极淡的主色底（4%），它同时把圆角显出来
+       （透明底时圆角是看不见的）。 */
+    background: transparent;
+    border-color: transparent;
+    transition: background-color .12s ease;
+}
+
+.text-card:hover {
+    background: color-mix(in srgb, var(--mui-palette-primary-main) 5%, transparent);
 }
 
 /* 顶部那条渐变细带 */
@@ -1628,6 +1643,33 @@
    是全站最容易误触的一对 —— 而删除又没有撤销。8px 让两次点击分得开。 */
 .text-card__actions {
     gap: 8px;
+}
+
+/* ── 触屏命中区：图标本身不变，用伪元素把可点范围撑到 44×44 ──────────────
+   ⚠️★ 卡片动作 28–30px、timeline 行复制 24×24、便签动作 22×22 —— 都远小于
+   44pt 的最小触控目标（手指按 22px 的叉，十次里错三次）。
+   ⚠️ 为什么用 `::after` 而不是把按钮改大：改尺寸会重排（图标间距、行高、卡片高度全变），
+   而这只是**命中区**问题 —— 视觉零变化才是对的。
+   ⚠️ 只给 `pointer: coarse`：鼠标不需要这么大的热区，桌面加宽反而让相邻按钮抢点击。 */
+@media (pointer: coarse) {
+    .text-card__actions .MuiIconButton-root,
+    .timeline-row__copy,
+    .sticky-note__ops button,
+    .sticky-note__langbtn {
+        position: relative;
+    }
+
+    .text-card__actions .MuiIconButton-root::after,
+    .timeline-row__copy::after,
+    .sticky-note__ops button::after {
+        content: '';
+        position: absolute;
+        top: 50%;
+        left: 50%;
+        width: 44px;
+        height: 44px;
+        transform: translate(-50%, -50%);
+    }
 }
 
 .text-card__divider {

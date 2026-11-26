@@ -250,13 +250,16 @@ export const UnifiedComposer = forwardRef<UnifiedComposerHandle>(function Unifie
                     if (files.length) handleSelectFiles(files);
                 }}
                 sx={{
+                    // ⚠️★ 融入背景：不再是一块白底 + 边框，直接坐在页面底上。
+                    //    边框只在**拖拽进来**时出现（那是唯一需要「整块高亮」的时刻）。
+                    //    内部的 TextField 自带下划线/边框，所以输入区仍然看得出来在哪。
                     border: 1,
-                    borderColor: dragover ? 'primary.main' : 'divider',
+                    borderColor: dragover ? 'primary.main' : 'transparent',
                     borderRadius: 4,
                     p: { xs: 0.5, md: 1.5 },
                     display: 'flex',
                     flexDirection: 'column',
-                    bgcolor: 'background.paper',
+                    bgcolor: 'transparent',
                 }}
             >
                 {display.composerText && (

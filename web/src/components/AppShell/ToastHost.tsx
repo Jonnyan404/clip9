@@ -1,9 +1,13 @@
-import { Alert, Snackbar, useMediaQuery } from '@mui/material';
+import { Alert, Button, Stack, useMediaQuery } from '@mui/material';
 import { useToastStore } from '@/stores/toastStore';
 
 /**
  * 全局 toast 的渲染出口 —— 对应 web-vue3/src/App.vue 里的 `<v-snackbar>`。
  * 数据在 `stores/toastStore.ts`（模块级单例，任何地方都能 `toast(...)`）。
+ *
+ * ⚠️★ 2026-11-26 换成了**自绘的 fixed 容器 + Stack**，不再用 `<Snackbar>`：
+ *    Snackbar 一个实例只能挂一条，而 store 现在是队列。层级仍是 **1400**
+ *    （查看器 1200 < Dialog 1300 < Snackbar 1400，这个顺序是故意的，别改）。
  *
  * ⚠️★ 窄屏（2026-10-26 用户报的「移动端提示不明显」）特意和桌面**不一样**：
  *
@@ -20,40 +24,66 @@ import { useToastStore } from '@/stores/toastStore';
  * 写成裸值是为了这个组件不依赖主题实例（它是 portal 里的叶子，没必要为此 useTheme）。
  */
 export function ToastHost() {
-    const visible = useToastStore((s) => s.visible);
-    const text = useToastStore((s) => s.text);
-    const color = useToastStore((s) => s.color);
-    const timeout = useToastStore((s) => s.timeout);
+    const items = useToastStore((s) => s.items);
     const hide = useToastStore((s) => s.hide);
 
     const narrow = useMediaQuery('(max-width: 600px)');
-    const severity = color === 'error' ? 'error' : color === 'success' ? 'success' : color === 'info' ? 'info' : undefined;
 
     return (
-        <Snackbar
-            open={visible}
-            // `-1` 表示「不自动关」（forever / dismissable）
-            autoHideDuration={timeout > 0 ? timeout : null}
-            onClose={(_event, reason) => {
-                if (reason !== 'clickaway') hide();
+        <Stack
+            spacing={1}
+            sx={{
+                position: 'fixed',
+                left: '50%',
+                transform: 'translateX(-50%)',
+                zIndex: 1400,
+                width: '100%',
+                maxWidth: narrow ? 'calc(100% - 24px)' : 560,
+                pointerEvents: 'none',
+                ...(narrow
+                    ? { bottom: 'calc(8px + env(safe-area-inset-bottom))' }
+                    : { top: 16 }),
             }}
-            anchorOrigin={{ vertical: narrow ? 'bottom' : 'top', horizontal: 'center' }}
-            // ⚠️ `mb` 是**在** MUI 给的 `bottom: 24px` 之外再加安全区（margin 撑的是定位元素的外沿）。
-            sx={narrow ? { mb: 'calc(8px + env(safe-area-inset-bottom))', maxWidth: 'calc(100% - 24px)' } : undefined}
         >
-            <Alert
-                severity={severity ?? 'info'}
-                // 有 severity 的一直是实心；没有 severity 的（`toast('已复制')` 这类）只在窄屏转实心。
-                variant={severity || narrow ? 'filled' : 'outlined'}
-                onClose={hide}
-                sx={{
-                    width: '100%',
-                    alignItems: 'center',
-                    ...(narrow ? { boxShadow: 6, borderRadius: 2, fontSize: 14, py: 0.75 } : null),
-                }}
-            >
-                {text}
-            </Alert>
-        </Snackbar>
+            {items.map((item) => {
+                const severity = item.color === 'error'
+                    ? 'error'
+                    : item.color === 'success'
+                        ? 'success'
+                        : item.color === 'info'
+                            ? 'info'
+                            : undefined;
+                return (
+                    <Alert
+                        key={item.id}
+                        severity={severity ?? 'info'}
+                        // 有 severity 的一直是实心；没有 severity 的（`toast('已复制')` 这类）只在窄屏转实心。
+                        variant={severity || narrow ? 'filled' : 'outlined'}
+                        onClose={() => hide(item.id)}
+                        // `action` 是内联按钮（「撤销」）。点了先关这条、再执行 ——
+                        // 顺序反过来的话回调里如果又弹一条，会被这里的关闭动作立刻清掉。
+                        action={item.action ? (
+                            <Button
+                                color="inherit"
+                                size="small"
+                                sx={{ ml: 1, minWidth: 0, fontWeight: 700 }}
+                                onClick={() => { hide(item.id); item.action?.onClick(); }}
+                            >
+                                {item.action.label}
+                            </Button>
+                        ) : undefined}
+                        sx={{
+                            width: '100%',
+                            alignItems: 'center',
+                            // 队列里只有最新那条能点（`pointerEvents: none` 交给外层挡穿透）
+                            pointerEvents: 'auto',
+                            ...(narrow ? { boxShadow: 6, borderRadius: 2, fontSize: 14, py: 0.75 } : null),
+                        }}
+                    >
+                        {item.text}
+                    </Alert>
+                );
+            })}
+        </Stack>
     );
 }

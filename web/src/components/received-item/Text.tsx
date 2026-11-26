@@ -3,6 +3,8 @@ import { useTranslation } from 'react-i18next';
 import { Box, Card, CardContent, Chip, Divider, IconButton, Tooltip, Typography } from '@mui/material';
 import axios from 'axios';
 import { useWebSocketStore } from '@/stores/wsStore';
+import { useAppStore } from '@/stores/appStore';
+import { useToastStore } from '@/stores/toastStore';
 import { toast } from '@/stores/toastStore';
 import { useDisplaySettings } from '@/hooks/useDisplaySettings';
 import { useInView } from '@/hooks/useInView';
@@ -63,7 +65,8 @@ export const ReceivedText = memo(function ReceivedText({ meta }: { meta: Receive
         }
     };
 
-    const deleteItem = async () => {
+    /** 真正提交删除（5 秒撤销窗口之后，或者压根没法撤销时）。 */
+    const commitDelete = async () => {
         try {
             await axios.post(`revoke/${meta.id}`, null, { params: new URLSearchParams([['room', useWebSocketStore.getState().room]]) });
             recordUse(cardActionKey('delete'));
@@ -72,6 +75,43 @@ export const ReceivedText = memo(function ReceivedText({ meta }: { meta: Receive
             const msg = errorMessage(error);
             toast(msg ? t('deleteFailedMessageMsg', { msg }) : t('deleteFailedMessage'));
         }
+    };
+
+    /**
+     * 删除 = **先本地摘掉 + 5 秒撤销窗口**，超时才真发 revoke。
+     *
+     * ⚠️★ 为什么不是「弹个确认框」：删除是 `revoke + （文件时）DELETE file/{cache}` 双写，
+     *    确认框只是多一次点击，误删照样发生、而且不可逆。**唯一能撤销的做法是把提交推迟** ——
+     *    5 秒内点撤销，一个字节都不用发给服务端。
+     * ⚠️ 5 秒内刷新/关页面 = 删除没生效（内容还在）。这比「删了找不回来」好。
+     */
+    const deleteItem = () => {
+        const { removeReceivedLocal, restoreReceivedLocal } = useAppStore.getState();
+        const removed = removeReceivedLocal(meta.id);
+        if (!removed) {
+            // 列表里已经没有它（别的端删过 / 并发竞态）：别再假装能撤销，直接提交
+            void commitDelete();
+            return;
+        }
+        let undone = false;
+        const timer = window.setTimeout(() => {
+            if (undone) {
+                return;
+            }
+            useToastStore.getState().hide(toastId);
+            void commitDelete();
+        }, 5000);
+        const toastId = useToastStore.getState().show(t('deletedUndo'), {
+            forever: true,
+            action: {
+                label: t('undo'),
+                onClick: () => {
+                    undone = true;
+                    window.clearTimeout(timer);
+                    restoreReceivedLocal(removed.item, removed.index);
+                },
+            },
+        });
     };
 
     const deviceIcon = (type?: string) => {

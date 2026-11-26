@@ -168,6 +168,8 @@ export default function DefaultMode() {
         <Box sx={{ display: 'flex', flexDirection: 'column', height: '100%', minHeight: 0, overflow: 'hidden' }}>
             <PageToolbar variant="default" />
             <Box sx={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', width: '100%', maxWidth: 'var(--mode-max)', mx: 'auto', px: 'var(--mode-gutter)', pb: 2, pt: 1 }}>
+                {/* ⚠️★ 「融入背景」：输入区的外壳不再是一块白卡。
+                    留 `Card` 只是为了它的 flex 行为，底色和描边都透明。 */}
                 {!composerFullyHidden && (
                     <Card
                         variant="outlined"
@@ -176,6 +178,8 @@ export default function DefaultMode() {
                             p: { xs: 0.5, md: 1.5 },
                             mb: 1,
                             flexShrink: 0,
+                            bgcolor: 'transparent',
+                            borderColor: 'transparent',
                         }}
                     >
                         <UnifiedComposer ref={composerRef} />
@@ -199,6 +203,7 @@ export default function DefaultMode() {
                     </Box>
                 )}
 
+                {/* 同上：列表容器也透明 —— 卡片自己已经没有底了，外壳再留一块白就前功尽弃 */}
                 <Card
                     variant="outlined"
                     sx={{
@@ -210,6 +215,8 @@ export default function DefaultMode() {
                         display: 'flex',
                         flexDirection: 'column',
                         overflow: 'hidden',
+                        bgcolor: 'transparent',
+                        borderColor: 'transparent',
                     }}
                 >
                     {received.length > 0 && display.timelineFilter && (
@@ -240,28 +247,33 @@ export default function DefaultMode() {
 
                     {received.length > 0 && (
                         <Box ref={listScrollRef} sx={{ flex: 1, minHeight: 0, overflowY: 'auto', overflowX: 'hidden', position: 'relative', pr: 0.5 }}>
+                            {/* ⚠️★ 计数 chip **嵌在第一条卡片的顶部边框上**，不是浮在列表上方：
+                                做法是让它在正常流里、再用负 `mb` 压到卡片顶边上 ——
+                                浮层（`position: absolute`）会被滚动容器的 `overflow` 裁掉上半截，
+                                而且滚动时它会离开「属于哪张卡」的语境。
+                                底色用**页面色**（不是卡片色）：这样它看起来是从边框里「挖」出来的一个口子，
+                                横带在它那里断开 —— 这就是「嵌入」的观感。 */}
                             {filtered.length > 0 && (
-                                <Chip
-                                    size="small"
-                                    variant="outlined"
-                                    color="primary"
-                                    className="timeline-count-chip"
-                                    label={historyUsageLabel}
-                                    sx={{ position: 'absolute', top: 0, left: '50%', transform: 'translateX(-50%)', zIndex: 1 }}
-                                />
+                                <Box sx={{ display: 'flex', justifyContent: 'center', position: 'relative', zIndex: 2, pt: 0.5, mb: '-11px' }}>
+                                    <Chip
+                                        size="small"
+                                        className="timeline-count-chip"
+                                        label={historyUsageLabel}
+                                        sx={{
+                                            height: 22,
+                                            bgcolor: 'background.default',
+                                            border: '1px solid',
+                                            borderColor: 'divider',
+                                            '& .MuiChip-label': { px: 1, fontSize: 11 },
+                                        }}
+                                    />
+                                </Box>
                             )}
                             {filtered.slice(0, renderLimit).map((item: ReceivedItem) => (
                                 // ⚠️ `timeline-item` 带着 `content-visibility: auto` ——
                                 // 屏外卡片**不参与布局与绘制**，切换时省掉约 20%（实测中位 323→258ms）。
                                 // 详见 components.css 里那段注释。
-                                // ⚠️★ 第一条的 `pt` 必须够放下上面那个 `4/50` 计数胶囊（22px）：
-                                //    原来是 1.5（12px），胶囊会压在卡片顶上 —— 正好盖住那条 4px 渐变带，
-                                //    看起来像渐变缺了一段。3（24px）= 22px 胶囊 + 2px 缝。
-                                <Box
-                                    key={item.id}
-                                    className="timeline-item"
-                                    sx={{ pt: item === filtered[0] ? 3 : 0 }}
-                                >
+                                <Box key={item.id} className="timeline-item">
                                     {item.type === 'text' ? <ReceivedText meta={item} /> : <ReceivedFile meta={item} onOpen={openViewer} />}
                                 </Box>
                             ))}

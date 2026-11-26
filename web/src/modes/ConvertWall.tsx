@@ -51,33 +51,23 @@ import {
  * 而不是让用户点了之后收到一句「转换失败」。
  */
 
-/** 一次转换的状态机。⚠️ `failed` 要带**原因**，不能只有一个红点。 */
-type ItemState =
-    | { phase: 'converting' }
-    | { phase: 'done'; markdown: string; chars: number; images: number | null; imagesTruncated: boolean; multiColumnPages: number[] }
-    | { phase: 'failed'; reason: string };
-
-interface ConvertItem {
-    /** 本地的行 id。⚠️ 不能用文件名 —— 同名文件丢两次会撞。 */
-    key: string;
-    name: string;
-    size: number;
-    state: ItemState;
-}
+// ⚠️ `ConvertItem` / 状态机搬到 `stores/draftStore.ts` 了：切模式会卸载这个组件，
+//    而「转了一半的结果」不能跟着没（转一份 PDF 几十秒，切一下归零）。
+import { type ConvertItem, useDraftStore } from '@/stores/draftStore';
 
 export default function ConvertWall() {
     const { t } = useTranslation();
     const room = useWebSocketStore((s) => s.room);
 
     const [capability, setCapability] = useState<ConvertCapability | null>(null);
-    const [items, setItems] = useState<ConvertItem[]>([]);
+    const items = useDraftStore((s) => s.convertItems);
+    const setItems = useDraftStore((s) => s.setConvertItems);
     const [dragover, setDragover] = useState(false);
     const [expanded, setExpanded] = useState<Record<string, boolean>>({});
 
     const fileInputRef = useRef<HTMLInputElement>(null);
     /** 拖拽进出会成对触发（进子元素也算一次），所以要计数 —— 只看 `dragleave` 会在划过子元素时闪。 */
     const dragDepth = useRef(0);
-    const nextKey = useRef(0);
 
     const supported = capability?.enabled === true;
     const accept = useMemo(
@@ -110,7 +100,8 @@ export default function ConvertWall() {
         async (files: File[]) => {
             if (!files.length) return;
             const added: ConvertItem[] = files.map((file) => ({
-                key: `f${(nextKey.current += 1)}`,
+                // ⚠️ 不能用组件内计数器：切模式回来计数器归零，会和 store 里已有的 key 撞。
+                key: `f${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
                 name: file.name,
                 size: file.size,
                 state: { phase: 'converting' },
@@ -119,7 +110,7 @@ export default function ConvertWall() {
 
             for (const [index, file] of files.entries()) {
                 const key = added[index].key;
-                const settle = (state: ItemState) =>
+                const settle = (state: ConvertItem['state']) =>
                     setItems((prev) => prev.map((item) => (item.key === key ? { ...item, state } : item)));
                 try {
                     const uploaded = await uploadDocument({ file, room });
