@@ -1658,8 +1658,10 @@
        ⚠️ 现在按用户要求回到 `transparent`，**保留 hover 的 5% 主色底** ——
        「点整行 = 展开」这件事必须有可点区域的反馈，否则热区看不见。 */
     background: transparent;
-    border-color: transparent;
-    transition: background-color .12s ease;
+    /* ⚠️ 2026-11-26：把 1px 边框显示出来。卡片底透明时它成了「块」的唯一边界
+       （渐变带只在内侧，不承担这个职责）。颜色走主题 divider，浅深两套自动切。 */
+    border-color: var(--mui-palette-divider);
+    transition: background-color .12s ease, border-color .12s ease;
 }
 
 .text-card:hover {
@@ -1677,6 +1679,18 @@
     margin: 0 16px;
     border-radius: 2px;
     background: linear-gradient(90deg, var(--brand-1), var(--brand-2));
+    /* ⚠️★ 2026-11-26：静止时**淡化到 45%**，hover 才回到满色。
+       原因：渐变终点是青绿 `#44DBE3`，在纯白底上像荧光笔，一屏几条就已经很跳 ——
+       它现在长在每条消息顶上、又比正文短，观感最接近一根「进度条」。
+       淡化的同时保住「有这条带」：它仍然是卡片唯一的结构信号，只是退到背景里。
+       ⚠️ 过渡和卡片的 hover 底色同一套语言（.12s），两者一起亮才不会看着脱节。 */
+    opacity: 0.45;
+    transition: opacity .12s ease;
+}
+
+.text-card:hover .text-card__bar,
+.text-card:focus-within .text-card__bar {
+    opacity: 1;
 }
 
 /* 右上角的条目编号 */

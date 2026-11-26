@@ -64,17 +64,9 @@ export function MarkdownToggle({
 
     return (
         <div className="md-toggle">
-            {/* 原文。`null` 不是动作 —— 它表示「不跑任何动作」。 */}
-            <Tooltip title={t('rawText')}>
-                <button
-                    type="button"
-                    className={`md-toggle__icon${mode === null ? ' md-toggle__icon--active' : ''}`}
-                    aria-label={t('rawText')}
-                    onClick={() => onModeChange(null)}
-                >
-                    <MdiIcon name="mdi-code-tags" size={20} />
-                </button>
-            </Tooltip>
+            {/* ⚠️★ 原文按钮已移除（用户 2026-11-26）：它原来负责「回到不跑动作」，
+                现在这件事交给**二次点击同一个动作**（见下面那个 onClick）——
+                少一颗常驻按钮，且「点哪颗就撤哪颗」比「点最左边那颗原文」更直觉。 */}
 
             {inlineActions.map((action) => (
                 <Tooltip key={action.id} title={t(action.nameKey)}>
@@ -82,7 +74,15 @@ export function MarkdownToggle({
                         type="button"
                         className={`md-toggle__icon${mode === action.id ? ' md-toggle__icon--active' : ''}`}
                         aria-label={t(action.nameKey)}
-                        onClick={(e) => choose(action, e.currentTarget)}
+                        onClick={(e) => {
+                            // ⚠️ 二次点击 = 取消：再点一次**已经选中**的动作，回到「不跑任何动作」。
+                            //    这是原文按钮被移除后的唯一退路，别删。
+                            if (mode === action.id) {
+                                onModeChange(null);
+                                return;
+                            }
+                            choose(action, e.currentTarget);
+                        }}
                     >
                         <MdiIcon name={action.icon} size={20} />
                     </button>
@@ -118,6 +118,11 @@ export function MarkdownToggle({
                                     // 那个「⋯」按钮虽然还在，但这个 state 已经被清掉了。
                                     const anchor = menuAnchor;
                                     setMenuAnchor(null);
+                                    // 菜单里同样支持「二次点击 = 取消」（和露在外面的那两颗一致）
+                                    if (mode === id) {
+                                        onModeChange(null);
+                                        return;
+                                    }
                                     choose(findAction(id) as MarkdownAction | undefined, anchor);
                                 }}
                             />
