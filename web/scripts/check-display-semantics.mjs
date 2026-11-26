@@ -42,7 +42,7 @@ const WEB = resolve(HERE, '..');
 const REPO = resolve(WEB, '..');
 
 // 零 import 的两个模块：可以直接 import（它们本来就要被桌面端原样加载）。
-const { hasCodeMarkup, hasMathMarkup, looksLikeMarkdown, looksLikeTable, looksLikeTaskList } = await import(
+const { hasCodeMarkup, hasMathMarkup, looksLikeMarkdown, looksLikeTable, looksLikeTaskList, matchSegment, segmentWords } = await import(
     new URL('../src/lib/actions/pure.js', import.meta.url).href
 );
 const { DISPLAY_TOGGLES, DEFAULT_DISPLAY } = await import(
@@ -506,6 +506,52 @@ for (const problem of i18nProblems) console.log(`      · ${problem}`);
     for (const file of broken) {
         console.log(`      · ${file} 有 flex:1 却没有 100dvh 或（外壳定高时的）100% —— 里面的区域会塌成 0 高（不报错，只是空白）`);
     }
+}
+
+// ── 7.5 动作库 · 分词（`zh.segment`）─────────────────────────────────
+//
+// 这个动作用的是浏览器原生 `Intl.Segmenter`（零 import，桌面端跑同一份文件），
+// 所以它**不会因为缺依赖而静默失效** —— 能坏的地方只有三处，都在这里盯住：
+//   a) match 把「点了等于没点」的入口也放进来（纯英文切完就是原文）；
+//   b) 输出排版把标点挤成单独一个词（`我 爱 北京 ， 天安门`）；
+//   c) 老 WebView 没有 `Intl.Segmenter` 时**抛错**（宁可退化，也不能让按钮点了报错）。
+{
+    ok(
+        '纯英文不进分词动作（切完等于原文，点了没反应）',
+        !matchSegment('I love machine learning') && !matchSegment('hello world'),
+        'match 对纯英文返回了 true —— 用户点下去内容一个字都不会变',
+    );
+    ok('中文 / 中英混排进分词动作', matchSegment('深度学习') && matchSegment('用 clip9 复制'));
+
+    const segmented = segmentWords('我 爱 北京，天安门。');
+    ok('分词输出统一用单空格分隔', segmented === '我 爱 北京， 天安门。', JSON.stringify(segmented));
+    ok(
+        '标点粘在前一个词上（不单独成词）',
+        !/\s[，。！？；：]/.test(segmented) && !/^[，。！？；：]/.test(segmented),
+        JSON.stringify(segmented),
+    );
+    ok('纯空白返回空串', segmentWords('   ') === '' && segmentWords('') === '');
+
+    // 退化路径：老 WebView（Safari < 14.1 / Chrome < 87）没有 Intl.Segmenter。
+    // 中文整段没空格时**退化结果和正常结果不同**（`中文一句` vs `中文 一句`），
+    // 正好能区分「真走了退化」和「跑的还是影子」。
+    const savedSegmenter = Intl.Segmenter;
+    let degraded;
+    try {
+        delete Intl.Segmenter;
+        degraded = segmentWords('中文一句');
+    } catch (error) {
+        degraded = `抛错：${error.message}`;
+    } finally {
+        Intl.Segmenter = savedSegmenter;
+    }
+    ok(
+        '没有 Intl.Segmenter 时退化成原文、不抛错',
+        degraded === '中文一句',
+        `实际 ${JSON.stringify(degraded)} —— 老 WebView 上点这个按钮会报错/输出异常`,
+    );
+    // 退化之后必须恢复，否则后面所有用到分词/注音的判据都在退化路径上跑（假绿）。
+    ok('退化探针结束后 Intl.Segmenter 已恢复', typeof Intl.Segmenter === 'function');
 }
 
 // ── 8. 已构建产物（有就查，没有就跳过）────────────────────────────────

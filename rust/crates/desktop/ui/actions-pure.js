@@ -734,8 +734,13 @@ export function matchPinyinWord(text) {
  *
  * ⚠️ 走**浏览器原生** `Intl.Segmenter`（与 `pinyin.js` 的 toWordGroups 同一套），零依赖：
  *    这个文件必须保持零 import（桌面端也跑它），所以不能去装 jieba 之类的分词库。
- * ⚠️★ 兼容：`Intl.Segmenter` 是 Safari 14.1 / Chrome 87 之后才有的。老 WebView 上**没有**它，
- *    这时退回「按空白与标点切」—— 中文会整段算一个词（做不到真正分词），但至少不抛错、
+ *    体积上也装不起：jieba 的词典本身就 ~5 MB，而**整个前端预缓存预算是 3 MB**
+ *    （`check-whiteboard-plan.mjs`），一个动作用例不该顶掉两倍的应用体积。
+ *    词边界质量由 ICU 的 CJK 词典保证，歧义句实测是对的：
+ *    `结婚的和尚未结婚的` → `结婚 的 和 尚未 结婚 的`。唯一不如 jieba 的是偏正短语粒度
+ *    （`南京市长江大桥` → `南京市 长江 大 桥`，jieba 会给 `长江大桥`），可以接受。
+ * ⚠️★ 兼容：`Intl.Segmenter` 是 Safari 14.1 / Chrome 87 / Firefox 125 之后才有的。老 WebView 上
+ *    **没有**它，这时只折叠空白 —— 中文会整段算一个词（做不到真正分词），但至少不抛错、
  *    输出还是可用的（和原文一致的分段）。宁可退化，也不能让按钮点了报错。
  */
 export function segmentWords(text) {
@@ -774,10 +779,16 @@ export function segmentWords(text) {
     return words.join(' ');
 }
 
-/** 分词只对有多个「词」的内容有意义：含汉字，或含空白（英文多词）。 */
+/**
+ * 分词只对**中文**有意义 —— 这也就是它存在的理由。
+ *
+ * ⚠️★ 不要对纯英文返回 true：`Intl.Segmenter` 切英文就等于「按空白切」，
+ *    实测 `segmentWords('I love machine learning')` **原样返回** ——
+ *    按钮点下去内容一个字都没变，用户只会以为坏了。英文按空格本来就是词，
+ *    不需要「分词」这个动作。（早先写成「含汉字 or 含空白」，把这个空入口放进来了。）
+ */
 export function matchSegment(text) {
-    const s = String(text || '');
-    return /[\u4e00-\u9fff]/.test(s) || /\S\s+\S/.test(s.trim());
+    return /[\u4e00-\u9fff]/.test(String(text || ''));
 }
 
 export function matchSimplified(text) {
