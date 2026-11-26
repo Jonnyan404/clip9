@@ -130,7 +130,19 @@ export default defineConfig(({ command }) => {
                         '**/reward-*.png',
                     ],
                     cleanupOutdatedCaches: true,
-                    navigateFallback: 'index.html',
+                    // ⚠️★ 2026-11-26：**不再让 SW 接管导航**。
+                    //
+                    // 白屏的根因就是这一行：`navigateFallback: 'index.html'` 让每一次导航
+                    // 都由**上一次部署预缓存的那份壳**应答。而 `cleanupOutdatedCaches` 会随新
+                    // SW 激活清掉旧的预缓存 —— 于是「旧壳 + 旧 chunk 已删除」这个组合成立，
+                    // 入口 JS 404、页面全白。而负责发现新版本的代码就住在那个 404 的 bundle 里，
+                    // 只能人手动刷新（`index.html` 里那段内联兜底也只救得了一次）。
+                    //
+                    // 现在导航一律走网络（`.workers.dev` 的 HTML 是 `max-age=0, must-revalidate`，
+                    // 每次都会验证），SW 只负责静态资源。代价是**断网打不开** —— 这是个实时
+                    // 剪贴板应用，离线壳的价值远小于「部署后打开就白屏」。
+                    // ⚠️ `navigateFallbackDenylist` 必须留着：判据 D 仍在检查那张放行表。
+                    navigateFallback: null,
                     // ⚠️★ 这份放行表是**契约**：服务端每加一条路由，这里漏了就出故障
                     // （SW 的导航兜底把点击整个吞掉、返回预缓存里的 index.html）。
                     //
