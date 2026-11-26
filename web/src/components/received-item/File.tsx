@@ -217,8 +217,9 @@ export const ReceivedFile = memo(function ReceivedFile({ meta, onOpen }: { meta:
                                 ) : null;
                             }
                             if (id === 'share') {
+                                // 同上：用捕获阶段，`ShareLinkButton` 内部会 `stopPropagation`
                                 return (
-                                    <span key="share" onClick={() => recordUse(cardActionKey('share'))} style={{ display: 'inline-flex' }}>
+                                    <span key="share" onClickCapture={() => recordUse(cardActionKey('share'))} style={{ display: 'inline-flex' }}>
                                         <ShareLinkButton meta={meta} />
                                     </span>
                                 );

@@ -231,7 +231,7 @@ export function GlancePreview({ item, enableTaskToggle = false, inline = false, 
                         {t('copyText')}
                     </Button>
                 )}
-                <span onClick={() => recordUse(cardActionKey('share'))} style={{ display: 'inline-flex' }}>
+                <span onClickCapture={() => recordUse(cardActionKey('share'))} style={{ display: 'inline-flex' }}>
                     <ShareLinkButton meta={item} iconOnly={false} />
                 </span>
                 <span style={{ flex: 1 }} />

@@ -59,7 +59,21 @@ export function MarkdownToggle({
      */
     const usage = useActionPrefStore((s) => s.usage);
     const orderedActions = useMemo(() => sortActions(actions, usage), [actions, usage]);
-    const inlineActions = orderedActions.slice(0, 2);
+
+    /**
+     * 露在外面的两颗：**当前正在跑的那个动作固定第一**（占原来「原文」按钮的位置），
+     * 其余按频次补齐。
+     *
+     * ⚠️★ 为什么当前动作必须钉在第一位：它可能在频次上排不进前二（比如第一次用一个冷门动作），
+     *    那样用户点完就「看不见自己在跑什么」—— 只能靠 `⋯` 里那个高亮去猜。
+     *    原文按钮删掉之后空出来的正好就是这个位置，语义也接得上：
+     *    第一个位置永远是「你现在看到的是哪种视图」。
+     * ⚠️ 被挤出去的那个动作会回到 `⋯` 里，不是消失。
+     */
+    const activeAction = mode ? orderedActions.find((action) => action.id === mode) : undefined;
+    const shownActions = activeAction
+        ? [activeAction, ...orderedActions.filter((action) => action.id !== activeAction.id)].slice(0, 2)
+        : orderedActions.slice(0, 2);
     const hasMore = orderedActions.length > 2;
 
     return (
@@ -68,7 +82,7 @@ export function MarkdownToggle({
                 现在这件事交给**二次点击同一个动作**（见下面那个 onClick）——
                 少一颗常驻按钮，且「点哪颗就撤哪颗」比「点最左边那颗原文」更直觉。 */}
 
-            {inlineActions.map((action) => (
+            {shownActions.map((action) => (
                 <Tooltip key={action.id} title={t(action.nameKey)}>
                     <button
                         type="button"

@@ -196,7 +196,10 @@ export const ReceivedText = memo(function ReceivedText({ meta }: { meta: Receive
                                 // 分享的点击在 `ShareLinkButton` 内部，这里靠冒泡记一次使用
                                 return (
                                     <Fragment key="share">
-                                        <span onClick={() => recordUse(cardActionKey('share'))} style={{ display: 'inline-flex' }}>
+                                        {/* ⚠️★ 必须用 `onClickCapture`：`ShareLinkButton` 内部的
+                                            `onClick` 里有 `e.stopPropagation()`，冒泡阶段的监听器**永远收不到**，
+                                            于是「分享」的使用次数从来记不到 —— 卡片按钮的顺序就一直像定死的。 */}
+                                        <span onClickCapture={() => recordUse(cardActionKey('share'))} style={{ display: 'inline-flex' }}>
                                             <ShareLinkButton meta={meta} />
                                         </span>
                                     </Fragment>
