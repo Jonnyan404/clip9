@@ -64,7 +64,41 @@ export function MarkdownToggle({
      */
     const usage = useActionPrefStore((s) => s.usage);
     const recordUse = useActionPrefStore((s) => s.recordUse);
-    const orderedActions = useMemo(() => sortActions(actions, usage), [actions, usage]);
+
+    /**
+     * 用过的 `view` 动作 —— **不管它对这段文本 match 不 match**，都预热进候选池。
+     *
+     * ⚠️★ 这是「我反复用文本统计，预览条永远是分词/查找替换」的根因：
+     *    `actions` 来自 `targetedActions()`，而它只收**有 `match` 且匹配当前文本**的动作。
+     *    「文本统计」这类通用动作**根本没有 match 字段** → 永远进不了 targeted →
+     *    频次再高也顶不上来，而它在动作库（`⋯`）里却排第一，看起来像两套逻辑。
+     *    现在 candidates = targeted ∪ 用过的 view 动作，再统一按频次排。
+     * ⚠️ 只收 `direction === 'view'`：`transform` 类的动作会改文本内容，不该常驻在「怎么看」这一排。
+     */
+    const frequentPool = useMemo(() => {
+        const list: MarkdownAction[] = [];
+        for (const [id, entry] of Object.entries(usage)) {
+            if (!entry || entry.count <= 0) {
+                continue;
+            }
+            const action = findAction(id) as (MarkdownAction & { direction?: string }) | undefined;
+            if (action && action.direction === 'view') {
+                list.push(action);
+            }
+        }
+        return list;
+    }, [usage]);
+
+    const orderedActions = useMemo(() => {
+        const map = new Map<string, MarkdownAction>();
+        for (const action of actions) {
+            map.set(action.id, action);
+        }
+        for (const action of frequentPool) {
+            map.set(action.id, action);
+        }
+        return sortActions([...map.values()], usage);
+    }, [actions, frequentPool, usage]);
 
     /**
      * 露在外面的两颗：**当前正在跑的那个动作固定第一**（占原来「原文」按钮的位置），
