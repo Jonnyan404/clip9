@@ -9,7 +9,6 @@ import { toast } from '@/stores/toastStore';
 import { useDisplaySettings } from '@/hooks/useDisplaySettings';
 import { useInView } from '@/hooks/useInView';
 import { useMarkdown } from '@/hooks/useMarkdown';
-import { cardActionKey, orderCardActions, useActionPrefStore } from '@/stores/actionPrefStore';
 import { useTaskListToggle } from '@/hooks/useTaskListToggle';
 import {
     copyTextToClipboard, deviceLabel, errorMessage, formatTimestamp, isAutomationMessage, isLateMessage,
@@ -46,10 +45,10 @@ export const ReceivedText = memo(function ReceivedText({ meta }: { meta: Receive
     const { ref: cardRef, inView } = useInView<HTMLDivElement>();
     const md = useMarkdown(() => decodedContent, undefined, inView);
 
-    const recordUse = useActionPrefStore((s) => s.recordUse);
-    // ⚠️ 只存**字符串**（zustand 用 Object.is 比较）：存数组的话每帧都是新引用，
-    //    50 张卡片会全部重渲染，而 `memo` 也救不了 —— 是这个组件自己的订阅变了。
-    const actionOrder = useActionPrefStore((s) => orderCardActions(s.usage));
+    // ⚠️ 卡片的三个动作是**固定顺序**（复制 → 分享 → 删除），不按频次排（用户 2026-11-26：
+    //    这三个位置是肌肉记忆，换位只会让人点错）。
+    //    频次只用于**动作库**（`⋯` 里的动作、预览条那两颗）。
+    const actionOrder = 'copy,share,delete';
 
     // 定时消息的两个标记。**判定在 lib/util**（单点），这里只负责画。
     const isAutomation = isAutomationMessage(meta);
@@ -59,7 +58,6 @@ export const ReceivedText = memo(function ReceivedText({ meta }: { meta: Receive
         try {
             // 复制**当前视图**的正文（`md.copyText`）：切到压缩 JSON 后拿到的就是压缩后的那一行。
             await copyTextToClipboard(md.copyText);
-            recordUse(cardActionKey('copy'));
             toast(t('copySuccess'));
         } catch {
             toast(t('copyFailedGeneral'));
@@ -70,7 +68,6 @@ export const ReceivedText = memo(function ReceivedText({ meta }: { meta: Receive
     const commitDelete = async () => {
         try {
             await axios.post(`revoke/${meta.id}`, null, { params: new URLSearchParams([['room', useWebSocketStore.getState().room]]) });
-            recordUse(cardActionKey('delete'));
             toast(t('deleteSuccessText'));
         } catch (error) {
             const msg = errorMessage(error);
@@ -179,8 +176,7 @@ export const ReceivedText = memo(function ReceivedText({ meta }: { meta: Receive
                             {decodedContent}
                         </Typography>
                     </div>
-                    {/* ⚠️★ 动作按**使用频率**排（用户 2026-11-26 的要求），但删除不参与：
-                        它是不可逆的，永远留在最右 —— 「我删得多」不该把删除挪到复制旁边。 */}
+                    {/* 固定顺序：复制 → 分享 → 删除。删除恒在最右（不可逆的动作不该挨着复制）。 */}
                     <div className="text-card__actions" onClick={(e) => e.stopPropagation()}>
                         {actionOrder.split(',').map((id) => {
                             if (id === 'copy') {
@@ -196,10 +192,7 @@ export const ReceivedText = memo(function ReceivedText({ meta }: { meta: Receive
                                 // 分享的点击在 `ShareLinkButton` 内部，这里靠冒泡记一次使用
                                 return (
                                     <Fragment key="share">
-                                        {/* ⚠️★ 必须用 `onClickCapture`：`ShareLinkButton` 内部的
-                                            `onClick` 里有 `e.stopPropagation()`，冒泡阶段的监听器**永远收不到**，
-                                            于是「分享」的使用次数从来记不到 —— 卡片按钮的顺序就一直像定死的。 */}
-                                        <span onClickCapture={() => recordUse(cardActionKey('share'))} style={{ display: 'inline-flex' }}>
+                                        <span style={{ display: 'inline-flex' }}>
                                             <ShareLinkButton meta={meta} />
                                         </span>
                                     </Fragment>

@@ -125,34 +125,3 @@ export function sortActions<T extends { id: string }>(
         return sb.lastUsedAt - sa.lastUsedAt;
     });
 }
-
-/**
- * 卡片上那几个动作（复制 / 分享 / 删除）的显示顺序。
- *
- * ⚠️★ **只对非破坏性动作排序**：`delete` 永远在最后。
- *    如果让它参与频次排序，「我删得多」就会把删除挪到最左边 ——
- *    而删除是**不可逆**的（文件是 `revoke + DELETE 字节` 双写），旁边紧挨着复制。
- *    频次排序在这里会让一个原本安全的布局变危险。
- *
- * ⚠️ 返回逗号串而不是数组：它被 zustand 的 selector 用，数组每帧都是新引用，
- *    50 张卡片会全部重渲染；字符串比较才是稳的。
- */
-export function orderCardActions(usage: Record<string, ActionUsageEntry>, ids: readonly string[] = ['copy', 'share', 'delete']): string {
-    const score = (id: string) => usage[`card.${id}`] ?? ZERO;
-    // 删除（不可逆）不参与排序，永远最后；其余按「次数 → 最近一次」
-    const sortable = ids.filter((id) => id !== 'delete');
-    const ordered = [...sortable].sort((a, b) => {
-        const sa = score(a);
-        const sb = score(b);
-        if (sb.count !== sa.count) {
-            return sb.count - sa.count;
-        }
-        return sb.lastUsedAt - sa.lastUsedAt;
-    });
-    return (ids.includes('delete') ? [...ordered, 'delete'] : ordered).join(',');
-}
-
-/** 记一次卡片动作的使用。key 前缀 `card.` 与动作库的 id 区分开（同一张 usage 表）。 */
-export function cardActionKey(id: string): string {
-    return `card.${id}`;
-}

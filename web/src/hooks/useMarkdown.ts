@@ -157,11 +157,12 @@ export function useMarkdown(
     // 「复制」该复制**你正在看的那一份**：原文 / 当前动作的结果。
     const copyText = viewText || text;
 
-    // 图标有几个 → 正文要给图标让出多宽。总数封在 4 个（原文 + 2 个针对性动作 + ⋯）。
-    // ⚠️★ 4 个图标的实测宽度是 110px，再加 `.md-toggle` 的右缩进 12px = 122px ——
-    //    原来这里给 96px，第 4 个图标会压在正文上（窄屏尤其明显，时间线展开时实测重叠 26px）。
-    const iconCount = !available ? 0 : 1 + Math.min(targeted.length, 2) + (targeted.length > 2 ? 1 : 0);
-    const gutter = iconCount > 2 ? '124px' : '64px';
+    // 图标有几个 → 正文要给图标让出多宽。
+    // ⚠️★ 2026-11-26：原文按钮删掉之后最多只有 **3 颗**（2 个动作 + ⋯），
+    //    原来按 4 颗算的 124px 会在正文右边空出一条。3 颗实测 ≈ 90px + 右缩进 12 = 102，
+    //    取 100px 留 2px 余量；只有 2 颗时不带 ⋯，64px 够。
+    const iconCount = !available ? 0 : Math.min(targeted.length, 2) + (targeted.length > 2 ? 1 : 0);
+    const gutter = iconCount > 2 ? '100px' : '64px';
 
     const setMode = useCallback((next: string | null, params?: Record<string, string>) => {
         setOverride(next ?? null);

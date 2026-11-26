@@ -43,6 +43,11 @@ export function MarkdownToggle({
         if (!action) {
             return;
         }
+        // ⚠️★ 这一行是「频次排序」真正起作用的前提：预览条上露出的那两颗按钮
+        //    **不经过** `ActionPicker.pick()`，所以它的使用次数原来从来没被记过 ——
+        //    于是「分词 / 查找替换」永远排在最前，用别的动作一百次也不会上来
+        //    （用户 2026-11-26 报的正是这个）。
+        recordUse(action.id);
         if (action.params && action.params.length) {
             setParamAction({ action, anchor });
             return;
@@ -58,6 +63,7 @@ export function MarkdownToggle({
      * ⚠️ 频次用 `actionPrefStore` 里那张表（和动作面板共用），`count` 相同比 `lastUsedAt`。
      */
     const usage = useActionPrefStore((s) => s.usage);
+    const recordUse = useActionPrefStore((s) => s.recordUse);
     const orderedActions = useMemo(() => sortActions(actions, usage), [actions, usage]);
 
     /**
@@ -70,7 +76,12 @@ export function MarkdownToggle({
      *    第一个位置永远是「你现在看到的是哪种视图」。
      * ⚠️ 被挤出去的那个动作会回到 `⋯` 里，不是消失。
      */
-    const activeAction = mode ? orderedActions.find((action) => action.id === mode) : undefined;
+    // ⚠️★ 兜底到全量动作：当前动作**不一定在 `actions`（targeted）里** ——
+    //    比如默认视图 `format.markdown` 在文本不像 markdown 时连 `match` 都不成立。
+    //    找不到就不 pin，等于「当前在跑什么」看不见（用户报的「dev 里没效果」就可能是这一条）。
+    const activeAction = mode
+        ? orderedActions.find((action) => action.id === mode) ?? (findAction(mode) as MarkdownAction | undefined)
+        : undefined;
     const shownActions = activeAction
         ? [activeAction, ...orderedActions.filter((action) => action.id !== activeAction.id)].slice(0, 2)
         : orderedActions.slice(0, 2);

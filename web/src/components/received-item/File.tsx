@@ -7,7 +7,6 @@ import { toast } from '@/stores/toastStore';
 import { useDisplaySettings } from '@/hooks/useDisplaySettings';
 import { useInView } from '@/hooks/useInView';
 import { useMarkdown } from '@/hooks/useMarkdown';
-import { cardActionKey, orderCardActions, useActionPrefStore } from '@/stores/actionPrefStore';
 import {
     deviceLabel, errorMessage, filePreviewKind,
     formatTimestamp, isImageName, prettyFileSize,
@@ -61,13 +60,11 @@ export const ReceivedFile = memo(function ReceivedFile({ meta, onOpen }: { meta:
     );
 
     // ⚠️ 同步的：地址本地拼（`services/file-url`），不再为「看一眼」去签一条分享令牌。
-    const recordUse = useActionPrefStore((s) => s.recordUse);
-    // ⚠️ 存字符串（原因见 Text.tsx 同一处注释：数组引用会让 50 张卡全部重渲染）
-    const actionOrder = useActionPrefStore((s) => orderCardActions(s.usage, ['download', 'preview', 'share', 'delete']));
+    // ⚠️ 固定顺序（原因见 Text.tsx）：这些位置是肌肉记忆，频次只用在动作库里。
+    const actionOrder = 'download,preview,share,delete';
 
     const downloadFile = () => {
         if (expired || !meta.cache) return;
-        recordUse(cardActionKey('download'));
         saveFileToDisk(meta.cache, meta.name, room);
     };
 
@@ -101,7 +98,6 @@ export const ReceivedFile = memo(function ReceivedFile({ meta, onOpen }: { meta:
      */
     const previewFile = () => {
         if (expired) return;
-        recordUse(cardActionKey('preview'));
         if (expand) {
             setExpand(false);
             return;
@@ -125,7 +121,6 @@ export const ReceivedFile = memo(function ReceivedFile({ meta, onOpen }: { meta:
             if (!expired && meta.cache) {
                 await axios.delete(`file/${meta.cache}`);
             }
-            recordUse(cardActionKey('delete'));
             toast(t('deleteSuccessFile', { name: meta.name }));
         } catch (error) {
             const msg = errorMessage(error);
@@ -217,9 +212,8 @@ export const ReceivedFile = memo(function ReceivedFile({ meta, onOpen }: { meta:
                                 ) : null;
                             }
                             if (id === 'share') {
-                                // 同上：用捕获阶段，`ShareLinkButton` 内部会 `stopPropagation`
                                 return (
-                                    <span key="share" onClickCapture={() => recordUse(cardActionKey('share'))} style={{ display: 'inline-flex' }}>
+                                    <span key="share" style={{ display: 'inline-flex' }}>
                                         <ShareLinkButton meta={meta} />
                                     </span>
                                 );
