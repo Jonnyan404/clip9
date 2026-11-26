@@ -554,6 +554,70 @@ for (const problem of i18nProblems) console.log(`      · ${problem}`);
     ok('退化探针结束后 Intl.Segmenter 已恢复', typeof Intl.Segmenter === 'function');
 }
 
+// ── 7.6 传统色分组：浅色系 / 深色系 / 隐藏 ────────────────────────────
+//
+// 传统色对话框把 742 支色按「适合哪一套配色」分成两个页签，并且按用户要求把
+// **两边都不合适**的（纯白 / 纯黑这类）直接藏掉。这里拿**发货的那份
+// `lib/contrast.js`** 跑真实数据 —— 而不是在这个脚本里抄一份公式（抄的永远绿）。
+{
+    const colorMath = await import(new URL('../src/lib/contrast.js', import.meta.url).href);
+    const { traditionalColorGroups: groups } = await import(new URL('../src/data/traditionalColors.js', import.meta.url).href);
+    const colors = groups.flatMap((group) => group.colors);
+
+    ok(
+        '纯白 / 纯黑不进任何一组（当主色只剩一个白/黑按钮，没有色彩可言）',
+        colorMath.paletteScopeOf('#FFFFFF') === null && colorMath.paletteScopeOf('#000000') === null,
+    );
+    // ⚠️ 这条是**直觉锚点**：MUI 的默认主色是蓝 600，它必须落在「浅色系」里 ——
+    //    分界只要偏一点（比如改成「两边哪边对比更高」）就会把它推进深色分组，
+    //    用户会觉得整个分类是乱的。
+    ok(
+        '默认主色 #1e88e5 落在浅色系',
+        colorMath.paletteScopeOf('#1e88e5') === 'light',
+        `实际 ${colorMath.paletteScopeOf('#1e88e5')}`,
+    );
+
+    const light = colors.filter((color) => colorMath.paletteScopeOf(color.hex) === 'light');
+    const dark = colors.filter((color) => colorMath.paletteScopeOf(color.hex) === 'dark');
+    const hidden = colors.filter((color) => colorMath.paletteScopeOf(color.hex) === null);
+
+    // 下限保护：一边倒说明分组逻辑坏了（比如所有色都落到同一桶），而不是「清单变了」。
+    ok(
+        '两个分组都有量（不是一边倒）',
+        light.length >= 100 && dark.length >= 100,
+        `浅色系 ${light.length} 支 / 深色系 ${dark.length} 支`,
+    );
+    // 上限保护：删多了是事故（用户看不到色），删少了说明阈值失效。
+    // 只卡上限不卡下限 —— 清单更新后如果没有极端色了，那是正常情况。
+    ok(
+        '隐藏的只是极少数极端色',
+        hidden.length <= 8,
+        `藏了 ${hidden.length} 支：${hidden.map((color) => `${color.name}(${color.hex})`).join('、')}`,
+    );
+
+    const lightFails = light.filter((color) => (colorMath.contrastRatio(color.hex, colorMath.SURFACE_LIGHT) ?? 0) < 3);
+    ok(
+        '浅色系每支在浅底上都有 ≥3:1 的区分度',
+        lightFails.length === 0,
+        lightFails.slice(0, 5).map((color) => `${color.name} ${color.hex}`).join('；'),
+    );
+    const darkFails = dark.filter((color) => (colorMath.contrastRatio(color.hex, colorMath.SURFACE_DARK) ?? 0) < 4.5);
+    ok(
+        '深色系每支在深底上都有 ≥4.5:1 的区分度',
+        darkFails.length === 0,
+        darkFails.slice(0, 5).map((color) => `${color.name} ${color.hex}`).join('；'),
+    );
+
+    // 底色只有一份来源：`theme/index.ts` 不能自己再写一个字面量 hex
+    // （否则传统色板按 A 色算、界面用 B 色画，两处会慢慢漂）。
+    const themeSource = stripComments(readFileSync(join(WEB, 'src/theme/index.ts'), 'utf8'));
+    ok(
+        'theme 的页面底色取自 lib/contrast.js（不再硬编码 hex）',
+        /SURFACE_LIGHT/.test(themeSource) && /SURFACE_DARK/.test(themeSource) && !/background:\s*\{\s*default:\s*'#/.test(themeSource),
+        'theme/index.ts 里又把 background.default 写回字面量了',
+    );
+}
+
 // ── 8. 已构建产物（有就查，没有就跳过）────────────────────────────────
 if (!process.argv.includes('--src')) {
     const assetsDir = join(WEB, 'dist/assets');

@@ -1,88 +1,151 @@
-import { Box, Button, Dialog, DialogContent, DialogTitle, Typography } from '@mui/material';
+import { useEffect, useMemo, useState } from 'react';
+import { Box, Button, Dialog, DialogActions, DialogContent, DialogTitle, Tab, Tabs, Typography } from '@mui/material';
 import { useTranslation } from 'react-i18next';
-import { useColorScheme, useTheme } from '@mui/material/styles';
+import { useColorScheme } from '@mui/material/styles';
 import { traditionalColorGroups } from '@/data/traditionalColors.js';
 import { useThemeStore } from '@/stores/themeStore';
 import { MdiIcon } from '@/components/ui/MdiIcon';
-import { contrastRatio, readableOn } from '@/lib/contrast';
+import { SURFACE_DARK, SURFACE_LIGHT, paletteScopeOf, readableOn } from '@/lib/contrast';
 
 /** 色块的边长。⚠️ 与悬停时的放大倍数一起决定了「会不会挤到邻居」。 */
 const SWATCH = 34;
 
-/**
- * 与当前背景的对比度低于这个值就标出来。
- *
- * ⚠️ 3:1 是 WCAG 对**非文本**（图形、图标、界面组件边界）的 AA 要求 —— 主色恰恰是用在
- *    按钮底色、选中态这类地方，比的是它和页面底色的区分度，不是文字可读性（那是 4.5:1）。
- *    用 4.5 当门槛会把「深一点的蓝」也标上，提示就失去意义了。
- */
-const LOW_CONTRAST = 3;
+type Scope = 'light' | 'dark';
+
+const groupList = traditionalColorGroups as Array<{ name: string; colors: Array<{ name: string; hex: string }> }>;
+
+/** 点了「两套都用」之后，按钮上的确认文案停留多久。 */
+const APPLIED_MS = 2000;
 
 /**
- * 中华传统色选择 —— 对应 web-vue3/src/components/TraditionalColorDialog.vue。
- * 点一个色块就把它设成**当前明暗模式**的主色（与 Vue 版一致：各改各的那一份）。
+ * 中华传统色选择。
  *
- * # ⚠️★ 2026-10-07 修的三件事
+ * # ⚠️★ 2026-11-26 改成「按适配的配色分两组」
  *
- * 1. **悬停没有反馈**：原来那些色块是内联 `style`，只有 `border` 与 `background` ——
- *    既没有 `:hover`、也没有 `:focus-visible`，鼠标划过去**什么都没有**。
- * 2. **根本没有「选中」这个概念**：组件**没读当前主色**，所以用户看不出现在用的是哪一个，
- *    点完也不知道成没成（只能看背后的界面颜色变没变）。
- * 3. **悬停态与选中态分不开**：这两件事必须一眼能分辨 ——
- *    悬停是**放大 + 中性灰环**（临时的），选中是**主题色环 + 对勾**（持久的）。
- *    两者都做成「一个圈」的话，鼠标停在已选色块上时会分不清是哪个状态。
+ * 原来是一个 742 个色块的平铺大表，点谁就是给**当前明暗**那一套换主色。三个问题：
  *
- * ⚠️ 点击的即时反馈靠**状态本身**：`setPrimary` 是同步的（写 localStorage + 改 store），
- * 而 `<ThemeProvider>` 会立刻用新主色重建主题 —— 所以环与对勾**当拍就位**，不需要额外的动画。
+ * 1. **找不到能用的色**：742 个里有一半在浅色模式下几乎看不见（乳白、茉莉黄、粉彩），
+ *    用户得先点一下、看背后的界面变没变，才知道这个色能不能用。
+ * 2. **想给另一套挑色必须先切模式**：切过去界面全变、设置页也跟着重排，很打断。
+ * 3. **「两套都用」点了没反馈**：它只改**另一个**模式那一份，当前界面一个像素都不变 ——
+ *    看起来就像按钮坏了（用户原话）。
+ *
+ * 现在的做法：
+ * · 顶部两个页签 = **要改哪一套**，同时**只显示适合那一套的色**（`paletteScopeOf`，
+ *   判据在 `check-display-semantics.mjs`：浅色系对浅底 ≥3:1、深色系对深底 ≥4.5:1）。
+ * · 每个页签顶上有**一条预览**，用那一套的底色 + 当前主色画出来 —— 改的是哪一套都看得见效果。
+ *   这是「点击没反馈」的正解：反馈不能依赖「背后的界面变了」。
+ * · 底部补了**关闭**按钮（原来只能点遮罩或按 Esc 退出）。
+ *
+ * # 历史（2026-10-07 修的三件事，仍然有效）
+ *
+ * 1. 色块原来是内联 `style`，没有 `:hover` / `:focus-visible`，鼠标划过去什么都没有。
+ * 2. 组件不读当前主色，用户看不出现在用的是哪一个。
+ * 3. 悬停态与选中态要能分辨 —— 悬停是**放大 + 中性灰环**（临时的），
+ *    选中是**主题色环 + 对勾**（持久的）。
+ *
+ * ⚠️ 点击的即时反馈靠**状态本身**：`setPrimary` 同步写 store + localStorage，
+ *    `<ThemeProvider>` 当拍用新主色重建主题 —— 环与对勾立刻到位。
  */
 export function TraditionalColorDialog({ open, onClose }: { open: boolean; onClose: () => void }) {
     const { t } = useTranslation();
     const { mode } = useColorScheme();
     const isDark = mode === 'dark';
-    const theme = useTheme();
-    // ⚠️ 订阅**当前明暗那一份**：浅色下选中的是 `primaryLight`，深色下是 `primaryDark` ——
-    // 两个是各自独立的（与 Vue 版一致），拿错那一份会把另一个模式的选中色标出来。
-    const primary = useThemeStore((s) => (isDark ? s.primaryDark : s.primaryLight));
+
+    // ⚠️ 两套都订阅：选中的环要按**当前页签**那一份画，不是按当前明暗模式。
+    const primaryLight = useThemeStore((s) => s.primaryLight);
+    const primaryDark = useThemeStore((s) => s.primaryDark);
     const setPrimary = useThemeStore((s) => s.setPrimary);
     const setPrimaryBoth = useThemeStore((s) => s.setPrimaryBoth);
 
-    /**
-     * 当前这一套的页面底色 —— 用来算「这个色和背景差多少」。
-     *
-     * ⚠️ 从 `theme.colorSchemes` 取，**不要**用 `theme.palette.background.default`：
-     *    开了 CSS 变量主题之后 `theme.palette` 是**默认那套**（浅色）的值，
-     *    暗色下用它算出来的对比度是错的，而那些「几乎看不见」的色恰恰都在暗色模式下才出问题。
-     */
-    const background = (() => {
-        const scheme = (theme as unknown as { colorSchemes?: Record<string, { palette?: { background?: { default?: string } } }> })
-            .colorSchemes?.[isDark ? 'dark' : 'light'];
-        return scheme?.palette?.background?.default || (isDark ? '#0f172a' : '#f4f7fb');
-    })();
+    const [scope, setScope] = useState<Scope>(isDark ? 'dark' : 'light');
+    const [applied, setApplied] = useState(false);
 
-    const isSelected = (hex: string) => hex.toLowerCase() === primary.toLowerCase();
+    // ⚠️ 每次打开都回到「当前明暗模式」那个页签：对话框是常挂载的（`open={false}` 不卸载），
+    //    不重置的话，上次看的是深色页签，这次在浅色模式下打开还停在深色页签上。
+    useEffect(() => {
+        if (open) {
+            setScope(isDark ? 'dark' : 'light');
+            setApplied(false);
+        }
+    }, [open, isDark]);
+
+    // 确认文案自己退场，不用用户去关
+    useEffect(() => {
+        if (!applied) {
+            return undefined;
+        }
+        const id = window.setTimeout(() => setApplied(false), APPLIED_MS);
+        return () => window.clearTimeout(id);
+    }, [applied]);
+
+    const activePrimary = scope === 'dark' ? primaryDark : primaryLight;
 
     /**
-     * 当前选中的色在**这套背景**上的对比度。
+     * 当前页签下要显示的色 —— **在这里就筛掉**，不是渲染时 `display:none`。
      *
-     * ⚠️★ 为什么不在每个色块上提前标出来（做过，撤了）：742 个色里有 189 个（25%）
-     * 低于 3:1 —— 满屏角标的结果是**提示失去意义**，还盖住了色块本身。
-     * 改成「选了以后才说一句」：没有视觉噪音，而且只在真的会看不清时才出现。
+     * ⚠️ 只在 `scope` 变化时重算：742 次对比度计算虽然只要 1–2ms，
+     *    但列表里每个色块 hover 都会让父组件重渲染，没必要每帧重算一遍。
      */
-    const currentRatio = contrastRatio(primary, background);
-    const tooFaint = currentRatio !== null && currentRatio < LOW_CONTRAST;
+    const sections = useMemo(
+        () =>
+            groupList
+                .map((group) => ({ name: group.name, colors: group.colors.filter((c) => paletteScopeOf(c.hex) === scope) }))
+                .filter((section) => section.colors.length > 0),
+        [scope],
+    );
+
+    const isSelected = (hex: string) => hex.toLowerCase() === activePrimary.toLowerCase();
 
     return (
         <Dialog open={open} onClose={onClose} maxWidth="md" fullWidth>
             <DialogTitle>
                 {t('traditionalColors')}
-                {/* ⚠️★ 必须说清「改的是哪一套」：主色明暗各存一份，在浅色模式下选色
-                    不会影响深色模式。不说的话，用户切到深色发现没变，会以为设置没保存。 */}
                 <Typography variant="caption" component="div" color="text.secondary" sx={{ mt: 0.5 }}>
-                    {t('themeScopeNow', { scope: isDark ? t('themeScopeDark') : t('themeScopeLight') })}
+                    {t('themeClassifyHint')}
                 </Typography>
             </DialogTitle>
-            <DialogContent dividers sx={{ maxHeight: '70vh' }}>
-                {(traditionalColorGroups as Array<{ name: string; colors: Array<{ name: string; hex: string }> }>).map((group) => (
+            <Tabs value={scope} onChange={(_event, value: Scope) => setScope(value)} variant="fullWidth" sx={{ borderBottom: 1, borderColor: 'divider' }}>
+                <Tab value="light" label={t('themeColorsLightTab')} />
+                <Tab value="dark" label={t('themeColorsDarkTab')} />
+            </Tabs>
+            {/* 预览条 —— 这一套的底色 + 当前主色。改的是哪一套，效果都在这里看得见。
+                ⚠️★ 必须放在**滚动区之外**：色板有几百个色块，用户滚到下面点色时
+                    预览条若跟着滚走，「点了有没有生效」就又看不见了 —— 那正是这次要修的病。 */}
+            <Box
+                sx={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 1.5,
+                    mx: 3,
+                    my: 1.5,
+                    px: 1.5,
+                    py: 1,
+                    borderRadius: 1.5,
+                    bgcolor: scope === 'dark' ? SURFACE_DARK : SURFACE_LIGHT,
+                    border: '1px solid',
+                    borderColor: 'divider',
+                }}
+            >
+                <Box
+                    sx={{
+                        px: 1.5,
+                        py: 0.5,
+                        borderRadius: 1,
+                        bgcolor: activePrimary,
+                        color: readableOn(activePrimary),
+                        fontSize: 13,
+                        fontWeight: 600,
+                    }}
+                >
+                    {t('themePreviewSample')}
+                </Box>
+                <Typography sx={{ color: readableOn(scope === 'dark' ? SURFACE_DARK : SURFACE_LIGHT), fontSize: 12, opacity: 0.8 }}>
+                    {t('themePreviewCaption', { scope: t(scope === 'dark' ? 'themeScopeDark' : 'themeScopeLight') })}
+                </Typography>
+            </Box>
+            <DialogContent dividers sx={{ maxHeight: '52vh' }}>
+                {sections.map((group) => (
                     <section key={group.name} style={{ marginBottom: 16 }}>
                         <Typography variant="subtitle2" sx={{ mb: 1 }}>{t(group.name)}</Typography>
                         <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1 }}>
@@ -99,7 +162,7 @@ export function TraditionalColorDialog({ open, onClose }: { open: boolean; onClo
                                         // ⚠️★ 选中态要**说给读屏**听：只画一个环的话，
                                         // 屏幕阅读器用户完全不知道现在用的是哪一个。
                                         aria-pressed={selected}
-                                        onClick={() => setPrimary(isDark ? 'dark' : 'light', color.hex)}
+                                        onClick={() => setPrimary(scope, color.hex)}
                                         sx={{
                                             position: 'relative',
                                             display: 'flex',
@@ -148,33 +211,18 @@ export function TraditionalColorDialog({ open, onClose }: { open: boolean; onClo
                     </section>
                 ))}
             </DialogContent>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10, padding: '10px 16px' }}>
-                <div style={{ flex: 1, minWidth: 0 }}>
-                    <Typography variant="caption" color="text.secondary" component="div">
-                        {t('themeScopeHint')}
-                    </Typography>
-                    {/* ⚠️ 只在**当前选中的色**与背景对比度不足时出现 —— 不预先标 189 个色块，
-                        那是视觉噪音（见 `tooFaint` 的注释）。仍允许用户这么选，只是把后果说清楚。 */}
-                    {tooFaint && (
-                        <Typography variant="caption" color="warning.main" component="div" sx={{ mt: 0.5 }}>
-                            {t('themeLowContrastWarn', { ratio: currentRatio.toFixed(1) })}
-                        </Typography>
-                    )}
-                </div>
+            <DialogActions sx={{ px: 2, py: 1.5, gap: 1 }}>
                 {/* 「两套都用这个色」：多数人只想换一个颜色，不想在两套里各选一遍。
-                    默认不勾，因为深色底上往往需要更亮的一支（那是分成两份的原因）。 */}
-                {/* ⚠️ `color="inherit"` 不是随手写的：这颗按钮如果走 primary，
-                    而用户刚好选了个接近背景的色（正是上面那条警告说的情况），
-                    它自己就会变成「白底白字」—— 一个提示别人看不清的按钮，自己也看不清。 */}
-                <Button
-                    size="small"
-                    variant="outlined"
-                    color="inherit"
-                    onClick={() => setPrimaryBoth(primary)}
-                >
-                    {t('themeApplyToBoth')}
+                    ⚠️★ 按钮文案会**自己变**成「已应用到两套」（2 秒）——
+                        这颗按钮只改**另一个**模式那一份，当前界面一个像素都不变，
+                        没有这句确认的话，用户会以为它坏了（就是这个 bug 来的）。 */}
+                <Button size="small" variant="outlined" color="inherit" sx={{ mr: 'auto' }} startIcon={applied ? <MdiIcon name="mdi-check" size={16} /> : undefined} onClick={() => { setPrimaryBoth(activePrimary); setApplied(true); }}>
+                    {applied ? t('themeApplyToBothDone') : t('themeApplyToBoth')}
                 </Button>
-            </div>
+                <Button size="small" variant="contained" color="inherit" onClick={onClose}>
+                    {t('close')}
+                </Button>
+            </DialogActions>
         </Dialog>
     );
 }

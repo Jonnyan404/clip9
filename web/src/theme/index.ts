@@ -1,4 +1,5 @@
 import { createTheme } from '@mui/material/styles';
+import { SURFACE_DARK, SURFACE_LIGHT } from '@/lib/contrast';
 
 /**
  * 应用主题 —— 从 web-vue3/src/plugins/vuetify.js 移植。
@@ -24,7 +25,9 @@ export function createAppTheme(primaryLight: string, primaryDark: string) {
                     error: { main: '#ff5252' },
                     // ⚠️ 页面底色跟随 Vue 版（App.vue 的 `.app-shell { background: #f4f7fb }`）——
                     // MUI 默认是纯白，跟 Vue 的浅灰蓝对不上。
-                    background: { default: '#f4f7fb' },
+                    // ⚠️ 值住在 `lib/contrast.js`（传统色板要拿它算「这支色在浅底上看得见吗」），
+                    //    两处各写一份迟早会漂。
+                    background: { default: SURFACE_LIGHT },
                 },
             },
             dark: {
@@ -33,7 +36,7 @@ export function createAppTheme(primaryLight: string, primaryDark: string) {
                     secondary: { main: '#424242' },
                     error: { main: '#ff5252' },
                     // Vue：`.app-shell--dark { background: #0f172a }`
-                    background: { default: '#0f172a' },
+                    background: { default: SURFACE_DARK },
                 },
             },
         },
