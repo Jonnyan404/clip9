@@ -61,14 +61,16 @@ export function contrastRatio(a, b) {
  * 那边从这边 import（这个文件零依赖，反过来引会把 MUI 拖进来）。
  */
 /**
- * 浅色模式的页面底色。
+ * 浅色模式的页面底色 —— **纯白**。
  *
- * ⚠️ 2026-11-26 从 `#f4f7fb` 调白到 `#fbfcfd`：卡片和输入区都透明之后，
- * 页面底色就是**唯一**的底色，原来那点灰蓝在满屏面积上显脏（用户要求「调白一点」）。
- * ⚠️ 只提亮、不改成纯白：纯白 `#ffffff` 会让 `background.paper` 与页面同色，
- * 对话框/菜单就再也没有「浮起来」的层次了。留 1–2 个色阶的差。
+ * ⚠️ 2026-11-26 第三次调整：`#f4f7fb` → `#fbfcfd` → `#ffffff`。
+ * 前两版都在「页面底色」上找层次，结果满屏带灰、显脏；现在反过来 ——
+ * **页面纯白，靠元素各自压深一点**（卡片 4%、面板/输入框按需）来找层次。
+ * ⚠️ `background.paper` 也是纯白，所以对话框/菜单不再靠「比页面更白」浮起来，
+ * 而是靠投影（MUI 的 Dialog/Menu 自带 `boxShadow: 24`）。别把 paper 调灰来补层次，
+ * 那会让所有 Dialog 变成一块脏底。
  */
-export const SURFACE_LIGHT = '#fbfcfd';
+export const SURFACE_LIGHT = '#ffffff';
 export const SURFACE_DARK = '#0f172a';
 
 /**

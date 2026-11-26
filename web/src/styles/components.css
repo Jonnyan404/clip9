@@ -855,8 +855,8 @@
    ⚠️ 透明的前提是**内容不会从工具栏下面滚过去**；每个模式的内容区自己滚（见
    `DefaultMode` 的 `listScrollRef` 和各模式的 `overflow-y`）。 */
 .page-toolbar--default {
-    /* 跟页面底色同一支 —— 卡片透明之后，顶栏和页面差一个色阶就会显出一条横带 */
-    background: #fbfcfd;
+    /* 跟页面底色同一支（纯白）—— 差一个色阶就会显出一条横带 */
+    background: #ffffff;
     border-bottom: 1px solid rgba(148, 163, 184, 0.18);
 }
 
@@ -1068,7 +1068,9 @@
     flex: 0 0 30%;
     border: 1px solid rgba(148, 163, 184, 0.26);
     border-radius: 16px;
-    background: rgba(255, 255, 255, 0.9);
+    /* ⚠️ 2026-11-26：面板不再是一张白卡 —— 结果区/添加按钮已经透到页面底，
+       外层还留白的话，结果区看起来像从白卡里「挖掉一块」。 */
+    background: transparent;
     overflow: hidden;
 }
 
@@ -1079,7 +1081,7 @@
     flex-direction: column;
     border: 1px solid rgba(148, 163, 184, 0.26);
     border-radius: 16px;
-    background: rgba(255, 255, 255, 0.9);
+    background: transparent;
     padding: 12px;
     overflow: hidden;
 }
@@ -1195,8 +1197,8 @@
 /* 暗色（对应 Vue 的 `.bench-wall--dark`） */
 .dark .bench-wall__list,
 .dark .bench-wall__panel {
-    /* 同上：走纸面变量，别在这里再来第三种深色 */
-    background: var(--mui-palette-background-paper);
+    /* 同上：面板透到页面底（浅色已经透明，深色留一块纸面会是「同一屏两个底」） */
+    background: transparent;
     border-color: rgba(71, 85, 105, 0.72);
 }
 
@@ -1445,8 +1447,10 @@
     border: 1px solid rgba(148, 163, 184, 0.42);
     border-radius: 10px;
     padding: 10px;
-    /* 与步骤行同一块底纹（实测像素 rgb(189,189,189)） */
-    background: rgba(66, 66, 66, 0.35);
+    /* ⚠️★ 2026-11-26：结果区原来是一块 `rgba(66,66,66,.35)` 的中灰（浅色下实测 `rgb(189,189,189)`），
+       而它 `min-height: 140px`、空着的时候占 90% 面积 —— 整屏最重的元素是一块**空的灰**，
+       把真正要读的输入文字压住了。现在透到页面底上，只留 1px 边框表明「结果会落在这里」。 */
+    background: transparent;
 }
 
 .action-chain__pre {
@@ -1592,9 +1596,11 @@
     width: 100%;
     height: 28px;
     padding: 0 12px;
-    border: none;
-    border-radius: 4px;
-    background: color-mix(in srgb, currentColor 24%, transparent);
+    /* ⚠️ 虚线边框代替灰条：灰底读起来像「禁用骨架」，而它其实是这一屏**唯一**的入口。
+       虚线才表达「这里可以加东西」。 */
+    border: 1px dashed rgba(148, 163, 184, 0.5);
+    border-radius: 6px;
+    background: transparent;
     color: inherit;
     font: inherit;
     font-size: 0.8125rem;
@@ -1607,7 +1613,9 @@
 }
 
 .action-chain__add-btn:hover {
-    background: color-mix(in srgb, currentColor 34%, transparent);
+    background: color-mix(in srgb, var(--mui-palette-primary-main) 10%, transparent);
+    border-color: var(--mui-palette-primary-main);
+    color: var(--mui-palette-primary-main);
 }
 
 .action-chain__empty { font-size: 0.75rem; opacity: 0.7; }
@@ -1649,7 +1657,7 @@
        但比原来那块纯白轻得多 —— 在白底上几乎看不出，只在满屏时才成为层次。
        ⚠️ 用 `text-primary` 而不是固定灰：深色下它会自动变成「比页面亮一点」，
        两个方向都是同一句「比背景多一层」。 */
-    background: color-mix(in srgb, var(--mui-palette-text-primary) 2.5%, transparent);
+    background: color-mix(in srgb, var(--mui-palette-text-primary) 4%, transparent);
     border-color: transparent;
     transition: background-color .12s ease;
 }
