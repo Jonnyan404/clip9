@@ -12,6 +12,7 @@ import {
 import { downloadFile as saveFileToDisk, fileUrl } from '@/services/file-url';
 import { MarkdownBody } from '@/components/MarkdownBody';
 import { MarkdownToggle } from '@/components/MarkdownToggle';
+import { SegmentWords } from '@/components/ui/SegmentWords';
 import { ShareLinkButton } from '@/components/ShareLinkButton';
 import { MdiIcon } from '@/components/ui/MdiIcon';
 import { cardActionKey, useActionPrefStore } from '@/stores/actionPrefStore';
@@ -200,7 +201,13 @@ export function GlancePreview({ item, enableTaskToggle = false, inline = false, 
                     onClick={enableTaskToggle ? onMdClick : undefined}
                 >
                     {md.available && <MarkdownToggle mode={md.mode} actions={md.actions} onModeChange={md.setMode} />}
-                    {md.html ? <MarkdownBody html={md.html} /> : <div style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>{content}</div>}
+                    {md.mode === 'zh.segment' ? (
+                        <SegmentWords text={md.copyText} />
+                    ) : md.html ? (
+                        <MarkdownBody html={md.html} />
+                    ) : (
+                        <div style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>{content}</div>
+                    )}
                 </div>
             )}
 

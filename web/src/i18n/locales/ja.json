@@ -75,6 +75,7 @@
   "fileSizeLimit": "ファイル {limit}",
   "textMessage": "テキストメッセージ",
   "copyText": "テキストをコピー",
+  "segmentClearPick": "選択を解除",
   "copyLink": "リンクをコピー",
   "delete": "削除",
   "fileMessage": "ファイルメッセージ",

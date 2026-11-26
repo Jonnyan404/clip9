@@ -60,7 +60,15 @@ export function contrastRatio(a, b) {
  * 两套配色的**页面底色** —— 与 `theme/index.ts` 里 `background.default` 是同一对值，
  * 那边从这边 import（这个文件零依赖，反过来引会把 MUI 拖进来）。
  */
-export const SURFACE_LIGHT = '#f4f7fb';
+/**
+ * 浅色模式的页面底色。
+ *
+ * ⚠️ 2026-11-26 从 `#f4f7fb` 调白到 `#fbfcfd`：卡片和输入区都透明之后，
+ * 页面底色就是**唯一**的底色，原来那点灰蓝在满屏面积上显脏（用户要求「调白一点」）。
+ * ⚠️ 只提亮、不改成纯白：纯白 `#ffffff` 会让 `background.paper` 与页面同色，
+ * 对话框/菜单就再也没有「浮起来」的层次了。留 1–2 个色阶的差。
+ */
+export const SURFACE_LIGHT = '#fbfcfd';
 export const SURFACE_DARK = '#0f172a';
 
 /**

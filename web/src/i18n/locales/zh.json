@@ -75,6 +75,7 @@
   "fileSizeLimit": "文件 {limit}",
   "textMessage": "文本消息",
   "copyText": "复制文本",
+  "segmentClearPick": "清空选择",
   "copyLink": "复制链接",
   "delete": "删除",
   "fileMessage": "文件消息",

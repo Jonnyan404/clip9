@@ -75,6 +75,7 @@
   "fileSizeLimit": "檔案 {limit}",
   "textMessage": "文字訊息",
   "copyText": "複製文字",
+  "segmentClearPick": "清除選擇",
   "copyLink": "複製連結",
   "delete": "刪除",
   "fileMessage": "檔案訊息",

@@ -14,6 +14,7 @@ import { downloadFile as saveFileToDisk, fileUrl } from '@/services/file-url';
 import { openFromVisibleSet } from '@/stores/viewerStore';
 import { MarkdownBody } from '@/components/MarkdownBody';
 import { MarkdownToggle } from '@/components/MarkdownToggle';
+import { SegmentWords } from '@/components/ui/SegmentWords';
 import { ShareLinkButton } from '@/components/ShareLinkButton';
 import { MdiIcon } from '@/components/ui/MdiIcon';
 import type { ReceivedItem } from '@/stores/appStore';
@@ -196,7 +197,7 @@ export function StickyNote({ meta }: { meta: ReceivedItem }) {
                         title={decodedContent}
                         onClick={onMdClick}
                     >
-                        {md.html ? <MarkdownBody html={md.html} /> : decodedContent}
+                        {md.mode === 'zh.segment' ? <SegmentWords text={md.copyText} /> : md.html ? <MarkdownBody html={md.html} /> : decodedContent}
                     </div>
                 )}
                 {timestampLabel && <span className="sticky-note__time">{timestampLabel}</span>}
@@ -280,7 +281,7 @@ export function StickyNote({ meta }: { meta: ReceivedItem }) {
                             <div
                                 className={`sticky-note__reader-text${isLink ? ' sticky-note__text--link' : ''}${md.available ? ' sticky-note__reader-text--md' : ''}${md.leadsWithBlock ? ' sticky-note__reader-text--block' : ''}${md.html ? ' sticky-note__reader-text--rendered' : ''}`}
                             >
-                                {md.html ? <MarkdownBody html={md.html} /> : decodedContent}
+                                {md.mode === 'zh.segment' ? <SegmentWords text={md.copyText} /> : md.html ? <MarkdownBody html={md.html} /> : decodedContent}
                             </div>
                         </div>
                     )}

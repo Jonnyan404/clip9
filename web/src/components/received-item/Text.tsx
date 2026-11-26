@@ -16,6 +16,7 @@ import {
 } from '@/lib/util';
 import { MarkdownBody } from '@/components/MarkdownBody';
 import { MarkdownToggle } from '@/components/MarkdownToggle';
+import { SegmentWords } from '@/components/ui/SegmentWords';
 import { ShareLinkButton } from '@/components/ShareLinkButton';
 import { MdiIcon } from '@/components/ui/MdiIcon';
 import type { ReceivedItem } from '@/stores/appStore';
@@ -226,9 +227,13 @@ export const ReceivedText = memo(function ReceivedText({ meta }: { meta: Receive
                             {md.available && (
                                 <MarkdownToggle mode={md.mode} actions={md.actions} onModeChange={md.setMode} />
                             )}
-                            {md.html
-                                ? <MarkdownBody html={md.html} />
-                                : <div className="text-card__preview">{decodedContent}</div>}
+                            {/* ⚠️ 「切出词」的结果要能按词点选 —— 卡片上也一样，
+                                不能只在动作台里能用（用户 2026-11-26 报的）。 */}
+                            {md.mode === 'zh.segment'
+                                ? <SegmentWords text={md.copyText} />
+                                : md.html
+                                    ? <MarkdownBody html={md.html} />
+                                    : <div className="text-card__preview">{decodedContent}</div>}
                         </Box>
                     </>
                 )}

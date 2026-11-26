@@ -855,7 +855,8 @@
    ⚠️ 透明的前提是**内容不会从工具栏下面滚过去**；每个模式的内容区自己滚（见
    `DefaultMode` 的 `listScrollRef` 和各模式的 `overflow-y`）。 */
 .page-toolbar--default {
-    background: #f5f7fa;
+    /* 跟页面底色同一支 —— 卡片透明之后，顶栏和页面差一个色阶就会显出一条横带 */
+    background: #fbfcfd;
     border-bottom: 1px solid rgba(148, 163, 184, 0.18);
 }
 
@@ -1372,18 +1373,25 @@
 
 /* ⚠️ 结果区**不自己滚**（没有 max-height / overflow）—— 滚动交给外层 `.action-chain`。
    两层滚动容器在触屏上很糟：手指在里面滑只滚内层，滚到底外层不动，看着像卡住了。 */
-/* ── 分词结果的词块（`切出词` 那个动作）────────────────────────────────
+/* ── 分词结果的词块（components/ui/SegmentWords.tsx，四个模式共用）──────────
    ⚠️ 一颗词一颗胶囊、可点选：这个动作的下游是「挑几个词去查/去拼」，
-   整段复制出去再删是它原来唯一的用法。 */
-.action-chain__words {
+   整段复制出去再删是它原来唯一的用法。
+   ⚠️ 类名是 `segment-words*`（通用），不是 `action-chain__*` —— 它现在也长在卡片正文里。 */
+.segment-words {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    min-width: 0;
+}
+
+.segment-words__list {
     display: flex;
     flex-wrap: wrap;
     gap: 4px;
     align-content: flex-start;
-    padding: 2px 0;
 }
 
-.action-chain__word {
+.segment-words__word {
     font: inherit;
     font-size: 12.5px;
     line-height: 1.45;
@@ -1396,16 +1404,40 @@
     transition: background-color .1s ease;
 }
 
-.action-chain__word:hover {
+.segment-words__word:hover {
     background: color-mix(in srgb, var(--mui-palette-primary-main) 16%, transparent);
 }
 
 /* 选中：填实主色。⚠️ 文字色必须用 contrastText —— 白字硬编码在用户选亮色主色时会糊。 */
-.action-chain__word--on,
-.action-chain__word--on:hover {
+.segment-words__word--on,
+.segment-words__word--on:hover {
     background: var(--mui-palette-primary-main);
     border-color: var(--mui-palette-primary-main);
     color: var(--mui-palette-primary-contrastText);
+}
+
+.segment-words__bar {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.segment-words__copy,
+.segment-words__clear {
+    font: inherit;
+    font-size: 12px;
+    padding: 2px 9px;
+    border-radius: 6px;
+    border: 1px solid var(--mui-palette-divider);
+    background: transparent;
+    color: var(--mui-palette-text-secondary);
+    cursor: pointer;
+}
+
+.segment-words__copy:hover,
+.segment-words__clear:hover {
+    background: color-mix(in srgb, var(--mui-palette-primary-main) 10%, transparent);
+    color: var(--mui-palette-primary-main);
 }
 
 .action-chain__result {

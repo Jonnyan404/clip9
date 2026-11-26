@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Menu, Tooltip } from '@mui/material';
 import { MdiIcon } from '@/components/ui/MdiIcon';
@@ -6,6 +6,7 @@ import type { MarkdownAction } from '@/hooks/useMarkdown';
 import { ActionPicker } from '@/components/bench/ActionPicker';
 import { ActionParamsPopover } from '@/components/ActionParamsPopover';
 import { findAction } from '@/lib/actions/index.js';
+import { sortActions, useActionPrefStore } from '@/stores/actionPrefStore';
 
 /**
  * 预览框右上角那排「用哪种方式看」的图标 —— **动作库驱动**。
@@ -49,8 +50,17 @@ export function MarkdownToggle({
         onModeChange(action.id);
     };
 
-    const inlineActions = actions.slice(0, 2);
-    const hasMore = actions.length > 2;
+    /**
+     * 除了「原文」，卡片上直接露出的图标按**使用频次**排（用户 2026-11-26 的要求）。
+     *
+     * ⚠️ 「原文」不在 `actions` 里 —— 它是那颗单独的 `</>` 按钮，永远在最左：
+     *    它不是一个动作，是「什么都不跑」，位置漂了会让人找不到退路。
+     * ⚠️ 频次用 `actionPrefStore` 里那张表（和动作面板共用），`count` 相同比 `lastUsedAt`。
+     */
+    const usage = useActionPrefStore((s) => s.usage);
+    const orderedActions = useMemo(() => sortActions(actions, usage), [actions, usage]);
+    const inlineActions = orderedActions.slice(0, 2);
+    const hasMore = orderedActions.length > 2;
 
     return (
         <div className="md-toggle">

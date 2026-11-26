@@ -75,6 +75,7 @@
   "fileSizeLimit": "Files {limit}",
   "textMessage": "Text Message",
   "copyText": "Copy Text",
+  "segmentClearPick": "Clear",
   "copyLink": "Copy Link",
   "delete": "Delete",
   "fileMessage": "File Message",

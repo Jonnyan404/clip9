@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Box, Button, Divider, Menu, MenuItem, Popover, TextField } from '@mui/material';
 import { runChain } from '@/lib/actions/index.js';
@@ -7,6 +7,7 @@ import { copyTextToClipboard } from '@/lib/util';
 import { toast } from '@/stores/toastStore';
 import { MdiIcon } from '@/components/ui/MdiIcon';
 import { ActionPicker } from './ActionPicker';
+import { SegmentWords } from '@/components/ui/SegmentWords';
 
 /**
  * 动作链 —— 从 web-vue3/src/components/bench/ActionChain.vue 移植。
@@ -77,22 +78,11 @@ export function ActionChain({ text, onSaveAsNew }: { text: string; onSaveAsNew: 
     const displayText = isEmptyChain ? text : hasError ? '' : result.output;
 
     /**
-     * 分词结果**按词点选**，只复制选中的那几个。
+     * 分词结果**按词点选**（交互在 `components/ui/SegmentWords.tsx`，卡片正文里也用同一份）。
      *
-     * ⚠️★ 为什么要专门做一块 UI：`切出词` 这个动作的下游通常是「挑几个词去查/去拼」，
-     *    而结果是**一整段空格分隔的文本** —— 用户只能整段复制再去别处删。点选才是它的用法。
      * ⚠️ 只在最后一步是 `zh.segment` 时启用：别的动作结果是一段话，切成词块反而不能读。
      */
     const isSegment = !isEmptyChain && !hasError && lastStep?.id === 'zh.segment';
-    const words = useMemo(
-        () => (isSegment ? displayText.split(/\s+/).filter(Boolean) : []),
-        [isSegment, displayText],
-    );
-    const [pickedWords, setPickedWords] = useState<Set<number>>(() => new Set());
-    // 结果变了就清空选择：否则上一段的选中下标会「继续选中」新结果的同位置
-    useEffect(() => {
-        setPickedWords(new Set());
-    }, [displayText]);
 
     const paramValue = (step: typeof steps[number], p: ParamSpec) => {
         const raw = step.params?.[p.key];
@@ -117,11 +107,8 @@ export function ActionChain({ text, onSaveAsNew }: { text: string; onSaveAsNew: 
     };
 
     const copyResult = async () => {
-        // 有选中就只复制选中的（按原文顺序、单空格拼接），没选就复制全部
-        const picked = words.filter((_word, index) => pickedWords.has(index));
-        const payload = picked.length ? picked.join(' ') : displayText;
         try {
-            await copyTextToClipboard(payload);
+            await copyTextToClipboard(displayText);
             toast(t('copySuccess'));
         } catch {
             toast(t('copyFailedGeneral'));
@@ -321,10 +308,9 @@ export function ActionChain({ text, onSaveAsNew }: { text: string; onSaveAsNew: 
             <div className="action-chain__head">
                 <span className="action-chain__title">{t('actionResultTitle')}</span>
                 <span style={{ flex: 1 }} />
-                {!hasError && (
-                    <Button size="small" variant="text" disabled={!displayText} onClick={copyResult}>
-                        {pickedWords.size ? `${t('copyText')} (${pickedWords.size})` : t('copyText')}
-                    </Button>
+                {/* 分词结果自己有「复制 (n)」按钮（带点选计数），这里不再重复放一颗 */}
+                {!hasError && !isSegment && (
+                    <Button size="small" variant="text" disabled={!displayText} onClick={copyResult}>{t('copyText')}</Button>
                 )}
                 {!hasError && !isEmptyChain && (
                     <Button size="small" variant="text" onClick={() => onSaveAsNew(displayText)}>{t('actionSaveAsNew')}</Button>
@@ -339,32 +325,8 @@ export function ActionChain({ text, onSaveAsNew }: { text: string; onSaveAsNew: 
                     </div>
                 ) : renderedHtml ? (
                     <div className="action-chain__html" dangerouslySetInnerHTML={{ __html: renderedHtml }} />
-                ) : words.length ? (
-                    // 分词结果：一个词一颗可点的胶囊，选中的填实主色
-                    <div className="action-chain__words">
-                        {words.map((word, index) => {
-                            const picked = pickedWords.has(index);
-                            return (
-                                <button
-                                    key={`${index}-${word}`}
-                                    type="button"
-                                    className={picked ? 'action-chain__word action-chain__word--on' : 'action-chain__word'}
-                                    aria-pressed={picked}
-                                    onClick={() => setPickedWords((prev) => {
-                                        const next = new Set(prev);
-                                        if (next.has(index)) {
-                                            next.delete(index);
-                                        } else {
-                                            next.add(index);
-                                        }
-                                        return next;
-                                    })}
-                                >
-                                    {word}
-                                </button>
-                            );
-                        })}
-                    </div>
+                ) : isSegment ? (
+                    <SegmentWords text={displayText} />
                 ) : displayText ? (
                     <pre className="action-chain__pre">{displayText}</pre>
                 ) : (
