@@ -175,6 +175,28 @@ if (unusedKeys.length) {
     problems.push(`i18n 有 ${unusedKeys.length} 个未被引用的死键：${unusedKeys.slice(0, 8).join(', ')}`);
 }
 
+// ⚠️★ 插值占位符必须是**单**大括号：`i18n/index.ts` 把 i18next 的
+// `interpolation.prefix/suffix` 改成了 `{` / `}`（不是默认的 `{{` / `}}`）。
+// 写成 `{{name}}` 的症状**特别像「没加文案」**：界面上直接显示那段花括号本身，
+// 而键存在、键集合一致、也没死键 —— 上面那几条判据一条都抓不到
+// （2026-11-26 实测，`actionParamRequired` 就这么在界面上露出了 `{{name}}`）。
+{
+    const doubled = [];
+    for (const locale of LOCALES) {
+        const data = JSON.parse(readFileSync(join(WEB, 'src/i18n/locales', `${locale}.json`), 'utf8'));
+        for (const [key, value] of Object.entries(data)) {
+            if (typeof value === 'string' && value.includes('{{')) {
+                doubled.push(`${locale}:${key}`);
+            }
+        }
+    }
+    if (doubled.length) {
+        problems.push(
+            `这些文案用了双大括号插值（本项目的 i18next 配的是单大括号，界面上会原样显示）：${doubled.slice(0, 6).join(', ')}`,
+        );
+    }
+}
+
 // ── F. 已删除的模式不得复活 ───────────────────────────────────────────────
 // ⚠️ chat / mega / workbench / terminal 于 2026-09-26 真删，**没有退役映射表、没有兼容垫片**
 //    （这个项目没有老用户，兼容垫片是永久成本）。

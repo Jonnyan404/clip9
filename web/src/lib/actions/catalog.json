@@ -230,14 +230,15 @@
             }
           ]
         },
-        {
-          "key": "find",
-          "labelKey": "actionReplaceFind",
-          "visibleWhen": {
-            "key": "mode",
-            "equals": "text"
-          }
-        },
+      {
+        "key": "find",
+        "labelKey": "actionReplaceFind",
+        "required": true,
+        "visibleWhen": {
+          "key": "mode",
+          "equals": "text"
+        }
+      },
         {
           "key": "with",
           "labelKey": "actionReplaceWith"
@@ -398,6 +399,16 @@
       "direction": "view",
       "match": "matchPinyinWord",
       "run": "runPinyinWord"
+    },
+    {
+      "id": "zh.segment",
+      "group": "zh",
+      "nameKey": "actionSegment",
+      "descKey": "actionSegmentDesc",
+      "icon": "mdi-content-cut",
+      "direction": "view",
+      "match": "matchSegment",
+      "run": "segmentWords"
     },
     {
       "id": "zh.simplified",

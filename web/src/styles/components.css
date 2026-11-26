@@ -1138,7 +1138,7 @@
     align-items: center;
     justify-content: center;
     border-radius: 5px;
-    background: linear-gradient(135deg, #0ea5e9, #14b8a6);
+    background: linear-gradient(135deg, var(--brand-1), var(--brand-2));
     color: #fff;
     font-size: 0.625rem;
     font-weight: 700;
@@ -1339,6 +1339,71 @@
 
 .action-picker__empty { font-size: 0.75rem; opacity: 0.7; padding: 14px 2px; text-align: center; }
 
+/* ── 排序条 + 自定义排序的竖排（2026-11-26）─────────────────────────────
+   排序条放在搜索与列表之间：它是**整个面板**的视图设置，塞进每一组会变成 N 份不同步的开关。
+   自定义那档换成竖排 —— grid 里每个胶囊右侧再塞两个箭头会挤成一条缝，手机上点不中。 */
+.action-picker__sortbar {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    flex-wrap: wrap;
+    margin-bottom: 8px;
+}
+.action-picker__sortlabel {
+    font-size: 0.6875rem;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    opacity: 0.75;
+}
+.action-picker__sorthint { font-size: 0.6875rem; opacity: 0.65; }
+
+.action-picker__list { display: flex; flex-direction: column; gap: 4px; }
+.action-picker__row { display: flex; align-items: center; gap: 2px; }
+
+.action-picker__rowbtn {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 5px 10px;
+    border: 1px solid rgba(148, 163, 184, 0.5);
+    border-radius: 8px;
+    /* 与上面那些胶囊同一套底色/字色来源：这个面板住在弹层里，写死白底在暗色下就是一片白块 */
+    background: var(--mui-palette-background-paper);
+    color: inherit;
+    font-size: 0.75rem;
+    line-height: 1.4;
+    text-align: left;
+    cursor: pointer;
+    transition: border-color 0.15s ease, color 0.15s ease;
+}
+.action-picker__rowbtn:hover {
+    border-color: var(--mui-palette-primary-main);
+    color: var(--mui-palette-primary-main);
+}
+.action-picker__row--dim .action-picker__rowbtn { opacity: 0.42; }
+
+.action-picker__move {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 26px;
+    height: 26px;
+    flex: none;
+    padding: 0;
+    border: none;
+    border-radius: 6px;
+    background: none;
+    color: inherit;
+    opacity: 0.6;
+    cursor: pointer;
+}
+.action-picker__move:hover {
+    opacity: 1;
+    background: color-mix(in srgb, currentColor 10%, transparent);
+}
+
 /* 「添加动作」= Vuetify 的 `variant="tonal"`。
    ⚠️★ 关键：**不带 `color` 的 tonal 是中性灰底 + 正常字色**，不是主色蓝 ——
    Vue 实测像素 rgb(203,204,204)、字色 rgba(0,0,0,0.87)、高 28px、圆角 4px。
@@ -1402,7 +1467,7 @@
 /* 顶部那条渐变细带 */
 .text-card__bar {
     height: 4px;
-    background: linear-gradient(90deg, #0ea5e9, #14b8a6);
+    background: linear-gradient(90deg, var(--brand-1), var(--brand-2));
 }
 
 /* 右上角的条目编号 */
@@ -1841,7 +1906,7 @@
     font-size: 9.5px;
     font-weight: 700;
     color: #fff;
-    background: linear-gradient(135deg, #0ea5e9, #14b8a6);
+    background: linear-gradient(135deg, var(--brand-1), var(--brand-2));
     white-space: nowrap;
 }
 
@@ -1873,7 +1938,7 @@
 }
 
 .timeline-day__hist:active .timeline-day__bar {
-    background: color-mix(in srgb, #0ea5e9 92%, transparent);
+    background: color-mix(in srgb, var(--brand-1) 92%, transparent);
 }
 
 .timeline-day__track {
@@ -1893,7 +1958,7 @@
     min-height: 3px;
     transform: translateX(-50%);
     border-radius: 2px 2px 0 0;
-    background: color-mix(in srgb, #0ea5e9 60%, transparent);
+    background: color-mix(in srgb, var(--brand-1) 60%, transparent);
 }
 
 .dark .timeline-day__bar {
@@ -1981,8 +2046,8 @@
 /* 被日头柱状图跳到的行：闪一下再淡掉 —— 否则 smooth 滚过去之后，一行和上面几十行长得一样，
    用户不知道「跳成功了没有」。时长与 `TimelineWall` 里清 `flashId` 的 1600ms 对齐。 */
 @keyframes timeline-row-flash {
-    0% { background: color-mix(in srgb, #0ea5e9 26%, transparent); }
-    60% { background: color-mix(in srgb, #0ea5e9 14%, transparent); }
+    0% { background: color-mix(in srgb, var(--brand-1) 26%, transparent); }
+    60% { background: color-mix(in srgb, var(--brand-1) 14%, transparent); }
     100% { background: transparent; }
 }
 

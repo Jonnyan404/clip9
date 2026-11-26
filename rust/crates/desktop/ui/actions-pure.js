@@ -725,6 +725,61 @@ export function matchPinyinWord(text) {
     return /[\u4e00-\u9fff]/.test(String(text || ''));
 }
 
+/**
+ * 分词 —— 把一段话切成词，空格分隔。
+ *
+ * 为什么值得在**动作库**里：`注音分词` 那条输出的是「词(拼音)」，带拼音就只对中文朗读有用；
+ * 而「切出词」本身是很多下游动作的前置（翻译、统计词频、逐词查词典、把中文喂给按空格分词的模型）。
+ * 之前想做这件事只能拿注音那条再手工删括号。
+ *
+ * ⚠️ 走**浏览器原生** `Intl.Segmenter`（与 `pinyin.js` 的 toWordGroups 同一套），零依赖：
+ *    这个文件必须保持零 import（桌面端也跑它），所以不能去装 jieba 之类的分词库。
+ * ⚠️★ 兼容：`Intl.Segmenter` 是 Safari 14.1 / Chrome 87 之后才有的。老 WebView 上**没有**它，
+ *    这时退回「按空白与标点切」—— 中文会整段算一个词（做不到真正分词），但至少不抛错、
+ *    输出还是可用的（和原文一致的分段）。宁可退化，也不能让按钮点了报错。
+ */
+export function segmentWords(text) {
+    const s = String(text || '');
+    if (!s.trim()) {
+        return '';
+    }
+
+    if (typeof Intl === 'undefined' || typeof Intl.Segmenter !== 'function') {
+        // 退化路径：只按空白断，顺带把连续空白折叠掉。中文在这里切不动（没有空格），
+        // 但这是「没有分词能力」的诚实结果，比拿字符数硬切更像话。
+        return s.replace(/\s+/g, ' ').trim();
+    }
+
+    const segmenter = new Intl.Segmenter('zh', { granularity: 'word' });
+    const words = [];
+    for (const part of segmenter.segment(s)) {
+        if (part.isWordLike) {
+            words.push(part.segment);
+            continue;
+        }
+        // 纯空白 = 词与词之间的分隔，丢掉（输出统一用空格，不再保留原文的换行/缩进）
+        if (!part.segment.trim()) {
+            continue;
+        }
+        // ⚠️ 标点**粘到前一个词上**（`北京，` 算一个词），不是单独成词：
+        //    `我 爱 北京 ， 天安门 。` 这种「标点前后各一个空格」的排版读起来很碎，
+        //    而 `我 爱 北京， 天安门。` 既保住了标点信息，又一眼能看出分词边界。
+        //    没有前一个词（句子以标点开头）时只能自己占一位。
+        if (words.length) {
+            words[words.length - 1] += part.segment;
+        } else {
+            words.push(part.segment);
+        }
+    }
+    return words.join(' ');
+}
+
+/** 分词只对有多个「词」的内容有意义：含汉字，或含空白（英文多词）。 */
+export function matchSegment(text) {
+    const s = String(text || '');
+    return /[\u4e00-\u9fff]/.test(s) || /\S\s+\S/.test(s.trim());
+}
+
 export function matchSimplified(text) {
     return /[\u4e00-\u9fff]/.test(String(text || ''));
 }

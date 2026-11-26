@@ -258,7 +258,13 @@ export function SettingsDialog({
                                     <ToggleButton value="side">{t('menuLayoutSide')}</ToggleButton>
                                 </ToggleButtonGroup>
                             </SettingRow>
-                            <SettingRow icon="mdi-palette" primary={t('changeThemeColor')}>
+                            <SettingRow
+                                icon="mdi-palette"
+                                primary={t('changeThemeColor')}
+                                // ⚠️ 这行说明不能省：主色明暗各存一份，取色器改的是**当前**那一套。
+                                //    不说的话，切到另一个模式发现颜色没变，看起来像「没保存」。
+                                secondary={t('themeScopeNow', { scope: isDark ? t('themeScopeDark') : t('themeScopeLight') })}
+                            >
                                 <input
                                     type="color"
                                     value={currentPrimary}
@@ -270,6 +276,8 @@ export function SettingsDialog({
                                 <Button
                                     size="small"
                                     variant="outlined"
+                                    // ⚠️ 同上：主色可能是接近背景的浅色，这颗按钮不该跟着 primary 走
+                                    color="inherit"
                                     startIcon={<MdiIcon name="mdi-palette-swatch" size={16} />}
                                     onClick={onOpenTraditionalColors}
                                 >

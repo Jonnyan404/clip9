@@ -25,9 +25,18 @@ import { prefersRenderedView } from '@/lib/util';
 export interface MarkdownAction {
     id: string;
     nameKey: string;
+    descKey?: string;
     icon: string;
     render?: string;
     fenceLanguage?: string;
+    /** 这个动作要用户先填参数（目前只有 `text.replace`）。声明了就得先收集再跑。 */
+    params?: Array<{
+        key: string;
+        labelKey: string;
+        type?: string;
+        options?: Array<{ value: string; labelKey: string }>;
+        visibleWhen?: { key: string; equals: string };
+    }>;
 }
 
 export interface UseMarkdownResult {
@@ -38,7 +47,9 @@ export interface UseMarkdownResult {
     html: string;
     leadsWithBlock: boolean;
     mode: string | null;
-    setMode: (next: string | null) => void;
+    /** 当前视图动作的参数（`text.replace` 的 mode/find/with）。没填过就是 undefined。 */
+    modeParams?: Record<string, string>;
+    setMode: (next: string | null, params?: Record<string, string>) => void;
 }
 
 export function useMarkdown(
@@ -66,10 +77,15 @@ export function useMarkdown(
 
     // 用户显式选过的动作 id。`undefined` = 从没选过（跟随默认值），`null` = 明确要看原文。
     const [override, setOverride] = useState<string | null | undefined>(undefined);
+    // 那个动作的参数（`text.replace` 的 mode/find/with）。
+    // ⚠️★ 必须与 `override` **分开存**：换到别的动作时要能一眼看出「这个动作没有参数」，
+    //    而不是把上一个动作的 find 带过去。
+    const [overrideParams, setOverrideParams] = useState<Record<string, string> | undefined>(undefined);
 
     // 默认值**跟着内容走**，不能只在挂载时定一次（文件预览的正文是异步抓回来的）。
     const defaultId = prefersRenderedView(text) ? 'format.markdown' : null;
     const mode = override === undefined ? defaultId : override;
+    const modeParams = override === undefined ? undefined : overrideParams;
 
     // 图标排显示的条件：开关开着 + 至少有一个**针对性**动作。
     // ⚠️ 通用动作（转大写、Base64 编码…）**不单独触发显示** —— 否则每条普通文本上都会挂一排图标。
@@ -79,6 +95,13 @@ export function useMarkdown(
     const [html, setHtml] = useState('');
     const [viewText, setViewText] = useState('');
     const seqRef = useRef(0);
+
+    // 送给 `runChain` 的那一步。⚠️ 用 `useMemo` 定住引用：直接把对象字面量写进依赖数组，
+    // 每次渲染都是新对象，那个 effect 会无限重跑。
+    const chainStep = useMemo(
+        () => (mode ? (modeParams ? { id: mode, params: modeParams } : mode) : null),
+        [mode, modeParams],
+    );
 
     useEffect(() => {
         const seq = ++seqRef.current;
@@ -96,7 +119,7 @@ export function useMarkdown(
         let cancelled = false;
         void (async () => {
             // `truncated` 告诉动作「这条正文是截断过的」—— 目前只有 markdown 那个动作在意它。
-            const result = await runChain(text, [mode], { t, truncated: mdFile });
+            const result = await runChain(text, [chainStep ?? mode], { t, truncated: mdFile });
             // 防竞态：快速切视图时，先发起的计算可能后回来
             if (cancelled || seq !== seqRef.current) {
                 return;
@@ -125,7 +148,7 @@ export function useMarkdown(
         return () => {
             cancelled = true;
         };
-    }, [text, mode, available, mdFile, t, enabled]);
+    }, [text, mode, chainStep, available, mdFile, t, enabled]);
 
     // 渲染结果是不是以 `<pre>` 开头（代码视图 / JSON / 编解码结果都是）——
     // 消费方据此**关掉浮动占位**（`<pre>` 带 overflow-x，是 BFC，不会绕着浮动块排版）。
@@ -140,8 +163,10 @@ export function useMarkdown(
     const iconCount = !available ? 0 : 1 + Math.min(targeted.length, 2) + (targeted.length > 2 ? 1 : 0);
     const gutter = iconCount > 2 ? '124px' : '64px';
 
-    const setMode = useCallback((next: string | null) => {
+    const setMode = useCallback((next: string | null, params?: Record<string, string>) => {
         setOverride(next ?? null);
+        // 参数跟着那一次选择走：同一个动作换参数要能重新跑，换动作则把旧的清掉。
+        setOverrideParams(next && params ? params : undefined);
     }, []);
 
     return {
@@ -152,6 +177,8 @@ export function useMarkdown(
         html,
         leadsWithBlock,
         mode,
+        modeParams,
+        // eslint-disable-next-line react-hooks/exhaustive-deps
         setMode,
     };
 }
