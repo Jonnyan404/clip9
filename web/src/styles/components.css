@@ -1666,9 +1666,16 @@
     background: color-mix(in srgb, var(--mui-palette-primary-main) 5%, transparent);
 }
 
-/* 顶部那条渐变细带 */
+/* 顶部那条渐变细带。
+   ⚠️★ 2026-11-26：卡片底透明之后，这条通栏的带子成了**唯一**的结构信号，
+   于是它被放大成「表格的彩色分隔线」—— 顶着容器左右边缘、每条一样长，
+   一屏 12 条就是 12 条横贯线。
+   现在左右各内缩 16px（正好等于 `CardContent` 的 padding，于是它的两端和正文
+   左边对齐）+ 2px 圆角：它从「分隔线」变成「属于这条消息的书签」。 */
 .text-card__bar {
     height: 4px;
+    margin: 0 16px;
+    border-radius: 2px;
     background: linear-gradient(90deg, var(--brand-1), var(--brand-2));
 }
 
