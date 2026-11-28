@@ -40,9 +40,12 @@ export function ToastHost() {
                 width: '100%',
                 maxWidth: narrow ? 'calc(100% - 24px)' : 560,
                 pointerEvents: 'none',
+                // ⚠️★ 桌面端要**让开顶栏**（实测高 50px）：原来是 `top: 16`，
+                //    通知直接压在工具栏上，把「标准 / 房间 chip / 设置」那排图标遮掉一半 ——
+                //    和「通知与背景重叠」是同一件事的两个面。58 = 50 + 8 的间距。
                 ...(narrow
                     ? { bottom: 'calc(8px + env(safe-area-inset-bottom))' }
-                    : { top: 16 }),
+                    : { top: 58 }),
             }}
         >
             {items.map((item) => {
@@ -77,7 +80,19 @@ export function ToastHost() {
                             alignItems: 'center',
                             // 队列里只有最新那条能点（`pointerEvents: none` 交给外层挡穿透）
                             pointerEvents: 'auto',
-                            ...(narrow ? { boxShadow: 6, borderRadius: 2, fontSize: 14, py: 0.75 } : null),
+                            // ⚠️★ 2026-11-28（用户报「桌面端通知和背景重叠」）：
+                            //    `variant="outlined"` 是**透明底 + 1px 边框**。它原来"看着有底"，
+                            //    是因为页面底色是浅灰、和它差一档；页面改成纯白之后，
+                            //    它就完全融进背景 —— 文字像直接浮在下面的卡片上。
+                            //    所以无 severity 的那一支必须显式给纸面色 + 投影。
+                            ...(severity || narrow
+                                ? { boxShadow: 6, borderRadius: 2, fontSize: 14, py: 0.75 }
+                                : {
+                                    bgcolor: 'background.paper',
+                                    boxShadow: 6,
+                                    border: '1px solid',
+                                    borderColor: 'divider',
+                                }),
                         }}
                     >
                         {item.text}
